@@ -5,14 +5,13 @@
 
 #include <glm/glm.hpp>
 
+#include <memory>
 #include <cstddef>
-#include <cstdint>
-#include <limits>
-#include <unordered_set>
-#include <vector>
 
 namespace ParallelRoam::Algorithms::DataOrientedRoam
 {
+struct DataOrientedRoamState;
+
 /// <summary>
 /// 使用 UV 空间表达一个 ROAM 三角形域，避免节点池重复保存世界空间顶点
 /// </summary>
@@ -74,6 +73,14 @@ struct DataOrientedRoamStats
 class DataOrientedRoamMeshBuilder
 {
 public:
+    DataOrientedRoamMeshBuilder();
+    ~DataOrientedRoamMeshBuilder();
+
+    DataOrientedRoamMeshBuilder(const DataOrientedRoamMeshBuilder&) = delete;
+    DataOrientedRoamMeshBuilder& operator=(const DataOrientedRoamMeshBuilder&) = delete;
+    DataOrientedRoamMeshBuilder(DataOrientedRoamMeshBuilder&&) noexcept;
+    DataOrientedRoamMeshBuilder& operator=(DataOrientedRoamMeshBuilder&&) noexcept;
+
     [[nodiscard]] Terrain::TerrainMeshData Build(
         const Terrain::HeightMap& heightMap,
         float terrainSize,
@@ -84,113 +91,6 @@ public:
     [[nodiscard]] const DataOrientedRoamStats& Stats() const;
 
 private:
-    using NodeIndex = std::uint32_t;
-    static constexpr NodeIndex InvalidNodeIndex = std::numeric_limits<NodeIndex>::max();
-
-    enum class SplitReason
-    {
-        Requested,
-        ForcedByBaseNeighbor,
-    };
-
-    /// <summary>
-    /// 3A 的 AoS 节点记录，所有拓扑关系都保存为 NodeIndex，后续 3B 会拆分为 SoA 数组
-    /// </summary>
-    struct DataOrientedRoamNode
-    {
-        TriangleDomain Domain;
-        NodeIndex Parent{InvalidNodeIndex};
-        NodeIndex LeftChild{InvalidNodeIndex};
-        NodeIndex RightChild{InvalidNodeIndex};
-        NodeIndex BaseNeighbor{InvalidNodeIndex};
-        NodeIndex LeftNeighbor{InvalidNodeIndex};
-        NodeIndex RightNeighbor{InvalidNodeIndex};
-        float GeometricError{0.0F};
-        std::uint64_t PathId{0};
-        std::uint64_t CreatedBuildId{0};
-        std::uint64_t ActivatedBuildId{0};
-        std::uint64_t SplitBuildId{0};
-        std::uint64_t MergeBuildId{0};
-        int Depth{0};
-        bool ActivatedByForcedSplit{false};
-        bool IsSplit{false};
-    };
-
-    [[nodiscard]] NodeIndex AddNode(
-        const TriangleDomain& domain,
-        NodeIndex parent,
-        int depth,
-        std::uint64_t pathId);
-
-    void ReserveNodePool();
-    void ResetTopology();
-
-    [[nodiscard]] bool NeedsTopologyReset(
-        const Terrain::HeightMap& heightMap,
-        float terrainSize,
-        float heightScale,
-        const DataOrientedRoamSettings& settings) const;
-
-    void RefineWithSplitQueue(NodeIndex rootA, NodeIndex rootB);
-    void MergeWithDiamondQueue();
-
-    [[nodiscard]] bool SplitNode(
-        NodeIndex node,
-        SplitReason reason,
-        NodeIndex forcedFrom);
-
-    void LinkSplitNeighbors(NodeIndex node, NodeIndex baseNeighbor);
-    void ReplaceNeighborReference(NodeIndex neighbor, NodeIndex oldNode, NodeIndex newNode);
-
-    [[nodiscard]] bool CanMergeNode(NodeIndex node) const;
-    void MergeSingleNode(NodeIndex node);
-    [[nodiscard]] bool MergeNodeOrDiamond(NodeIndex node);
-
-    void CollectLeafNodes(std::vector<NodeIndex>& leafNodes) const;
-    void CollectLeafNodesFrom(NodeIndex node, std::vector<NodeIndex>& leafNodes) const;
-    void CollectActiveSplitPaths();
-    void CollectActiveSplitPathsFrom(NodeIndex node);
-
-    void ValidateTopology();
-
-    void EmitLeafTriangles(Terrain::TerrainMeshData& meshData) const;
-    void EmitNode(NodeIndex node, Terrain::TerrainMeshData& meshData) const;
-    void EmitDomainTriangle(const DataOrientedRoamNode& node, Terrain::TerrainMeshData& meshData) const;
-
-    [[nodiscard]] bool ShouldSplitWithScore(const DataOrientedRoamNode& node, float screenErrorScore) const;
-    [[nodiscard]] bool WasSplitLastFrame(const DataOrientedRoamNode& node) const;
-
-    enum class LeafDebugClass
-    {
-        Original,
-        Subdivided,
-        Rebuilt,
-    };
-
-    [[nodiscard]] LeafDebugClass ClassifyLeafDebug(const DataOrientedRoamNode& node) const;
-    [[nodiscard]] glm::vec3 DebugColorForLeaf(const DataOrientedRoamNode& node) const;
-    [[nodiscard]] float DebugHighlightForLeaf(const DataOrientedRoamNode& node) const;
-
-    [[nodiscard]] float ComputeGeometricError(const TriangleDomain& domain) const;
-    [[nodiscard]] float ComputeScreenErrorScore(const DataOrientedRoamNode& node) const;
-    [[nodiscard]] glm::vec3 DomainToWorld(const glm::vec2& uv) const;
-    [[nodiscard]] glm::vec3 SampleNormal(const glm::vec2& uv) const;
-
-    [[nodiscard]] bool IsValidNode(NodeIndex node) const;
-    [[nodiscard]] bool IsLeaf(NodeIndex node) const;
-
-    const Terrain::HeightMap* _heightMap{nullptr};
-    DataOrientedRoamSettings _settings;
-    DataOrientedRoamStats _stats;
-    std::vector<DataOrientedRoamNode> _nodes;
-    std::unordered_set<std::uint64_t> _previousSplitPaths;
-    std::unordered_set<std::uint64_t> _currentSplitPaths;
-    NodeIndex _rootA{InvalidNodeIndex};
-    NodeIndex _rootB{InvalidNodeIndex};
-    glm::vec3 _cameraPosition{0.0F};
-    float _terrainSize{1.0F};
-    float _heightScale{1.0F};
-    int _topologyMaxDepth{0};
-    std::uint64_t _buildSequence{0};
+    std::unique_ptr<DataOrientedRoamState> _state;
 };
 } // 命名空间 ParallelRoam::Algorithms::DataOrientedRoam
