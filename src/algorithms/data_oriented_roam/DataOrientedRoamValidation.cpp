@@ -169,6 +169,7 @@ void ValidateTopology(DataOrientedRoamState& state)
     std::vector<DataOrientedRoamNodeIndex> leafNodes;
     CollectLeafNodes(state, leafNodes);
     std::vector<bool> leafSet(state.Nodes.size(), false);
+    // leafSet 的大小直接来自 SoA 长度，覆盖 inactive child 的下标空间
     for (DataOrientedRoamNodeIndex node : leafNodes)
     {
         // leafSet 让 neighbor 验证不用反复线性查找 active leaf
@@ -266,7 +267,7 @@ void ValidateTopology(DataOrientedRoamState& state)
 
     for (DataOrientedRoamNodeIndex nodeIndex = 0; nodeIndex < state.Nodes.size(); ++nodeIndex)
     {
-        const DataOrientedRoamNode& node = state.Nodes[nodeIndex];
+        const DataOrientedRoamNodeConstRef node = state.Nodes[nodeIndex];
         if (node.IsSplit && (!state.IsValidNode(node.LeftChild) || !state.IsValidNode(node.RightChild)))
         {
             ++state.Stats.InvalidTopologyCount;

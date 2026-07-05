@@ -180,13 +180,13 @@ bool SplitNode(
         state.Nodes[node].RightChild = rightChild;
     }
 
-    DataOrientedRoamNode& parent = state.Nodes[node];
+    auto parent = state.Nodes[node];
     // parent 留在 node pool 中，但不再是 active leaf
     parent.IsSplit = true;
     parent.SplitBuildId = state.BuildSequence;
 
-    DataOrientedRoamNode& leftChild = state.Nodes[parent.LeftChild];
-    DataOrientedRoamNode& rightChild = state.Nodes[parent.RightChild];
+    auto leftChild = state.Nodes[parent.LeftChild];
+    auto rightChild = state.Nodes[parent.RightChild];
     // child 可能从历史 merge 状态复用，激活前必须清空旧 neighbor
     leftChild.BaseNeighbor = InvalidDataOrientedRoamNodeIndex;
     leftChild.LeftNeighbor = InvalidDataOrientedRoamNodeIndex;
@@ -218,7 +218,7 @@ bool CanMergeNode(const DataOrientedRoamState& state, DataOrientedRoamNodeIndex 
         return false;
     }
 
-    const DataOrientedRoamNode& candidate = state.Nodes[node];
+    const DataOrientedRoamNodeConstRef candidate = state.Nodes[node];
     if (!state.IsValidNode(candidate.LeftChild) || !state.IsValidNode(candidate.RightChild))
     {
         return false;
@@ -356,6 +356,8 @@ void RefineWithSplitQueue(DataOrientedRoamState& state)
         }
 
         const float score = ComputeScreenErrorScore(state, state.Nodes[node]);
+        // ScreenErrors 是 3B 为后续并行误差评估预留的连续输出
+        state.Nodes[node].ScreenError = score;
         // enqueue 阶段先过滤一次，减少低价值候选入队
         if (!ShouldSplitWithScore(state, state.Nodes[node], score))
         {
@@ -399,6 +401,8 @@ void RefineWithSplitQueue(DataOrientedRoamState& state)
         }
 
         const float score = ComputeScreenErrorScore(state, state.Nodes[node]);
+        // 弹出时缓存最新分数，便于调试候选过期情况
+        state.Nodes[node].ScreenError = score;
         // 弹出时重算，forced split 可能让候选过期
         if (!ShouldSplitWithScore(state, state.Nodes[node], score))
         {
@@ -449,7 +453,10 @@ void MergeWithDiamondQueue(DataOrientedRoamState& state)
 
         if (CanMergeNode(state, node))
         {
-            candidates.push_back(MergeCandidate{ComputeScreenErrorScore(state, state.Nodes[node]), node});
+            const float score = ComputeScreenErrorScore(state, state.Nodes[node]);
+            // merge 候选也写入同一 score 数组，保持 split / merge 口径一致
+            state.Nodes[node].ScreenError = score;
+            candidates.push_back(MergeCandidate{score, node});
         }
 
         self(self, state.Nodes[node].LeftChild);

@@ -2,8 +2,8 @@
 
 namespace ParallelRoam::Algorithms::DataOrientedRoam
 {
-// 3A adapter 保持和 Classic adapter 相同的接口形状
-// 差异只在内部 builder 的 node pool 表达
+// 3B adapter 保持和 Classic adapter 相同的接口形状
+// 差异只在内部 builder 的 SoA node pool 表达
 // benchmark 因此可以在同一 profile 下直接比较 Classic 与 DOD
 TerrainLodAlgorithmInfo DataOrientedRoamTerrainLodAlgorithm::Info() const
 {
@@ -11,7 +11,7 @@ TerrainLodAlgorithmInfo DataOrientedRoamTerrainLodAlgorithm::Info() const
         TerrainLodAlgorithmId::DataOrientedCpuRoam,
         "data_oriented_cpu_roam",
         "Data-Oriented CPU ROAM",
-        "Index-based CPU ROAM node pool baseline for Data-Oriented refactoring",
+        "SoA CPU ROAM node pool baseline for Data-Oriented refactoring",
     };
 }
 
@@ -45,8 +45,8 @@ bool DataOrientedRoamTerrainLodAlgorithm::BuildRenderData(
         return false;
     }
 
-    // 3A 仍然输出 CPU mesh
-    // SoA 和多线程阶段先不改变 renderer 消费方式
+    // 3B 仍然输出 CPU mesh
+    // 多线程阶段先不改变 renderer 消费方式
     outPacket.Mode = TerrainLodRenderMode::CpuMesh;
     outPacket.CpuMesh = _builder.Build(
         *input.HeightMap,
@@ -76,7 +76,7 @@ void DataOrientedRoamTerrainLodAlgorithm::Reset()
 DataOrientedRoamSettings DataOrientedRoamTerrainLodAlgorithm::ToDataOrientedSettings(
     const TerrainLodSettings& settings)
 {
-    // DOD 3A 使用与 Classic 相同的控制变量
+    // DOD 3B 使用与 Classic 相同的控制变量
     // 这是三版本 benchmark 可比性的前提
     DataOrientedRoamSettings dataSettings{};
     dataSettings.MaxDepth = settings.MaxDepth;

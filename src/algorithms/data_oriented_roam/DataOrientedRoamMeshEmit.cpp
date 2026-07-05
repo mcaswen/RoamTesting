@@ -8,11 +8,12 @@ namespace
 {
 void EmitDomainTriangle(
     const DataOrientedRoamState& state,
-    const DataOrientedRoamNode& node,
+    DataOrientedRoamNodeConstRef node,
     Terrain::TerrainMeshData& meshData)
 {
     const auto baseIndex = static_cast<std::uint32_t>(meshData.Vertices.size());
     const TriangleDomain& domain = node.Domain;
+    // uvs 直接引用 domain 三个顶点，emit 不创建持久顶点缓存
     const std::array<glm::vec2, 3> uvs{domain.A, domain.B, domain.C};
     const glm::vec3 debugColor = DebugColorForLeaf(state, node);
     const float debugHighlight = DebugHighlightForLeaf(state, node);
@@ -54,8 +55,8 @@ void EmitDomainTriangle(
 
 void EmitLeafTriangles(const DataOrientedRoamState& state, Terrain::TerrainMeshData& meshData)
 {
-    // 3A 仍输出 CPU mesh
-    // 后续 SoA 和并行阶段会先保持这个渲染出口稳定
+    // 3B 仍输出 CPU mesh
+    // 后续并行阶段会先保持这个渲染出口稳定
     std::vector<DataOrientedRoamNodeIndex> leafNodes;
     CollectLeafNodes(state, leafNodes);
 

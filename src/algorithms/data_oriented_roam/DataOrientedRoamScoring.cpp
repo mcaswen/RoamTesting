@@ -8,7 +8,7 @@ namespace ParallelRoam::Algorithms::DataOrientedRoam
 {
 bool ShouldSplitWithScore(
     const DataOrientedRoamState& state,
-    const DataOrientedRoamNode& node,
+    DataOrientedRoamNodeConstRef node,
     float screenErrorScore)
 {
     if (node.Depth >= state.Settings.MaxDepth)
@@ -34,7 +34,7 @@ bool ShouldSplitWithScore(
     return WasSplitLastFrame(state, node);
 }
 
-bool WasSplitLastFrame(const DataOrientedRoamState& state, const DataOrientedRoamNode& node)
+bool WasSplitLastFrame(const DataOrientedRoamState& state, DataOrientedRoamNodeConstRef node)
 {
     // hysteresis 只看上一帧最终 active split path
     return state.PreviousSplitPaths.find(node.PathId) != state.PreviousSplitPaths.end();
@@ -42,7 +42,7 @@ bool WasSplitLastFrame(const DataOrientedRoamState& state, const DataOrientedRoa
 
 DataOrientedRoamLeafDebugClass ClassifyLeafDebug(
     const DataOrientedRoamState& state,
-    const DataOrientedRoamNode& node)
+    DataOrientedRoamNodeConstRef node)
 {
     // Rebuilt 同时覆盖新 split child 和本帧 merge 回来的 parent
     // debug color 用它突出本帧拓扑变化区域
@@ -60,7 +60,7 @@ DataOrientedRoamLeafDebugClass ClassifyLeafDebug(
     return DataOrientedRoamLeafDebugClass::Original;
 }
 
-glm::vec3 DebugColorForLeaf(const DataOrientedRoamState& state, const DataOrientedRoamNode& node)
+glm::vec3 DebugColorForLeaf(const DataOrientedRoamState& state, DataOrientedRoamNodeConstRef node)
 {
     const float depthRatio = std::clamp(
         static_cast<float>(node.Depth) / static_cast<float>(std::max(state.Settings.MaxDepth, 1)),
@@ -87,7 +87,7 @@ glm::vec3 DebugColorForLeaf(const DataOrientedRoamState& state, const DataOrient
     return glm::vec3{0.28F, 0.34F, 0.30F};
 }
 
-float DebugHighlightForLeaf(const DataOrientedRoamState& state, const DataOrientedRoamNode& node)
+float DebugHighlightForLeaf(const DataOrientedRoamState& state, DataOrientedRoamNodeConstRef node)
 {
     switch (ClassifyLeafDebug(state, node))
     {
@@ -134,7 +134,7 @@ float ComputeGeometricError(const DataOrientedRoamState& state, const TriangleDo
     });
 }
 
-float ComputeScreenErrorScore(const DataOrientedRoamState& state, const DataOrientedRoamNode& node)
+float ComputeScreenErrorScore(const DataOrientedRoamState& state, DataOrientedRoamNodeConstRef node)
 {
     // 高度误差负责山体起伏，边长项保证近处平坦区域仍能细分
     const glm::vec3 a = DomainToWorld(state, node.Domain.A);

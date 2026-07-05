@@ -23,7 +23,7 @@ struct TriangleDomain
 };
 
 /// <summary>
-/// Data-Oriented CPU ROAM 3A 的单帧细分、合并和拓扑验证参数
+/// Data-Oriented CPU ROAM 3B 的单帧细分、合并和拓扑验证参数
 /// </summary>
 struct DataOrientedRoamSettings
 {
@@ -43,6 +43,8 @@ struct DataOrientedRoamStats
 {
     std::size_t NodeCount{0};
     std::size_t ReservedNodeCapacity{0};
+    std::size_t NodeStorageBytes{0};
+    std::size_t NodeStorageArrayCount{0};
     std::size_t ActiveTriangleCount{0};
     std::size_t OriginalTriangleCount{0};
     std::size_t SubdividedTriangleCount{0};
@@ -68,7 +70,7 @@ struct DataOrientedRoamStats
 };
 
 /// <summary>
-/// Data-Oriented CPU ROAM 的 3A 版本：节点由预分配 vector 池管理，拓扑关系全部使用 index 表达
+/// Data-Oriented CPU ROAM 的 3B 版本：节点池使用 SoA 数组，拓扑关系全部使用 index 表达
 /// </summary>
 class DataOrientedRoamMeshBuilder
 {

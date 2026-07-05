@@ -255,7 +255,7 @@ assets/textures/Tex_Terrain_Debug_Diffuse.ppm
 
 - 已新增 `DataOrientedRoamMeshBuilder`，节点池由 `std::vector` 预分配管理，parent / child / neighbor 统一使用 `NodeIndex`；
 - 已通过统一 `ITerrainLodAlgorithm` 接口接入 benchmark，`--algorithm dod` 可运行 index-based 3A 版本；
-- 3A 暂保持 AoS 节点结构，SoA 拆分和并行阶段留给 3B / 3C。
+- 3A 已作为 index-based baseline 保留在提交历史中，当前主线已进入 3B SoA 节点池实现。
 
 3B：AoS 转 SoA
 
@@ -263,6 +263,12 @@ assets/textures/Tex_Terrain_Debug_Diffuse.ppm
 - 只在需要时读取对应数组；
 - 对齐 / padding 进行基本检查；
 - 保证结果与 Classic 版一致或可解释地接近。
+
+当前状态：
+
+- `DataOrientedRoamNodePool` 已改为 SoA 数组，domain、parent/child、neighbor、error、depth、build id 和 flag 分离存储；
+- `ScreenErrors` 缓存最近一次 split / merge 队列评分，为 3C 并行误差评估保留连续写入目标；
+- DOD 私有统计记录 SoA 数组数量和容量估算，统一 benchmark 接口保持不变。
 
 3C：线程池与并行误差评估
 
