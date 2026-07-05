@@ -348,16 +348,14 @@ void RefineWithSplitQueue(DataOrientedRoamState& state)
     std::priority_queue<SplitCandidate, std::vector<SplitCandidate>, CandidateCompare> candidates;
     std::uint64_t sequence = 0;
 
-    const auto enqueueCandidate = [&state, &candidates, &sequence](DataOrientedRoamNodeIndex node) {
+    const auto enqueueCandidateWithScore =
+        [&state, &candidates, &sequence](DataOrientedRoamNodeIndex node, float score) {
         if (!state.IsValidNode(node) || !state.IsLeaf(node) || state.Nodes[node].Depth >= state.Settings.MaxDepth)
         {
             // 只有未达到 maxDepth 的 active leaf 进入候选队列
             return;
         }
 
-        const float score = ComputeScreenErrorScore(state, state.Nodes[node]);
-        // ScreenErrors 是误差评估的连续输出
-        state.Nodes[node].ScreenError = score;
         // 入队前先过滤一次，减少低价值候选
         if (!ShouldSplitWithScore(state, state.Nodes[node], score))
         {
@@ -368,25 +366,26 @@ void RefineWithSplitQueue(DataOrientedRoamState& state)
         state.Stats.CandidatePeakCount = std::max(state.Stats.CandidatePeakCount, candidates.size());
     };
 
-    const auto enqueueActiveLeaves = [&enqueueCandidate, &state](auto&& self, DataOrientedRoamNodeIndex node) -> void {
-        if (!state.IsValidNode(node))
-        {
-            return;
-        }
-
-        if (state.IsLeaf(node))
-        {
-            // 持久拓扑中 root 通常已 split，要从当前 leaf 重新评估
-            enqueueCandidate(node);
-            return;
-        }
-
-        self(self, state.Nodes[node].LeftChild);
-        self(self, state.Nodes[node].RightChild);
+    const auto enqueueCandidate = [&state, &enqueueCandidateWithScore](DataOrientedRoamNodeIndex node) {
+        const float score = EvaluateScreenErrorForNode(state, node);
+        enqueueCandidateWithScore(node, score);
     };
 
-    enqueueActiveLeaves(enqueueActiveLeaves, state.RootA);
-    enqueueActiveLeaves(enqueueActiveLeaves, state.RootB);
+    std::vector<DataOrientedRoamNodeIndex> activeLeaves;
+    // 批量评分只覆盖进入 split pass 前已有的 active leaf
+    CollectLeafNodes(state, activeLeaves);
+    // 评估完成前不修改拓扑  leaf index 快照保持有效
+    EvaluateScreenErrors(state, activeLeaves);
+    for (DataOrientedRoamNodeIndex node : activeLeaves)
+    {
+        if (!state.IsValidNode(node))
+        {
+            continue;
+        }
+
+        // 缓存分数避免初始入队重复采样 HeightMap
+        enqueueCandidateWithScore(node, state.Nodes[node].ScreenError);
+    }
 
     while (!candidates.empty())
     {
@@ -400,10 +399,9 @@ void RefineWithSplitQueue(DataOrientedRoamState& state)
             continue;
         }
 
-        const float score = ComputeScreenErrorScore(state, state.Nodes[node]);
+        const float score = EvaluateScreenErrorForNode(state, node);
         // 弹出时缓存最新分数，便于调试候选过期情况
-        state.Nodes[node].ScreenError = score;
-        // 弹出时重算，forced split 可能让候选过期
+        // forced split 可能让候选过期
         if (!ShouldSplitWithScore(state, state.Nodes[node], score))
         {
             continue;
@@ -422,6 +420,7 @@ void RefineWithSplitQueue(DataOrientedRoamState& state)
             continue;
         }
 
+        // split 产生的新 child 不在批量快照内  这里即时评分
         enqueueCandidate(state.Nodes[node].LeftChild);
         enqueueCandidate(state.Nodes[node].RightChild);
 

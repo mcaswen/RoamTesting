@@ -15,6 +15,7 @@ include(Sanitizers)
 include(Dependencies)
 
 parallel_roam_apply_global_options()
+find_package(Threads REQUIRED)
 
 add_library(parallel_roam_project_options INTERFACE)
 target_compile_features(parallel_roam_project_options INTERFACE cxx_std_20)
@@ -43,6 +44,7 @@ if(PARALLEL_ROAM_BUILD_APP)
                 src/algorithms/classic_roam/ClassicRoamTerrainLodAlgorithm.cpp
                 src/algorithms/classic_roam/ClassicRoamMeshBuilder.cpp
                 src/algorithms/data_oriented_roam/DataOrientedRoamTerrainLodAlgorithm.cpp
+                src/algorithms/data_oriented_roam/DataOrientedRoamErrorEvaluation.cpp
                 src/algorithms/data_oriented_roam/DataOrientedRoamMeshBuilder.cpp
                 src/algorithms/data_oriented_roam/DataOrientedRoamMeshEmit.cpp
                 src/algorithms/data_oriented_roam/DataOrientedRoamScoring.cpp
@@ -73,6 +75,7 @@ if(PARALLEL_ROAM_BUILD_APP)
         PRIVATE
             parallel_roam_project_options
             parallel_roam_project_warnings
+            Threads::Threads
     )
 
     parallel_roam_link_optional_dependencies(parallel_roam)

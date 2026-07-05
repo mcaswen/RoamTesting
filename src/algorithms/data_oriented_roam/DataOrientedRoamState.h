@@ -220,6 +220,12 @@ void ValidateTopology(DataOrientedRoamState& state);
 // EmitLeafTriangles 是当前 DOD 路径的 CPU mesh 输出 pass
 void EmitLeafTriangles(const DataOrientedRoamState& state, Terrain::TerrainMeshData& meshData);
 
+// EvaluateScreenErrorForNode 写回单个节点的 screen error 缓存
+[[nodiscard]] float EvaluateScreenErrorForNode(DataOrientedRoamState& state, DataOrientedRoamNodeIndex node);
+
+// EvaluateScreenErrors 批量刷新 active leaf 的 screen error 缓存
+void EvaluateScreenErrors(DataOrientedRoamState& state, const std::vector<DataOrientedRoamNodeIndex>& leafNodes);
+
 // ShouldSplitWithScore 汇总 split 阈值、merge 阈值和 hysteresis 规则
 [[nodiscard]] bool ShouldSplitWithScore(
     const DataOrientedRoamState& state,

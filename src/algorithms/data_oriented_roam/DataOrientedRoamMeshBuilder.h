@@ -32,6 +32,8 @@ struct DataOrientedRoamSettings
     float MergeThreshold{0.02F};
     float DistanceScale{24.0F};
     std::size_t SplitBudget{8192};
+    // 0 自动选择 worker 数 1 保持串行评估
+    std::size_t ErrorEvaluationWorkerCount{0};
     bool EnableLocalConstraints{true};
     bool EnableTopologyValidation{false};
 };
@@ -61,7 +63,14 @@ struct DataOrientedRoamStats
     std::size_t TjunctionCount{0};
     std::size_t InvalidNeighborCount{0};
     std::size_t InvalidTopologyCount{0};
+    // ErrorEvaluationCount 记录批量评分覆盖的 active leaf 数量
+    std::size_t ErrorEvaluationCount{0};
+    // worker count 是本帧实际采用的并行宽度
+    std::size_t ErrorEvaluationWorkerCount{0};
     float UpdateMilliseconds{0.0F};
+    // 两个耗时字段按实际路径择一写入
+    float ErrorEvaluationSingleThreadMilliseconds{0.0F};
+    float ErrorEvaluationParallelMilliseconds{0.0F};
     float SplitMilliseconds{0.0F};
     float EmitMilliseconds{0.0F};
     float ValidateMilliseconds{0.0F};

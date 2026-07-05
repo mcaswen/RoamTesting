@@ -89,7 +89,7 @@ struct ClassicRoamStats
     // ConstraintPassCount 统计 baseNeighbor 约束传播次数
     std::size_t ConstraintPassCount{0};
 
-    // CandidatePeakCount 记录 split queue 峰值，观察 2I 候选队列压力
+    // CandidatePeakCount 记录 split queue 峰值，观察候选队列压力
     std::size_t CandidatePeakCount{0};
 
     // RejectedSplitCount 表示因预算或深度上限被拒绝的 split

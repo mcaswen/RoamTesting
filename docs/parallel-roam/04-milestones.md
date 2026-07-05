@@ -277,6 +277,13 @@ assets/textures/Tex_Terrain_Debug_Diffuse.ppm
 - 记录单线程与多线程耗时；
 - 每阶段记录 CPU 时间。
 
+当前状态：
+
+- 新增 DOD `ErrorEvaluation` pass，先收集当前 active leaf，再批量刷新 SoA `ScreenErrors`；
+- 自动 worker 模式会按硬件线程数保守封顶，小批量 leaf 保持串行以避免线程启动成本吞掉收益；
+- 统一 benchmark 的 `CpuErrorEvalMilliseconds` 已接入 DOD 批量误差评估耗时，`CpuDecisionMilliseconds` 记录扣除该批量评估后的 split 决策时间；
+- 拓扑提交、约束传播和 split / merge 仍保持单线程，为 3D 的并行候选标记与 thread-local 收集保留清晰边界。
+
 3D：并行标记与收集
 
 - 并行标记 split / merge candidate；

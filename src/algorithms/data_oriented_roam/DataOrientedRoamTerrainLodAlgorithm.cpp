@@ -1,7 +1,19 @@
 #include "algorithms/data_oriented_roam/DataOrientedRoamTerrainLodAlgorithm.h"
 
+#include <algorithm>
+
 namespace ParallelRoam::Algorithms::DataOrientedRoam
 {
+namespace
+{
+float ErrorEvaluationMilliseconds(const DataOrientedRoamStats& stats)
+{
+    return stats.ErrorEvaluationWorkerCount > 1U ?
+        stats.ErrorEvaluationParallelMilliseconds :
+        stats.ErrorEvaluationSingleThreadMilliseconds;
+}
+} // 匿名命名空间
+
 // adapter 保持和 Classic adapter 相同的接口形状
 // 差异只在内部 builder 的 SoA node pool 表达
 // benchmark 因此可以在同一 profile 下直接比较 Classic 与 DOD
@@ -11,7 +23,7 @@ TerrainLodAlgorithmInfo DataOrientedRoamTerrainLodAlgorithm::Info() const
         TerrainLodAlgorithmId::DataOrientedCpuRoam,
         "data_oriented_cpu_roam",
         "Data-Oriented CPU ROAM",
-        "SoA CPU ROAM node pool baseline for Data-Oriented refactoring",
+        "SoA CPU ROAM with batched screen-error evaluation",
     };
 }
 
@@ -84,6 +96,8 @@ DataOrientedRoamSettings DataOrientedRoamTerrainLodAlgorithm::ToDataOrientedSett
     dataSettings.MergeThreshold = settings.MergeThreshold;
     dataSettings.DistanceScale = settings.DistanceScale;
     dataSettings.SplitBudget = settings.SplitBudget;
+    // worker 数保持 DOD 内部策略  避免扩大统一参数面
+    dataSettings.ErrorEvaluationWorkerCount = 0U;
     dataSettings.EnableLocalConstraints = settings.EnableLocalConstraints;
     dataSettings.EnableTopologyValidation = settings.EnableTopologyValidation;
     return dataSettings;
@@ -111,9 +125,12 @@ TerrainLodStats DataOrientedRoamTerrainLodAlgorithm::ToTerrainLodStats(const Dat
     lodStats.TjunctionCount = stats.TjunctionCount;
     lodStats.InvalidNeighborCount = stats.InvalidNeighborCount;
     lodStats.InvalidTopologyCount = stats.InvalidTopologyCount;
+    // error eval 从 split pass 里拆出独立 CSV 字段
+    const float errorEvaluationMilliseconds = ErrorEvaluationMilliseconds(stats);
     lodStats.CpuUpdateMilliseconds = stats.UpdateMilliseconds;
-    lodStats.CpuDecisionMilliseconds = stats.SplitMilliseconds;
-    lodStats.CpuTopologyMilliseconds = stats.SplitMilliseconds + stats.MergeMilliseconds;
+    lodStats.CpuErrorEvalMilliseconds = errorEvaluationMilliseconds;
+    lodStats.CpuDecisionMilliseconds = std::max(0.0F, stats.SplitMilliseconds - errorEvaluationMilliseconds);
+    lodStats.CpuTopologyMilliseconds = lodStats.CpuDecisionMilliseconds + stats.MergeMilliseconds;
     lodStats.CpuMeshBuildMilliseconds = stats.EmitMilliseconds;
     lodStats.SplitMilliseconds = stats.SplitMilliseconds;
     lodStats.MergeMilliseconds = stats.MergeMilliseconds;
