@@ -356,9 +356,9 @@ void RefineWithSplitQueue(DataOrientedRoamState& state)
         }
 
         const float score = ComputeScreenErrorScore(state, state.Nodes[node]);
-        // ScreenErrors 是 3B 为后续并行误差评估预留的连续输出
+        // ScreenErrors 是误差评估的连续输出
         state.Nodes[node].ScreenError = score;
-        // enqueue 阶段先过滤一次，减少低价值候选入队
+        // 入队前先过滤一次，减少低价值候选
         if (!ShouldSplitWithScore(state, state.Nodes[node], score))
         {
             return;

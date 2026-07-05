@@ -52,7 +52,7 @@ struct DebugOverlayData
     std::size_t RoamInvalidNeighborCount{0};
     std::size_t RoamInvalidTopologyCount{0};
 
-    // UI 直接展示算法层统计的阶段耗时
+    // UI 直接展示算法层统计的各 pass 耗时
     float RoamUpdateMilliseconds{0.0F};
     float RoamSplitMilliseconds{0.0F};
     float RoamMergeMilliseconds{0.0F};

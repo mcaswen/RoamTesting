@@ -7,7 +7,7 @@
 namespace ParallelRoam::App
 {
 /// <summary>
-/// 阶段 0 渲染闭环使用的自由飞行相机控制器
+/// 渲染闭环使用的自由飞行相机控制器
 /// </summary>
 class CameraController
 {

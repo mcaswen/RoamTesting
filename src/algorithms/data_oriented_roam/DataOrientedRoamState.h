@@ -78,7 +78,7 @@ struct DataOrientedRoamNodeRef
 };
 
 /// <summary>
-/// Data-Oriented ROAM 3B 的 SoA 节点池，拓扑、误差、深度和 flag 分别连续存储
+/// Data-Oriented ROAM 的 SoA 节点池，拓扑、误差、深度和 flag 分别连续存储
 /// </summary>
 struct DataOrientedRoamNodePool
 {
@@ -97,7 +97,7 @@ struct DataOrientedRoamNodePool
     std::vector<DataOrientedRoamNodeIndex> RightNeighbors;
     // GeometricErrors 与相机无关，节点创建后跨帧复用
     std::vector<float> GeometricErrors;
-    // ScreenErrors 缓存最近一次队列评分，方便后续 3C 并行评估复用
+    // ScreenErrors 缓存最近一次队列评分，供误差评估批量复用
     std::vector<float> ScreenErrors;
     // PathIds 是 hysteresis 的稳定键，不能使用 vector index 代替
     std::vector<std::uint64_t> PathIds;
@@ -147,7 +147,7 @@ struct DataOrientedRoamState
     DataOrientedRoamSettings Settings;
     // Stats 由各 pass 累积，builder 只负责更新时间桶
     DataOrientedRoamStats Stats;
-    // Nodes 是 3B 的 SoA node pool
+    // Nodes 是 SoA node pool
     DataOrientedRoamNodePool Nodes;
     // PreviousSplitPaths 是 hysteresis 的跨帧记忆
     std::unordered_set<std::uint64_t> PreviousSplitPaths;

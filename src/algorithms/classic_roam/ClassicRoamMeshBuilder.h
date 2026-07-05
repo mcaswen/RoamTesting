@@ -14,7 +14,7 @@
 namespace ParallelRoam::Algorithms::ClassicRoam
 {
 /// <summary>
-/// 使用 UV 空间表达一个 ROAM 三角形域，实际顶点在 emit 阶段采样高度图生成
+/// 使用 UV 空间表达一个 ROAM 三角形域，实际顶点在 mesh 输出时采样高度图生成
 /// </summary>
 struct TriangleDomain
 {
@@ -52,7 +52,7 @@ struct ClassicRoamSettings
 };
 
 /// <summary>
-/// Classic CPU ROAM 的运行统计，记录拓扑规模、split/merge 行为和阶段耗时
+/// Classic CPU ROAM 的运行统计，记录拓扑规模、split/merge 行为和各 pass 耗时
 /// </summary>
 struct ClassicRoamStats
 {
@@ -250,7 +250,7 @@ private:
     void EmitNode(const ClassicRoamNode& node, Terrain::TerrainMeshData& meshData) const;
     void EmitDomainTriangle(const ClassicRoamNode& node, Terrain::TerrainMeshData& meshData) const;
 
-    // 当前阶段使用阈值决策，后续可替换为 priority queue
+    // 当前实现使用阈值决策，后续可替换为 priority queue
     [[nodiscard]] bool ShouldSplit(const ClassicRoamNode& node) const;
     [[nodiscard]] bool ShouldSplitWithScore(const ClassicRoamNode& node, float screenErrorScore) const;
 

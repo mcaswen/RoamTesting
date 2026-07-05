@@ -80,7 +80,7 @@ bool Application::Initialize()
 
     _terrainSettings = ToRenderSettings(_terrainPanelState);
 
-    // 阶段 1 渲染器加载 Height Map、地表纹理和内置 shader
+    // 渲染器加载 Height Map、地表纹理和内置 shader
     std::string rendererError;
     if (!_terrainRenderer.Initialize(
             std::filesystem::path{"assets/heightmaps/Hm_Terrain_Test_129.pgm"},

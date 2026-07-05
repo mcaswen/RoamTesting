@@ -187,7 +187,7 @@ BenchmarkScenario MakeScenario(BenchmarkProfile profile)
 
     // Standard 使用更大 HeightMap 和较长路径
     // 不要求每帧拓扑验证
-    // 重点是记录稳定的阶段耗时分布
+    // 重点是记录稳定的各 pass 耗时分布
     scenario.HeightMapPath = "assets/heightmaps/Hm_Terrain_Peking_513.png";
     scenario.Settings.EnableTopologyValidation = false;
     scenario.RequireTopologyClean = false;
@@ -470,7 +470,7 @@ bool WriteCsv(
         return false;
     }
 
-    // 表头覆盖三类算法的共同阶段
+    // 表头覆盖三类算法的共同统计字段
     // GPU 字段现在可为 0，后续实现后不需要改 CSV 契约
     csv << "profile,algorithm,frameIndex,timeSeconds,cameraName,cameraX,cameraY,cameraZ,"
            "heightMapWidth,heightMapHeight,terrainSize,heightScale,maxDepth,splitThreshold,mergeThreshold,"
@@ -689,7 +689,7 @@ int RunTerrainLodBenchmarkFromCommandLine(int argc, char** argv)
 
         if (argument == "--algorithm")
         {
-            // 缺值错误需要在解析阶段返回
+            // 缺值错误需要在解析时返回
             // 不进入默认 benchmark
             std::cerr << "--algorithm requires a value.\n";
             std::cerr << BenchmarkUsage();

@@ -38,7 +38,7 @@ void EmitDomainTriangle(
     const bool pointsTowardPositiveY = glm::cross(edge0, edge1).y >= 0.0F;
 
     // domain 绕序在递归 split 后可能和渲染面朝向相反
-    // emit 阶段统一翻到正 Y
+    // mesh 输出统一翻到正 Y
     meshData.Indices.push_back(baseIndex);
     if (pointsTowardPositiveY)
     {
@@ -55,8 +55,8 @@ void EmitDomainTriangle(
 
 void EmitLeafTriangles(const DataOrientedRoamState& state, Terrain::TerrainMeshData& meshData)
 {
-    // 3B 仍输出 CPU mesh
-    // 后续并行阶段会先保持这个渲染出口稳定
+    // 当前路径输出 CPU mesh
+    // 并行误差评估会保持这个渲染出口稳定
     std::vector<DataOrientedRoamNodeIndex> leafNodes;
     CollectLeafNodes(state, leafNodes);
 

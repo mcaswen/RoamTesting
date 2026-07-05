@@ -53,7 +53,7 @@ TerrainMeshData TerrainMeshBuilder::Build(const HeightMap& heightMap, float terr
     meshData.Indices.reserve(quadCount * 6U);
 
     // 每个 heightmap cell 拆成两个三角形
-    // 索引顺序要和 ROAM emit 阶段统一朝向正 Y
+    // 索引顺序要和 ROAM mesh 输出统一朝向正 Y
     for (int y = 0; y < meshData.GridHeight - 1; ++y)
     {
         for (int x = 0; x < meshData.GridWidth - 1; ++x)

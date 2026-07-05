@@ -6,7 +6,7 @@
 namespace ParallelRoam::Algorithms::DataOrientedRoam
 {
 /// <summary>
-/// 将 3B SoA Data-Oriented ROAM 接入三版本共享的 Terrain LOD 算法接口
+/// 将 SoA Data-Oriented ROAM 接入三版本共享的 Terrain LOD 算法接口
 /// </summary>
 class DataOrientedRoamTerrainLodAlgorithm final : public ITerrainLodAlgorithm
 {

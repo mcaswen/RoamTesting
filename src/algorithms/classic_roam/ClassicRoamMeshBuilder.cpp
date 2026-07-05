@@ -25,7 +25,7 @@ constexpr std::uint64_t RootAPathId = 1ULL;
 constexpr std::uint64_t RootBPathId = 1ULL << 32U;
 
 // SplitEdge 固定描述 base edge split 的三点
-// 这个 A/B/C 约定必须和 DOD 版保持一致
+// 这个三顶点顺序约定必须和 DOD 版保持一致
 struct SplitEdge
 {
     // Start 和 End 是本次 split 的边，Apex 是该边对面的顶点
@@ -243,7 +243,7 @@ Terrain::TerrainMeshData ClassicRoamMeshBuilder::Build(
     const auto mergeEnd = std::chrono::steady_clock::now();
 
     const auto splitStart = std::chrono::steady_clock::now();
-    // 阶段 2I 使用候选队列驱动 split，避免纯递归一次展开过多节点
+    // 候选队列驱动 split，避免纯递归一次展开过多节点
     RefineWithSplitQueue(_rootA, _rootB);
     const auto splitEnd = std::chrono::steady_clock::now();
 
@@ -1255,7 +1255,7 @@ float ClassicRoamMeshBuilder::ComputeScreenErrorScore(const ClassicRoamNode& nod
     const glm::vec3 a = DomainToWorld(node.Domain.A);
     const glm::vec3 b = DomainToWorld(node.Domain.B);
     const glm::vec3 c = DomainToWorld(node.Domain.C);
-    // 使用三角形中心估算视距，足够支撑阶段 2 的 LOD 展示
+    // 使用三角形中心估算视距，足够支撑当前 LOD 展示
     const glm::vec3 center = (a + b + c) / 3.0F;
     const float distance = std::max(glm::length(center - _cameraPosition), 0.05F);
     const float worldError = node.GeometricError * _heightScale;
@@ -1275,7 +1275,7 @@ float ClassicRoamMeshBuilder::ComputeScreenErrorScore(const ClassicRoamNode& nod
 
 glm::vec3 ClassicRoamMeshBuilder::DomainToWorld(const glm::vec2& uv) const
 {
-    // 世界空间仍以地形中心为原点，方便复用阶段 1 相机和光照
+    // 世界空间仍以地形中心为原点，方便复用相机和光照
     const float height = _heightMap->SampleBilinear(uv.x, uv.y);
     return glm::vec3{
         (uv.x - 0.5F) * _terrainSize,

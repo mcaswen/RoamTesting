@@ -26,7 +26,7 @@ bool Window::Create(const std::string& title, int width, int height)
     }
 
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
-    // 深度和 stencil 在阶段 1 就启用
+    // 深度和 stencil 直接启用，后续 renderer 可共享窗口配置
     // 后续 debug overlay 和 terrain wireframe 不需要重新创建 context
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
@@ -38,7 +38,7 @@ bool Window::Create(const std::string& title, int width, int height)
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_FORWARD_COMPATIBLE_FLAG);
 #else
-    // 非 macOS 平台优先请求 4.3，后续 GPU compute 阶段会依赖更高版本能力
+    // 非 macOS 平台优先请求 4.3，GPU compute 路径依赖更高版本能力
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, 0);
@@ -79,7 +79,7 @@ bool Window::Create(const std::string& title, int width, int height)
         return false;
     }
 
-    // 阶段 0 默认开启 vsync，避免空场景渲染占满 CPU/GPU
+    // 默认开启 vsync，避免空场景渲染占满 CPU/GPU
     if (SDL_GL_SetSwapInterval(1) != 0)
     {
         std::cerr << "SDL_GL_SetSwapInterval failed: " << SDL_GetError() << '\n';

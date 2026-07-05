@@ -36,7 +36,7 @@ public:
     void Render(const TriangleRenderContext& context);
 
 private:
-    // 后续阶段会替换为 terrain renderer，这里只保留验证渲染链路的最小状态
+    // 这里保留验证渲染链路的最小状态
     Shader _shader;
     unsigned int _vertexArrayId{0};
     unsigned int _vertexBufferId{0};

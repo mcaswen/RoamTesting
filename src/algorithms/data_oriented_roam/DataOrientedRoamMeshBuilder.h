@@ -23,7 +23,7 @@ struct TriangleDomain
 };
 
 /// <summary>
-/// Data-Oriented CPU ROAM 3B 的单帧细分、合并和拓扑验证参数
+/// Data-Oriented CPU ROAM 的单帧细分、合并和拓扑验证参数
 /// </summary>
 struct DataOrientedRoamSettings
 {
@@ -70,7 +70,7 @@ struct DataOrientedRoamStats
 };
 
 /// <summary>
-/// Data-Oriented CPU ROAM 的 3B 版本：节点池使用 SoA 数组，拓扑关系全部使用 index 表达
+/// Data-Oriented CPU ROAM 在 SoA 节点池上评估 active leaf screen error
 /// </summary>
 class DataOrientedRoamMeshBuilder
 {

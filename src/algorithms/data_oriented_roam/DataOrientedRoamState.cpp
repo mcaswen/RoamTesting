@@ -32,7 +32,7 @@ void CollectLeafNodesFrom(
 
     if (state.IsLeaf(node))
     {
-        // active leaf 才会进入 mesh emit 和统计阶段
+        // active leaf 才会进入 mesh 输出和统计流程
         leafNodes.push_back(node);
         return;
     }
@@ -94,7 +94,7 @@ std::size_t DataOrientedRoamNodePool::storage_bytes() const
 {
     // storage 估算按 capacity 计算，反映预分配后的内存占用
     return Domains.capacity() * sizeof(TriangleDomain) +
-           // topology index arrays 是 3B 最频繁访问的连续字段
+           // topology index arrays 是 split / merge 最频繁访问的连续字段
            Parents.capacity() * sizeof(DataOrientedRoamNodeIndex) +
            LeftChildren.capacity() * sizeof(DataOrientedRoamNodeIndex) +
            RightChildren.capacity() * sizeof(DataOrientedRoamNodeIndex) +
@@ -118,7 +118,7 @@ std::size_t DataOrientedRoamNodePool::storage_bytes() const
 
 std::size_t DataOrientedRoamNodePool::array_count() const
 {
-    // 3B 基本 padding 检查用数组数量描述 SoA 字段拆分程度
+    // array_count 用数组数量描述 SoA 字段拆分程度
     return 17U;
 }
 
@@ -161,7 +161,7 @@ void DataOrientedRoamNodePool::reserve(std::size_t capacity)
     BaseNeighbors.reserve(capacity);
     LeftNeighbors.reserve(capacity);
     RightNeighbors.reserve(capacity);
-    // error 数组单独连续，后续 3C 可批量写入 ScreenErrors
+    // error 数组单独连续，可批量写入 ScreenErrors
     GeometricErrors.reserve(capacity);
     ScreenErrors.reserve(capacity);
     // build id 数组服务 debug 和本帧重建分类
@@ -304,14 +304,13 @@ DataOrientedRoamNodeIndex AddNode(
     const float geometricError = ComputeGeometricError(state, domain);
     state.Stats.MaxDepthReached = std::max(state.Stats.MaxDepthReached, depth);
 
-    // SoA 数组 index 是 3B 版本唯一稳定的节点引用
+    // SoA 数组 index 是持久 node pool 的稳定节点引用
     return state.Nodes.Add(domain, parent, depth, pathId, state.BuildSequence, geometricError);
 }
 
 void ReserveNodePool(DataOrientedRoamState& state)
 {
-    // ReserveNodePool 是 3B 的关键保障
-    // 它降低扩容概率但正确性不能依赖地址稳定
+    // 预分配降低扩容概率，但正确性不能依赖地址稳定
     std::size_t targetCapacity = 2U + state.Settings.SplitBudget * 2U;
     if (state.Settings.MaxDepth <= ExactReserveMaxDepth)
     {

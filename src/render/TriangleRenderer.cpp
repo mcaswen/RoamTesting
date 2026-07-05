@@ -9,7 +9,7 @@ namespace ParallelRoam::Render
 {
 namespace
 {
-// 阶段 0 顶点格式只保留位置和颜色
+// 顶点格式只保留位置和颜色
 // 这个 renderer 只用于早期 OpenGL 闭环
 struct Vertex
 {
@@ -19,7 +19,7 @@ struct Vertex
 
 // terrain renderer 接入后仍保留
 // 方便排查窗口或 shader 基础链路问题
-// 先把 shader 内嵌在 cpp 中，阶段 1 再接入 assets/shaders 的资源加载
+// shader 内嵌在 cpp 中，terrain renderer 使用 assets/shaders 的资源加载
 constexpr const char* VertexShaderSource = R"(
 #version 410 core
 layout (location = 0) in vec3 aPosition;
@@ -75,7 +75,7 @@ bool TriangleRenderer::Initialize(std::string* errorMessage)
     glBindVertexArray(_vertexArrayId);
     glBindBuffer(GL_ARRAY_BUFFER, _vertexBufferId);
 
-    // 顶点数据在阶段 0 不会变化，因此使用 GL_STATIC_DRAW
+    // 顶点数据不会变化，因此使用 GL_STATIC_DRAW
     // 这里不走 TerrainMeshVertex
     // 避免最小 smoke 路径依赖后续 terrain 数据结构
     glBufferData(

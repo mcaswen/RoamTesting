@@ -16,7 +16,7 @@ Shader::~Shader()
 
 bool Shader::Load(const char* vertexSource, const char* fragmentSource, std::string* errorMessage)
 {
-    // 顶点和片元 shader 分开编译，便于定位具体失败阶段
+    // 顶点和片元 shader 分开编译，便于定位具体失败环节
     const unsigned int vertexShader = CompileShader(GL_VERTEX_SHADER, vertexSource, errorMessage);
     if (vertexShader == 0)
     {
@@ -167,7 +167,7 @@ std::string Shader::ReadShaderLog(unsigned int shaderId)
 
 std::string Shader::ReadProgramLog(unsigned int programId)
 {
-    // program link log 和 shader compile log 分开读取，便于输出准确阶段
+    // program link log 和 shader compile log 分开读取，便于输出准确环节
     int logLength = 0;
     glGetProgramiv(programId, GL_INFO_LOG_LENGTH, &logLength);
 

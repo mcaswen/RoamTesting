@@ -53,7 +53,7 @@ private:
     // 集中处理 SDL 事件，保证 GUI、输入状态和窗口尺寸看到同一批事件
     void PollEvents();
 
-    // 阶段 1 渲染 height map terrain 和调试面板
+    // 渲染 height map terrain 和调试面板
     void RenderFrame(const FrameTiming& frameTiming);
 
     // 子系统按生命周期依赖顺序声明，析构和 Shutdown 更容易保持一致

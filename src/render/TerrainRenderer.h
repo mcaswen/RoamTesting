@@ -70,7 +70,7 @@ struct TerrainRenderSettings
 };
 
 /// <summary>
-/// terrain renderer 汇总给 GUI 的渲染规模、ROAM 拓扑和阶段耗时统计
+/// terrain renderer 汇总给 GUI 的渲染规模、ROAM 拓扑和各 pass 耗时统计
 /// </summary>
 struct TerrainRenderStats
 {
@@ -162,10 +162,10 @@ public:
 private:
     bool RebuildMesh(std::string* errorMessage);
 
-    // 阶段 1 baseline 路径，便于和 ROAM 视觉对照
+    // baseline 路径，便于和 ROAM 视觉对照
     bool RebuildRegularGrid(std::string* errorMessage);
 
-    // 阶段 2 Classic ROAM 路径，会随相机位置动态更新
+    // Classic ROAM 路径，会随相机位置动态更新
     bool RebuildClassicRoam(const glm::vec3& cameraPosition, std::string* errorMessage);
     bool UploadMesh(std::string* errorMessage);
     bool LoadTexture(const std::filesystem::path& texturePath, std::string* errorMessage);
