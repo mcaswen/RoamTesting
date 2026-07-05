@@ -43,7 +43,9 @@ struct TerrainRenderSettings
     bool Wireframe{false};
     TerrainDebugColorMode DebugColorMode{TerrainDebugColorMode::Lit};
     float DebugOverlayStrength{0.85F};
-    bool UseClassicRoam{true};
+    bool UseTerrainLod{true};
+    // UseTerrainLod 为 false 时算法 id 保留上次选择
+    Algorithms::TerrainLodAlgorithmId TerrainLodAlgorithm{Algorithms::TerrainLodAlgorithmId::ClassicCpuRoam};
     int RoamMaxDepth{14};
 
     // SplitThreshold 是进入细分的高水位阈值
@@ -83,7 +85,8 @@ struct TerrainRenderStats
     int DrawCallCount{0};
     float TerrainSize{0.0F};
     float HeightScale{0.0F};
-    bool UseClassicRoam{false};
+    bool UseTerrainLod{false};
+    Algorithms::TerrainLodAlgorithmId TerrainLodAlgorithm{Algorithms::TerrainLodAlgorithmId::ClassicCpuRoam};
     std::size_t RoamNodeCount{0};
     std::size_t RoamOriginalTriangleCount{0};
     std::size_t RoamSubdividedTriangleCount{0};
@@ -127,7 +130,7 @@ struct TerrainRenderStats
     std::size_t RoamCpuWorkerCount{0};
     float RoamCpuUtilizationPercent{0.0F};
 
-    // 下列耗时用于拆分 Classic ROAM 的 CPU 成本来源
+    // 下列耗时用于拆分 CPU LOD 的成本来源
     float RoamUpdateMilliseconds{0.0F};
     float RoamSplitMilliseconds{0.0F};
     float RoamMergeMilliseconds{0.0F};
@@ -169,8 +172,8 @@ private:
     // baseline 路径，便于和 ROAM 视觉对照
     bool RebuildRegularGrid(std::string* errorMessage);
 
-    // Classic ROAM 路径，会随相机位置动态更新
-    bool RebuildClassicRoam(const glm::vec3& cameraPosition, std::string* errorMessage);
+    // Terrain LOD 路径会随相机位置动态更新
+    bool RebuildTerrainLod(const glm::vec3& cameraPosition, std::string* errorMessage);
     bool UploadMesh(std::string* errorMessage);
     bool LoadTexture(const std::filesystem::path& texturePath, std::string* errorMessage);
 

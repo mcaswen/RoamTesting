@@ -1,5 +1,7 @@
 #pragma once
 
+#include "algorithms/ITerrainLodAlgorithm.h"
+
 #include <SDL.h>
 #include <glm/glm.hpp>
 
@@ -26,13 +28,14 @@ struct DebugOverlayData
     std::size_t VertexCount{0};
     std::size_t TriangleCount{0};
     int DrawCallCount{0};
-    bool UseClassicRoam{false};
+    bool UseTerrainLod{false};
+    Algorithms::TerrainLodAlgorithmId TerrainLodAlgorithm{Algorithms::TerrainLodAlgorithmId::ClassicCpuRoam};
     std::size_t RoamNodeCount{0};
     std::size_t RoamOriginalTriangleCount{0};
     std::size_t RoamSubdividedTriangleCount{0};
     std::size_t RoamRebuiltTriangleCount{0};
 
-    // 下列统计直接来自 ClassicRoamStats
+    // 下列统计直接来自统一 TerrainLodStats
     std::size_t RoamActiveSplitCount{0};
     std::size_t RoamSplitCount{0};
     std::size_t RoamForcedSplitCount{0};
@@ -75,7 +78,8 @@ struct TerrainPanelState
     bool Wireframe{false};
     int DebugColorMode{0};
     float DebugOverlayStrength{0.85F};
-    bool UseClassicRoam{true};
+    bool UseTerrainLod{true};
+    Algorithms::TerrainLodAlgorithmId TerrainLodAlgorithm{Algorithms::TerrainLodAlgorithmId::ClassicCpuRoam};
     int RoamMaxDepth{14};
 
     // Split 和 Merge 使用双阈值减少相机移动时的抖动
@@ -83,10 +87,10 @@ struct TerrainPanelState
     float RoamMergeThreshold{0.02F};
     float RoamDistanceScale{24.0F};
 
-    // SplitBudget 控制单次 Classic ROAM build 的最大 split 数
+    // SplitBudget 控制单次 ROAM build 的最大 split 数
     int RoamSplitBudget{8192};
 
-    // 局部约束是 Classic ROAM 消除裂缝的默认路径
+    // 局部约束是 ROAM 消除裂缝的默认路径
     bool RoamEnableLocalConstraints{true};
 
     // 拓扑验证会全局扫描 active leaf，只在 debug 时打开

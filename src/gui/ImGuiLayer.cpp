@@ -155,6 +155,49 @@ void DrawMetricFloat(const char* label, float value, const char* format)
     DrawMetricRow(label, buffer);
 }
 
+int TerrainModeIndex(bool useTerrainLod, Algorithms::TerrainLodAlgorithmId algorithmId)
+{
+    if (!useTerrainLod)
+    {
+        // mode index 0 保留规则网格 baseline
+        return 0;
+    }
+
+    if (algorithmId == Algorithms::TerrainLodAlgorithmId::DataOrientedCpuRoam)
+    {
+        return 2;
+    }
+
+    return 1;
+}
+
+Algorithms::TerrainLodAlgorithmId TerrainAlgorithmFromModeIndex(int modeIndex)
+{
+    if (modeIndex == 2)
+    {
+        // UI 目前只暴露已能输出 CPU mesh 的新算法
+        return Algorithms::TerrainLodAlgorithmId::DataOrientedCpuRoam;
+    }
+
+    return Algorithms::TerrainLodAlgorithmId::ClassicCpuRoam;
+}
+
+const char* TerrainModeName(bool useTerrainLod, Algorithms::TerrainLodAlgorithmId algorithmId)
+{
+    if (!useTerrainLod)
+    {
+        // 面板显示以 renderer 实际运行的模式为准
+        return "规则网格";
+    }
+
+    if (algorithmId == Algorithms::TerrainLodAlgorithmId::DataOrientedCpuRoam)
+    {
+        return "Data-Oriented CPU ROAM";
+    }
+
+    return "Classic CPU ROAM";
+}
+
 void DrawDebugColorLegend()
 {
     // legend 与 TerrainMeshVertex 的 debug color 语义对应
@@ -296,9 +339,16 @@ bool ImGuiLayer::DrawDebugOverlay(const DebugOverlayData& data, TerrainPanelStat
     DrawMetricInt("高度图高", data.HeightMapHeight);
     DrawMetricSize("顶点数", data.VertexCount);
     DrawMetricSize("三角形数", data.TriangleCount);
-    DrawMetricRow("模式", data.UseClassicRoam ? "Classic ROAM" : "规则网格");
+    DrawMetricRow("模式", TerrainModeName(data.UseTerrainLod, data.TerrainLodAlgorithm));
     changed |= ImGui::Checkbox("线框模式", &terrainState.Wireframe);
-    changed |= ImGui::Checkbox("Classic ROAM", &terrainState.UseClassicRoam);
+    int terrainModeIndex = TerrainModeIndex(terrainState.UseTerrainLod, terrainState.TerrainLodAlgorithm);
+    const char* terrainModeItems[] = {"规则网格", "Classic CPU ROAM", "Data-Oriented CPU ROAM"};
+    if (ImGui::Combo("LOD 算法", &terrainModeIndex, terrainModeItems, 3))
+    {
+        changed = true;
+        terrainState.UseTerrainLod = terrainModeIndex != 0;
+        terrainState.TerrainLodAlgorithm = TerrainAlgorithmFromModeIndex(terrainModeIndex);
+    }
     const char* debugColorModes[] = {"关闭", "LOD 状态"};
     changed |= ImGui::Combo("调试着色", &terrainState.DebugColorMode, debugColorModes, 2);
     changed |= ImGui::SliderFloat("着色强度", &terrainState.DebugOverlayStrength, 0.0F, 1.0F, "%.2f");

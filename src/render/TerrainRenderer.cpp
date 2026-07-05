@@ -1,6 +1,7 @@
 #include "render/TerrainRenderer.h"
 
 #include "algorithms/classic_roam/ClassicRoamTerrainLodAlgorithm.h"
+#include "algorithms/data_oriented_roam/DataOrientedRoamTerrainLodAlgorithm.h"
 
 #include <glad/gl.h>
 #include <stb_image.h>
@@ -18,7 +19,7 @@ namespace
 {
 // TerrainRenderer 只把算法输出转换成 OpenGL draw state
 // LOD 决策留在 ITerrainLodAlgorithm 边界内
-// 相机至少移动这个距离才触发 Classic ROAM rebuild
+// 相机至少移动这个距离才触发 terrain LOD rebuild
 constexpr float MinRoamRebuildDistance = 0.30F;
 
 // meshDirty 只代表 CPU mesh 或 GPU buffer 内容需要重建
@@ -113,7 +114,8 @@ bool NeedsMeshRebuild(const TerrainRenderSettings& previous, const TerrainRender
     // 不应该导致 CPU mesh 重算
     return previous.TerrainSize != next.TerrainSize ||
            previous.HeightScale != next.HeightScale ||
-           previous.UseClassicRoam != next.UseClassicRoam ||
+           previous.UseTerrainLod != next.UseTerrainLod ||
+           previous.TerrainLodAlgorithm != next.TerrainLodAlgorithm ||
            previous.RoamMaxDepth != next.RoamMaxDepth ||
            previous.RoamSplitThreshold != next.RoamSplitThreshold ||
            previous.RoamMergeThreshold != next.RoamMergeThreshold ||
@@ -133,6 +135,22 @@ glm::vec3 NormalizeLightDirection(const glm::vec3& lightDirection)
     }
 
     return glm::normalize(lightDirection);
+}
+
+std::unique_ptr<Algorithms::ITerrainLodAlgorithm> CreateTerrainLodAlgorithm(
+    Algorithms::TerrainLodAlgorithmId algorithmId)
+{
+    if (algorithmId == Algorithms::TerrainLodAlgorithmId::ClassicCpuRoam)
+    {
+        return std::make_unique<Algorithms::ClassicRoam::ClassicRoamTerrainLodAlgorithm>();
+    }
+
+    if (algorithmId == Algorithms::TerrainLodAlgorithmId::DataOrientedCpuRoam)
+    {
+        return std::make_unique<Algorithms::DataOrientedRoam::DataOrientedRoamTerrainLodAlgorithm>();
+    }
+
+    return nullptr;
 }
 } // 匿名命名空间
 
@@ -198,13 +216,13 @@ bool TerrainRenderer::UpdateForCamera(const glm::vec3& cameraPosition, std::stri
     _lastCameraPosition = cameraPosition;
 
     // 规则网格不依赖相机，只有 UI 改变 mesh 参数时才重建
-    if (!_settings.UseClassicRoam && !_meshDirty)
+    if (!_settings.UseTerrainLod && !_meshDirty)
     {
         return true;
     }
 
-    // Classic ROAM 是视点相关 LOD，但微小移动时复用 mesh 降低卡顿
-    if (_settings.UseClassicRoam)
+    // ROAM 类算法是视点相关 LOD，但微小移动时复用 mesh 降低卡顿
+    if (_settings.UseTerrainLod)
     {
         // rebuild 距离随 terrain size 放大
         // 大地形下同样的世界位移对 screen error 影响更小
@@ -213,13 +231,13 @@ bool TerrainRenderer::UpdateForCamera(const glm::vec3& cameraPosition, std::stri
         const bool cameraMovedEnough = !_hasRoamBuildCameraPosition ||
                                        glm::dot(buildDelta, buildDelta) >= rebuildDistance * rebuildDistance;
 
-        // Classic repair pass 较重，静止或微小移动时复用上一帧 mesh
+        // 拓扑维护较重，静止或微小移动时复用上一帧 mesh
         if (!_meshDirty && !cameraMovedEnough)
         {
             return true;
         }
 
-        return RebuildClassicRoam(cameraPosition, errorMessage);
+        return RebuildTerrainLod(cameraPosition, errorMessage);
     }
 
     return RebuildMesh(errorMessage);
@@ -326,7 +344,8 @@ TerrainRenderStats TerrainRenderer::Stats() const
     stats.DrawCallCount = _initialized ? 1 : 0;
     stats.TerrainSize = _settings.TerrainSize;
     stats.HeightScale = _settings.HeightScale;
-    stats.UseClassicRoam = _settings.UseClassicRoam;
+    stats.UseTerrainLod = _settings.UseTerrainLod;
+    stats.TerrainLodAlgorithm = _settings.TerrainLodAlgorithm;
     stats.RoamNodeCount = _terrainLodStats.ActiveNodeCount;
     stats.RoamOriginalTriangleCount = _terrainLodStats.OriginalTriangleCount;
     stats.RoamSubdividedTriangleCount = _terrainLodStats.SubdividedTriangleCount;
@@ -366,11 +385,11 @@ const std::filesystem::path& TerrainRenderer::TexturePath() const
 
 bool TerrainRenderer::RebuildMesh(std::string* errorMessage)
 {
-    // UseClassicRoam 是当前 UI 的算法开关
     // 规则网格保留为视觉和性能 baseline
-    if (_settings.UseClassicRoam)
+    // ROAM 类算法都通过统一接口重建 CPU mesh
+    if (_settings.UseTerrainLod)
     {
-        return RebuildClassicRoam(_lastCameraPosition, errorMessage);
+        return RebuildTerrainLod(_lastCameraPosition, errorMessage);
     }
 
     return RebuildRegularGrid(errorMessage);
@@ -381,12 +400,9 @@ bool TerrainRenderer::RebuildRegularGrid(std::string* errorMessage)
     // 规则网格会重置 ROAM 统计，避免 UI 显示上一次算法结果
     _meshData = Terrain::TerrainMeshBuilder::Build(_heightMap, _settings.TerrainSize, _settings.HeightScale);
     _terrainLodStats = {};
-    if (_terrainLodAlgorithm != nullptr)
-    {
-        // 从 ROAM 切回规则网格时清空持久拓扑
-        // 再切回 ROAM 会从当前设置重新建立 root diamond
-        _terrainLodAlgorithm->Reset();
-    }
+    // 从 ROAM 切回规则网格时清空持久拓扑
+    // 再切回 ROAM 会从当前设置重新建立 root diamond
+    _terrainLodAlgorithm.reset();
     _hasRoamBuildCameraPosition = false;
     if (_meshData.Vertices.empty() || _meshData.Indices.empty())
     {
@@ -401,14 +417,24 @@ bool TerrainRenderer::RebuildRegularGrid(std::string* errorMessage)
     return UploadMesh(errorMessage);
 }
 
-bool TerrainRenderer::RebuildClassicRoam(const glm::vec3& cameraPosition, std::string* errorMessage)
+bool TerrainRenderer::RebuildTerrainLod(const glm::vec3& cameraPosition, std::string* errorMessage)
 {
-    if (_terrainLodAlgorithm == nullptr)
+    if (_terrainLodAlgorithm == nullptr || _terrainLodAlgorithm->Info().Id != _settings.TerrainLodAlgorithm)
     {
         // renderer 只持有统一接口
-        // 当前 UI 仍只有 Classic 开关
-        // benchmark 已经能单独创建 DOD 算法
-        _terrainLodAlgorithm = std::make_unique<Algorithms::ClassicRoam::ClassicRoamTerrainLodAlgorithm>();
+        // 具体算法由 UI 选择的 TerrainLodAlgorithmId 决定
+        // 切换算法时必须重建持久拓扑状态
+        _terrainLodAlgorithm = CreateTerrainLodAlgorithm(_settings.TerrainLodAlgorithm);
+        _hasRoamBuildCameraPosition = false;
+    }
+
+    if (_terrainLodAlgorithm == nullptr)
+    {
+        if (errorMessage != nullptr)
+        {
+            *errorMessage = "Selected terrain LOD algorithm is not available";
+        }
+        return false;
     }
 
     Algorithms::TerrainLodSettings lodSettings{};
@@ -430,7 +456,7 @@ bool TerrainRenderer::RebuildClassicRoam(const glm::vec3& cameraPosition, std::s
     buildInput.Settings = lodSettings;
 
     Algorithms::TerrainLodRenderPacket renderPacket{};
-    // TerrainRenderer 只消费统一算法接口输出，不再直接依赖 Classic builder
+    // TerrainRenderer 只消费统一算法接口输出，不直接依赖具体 builder
     if (!_terrainLodAlgorithm->BuildRenderData(buildInput, renderPacket, errorMessage))
     {
         return false;
@@ -449,7 +475,7 @@ bool TerrainRenderer::RebuildClassicRoam(const glm::vec3& cameraPosition, std::s
         // 当前 renderer 还没有 GPU-only packet 分支
         if (errorMessage != nullptr)
         {
-            *errorMessage = "Classic ROAM mesh build failed";
+            *errorMessage = "Terrain LOD mesh build failed";
         }
         return false;
     }
@@ -487,9 +513,9 @@ bool TerrainRenderer::UploadMesh(std::string* errorMessage)
 
     glBindVertexArray(_vertexArrayId);
     glBindBuffer(GL_ARRAY_BUFFER, _vertexBufferId);
-    // ROAM mesh 会随相机更新
+    // LOD mesh 会随相机更新
     // 规则网格只在参数变化时更新
-    const GLenum bufferUsage = _settings.UseClassicRoam ? GL_DYNAMIC_DRAW : GL_STATIC_DRAW;
+    const GLenum bufferUsage = _settings.UseTerrainLod ? GL_DYNAMIC_DRAW : GL_STATIC_DRAW;
     glBufferData(
         GL_ARRAY_BUFFER,
         static_cast<GLsizeiptr>(_meshData.Vertices.size() * sizeof(Terrain::TerrainMeshVertex)),

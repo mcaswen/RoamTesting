@@ -39,7 +39,8 @@ Render::TerrainRenderSettings ToRenderSettings(const Gui::TerrainPanelState& sta
     settings.Wireframe = state.Wireframe;
     settings.DebugColorMode = static_cast<Render::TerrainDebugColorMode>(std::clamp(state.DebugColorMode, 0, 1));
     settings.DebugOverlayStrength = std::clamp(state.DebugOverlayStrength, 0.0F, 1.0F);
-    settings.UseClassicRoam = state.UseClassicRoam;
+    settings.UseTerrainLod = state.UseTerrainLod;
+    settings.TerrainLodAlgorithm = state.TerrainLodAlgorithm;
     settings.RoamMaxDepth = state.RoamMaxDepth;
     settings.RoamSplitThreshold = state.RoamSplitThreshold;
     settings.RoamMergeThreshold = state.RoamMergeThreshold;
@@ -248,7 +249,8 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
     debugData.VertexCount = terrainStats.VertexCount;
     debugData.TriangleCount = terrainStats.TriangleCount;
     debugData.DrawCallCount = terrainStats.DrawCallCount;
-    debugData.UseClassicRoam = terrainStats.UseClassicRoam;
+    debugData.UseTerrainLod = terrainStats.UseTerrainLod;
+    debugData.TerrainLodAlgorithm = terrainStats.TerrainLodAlgorithm;
     debugData.RoamNodeCount = terrainStats.RoamNodeCount;
     debugData.RoamOriginalTriangleCount = terrainStats.RoamOriginalTriangleCount;
     debugData.RoamSubdividedTriangleCount = terrainStats.RoamSubdividedTriangleCount;
