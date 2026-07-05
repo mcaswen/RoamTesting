@@ -12,6 +12,9 @@
 
 namespace ParallelRoam::Render
 {
+/// <summary>
+/// terrain shader 的调试着色模式。
+/// </summary>
 enum class TerrainDebugColorMode
 {
     Lit = 0,
@@ -30,6 +33,9 @@ struct RenderContext
     int DrawableHeight{1};
 };
 
+/// <summary>
+/// terrain renderer 的可编辑运行参数，来自 GUI 面板并驱动 mesh 重建或 shader uniform 更新。
+/// </summary>
 struct TerrainRenderSettings
 {
     float TerrainSize{30.0F};
@@ -63,6 +69,9 @@ struct TerrainRenderSettings
     float SpecularStrength{0.18F};
 };
 
+/// <summary>
+/// terrain renderer 汇总给 GUI 的渲染规模、ROAM 拓扑和阶段耗时统计。
+/// </summary>
 struct TerrainRenderStats
 {
     int HeightMapWidth{0};

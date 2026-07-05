@@ -13,6 +13,9 @@
 
 namespace ParallelRoam::Algorithms::ClassicRoam
 {
+/// <summary>
+/// 使用 UV 空间表达一个 ROAM 三角形域，实际顶点在 emit 阶段采样高度图生成。
+/// </summary>
 struct TriangleDomain
 {
     // 三个 UV 点保持逆时针绕序，最终会映射到 XZ 平面
@@ -21,6 +24,9 @@ struct TriangleDomain
     glm::vec2 C{0.0F};
 };
 
+/// <summary>
+/// Classic CPU ROAM 的单帧细分、合并和拓扑验证参数。
+/// </summary>
 struct ClassicRoamSettings
 {
     // MaxDepth 控制 bintree 最细层级，129 高度图需要 14 才接近规则网格间距
@@ -45,6 +51,9 @@ struct ClassicRoamSettings
     bool EnableTopologyValidation{false};
 };
 
+/// <summary>
+/// Classic CPU ROAM 的运行统计，记录拓扑规模、split/merge 行为和阶段耗时。
+/// </summary>
 struct ClassicRoamStats
 {
     // NodeCount 包含内部节点和 leaf 节点
@@ -150,6 +159,9 @@ private:
         ForcedByBaseNeighbor,
     };
 
+    /// <summary>
+    /// Classic ROAM 的持久化二叉三角树节点，使用裸指针表达 parent / child / neighbor 拓扑。
+    /// </summary>
     struct ClassicRoamNode
     {
         // Domain 使用 UV 空间表达，避免节点保存重复三维顶点

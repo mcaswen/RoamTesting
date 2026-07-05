@@ -9,6 +9,9 @@
 
 namespace ParallelRoam::Terrain
 {
+/// <summary>
+/// terrain mesh 的单个顶点，携带渲染、采样和 LOD debug overlay 所需属性。
+/// </summary>
 struct TerrainMeshVertex
 {
     glm::vec3 Position{0.0F};
@@ -19,6 +22,9 @@ struct TerrainMeshVertex
     float DebugHighlight{0.35F};
 };
 
+/// <summary>
+/// CPU 侧 terrain 网格数据，供规则网格、ROAM 输出和 OpenGL 上传路径共用。
+/// </summary>
 struct TerrainMeshData
 {
     std::vector<TerrainMeshVertex> Vertices;

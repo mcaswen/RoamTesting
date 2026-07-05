@@ -12,6 +12,9 @@
 
 namespace ParallelRoam::Algorithms
 {
+/// <summary>
+/// 标识当前 terrain LOD 算法实现，供 UI、benchmark 和日志输出使用。
+/// </summary>
 enum class TerrainLodAlgorithmId
 {
     ClassicCpuRoam,
@@ -19,6 +22,9 @@ enum class TerrainLodAlgorithmId
     GpuRoamLike,
 };
 
+/// <summary>
+/// terrain LOD 算法的展示名称和简短描述。
+/// </summary>
 struct TerrainLodAlgorithmInfo
 {
     TerrainLodAlgorithmId Id{TerrainLodAlgorithmId::ClassicCpuRoam};
@@ -27,6 +33,9 @@ struct TerrainLodAlgorithmInfo
     std::string_view Description;
 };
 
+/// <summary>
+/// 描述某个 terrain LOD 算法当前可输出的渲染路径和拓扑能力。
+/// </summary>
 struct TerrainLodAlgorithmCapabilities
 {
     bool SupportsCpuMeshOutput{false};
@@ -37,6 +46,9 @@ struct TerrainLodAlgorithmCapabilities
     bool SupportsTopologyValidation{false};
 };
 
+/// <summary>
+/// 三种 ROAM 算法共享的运行参数，benchmark 和 renderer 使用同一套字段做公平对比。
+/// </summary>
 struct TerrainLodSettings
 {
     float TerrainSize{30.0F};
@@ -50,6 +62,9 @@ struct TerrainLodSettings
     bool EnableTopologyValidation{false};
 };
 
+/// <summary>
+/// 单帧 LOD 构建输入，固定高度图、相机位置和统一算法参数。
+/// </summary>
 struct TerrainLodBuildInput
 {
     const Terrain::HeightMap* HeightMap{nullptr};
@@ -57,6 +72,9 @@ struct TerrainLodBuildInput
     TerrainLodSettings Settings;
 };
 
+/// <summary>
+/// 算法渲染输出模式，区分 CPU mesh、GPU buffer 和 GPU driven 路径。
+/// </summary>
 enum class TerrainLodRenderMode
 {
     CpuMesh,
@@ -65,6 +83,9 @@ enum class TerrainLodRenderMode
     DebugOnly,
 };
 
+/// <summary>
+/// 算法输出给 renderer 或 benchmark 的统一渲染数据包。
+/// </summary>
 struct TerrainLodRenderPacket
 {
     TerrainLodRenderMode Mode{TerrainLodRenderMode::CpuMesh};
@@ -77,6 +98,9 @@ struct TerrainLodRenderPacket
     std::size_t IndexCount{0};
 };
 
+/// <summary>
+/// 跨 Classic / Data-Oriented / GPU 版本共享的统计字段，用于 UI 展示、回归测试和 CSV 输出。
+/// </summary>
 struct TerrainLodStats
 {
     std::size_t ActiveTriangleCount{0};

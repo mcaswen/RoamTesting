@@ -39,6 +39,9 @@ public:
     void Shutdown();
 
 private:
+    /// <summary>
+    /// 单帧时间数据，同时保留真实帧耗时和模拟用钳制时间。
+    /// </summary>
     struct FrameTiming
     {
         // RawDeltaSeconds 保留真实帧时间，用于性能显示
