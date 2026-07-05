@@ -95,7 +95,7 @@ assets/textures/Tex_Terrain_Debug_Diffuse.ppm
 
 ### 目标
 
-完成可工作的 Classic CPU ROAM 最小闭环。
+先完成可运行的 Classic CPU ROAM 原型，再补完符合经典 ROAM 语义的局部拓扑维护、diamond split、diamond merge 和裂缝约束。阶段 2 必须成为后续 Data-Oriented CPU 版和 GPU 版的可信 baseline。
 
 ### 子阶段
 
@@ -125,46 +125,116 @@ assets/textures/Tex_Terrain_Debug_Diffuse.ppm
 2D：邻接关系与裂缝处理
 
 - Classic 节点使用裸指针表达 `parent`、`leftChild/rightChild`、`baseNeighbor/leftNeighbor/rightNeighbor`；
-- split 前检查 `baseNeighbor`，若对侧 leaf 尚未 split 则先执行 forced split；
-- split 后按 diamond 关系连接四个 child 的 neighbor 指针；
-- 构建结束后重建 active leaf 的 neighbor 指针，便于后续调试和可视化；
-- 统计 forced split 次数、baseNeighbor 约束传播次数和无法继续修复的裂缝风险；
-- UI 提供裂缝修复开关，便于对照开启/关闭后的 wireframe 结果；
-- 后续可增加 neighbor link 可视化和 diamond 传播调试视图。
+- split 前递归处理 `baseNeighbor`，保证当前 triangle 和 base neighbor 能组成合法 diamond；
+- split 后立即按经典 ROAM 规则连接 child 的 `base/left/right neighbor`；
+- split 后同步更新相邻 triangle 对当前节点的反向 neighbor 引用；
+- 运行时路径不依赖全局 T-junction 扫描修裂缝；
+- invariant checker 可离线扫描 active leaf，验证没有 T-junction、邻接互反关系正确；
+- UI 提供 neighbor / diamond 传播统计，便于观察 forced split 成本。
 
 2E：merge 与 hysteresis
 
 - 引入 `splitThreshold > mergeThreshold`；
-- 相机远离且误差低于 `mergeThreshold` 时允许回落为粗 leaf；
-- 误差位于 split / merge 阈值之间时沿用上一帧路径 ID 的 split 状态；
-- 防止阈值附近频繁 split/merge 抖动；
-- 记录 splitCount / forcedSplitCount / mergeCount。
+- merge 只能按完整 diamond 成对执行，不能只 merge 单侧 sibling；
+- merge 前确认两个 sibling 都是 leaf，且对侧 diamond child 也满足回收约束；
+- merge 后恢复父节点和周围 neighbor 的互相引用；
+- 误差位于 split / merge 阈值之间时保持当前拓扑，防止频繁抖动；
+- 记录 splitCount / forcedSplitCount / mergeCount / rejectedMergeCount。
 
 ### 验收标准
 
 - 近处和地形变化大的区域明显细分；
 - 远处保持粗网格；
 - wireframe 可清晰展示 LOD；
-- 基本无裂缝；
+- 默认运行路径不依赖全局 repair pass；
+- invariant checker 验证无 T-junction；
+- neighbor 指针满足互反关系和 diamond 约束；
+- merge 不破坏裂缝约束；
 - 能输出 active triangle count；
 - 可作为三版本视觉一致性的 baseline。
 
 ### 当前实现状态（2026-07-05）
 
-- 已新增 `algorithms/classic_roam/ClassicRoamMeshBuilder`，实现 Classic CPU ROAM 的基础闭环；
+- 已新增 `algorithms/classic_roam/ClassicRoamMeshBuilder`，实现 Classic CPU ROAM 的可运行原型；
 - Classic 节点已经采用裸指针结构，包含 parent、child 和 base/left/right neighbor 指针；
 - 已使用两个根三角形覆盖完整 Height Map domain，并以二叉三角树方式沿 base edge 递归 split；
-- 当前 split 决策基于边中点和重心最大几何误差、相机距离、`SplitThreshold`、`MergeThreshold` 和 `DistanceScale`；
+- 当前 split 决策基于边中点和重心最大几何误差、近距投影边长、相机距离、`SplitThreshold`、`MergeThreshold` 和 `DistanceScale`；
 - `PathId` 已按两棵 root tree 分区，避免 hysteresis 和 merge 统计发生路径碰撞；
 - 新生成的 split 顶点会从 Height Map 双线性采样高度，并用 Height Map 梯度估算法线；
 - ROAM 输出三角绕序会统一修正到正 Y 方向，与规则网格 baseline 保持一致；
-- 已接入基于 `baseNeighbor` 的 diamond forced split 传播，右侧面板显示强制 split、约束传播次数和裂缝风险；
-- 已加入 T-junction repair pass，能修复一条粗边被多个细边贴住的情况；
-- 已接入基于路径 ID 的 hysteresis，右侧面板提供 merge 阈值并显示 merge 统计；
+- 已接入一部分基于 `baseNeighbor` 的 forced split 传播，右侧面板显示强制 split、约束传播次数和裂缝风险；
+- 当前 T-junction 主要依赖全局 repair pass 兜底，这不是完整经典 ROAM 的正确实现方式；
+- 当前 merge / hysteresis 已改为基于持久化拓扑和严格 diamond merge 的基础实现；
 - `TerrainRenderer` 支持在规则网格 baseline 和 Classic ROAM mesh 之间切换；
-- 右侧 ImGui 面板已加入 Classic ROAM 开关、裂缝修复开关、节点数、split/merge 统计、实际深度、最大深度、split/merge 阈值和距离权重；
-- 当前覆盖 2A、2B、2C、2D、2E 的核心展示目标；
-- 当前 2D 已完成基于裸指针 neighbor 的 Classic diamond split 传播，后续重点转向可视化和性能对比。
+- Classic ROAM rebuild 已加入相机位移阈值缓存，避免静止或微小移动时每帧重建和上传 mesh；
+- 默认交互路径已移除全局 T-junction repair，不再依赖 `O(L^2)` repair pass 修裂缝；
+- 已新增局部 baseNeighbor 约束，split 前会追踪到互为 base 的合法 diamond；
+- 已新增 priority queue split candidate 策略和 split budget，避免纯递归一次展开过多节点；
+- 已新增拓扑验证开关，开启后可统计 T-junction、邻接错误和 validate 耗时；
+- 已将 Classic ROAM builder 改为持久化拓扑，不再每次 build 都清空整棵树；
+- 已新增严格 diamond merge，只有 sibling leaf 和互为 base 的 diamond 满足条件时才回收；
+- merge 会恢复 parent 的 left/right neighbor，并保持 base neighbor 互指；
+- 右侧 ImGui 面板已加入 Classic ROAM 开关、局部约束开关、拓扑验证开关、节点数、split/merge 统计、实际深度、最大深度、split/merge 阈值、split budget、候选队列峰值、merge 拒绝和阶段耗时；
+- 当前覆盖 2A、2B、2C，并已推进 2F、2G、2H、2I、2J、2K、2L 的基础实现；
+- 阶段 2 尚未完全封版，后续重点是更完整的 debug draw、固定测试入口和报告用可视化。
+
+### 完整 Classic ROAM 补完计划
+
+2F：关闭默认全局 repair
+
+- 将全局 T-junction repair pass 从默认交互路径移除；
+- 保留 invariant checker 作为 debug / test 工具，不参与每帧修复；
+- UI 中将“裂缝修复”改为“经典局部约束”或类似名称，避免误导为全局 repair；
+- 性能面板记录 update ms、split ms、merge ms、emit ms。
+
+2G：建立经典拓扑不变量
+
+- 每个节点明确保存 parent、leftChild、rightChild、baseNeighbor、leftNeighbor、rightNeighbor；
+- root diamond 初始化后必须满足两个根互为 base neighbor；
+- leaf split 前后都要保持 neighbor 指针互反；
+- 内部节点不参与渲染 leaf 输出，但要保留 child 和 diamond 关系；
+- 添加 `ValidateTopology()`，检查 dangling pointer、非互反 neighbor、非法 child 和 T-junction。
+
+2H：完整 diamond split
+
+- `SplitTriangle(node)` 只处理 leaf；
+- 若 `node->BaseNeighbor` 存在且无法与当前节点直接组成 diamond，先递归 split base neighbor；
+- 当前节点和 base neighbor 都满足 diamond 条件后再分裂；
+- 分裂后按经典规则连接四个 child 的 neighbor；
+- 分裂后更新左邻、右邻和 base neighbor child 对当前 child 的反向引用；
+- forced split 只沿局部 neighbor 链传播，不扫描全局 leaf 集合。
+
+2I：误差队列与 split 策略
+
+- 预计算或缓存 geometric variance，避免每帧重复高成本采样；
+- 使用 screen-space error 计算当前 split priority；
+- 使用 max heap 管理 split candidate；
+- 每帧按预算执行 split，避免单帧无限递归造成卡顿；
+- 记录 split queue size、实际 split 次数和 forced split 次数。
+
+2J：完整 diamond merge
+
+- 已使用候选列表管理 merge candidate；
+- 已限制 merge 只能回收 sibling leaf，不能只回收单侧 child；
+- 若 base neighbor 也 split，则必须互为 base 并且两侧 child 都是 leaf，才允许成对 merge；
+- merge 后会把外部 neighbor 指回 parent，并保持 diamond parent 互为 base neighbor；
+- hysteresis 通过持久化拓扑、split / merge 双阈值和当前拓扑保持实现，不再只依赖路径 ID 假装 merge。
+
+2K：验证与调试可视化
+
+- 已增加拓扑验证开关，输出 active leaf 数、T-junction 数、非法 neighbor 数、最大深度和 validate 耗时；
+- 已通过临时 probe 对比规则网格和 Classic ROAM 的高度范围、三角绕序、坐标范围、退化三角形和索引越界；
+- wireframe 模式用于观察 Classic ROAM 细分结果；
+- 尚未完成正式 debug draw，后续补按 depth 着色、forced split 高亮和 diamond 对高亮；
+- 每次修改 topology 后必须运行 smoke test 和 topology validator。
+
+2L：阶段 2 完成标准
+
+- 默认交互路径已无全局 `O(L^2)` repair；
+- 开启 Classic ROAM 后，近处细分和远处 merge 会随相机位置变化；
+- validator 在临时 probe 的近处 / 远处切换中报告 T-junction 为 0、invalid neighbor 为 0；
+- split / merge 已具备局部 diamond 约束，但还需要更长时间交互验证；
+- 当前输出已经可作为阶段 3 DOD 重构的第一版行为标准。
 
 ## 阶段 3：Data-Oriented CPU 版本
 

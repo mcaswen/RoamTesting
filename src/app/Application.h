@@ -39,17 +39,26 @@ public:
     void Shutdown();
 
 private:
+    struct FrameTiming
+    {
+        // RawDeltaSeconds 保留真实帧时间，用于性能显示
+        float RawDeltaSeconds{0.0F};
+
+        // ClampedDeltaSeconds 只用于相机和模拟，避免卡顿后瞬移
+        float ClampedDeltaSeconds{0.0F};
+    };
+
     // GLAD 必须在 SDL OpenGL context 创建后加载函数指针
     [[nodiscard]] bool LoadOpenGL() const;
 
-    // 限制 delta time 峰值，避免调试暂停后相机瞬移
-    [[nodiscard]] float ComputeDeltaSeconds();
+    // 同时计算真实帧时间和模拟用帧时间
+    [[nodiscard]] FrameTiming ComputeFrameTiming();
 
     // 集中处理 SDL 事件，保证 GUI、输入状态和窗口尺寸看到同一批事件
     void PollEvents();
 
     // 阶段 1 渲染 height map terrain 和调试面板
-    void RenderFrame(float deltaSeconds);
+    void RenderFrame(const FrameTiming& frameTiming);
 
     // 子系统按生命周期依赖顺序声明，析构和 Shutdown 更容易保持一致
     Platform::Window _window;
@@ -62,5 +71,6 @@ private:
     std::chrono::steady_clock::time_point _lastFrameTime{};
     bool _initialized{false};
     float _framesPerSecond{0.0F};
+    float _frameTimeMilliseconds{0.0F};
 };
 } // 命名空间 ParallelRoam::App

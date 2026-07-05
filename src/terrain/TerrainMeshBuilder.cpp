@@ -37,6 +37,8 @@ TerrainMeshData TerrainMeshBuilder::Build(const HeightMap& heightMap, float terr
             vertex.Position.z = (v - 0.5F) * terrainSize;
             vertex.TexCoord = glm::vec2{u, v};
             vertex.Height = height;
+            vertex.DebugColor = glm::vec3{0.28F, 0.34F, 0.30F};
+            vertex.DebugHighlight = 0.35F;
         }
     }
 

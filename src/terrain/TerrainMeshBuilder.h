@@ -15,6 +15,8 @@ struct TerrainMeshVertex
     glm::vec3 Normal{0.0F, 1.0F, 0.0F};
     glm::vec2 TexCoord{0.0F};
     float Height{0.0F};
+    glm::vec3 DebugColor{0.28F, 0.34F, 0.30F};
+    float DebugHighlight{0.35F};
 };
 
 struct TerrainMeshData

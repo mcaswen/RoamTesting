@@ -92,8 +92,6 @@ rightNeighbor
 
 ## 建议目录结构
 
-这不是一次性强制完成的目录，而是稳定后可以收敛到的结构。
-
 ```text
 ParallelROAM/
 ├── CMakeLists.txt
@@ -115,7 +113,7 @@ ParallelROAM/
 └── tests/
 ```
 
-建议优先稳定 `app`、`render`、`terrain`、`roam` 四个目录，再补 `jobs`、`ui`、`tests`。
+优先稳定 `app`、`render`、`terrain`、`roam` 四个目录，再补 `jobs`、`ui`、`tests`。
 
 ## 分层架构
 

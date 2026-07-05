@@ -2,9 +2,15 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
+#include <functional>
 #include <limits>
 #include <memory>
+#include <numeric>
+#include <queue>
+#include <unordered_map>
+#include <unordered_set>
 
 namespace ParallelRoam::Algorithms::ClassicRoam
 {
@@ -14,9 +20,6 @@ constexpr std::uint64_t RootAPathId = 1ULL;
 
 // 第二棵根树放到高位区间，避免 rootA child path 与 rootB root 撞号
 constexpr std::uint64_t RootBPathId = 1ULL << 32U;
-
-// repair pass 理论上会随最大深度收敛，额外上限用于防止坏拓扑死循环
-constexpr int MaxCrackRepairPassCount = 64;
 
 struct SplitEdge
 {
@@ -33,16 +36,53 @@ struct DomainEdge
     glm::vec2 End{0.0F};
 };
 
+struct QuantizedPoint
+{
+    long long X{0};
+    long long Y{0};
+};
+
+struct QuantizedLineKey
+{
+    long long DirectionX{0};
+    long long DirectionY{0};
+    long long Constant{0};
+
+    bool operator==(const QuantizedLineKey& other) const
+    {
+        return DirectionX == other.DirectionX &&
+               DirectionY == other.DirectionY &&
+               Constant == other.Constant;
+    }
+};
+
+struct QuantizedLineKeyHash
+{
+    std::size_t operator()(const QuantizedLineKey& key) const
+    {
+        std::size_t seed = 1469598103934665603ULL;
+        const auto mix = [&seed](long long value) {
+            const std::size_t hashedValue = std::hash<long long>{}(value);
+            seed ^= hashedValue + 0x9e3779b97f4a7c15ULL + (seed << 6U) + (seed >> 2U);
+        };
+        mix(key.DirectionX);
+        mix(key.DirectionY);
+        mix(key.Constant);
+        return seed;
+    }
+};
+
+struct QuantizedEdge
+{
+    QuantizedLineKey Line;
+    long long MinParameter{0};
+    long long MaxParameter{0};
+};
+
 float DistanceSquared(const glm::vec2& a, const glm::vec2& b)
 {
     const glm::vec2 delta = b - a;
     return glm::dot(delta, delta);
-}
-
-float Cross2D(const glm::vec2& a, const glm::vec2& b)
-{
-    // 二维叉积用于判断点是否偏离边所在直线
-    return a.x * b.y - a.y * b.x;
 }
 
 bool SamePoint(const glm::vec2& a, const glm::vec2& b)
@@ -50,33 +90,6 @@ bool SamePoint(const glm::vec2& a, const glm::vec2& b)
     // UV 细分会产生浮点中点，需要容差判断端点重合
     constexpr float Epsilon = 0.000001F;
     return DistanceSquared(a, b) <= Epsilon * Epsilon;
-}
-
-bool IsPointStrictlyInsideSegment(const glm::vec2& point, const DomainEdge& edge)
-{
-    // 被切开的粗边会出现其他 leaf 顶点严格落在线段内部
-    constexpr float Epsilon = 0.000001F;
-    const glm::vec2 edgeVector = edge.End - edge.Start;
-    const glm::vec2 pointVector = point - edge.Start;
-    const float edgeLengthSquared = glm::dot(edgeVector, edgeVector);
-
-    if (edgeLengthSquared <= Epsilon)
-    {
-        return false;
-    }
-
-    if (std::abs(Cross2D(edgeVector, pointVector)) > Epsilon)
-    {
-        return false;
-    }
-
-    const float projection = glm::dot(pointVector, edgeVector);
-    return projection > Epsilon && projection < edgeLengthSquared - Epsilon;
-}
-
-std::array<glm::vec2, 3> DomainVertices(const TriangleDomain& domain)
-{
-    return {domain.A, domain.B, domain.C};
 }
 
 std::array<DomainEdge, 3> DomainEdges(const TriangleDomain& domain)
@@ -102,6 +115,46 @@ bool SameUndirectedEdge(const DomainEdge& left, const DomainEdge& right)
            (SamePoint(left.Start, right.End) && SamePoint(left.End, right.Start));
 }
 
+long long AbsoluteGcd(long long a, long long b)
+{
+    return std::gcd(std::llabs(a), std::llabs(b));
+}
+
+QuantizedPoint QuantizePoint(const glm::vec2& point, int maxDepth)
+{
+    const auto scale = static_cast<long long>(1ULL << static_cast<unsigned int>(std::clamp(maxDepth, 0, 30)));
+    return QuantizedPoint{
+        static_cast<long long>(std::llround(static_cast<double>(point.x) * static_cast<double>(scale))),
+        static_cast<long long>(std::llround(static_cast<double>(point.y) * static_cast<double>(scale))),
+    };
+}
+
+QuantizedLineKey MakeLineKey(const QuantizedPoint& start, const QuantizedPoint& end)
+{
+    long long directionX = end.X - start.X;
+    long long directionY = end.Y - start.Y;
+    const long long divisor = std::max(AbsoluteGcd(directionX, directionY), 1LL);
+    directionX /= divisor;
+    directionY /= divisor;
+
+    if (directionX < 0 || (directionX == 0 && directionY < 0))
+    {
+        directionX = -directionX;
+        directionY = -directionY;
+    }
+
+    return QuantizedLineKey{
+        directionX,
+        directionY,
+        directionY * start.X - directionX * start.Y,
+    };
+}
+
+long long ProjectToLineParameter(const QuantizedPoint& point, const QuantizedLineKey& line)
+{
+    return line.DirectionX * point.X + line.DirectionY * point.Y;
+}
+
 std::uint64_t LeftChildPathId(std::uint64_t parentPathId)
 {
     // child path 保持二叉堆编码，便于跨帧 hysteresis 复用
@@ -113,6 +166,12 @@ std::uint64_t RightChildPathId(std::uint64_t parentPathId)
     // right child 通过末位 1 与 left child 区分
     return parentPathId * 2ULL + 1ULL;
 }
+
+float ElapsedMilliseconds(std::chrono::steady_clock::time_point start, std::chrono::steady_clock::time_point end)
+{
+    const std::chrono::duration<float, std::milli> elapsed = end - start;
+    return elapsed.count();
+}
 } // 匿名命名空间
 
 Terrain::TerrainMeshData ClassicRoamMeshBuilder::Build(
@@ -122,11 +181,14 @@ Terrain::TerrainMeshData ClassicRoamMeshBuilder::Build(
     const glm::vec3& cameraPosition,
     const ClassicRoamSettings& settings)
 {
+    const auto updateStart = std::chrono::steady_clock::now();
+    ++_buildSequence;
+    const bool resetTopology = NeedsTopologyReset(heightMap, terrainSize, heightScale, settings);
     _heightMap = &heightMap;
     _settings = settings;
+    // merge 阈值不能高于 split 阈值，否则同一帧可能反复 split / merge
     _settings.MergeThreshold = std::min(_settings.MergeThreshold, _settings.SplitThreshold);
     _stats = {};
-    _nodes.clear();
     _currentSplitPaths.clear();
     _cameraPosition = cameraPosition;
     _terrainSize = terrainSize;
@@ -143,46 +205,62 @@ Terrain::TerrainMeshData ClassicRoamMeshBuilder::Build(
         return meshData;
     }
 
-    // 两个根三角形共享对角线 base edge，构成 Classic ROAM 的根 diamond
-    ClassicRoamNode* rootA = AddNode(
-        TriangleDomain{glm::vec2{0.0F, 1.0F}, glm::vec2{1.0F, 0.0F}, glm::vec2{0.0F, 0.0F}},
-        nullptr,
-        0,
-        RootAPathId);
-    ClassicRoamNode* rootB = AddNode(
-        TriangleDomain{glm::vec2{1.0F, 0.0F}, glm::vec2{0.0F, 1.0F}, glm::vec2{1.0F, 1.0F}},
-        nullptr,
-        0,
-        RootBPathId);
-    // 根节点跨共享 base edge 互为 base neighbor
-    rootA->BaseNeighbor = rootB;
-    rootB->BaseNeighbor = rootA;
-
-    // 每次 build 都从根节点重新细分，便于阶段 2 验证正确性
-    RefineNode(rootA);
-    RefineNode(rootB);
-
-    if (_settings.EnableCrackFix)
+    if (resetTopology)
     {
-        // normal split 后仍可能出现多小边贴一大边，需要闭环 repair
-        RepairCracksWithDiamondSplits();
+        // 高度图或最大深度不兼容时才清空拓扑，普通相机移动保留树结构
+        ResetTopology();
     }
 
-    // active leaf 的 neighbor 指针最终按实际共享边重建，便于调试和后续可视化
-    RebuildLeafNeighborLinks();
+    const auto mergeStart = std::chrono::steady_clock::now();
+    // merge 先运行，避免刚 split 的 child 在同一帧被低阈值立即回收
+    MergeWithDiamondQueue();
+    const auto mergeEnd = std::chrono::steady_clock::now();
+
+    const auto splitStart = std::chrono::steady_clock::now();
+    // 阶段 2I 使用候选队列驱动 split，避免纯递归一次展开过多节点
+    RefineWithSplitQueue(_rootA, _rootB);
+    const auto splitEnd = std::chrono::steady_clock::now();
+
+    if (_settings.EnableTopologyValidation)
+    {
+        const auto validateStart = std::chrono::steady_clock::now();
+        ValidateTopology();
+        const auto validateEnd = std::chrono::steady_clock::now();
+        _stats.ValidateMilliseconds = ElapsedMilliseconds(validateStart, validateEnd);
+    }
+
+    const auto emitStart = std::chrono::steady_clock::now();
     EmitLeafTriangles(meshData);
+    const auto emitEnd = std::chrono::steady_clock::now();
 
     _stats.NodeCount = _nodes.size();
     _stats.ActiveTriangleCount = meshData.Indices.size() / 3U;
-    for (const std::uint64_t previousPath : _previousSplitPaths)
+    std::vector<ClassicRoamNode*> activeLeaves;
+    CollectLeafNodes(activeLeaves);
+    _stats.MaxDepthReached = 0;
+    for (const ClassicRoamNode* leaf : activeLeaves)
     {
-        // 上一帧 split 路径在本帧消失即可视为 merge
-        if (_currentSplitPaths.find(previousPath) == _currentSplitPaths.end())
+        _stats.MaxDepthReached = std::max(_stats.MaxDepthReached, leaf->Depth);
+        switch (ClassifyLeafDebug(*leaf))
         {
-            ++_stats.MergeCount;
+        case LeafDebugClass::Original:
+            ++_stats.OriginalTriangleCount;
+            break;
+        case LeafDebugClass::Subdivided:
+            ++_stats.SubdividedTriangleCount;
+            break;
+        case LeafDebugClass::Rebuilt:
+            ++_stats.RebuiltTriangleCount;
+            break;
         }
     }
+    _stats.MergeMilliseconds = ElapsedMilliseconds(mergeStart, mergeEnd);
+    _stats.SplitMilliseconds = ElapsedMilliseconds(splitStart, splitEnd);
+    _stats.EmitMilliseconds = ElapsedMilliseconds(emitStart, emitEnd);
+    _stats.UpdateMilliseconds = ElapsedMilliseconds(updateStart, std::chrono::steady_clock::now());
+    CollectActiveSplitPaths();
     _previousSplitPaths = _currentSplitPaths;
+    _topologyMaxDepth = _settings.MaxDepth;
     return meshData;
 }
 
@@ -202,6 +280,8 @@ ClassicRoamMeshBuilder::ClassicRoamNode* ClassicRoamMeshBuilder::AddNode(
     node->Parent = parent;
     node->Depth = depth;
     node->PathId = pathId;
+    node->CreatedBuildId = _buildSequence;
+    node->ActivatedBuildId = _buildSequence;
     node->GeometricError = ComputeGeometricError(domain);
     _stats.MaxDepthReached = std::max(_stats.MaxDepthReached, depth);
 
@@ -209,6 +289,59 @@ ClassicRoamMeshBuilder::ClassicRoamNode* ClassicRoamMeshBuilder::AddNode(
     ClassicRoamNode* nodePointer = node.get();
     _nodes.push_back(std::move(node));
     return nodePointer;
+}
+
+void ClassicRoamMeshBuilder::ResetTopology()
+{
+    // ResetTopology 是唯一清空 node pool 的入口，避免普通 frame 破坏持久化拓扑
+    _nodes.clear();
+    _previousSplitPaths.clear();
+    _currentSplitPaths.clear();
+
+    // 两个根三角形共享对角线 base edge，构成 Classic ROAM 的根 diamond
+    _rootA = AddNode(
+        TriangleDomain{glm::vec2{0.0F, 1.0F}, glm::vec2{1.0F, 0.0F}, glm::vec2{0.0F, 0.0F}},
+        nullptr,
+        0,
+        RootAPathId);
+    _rootB = AddNode(
+        TriangleDomain{glm::vec2{1.0F, 0.0F}, glm::vec2{0.0F, 1.0F}, glm::vec2{1.0F, 1.0F}},
+        nullptr,
+        0,
+        RootBPathId);
+
+    // 根节点跨共享 base edge 互为 base neighbor
+    _rootA->BaseNeighbor = _rootB;
+    _rootB->BaseNeighbor = _rootA;
+    _topologyMaxDepth = _settings.MaxDepth;
+}
+
+bool ClassicRoamMeshBuilder::NeedsTopologyReset(
+    const Terrain::HeightMap& heightMap,
+    float terrainSize,
+    float heightScale,
+    const ClassicRoamSettings& settings) const
+{
+    if (_rootA == nullptr || _rootB == nullptr || _nodes.empty())
+    {
+        // 首帧没有 root diamond，必须初始化
+        return true;
+    }
+
+    if (_heightMap != &heightMap)
+    {
+        // Height Map 变化会让几何误差缓存失效
+        return true;
+    }
+
+    if (settings.MaxDepth < _topologyMaxDepth)
+    {
+        // 降低最大深度时，保守重建以清理过深的历史节点
+        return true;
+    }
+
+    // terrain size 或 height scale 改变时，保守重建以避免旧 score 驱动错误 hysteresis
+    return terrainSize != _terrainSize || heightScale != _heightScale;
 }
 
 void ClassicRoamMeshBuilder::RefineNode(ClassicRoamNode* node)
@@ -239,6 +372,168 @@ void ClassicRoamMeshBuilder::RefineNode(ClassicRoamNode* node)
     RefineNode(node->RightChild);
 }
 
+void ClassicRoamMeshBuilder::RefineWithSplitQueue(ClassicRoamNode* rootA, ClassicRoamNode* rootB)
+{
+    struct SplitCandidate
+    {
+        float Score{0.0F};
+        std::uint64_t Sequence{0};
+        ClassicRoamNode* Node{nullptr};
+    };
+
+    struct CandidateCompare
+    {
+        bool operator()(const SplitCandidate& left, const SplitCandidate& right) const
+        {
+            if (left.Score == right.Score)
+            {
+                return left.Sequence > right.Sequence;
+            }
+
+            return left.Score < right.Score;
+        }
+    };
+
+    std::priority_queue<SplitCandidate, std::vector<SplitCandidate>, CandidateCompare> candidates;
+    std::uint64_t sequence = 0;
+
+    const auto enqueueCandidate = [this, &candidates, &sequence](ClassicRoamNode* node) {
+        // 只有 leaf 会进入候选队列，内部节点已经由 child 接管细分决策
+        if (node == nullptr || !IsLeaf(node) || node->Depth >= _settings.MaxDepth)
+        {
+            return;
+        }
+
+        const float score = ComputeScreenErrorScore(*node);
+        if (!ShouldSplitWithScore(*node, score))
+        {
+            return;
+        }
+
+        // 分数相同用 sequence 保持稳定顺序，避免相机不动时队列顺序跳动
+        candidates.push(SplitCandidate{score, sequence++, node});
+        _stats.CandidatePeakCount = std::max(_stats.CandidatePeakCount, candidates.size());
+    };
+
+    const auto enqueueActiveLeaves = [&enqueueCandidate, this](auto&& self, ClassicRoamNode* node) -> void {
+        if (node == nullptr)
+        {
+            return;
+        }
+
+        if (IsLeaf(node))
+        {
+            // 持久拓扑中 root 通常已经 split，必须从当前 active leaf 启动队列
+            enqueueCandidate(node);
+            return;
+        }
+
+        // 递归深入 internal node，保证每个 active leaf 都能按新相机位置重新评估
+        self(self, node->LeftChild);
+        self(self, node->RightChild);
+    };
+
+    enqueueActiveLeaves(enqueueActiveLeaves, rootA);
+    enqueueActiveLeaves(enqueueActiveLeaves, rootB);
+
+    while (!candidates.empty())
+    {
+        const SplitCandidate candidate = candidates.top();
+        candidates.pop();
+
+        ClassicRoamNode* node = candidate.Node;
+        // 候选可能已经被 forced split 拆掉，需要在弹出时再次确认
+        if (node == nullptr || !IsLeaf(node))
+        {
+            continue;
+        }
+
+        const float score = ComputeScreenErrorScore(*node);
+        // 分数会随 forced split 后的拓扑变化重新计算，避免使用过期候选
+        if (!ShouldSplitWithScore(*node, score))
+        {
+            continue;
+        }
+
+        if (_settings.SplitBudget > 0U && _stats.SplitCount >= _settings.SplitBudget)
+        {
+            // 预算耗尽时停止本次 build，下一次相机移动后继续按队列重建
+            ++_stats.RejectedSplitCount;
+            break;
+        }
+
+        ClassicRoamNode* baseNeighborBeforeSplit = node->BaseNeighbor;
+        if (!SplitNode(node, SplitReason::Requested, nullptr))
+        {
+            ++_stats.RejectedSplitCount;
+            continue;
+        }
+
+        enqueueCandidate(node->LeftChild);
+        enqueueCandidate(node->RightChild);
+
+        // forced split 可能先拆开 base neighbor，也需要把新 child 放回候选队列
+        // 这样局部约束产生的新三角形不会停在过粗层级
+        if (baseNeighborBeforeSplit != nullptr && !IsLeaf(baseNeighborBeforeSplit))
+        {
+            enqueueCandidate(baseNeighborBeforeSplit->LeftChild);
+            enqueueCandidate(baseNeighborBeforeSplit->RightChild);
+        }
+    }
+}
+
+void ClassicRoamMeshBuilder::MergeWithDiamondQueue()
+{
+    struct MergeCandidate
+    {
+        float Score{0.0F};
+        ClassicRoamNode* Node{nullptr};
+    };
+
+    std::vector<MergeCandidate> candidates;
+    const auto collectCandidates = [this, &candidates](auto&& self, ClassicRoamNode* node) -> void {
+        // merge candidate 必须从 active internal node 中收集
+        if (node == nullptr || IsLeaf(node))
+        {
+            return;
+        }
+
+        if (CanMergeNode(node))
+        {
+            candidates.push_back(MergeCandidate{ComputeScreenErrorScore(*node), node});
+        }
+
+        self(self, node->LeftChild);
+        self(self, node->RightChild);
+    };
+
+    collectCandidates(collectCandidates, _rootA);
+    collectCandidates(collectCandidates, _rootB);
+
+    std::sort(
+        candidates.begin(),
+        candidates.end(),
+        [](const MergeCandidate& left, const MergeCandidate& right) {
+            // 误差越低越优先 merge，减少远处无意义细节
+            return left.Score < right.Score;
+        });
+
+    for (const MergeCandidate& candidate : candidates)
+    {
+        // 候选列表排序后，前面的 merge 可能改变后面节点的 active 状态
+        ClassicRoamNode* node = candidate.Node;
+        if (!CanMergeNode(node))
+        {
+            continue;
+        }
+
+        if (!MergeNodeOrDiamond(node))
+        {
+            ++_stats.RejectedMergeCount;
+        }
+    }
+}
+
 bool ClassicRoamMeshBuilder::SplitNode(
     ClassicRoamNode* node,
     SplitReason reason,
@@ -251,11 +546,34 @@ bool ClassicRoamMeshBuilder::SplitNode(
 
     if (node->Depth >= _settings.MaxDepth)
     {
+        ++_stats.RejectedSplitCount;
         return false;
     }
 
     ClassicRoamNode* baseNeighbor = node->BaseNeighbor;
-    if (_settings.EnableCrackFix && baseNeighbor != nullptr && IsLeaf(baseNeighbor) && baseNeighbor != forcedFrom)
+    if (_settings.EnableLocalConstraints)
+    {
+        int guard = 0;
+        // baseNeighbor 不是互指关系时，先沿邻接链追到合法 diamond
+        while (baseNeighbor != nullptr &&
+               baseNeighbor != forcedFrom &&
+               baseNeighbor->BaseNeighbor != node &&
+               guard < _settings.MaxDepth + 2)
+        {
+            // 经典 ROAM 要求 baseNeighbor 先回到互为 base 的 diamond 关系
+            ++_stats.ConstraintPassCount;
+            if (!SplitNode(baseNeighbor, SplitReason::ForcedByBaseNeighbor, node))
+            {
+                return false;
+            }
+
+            // split 可能通过 ReplaceNeighborReference 改写 node 的 baseNeighbor
+            baseNeighbor = node->BaseNeighbor;
+            ++guard;
+        }
+    }
+
+    if (_settings.EnableLocalConstraints && baseNeighbor != nullptr && IsLeaf(baseNeighbor) && baseNeighbor != forcedFrom)
     {
         // Classic ROAM 先补齐 base neighbor，保证旧 base edge 两侧一起 split 成 diamond
         // forcedFrom 防止互为 base neighbor 的两个 leaf 递归回跳
@@ -264,22 +582,39 @@ bool ClassicRoamMeshBuilder::SplitNode(
         {
             return false;
         }
+        // forced split 完成后刷新指针，后续 LinkSplitNeighbors 使用最新 diamond
+        baseNeighbor = node->BaseNeighbor;
     }
 
-    const TriangleDomain domain = node->Domain;
-    const int childDepth = node->Depth + 1;
     const std::uint64_t parentPathId = node->PathId;
-    const SplitEdge edge = ChooseBaseEdge(domain);
-    const glm::vec2 midpoint = (edge.Start + edge.End) * 0.5F;
+    if (node->LeftChild == nullptr || node->RightChild == nullptr)
+    {
+        // 首次 split 创建 child，后续 merge 后再次 split 会复用旧 child
+        const TriangleDomain domain = node->Domain;
+        const int childDepth = node->Depth + 1;
+        const SplitEdge edge = ChooseBaseEdge(domain);
+        const glm::vec2 midpoint = (edge.Start + edge.End) * 0.5F;
 
-    // 子节点继续把 A/B 作为 base edge，保留经典 bintree 递归语义
-    const TriangleDomain leftDomain{edge.Apex, edge.Start, midpoint};
-    const TriangleDomain rightDomain{edge.End, edge.Apex, midpoint};
-    ClassicRoamNode* leftChild = AddNode(leftDomain, node, childDepth, LeftChildPathId(parentPathId));
-    ClassicRoamNode* rightChild = AddNode(rightDomain, node, childDepth, RightChildPathId(parentPathId));
-    // child 指针直接挂回父节点，体现 Classic ROAM 的对象式树结构
-    node->LeftChild = leftChild;
-    node->RightChild = rightChild;
+        // 子节点继续把 A/B 作为 base edge，保留经典 bintree 递归语义
+        const TriangleDomain leftDomain{edge.Apex, edge.Start, midpoint};
+        const TriangleDomain rightDomain{edge.End, edge.Apex, midpoint};
+        node->LeftChild = AddNode(leftDomain, node, childDepth, LeftChildPathId(parentPathId));
+        node->RightChild = AddNode(rightDomain, node, childDepth, RightChildPathId(parentPathId));
+    }
+
+    node->IsSplit = true;
+    node->SplitBuildId = _buildSequence;
+    // 重新激活 child 前清空旧邻接，避免历史 merge 状态污染本次 split
+    node->LeftChild->BaseNeighbor = nullptr;
+    node->LeftChild->LeftNeighbor = nullptr;
+    node->LeftChild->RightNeighbor = nullptr;
+    node->RightChild->BaseNeighbor = nullptr;
+    node->RightChild->LeftNeighbor = nullptr;
+    node->RightChild->RightNeighbor = nullptr;
+    node->LeftChild->ActivatedBuildId = _buildSequence;
+    node->RightChild->ActivatedBuildId = _buildSequence;
+    node->LeftChild->ActivatedByForcedSplit = reason != SplitReason::Requested;
+    node->RightChild->ActivatedByForcedSplit = reason != SplitReason::Requested;
 
     LinkSplitNeighbors(node, baseNeighbor);
     _currentSplitPaths.insert(parentPathId);
@@ -356,122 +691,114 @@ void ClassicRoamMeshBuilder::ReplaceNeighborReference(
     }
 }
 
-void ClassicRoamMeshBuilder::RepairCracksWithDiamondSplits()
+bool ClassicRoamMeshBuilder::CanMergeNode(const ClassicRoamNode* node) const
 {
-    for (int pass = 0; pass < MaxCrackRepairPassCount; ++pass)
+    // 只能回收已经 split 的 parent
+    if (node == nullptr || IsLeaf(node))
     {
-        // 每轮先重建 leaf 邻接，让后续 SplitNode 能继续走 diamond 传播
-        RebuildLeafNeighborLinks();
-
-        std::vector<ClassicRoamNode*> forcedSplitNodes;
-        const std::size_t crackRiskCount = FindCrackRepairCandidates(forcedSplitNodes);
-        if (forcedSplitNodes.empty())
-        {
-            // 没有 T-junction 候选时，当前 active mesh 已经无裂缝
-            _stats.CrackRiskCount = crackRiskCount;
-            return;
-        }
-
-        ++_stats.ConstraintPassCount;
-        std::sort(
-            forcedSplitNodes.begin(),
-            forcedSplitNodes.end(),
-            [](const ClassicRoamNode* left, const ClassicRoamNode* right) {
-                // 先 split 浅层 coarse leaf，能更快消除一大边贴多小边
-                if (left->Depth != right->Depth)
-                {
-                    return left->Depth < right->Depth;
-                }
-
-                return left->PathId < right->PathId;
-            });
-        forcedSplitNodes.erase(std::unique(forcedSplitNodes.begin(), forcedSplitNodes.end()), forcedSplitNodes.end());
-
-        bool splitAnyNode = false;
-        for (ClassicRoamNode* node : forcedSplitNodes)
-        {
-            // 候选可能在本轮被 diamond 传播提前 split，需要再次确认 leaf 状态
-            // SplitNode 内部会继续处理 baseNeighbor diamond 约束
-            splitAnyNode = SplitNode(node, SplitReason::ForcedByCrackRepair, nullptr) || splitAnyNode;
-        }
-
-        if (!splitAnyNode)
-        {
-            // 所有候选都无法继续 split，通常表示已达 MaxDepth
-            _stats.CrackRiskCount = crackRiskCount + forcedSplitNodes.size();
-            return;
-        }
+        return false;
     }
 
-    std::vector<ClassicRoamNode*> remainingCandidates;
-    _stats.CrackRiskCount = FindCrackRepairCandidates(remainingCandidates);
+    if (node->LeftChild == nullptr || node->RightChild == nullptr)
+    {
+        return false;
+    }
+
+    if (!IsLeaf(node->LeftChild) || !IsLeaf(node->RightChild))
+    {
+        // child 还有更深细分时，必须先从更深处开始 merge
+        return false;
+    }
+
+    if (ComputeScreenErrorScore(*node) > _settings.MergeThreshold)
+    {
+        // parent 自身误差还高时，回收会造成明显 LOD 退化
+        return false;
+    }
+
+    const ClassicRoamNode* baseNeighbor = node->BaseNeighbor;
+    if (baseNeighbor == nullptr || IsLeaf(baseNeighbor))
+    {
+        // 边界边或对侧已是粗 leaf 时，可以只回收当前 sibling pair
+        return true;
+    }
+
+    // 非互指 diamond 不能 merge，否则会制造一大边贴多小边
+    if (baseNeighbor->BaseNeighbor != node)
+    {
+        // 非互为 base 的邻接不是合法 diamond，单侧 merge 会制造 T-junction
+        return false;
+    }
+
+    if (baseNeighbor->LeftChild == nullptr || baseNeighbor->RightChild == nullptr)
+    {
+        return false;
+    }
+
+    if (!IsLeaf(baseNeighbor->LeftChild) || !IsLeaf(baseNeighbor->RightChild))
+    {
+        // 对侧 diamond 还有更细 leaf 时，不能先回收当前侧
+        return false;
+    }
+
+    return ComputeScreenErrorScore(*baseNeighbor) <= _settings.MergeThreshold;
 }
 
-std::size_t ClassicRoamMeshBuilder::FindCrackRepairCandidates(std::vector<ClassicRoamNode*>& forcedSplitNodes) const
+void ClassicRoamMeshBuilder::MergeSingleNode(ClassicRoamNode* node)
 {
-    std::vector<ClassicRoamNode*> leafNodes;
-    CollectLeafNodes(leafNodes);
-
-    std::size_t crackRiskCount = 0;
-    for (ClassicRoamNode* coarseNode : leafNodes)
+    if (node == nullptr || node->LeftChild == nullptr || node->RightChild == nullptr)
     {
-        // coarseNode 的任意边被其他 leaf 顶点切开，都需要继续 split
-        const std::array<DomainEdge, 3> coarseEdges = DomainEdges(coarseNode->Domain);
-        bool needsForcedSplit = false;
-
-        for (const DomainEdge& coarseEdge : coarseEdges)
-        {
-            for (ClassicRoamNode* otherNode : leafNodes)
-            {
-                if (otherNode == coarseNode)
-                {
-                    continue;
-                }
-
-                for (const glm::vec2& otherVertex : DomainVertices(otherNode->Domain))
-                {
-                    // 端点重合是合法共享点，不属于 T-junction
-                    if (SamePoint(otherVertex, coarseEdge.Start) || SamePoint(otherVertex, coarseEdge.End))
-                    {
-                        continue;
-                    }
-
-                    if (IsPointStrictlyInsideSegment(otherVertex, coarseEdge))
-                    {
-                        needsForcedSplit = true;
-                        break;
-                    }
-                }
-
-                if (needsForcedSplit)
-                {
-                    break;
-                }
-            }
-
-            if (needsForcedSplit)
-            {
-                break;
-            }
-        }
-
-        if (!needsForcedSplit)
-        {
-            continue;
-        }
-
-        if (coarseNode->Depth >= _settings.MaxDepth)
-        {
-            // 深度上限挡住 repair 时保留风险统计给 UI 观察
-            ++crackRiskCount;
-        }
-        else
-        {
-            forcedSplitNodes.push_back(coarseNode);
-        }
+        return;
     }
 
-    return crackRiskCount;
+    ClassicRoamNode* leftChild = node->LeftChild;
+    ClassicRoamNode* rightChild = node->RightChild;
+    ClassicRoamNode* newLeftNeighbor = leftChild->BaseNeighbor;
+    ClassicRoamNode* newRightNeighbor = rightChild->BaseNeighbor;
+
+    // parent 的 left/right 边分别来自两个 child 的 base 边
+    // 外部 neighbor 必须改指向 parent，不能继续指向 inactive child
+    ReplaceNeighborReference(newLeftNeighbor, leftChild, node);
+    ReplaceNeighborReference(newRightNeighbor, rightChild, node);
+    node->LeftNeighbor = newLeftNeighbor;
+    node->RightNeighbor = newRightNeighbor;
+    // child 指针保留但不再 active，后续重新 split 可复用 child 对象
+    node->IsSplit = false;
+    node->ActivatedBuildId = _buildSequence;
+    node->MergeBuildId = _buildSequence;
+    node->ActivatedByForcedSplit = false;
+    ++_stats.MergeCount;
+}
+
+bool ClassicRoamMeshBuilder::MergeNodeOrDiamond(ClassicRoamNode* node)
+{
+    if (!CanMergeNode(node))
+    {
+        return false;
+    }
+
+    ClassicRoamNode* baseNeighbor = node->BaseNeighbor;
+    if (baseNeighbor != nullptr && !IsLeaf(baseNeighbor))
+    {
+        // 完整 diamond merge 要同时回收当前 parent 和 base parent
+        if (!CanMergeNode(baseNeighbor) || baseNeighbor->BaseNeighbor != node)
+        {
+            return false;
+        }
+
+        // 先固定 parent 之间的 base 互指，再回收两侧 child
+        // MergeSingleNode 不会改 baseNeighbor，因此互指关系会保留下来
+        node->BaseNeighbor = baseNeighbor;
+        baseNeighbor->BaseNeighbor = node;
+        MergeSingleNode(node);
+        MergeSingleNode(baseNeighbor);
+        node->BaseNeighbor = baseNeighbor;
+        baseNeighbor->BaseNeighbor = node;
+        return true;
+    }
+
+    MergeSingleNode(node);
+    return true;
 }
 
 void ClassicRoamMeshBuilder::CollectLeafNodes(std::vector<ClassicRoamNode*>& leafNodes) const
@@ -479,69 +806,210 @@ void ClassicRoamMeshBuilder::CollectLeafNodes(std::vector<ClassicRoamNode*>& lea
     // leaf 集合是当前 active mesh 的拓扑基础
     leafNodes.clear();
     leafNodes.reserve(_nodes.size());
-
-    for (const std::unique_ptr<ClassicRoamNode>& node : _nodes)
-    {
-        // 只有 leaf 会被写入最终 mesh
-        if (IsLeaf(node.get()))
-        {
-            leafNodes.push_back(node.get());
-        }
-    }
+    // 只能从 root 递归收集，不能遍历整个 node pool
+    CollectLeafNodesFrom(_rootA, leafNodes);
+    CollectLeafNodesFrom(_rootB, leafNodes);
 }
 
-void ClassicRoamMeshBuilder::RebuildLeafNeighborLinks()
+void ClassicRoamMeshBuilder::CollectLeafNodesFrom(ClassicRoamNode* node, std::vector<ClassicRoamNode*>& leafNodes) const
 {
+    if (node == nullptr)
+    {
+        return;
+    }
+
+    if (IsLeaf(node))
+    {
+        // inactive child 可能还留在 node pool 中，但不会从 root active 路径抵达
+        leafNodes.push_back(node);
+        return;
+    }
+
+    CollectLeafNodesFrom(node->LeftChild, leafNodes);
+    CollectLeafNodesFrom(node->RightChild, leafNodes);
+}
+
+void ClassicRoamMeshBuilder::CollectActiveSplitPaths()
+{
+    // active split path 用于 hysteresis，必须反映 merge 后的当前拓扑
+    _currentSplitPaths.clear();
+    _stats.ActiveSplitCount = 0;
+    CollectActiveSplitPathsFrom(_rootA);
+    CollectActiveSplitPathsFrom(_rootB);
+}
+
+void ClassicRoamMeshBuilder::CollectActiveSplitPathsFrom(const ClassicRoamNode* node)
+{
+    if (node == nullptr || IsLeaf(node))
+    {
+        // leaf 没有 child，不属于 split path
+        return;
+    }
+
+    _currentSplitPaths.insert(node->PathId);
+    ++_stats.ActiveSplitCount;
+    CollectActiveSplitPathsFrom(node->LeftChild);
+    CollectActiveSplitPathsFrom(node->RightChild);
+}
+
+void ClassicRoamMeshBuilder::ValidateTopology()
+{
+    // validator 使用量化边线索引检查裂缝，避免 leaf 之间两两扫描
     std::vector<ClassicRoamNode*> leafNodes;
     CollectLeafNodes(leafNodes);
+    std::unordered_set<const ClassicRoamNode*> leafSet;
+    leafSet.reserve(leafNodes.size());
 
     for (ClassicRoamNode* node : leafNodes)
     {
-        // leaf neighbor 会按最终 active mesh 重建，内部节点保留 split 时建立的经典拓扑
-        node->BaseNeighbor = nullptr;
-        node->LeftNeighbor = nullptr;
-        node->RightNeighbor = nullptr;
+        // leafSet 用于判断 neighbor 是否仍然指向 active leaf
+        leafSet.insert(node);
     }
 
-    const auto findNeighbor = [&leafNodes](const ClassicRoamNode* owner, const DomainEdge& edge) -> ClassicRoamNode* {
-        for (ClassicRoamNode* candidate : leafNodes)
+    const auto validateNeighbor = [&leafSet](const ClassicRoamNode* owner, const ClassicRoamNode* neighbor, const DomainEdge& edge) {
+        // 边界边允许为空，非空 neighbor 必须是 active leaf
+        if (neighbor == nullptr)
         {
-            // owner 自己的边不能和自己建立邻接
-            if (candidate == owner)
-            {
-                continue;
-            }
+            return false;
+        }
 
-            for (const DomainEdge& candidateEdge : DomainEdges(candidate->Domain))
+        if (leafSet.find(neighbor) == leafSet.end())
+        {
+            return false;
+        }
+
+        for (const DomainEdge& neighborEdge : DomainEdges(neighbor->Domain))
+        {
+            if (SameUndirectedEdge(edge, neighborEdge))
             {
-                // 只要任一边完整重合，就说明两个 leaf 在该边相邻
-                if (SameUndirectedEdge(edge, candidateEdge))
-                {
-                    return candidate;
-                }
+                // 共享边成立后还要检查对侧是否能反向找到 owner
+                return neighbor->BaseNeighbor == owner ||
+                       neighbor->LeftNeighbor == owner ||
+                       neighbor->RightNeighbor == owner;
             }
         }
 
-        return nullptr;
+        return false;
     };
+
+    std::unordered_map<QuantizedLineKey, std::vector<long long>, QuantizedLineKeyHash> lineVertices;
+    lineVertices.reserve(leafNodes.size() * 3U);
+    std::vector<QuantizedEdge> quantizedEdges;
+    quantizedEdges.reserve(leafNodes.size() * 3U);
 
     for (ClassicRoamNode* node : leafNodes)
     {
         const std::array<DomainEdge, 3> edges = DomainEdges(node->Domain);
 
-        // Domain edge 顺序是 base、right、left，写回经典 neighbor 指针
-        // base neighbor 用于后续 diamond split 的主要约束传播
-        node->BaseNeighbor = findNeighbor(node, edges[0]);
-        // right neighbor 和 left neighbor 主要服务调试显示与完整邻接验证
-        node->RightNeighbor = findNeighbor(node, edges[1]);
-        node->LeftNeighbor = findNeighbor(node, edges[2]);
+        for (const DomainEdge& edge : edges)
+        {
+            const QuantizedPoint start = QuantizePoint(edge.Start, _settings.MaxDepth);
+            const QuantizedPoint end = QuantizePoint(edge.End, _settings.MaxDepth);
+            const QuantizedLineKey line = MakeLineKey(start, end);
+            const long long startParameter = ProjectToLineParameter(start, line);
+            const long long endParameter = ProjectToLineParameter(end, line);
+            QuantizedEdge quantizedEdge{};
+            quantizedEdge.Line = line;
+            quantizedEdge.MinParameter = std::min(startParameter, endParameter);
+            quantizedEdge.MaxParameter = std::max(startParameter, endParameter);
+            quantizedEdges.push_back(quantizedEdge);
+
+            // 同一直线上的端点参数可用于快速发现粗边内部是否被其他 leaf 顶点切开
+            std::vector<long long>& vertexParameters = lineVertices[line];
+            vertexParameters.push_back(startParameter);
+            vertexParameters.push_back(endParameter);
+        }
+    }
+
+    for (auto& [line, vertexParameters] : lineVertices)
+    {
+        (void)line;
+        std::sort(vertexParameters.begin(), vertexParameters.end());
+        vertexParameters.erase(std::unique(vertexParameters.begin(), vertexParameters.end()), vertexParameters.end());
+    }
+
+    for (const QuantizedEdge& edge : quantizedEdges)
+    {
+        const auto lineIt = lineVertices.find(edge.Line);
+        if (lineIt == lineVertices.end())
+        {
+            continue;
+        }
+
+        const std::vector<long long>& vertexParameters = lineIt->second;
+        const auto interiorIt = std::upper_bound(vertexParameters.begin(), vertexParameters.end(), edge.MinParameter);
+        if (interiorIt != vertexParameters.end() && *interiorIt < edge.MaxParameter)
+        {
+            // validator 只记录 T-junction，不主动 split 修复
+            ++_stats.TjunctionCount;
+            ++_stats.CrackRiskCount;
+        }
+    }
+
+    for (ClassicRoamNode* node : leafNodes)
+    {
+        const std::array<DomainEdge, 3> edges = DomainEdges(node->Domain);
+
+        // 只验证非空 neighbor，边界边允许为空
+        if (node->BaseNeighbor != nullptr && !validateNeighbor(node, node->BaseNeighbor, edges[0]))
+        {
+            ++_stats.InvalidNeighborCount;
+        }
+
+        if (node->RightNeighbor != nullptr && !validateNeighbor(node, node->RightNeighbor, edges[1]))
+        {
+            ++_stats.InvalidNeighborCount;
+        }
+
+        if (node->LeftNeighbor != nullptr && !validateNeighbor(node, node->LeftNeighbor, edges[2]))
+        {
+            ++_stats.InvalidNeighborCount;
+        }
+    }
+
+    if (_rootA == nullptr || _rootB == nullptr || _rootA->BaseNeighbor != _rootB || _rootB->BaseNeighbor != _rootA)
+    {
+        ++_stats.InvalidTopologyCount;
+    }
+
+    for (const std::unique_ptr<ClassicRoamNode>& ownedNode : _nodes)
+    {
+        const ClassicRoamNode* node = ownedNode.get();
+        if (node == nullptr)
+        {
+            ++_stats.InvalidTopologyCount;
+            continue;
+        }
+
+        if (node->IsSplit && (node->LeftChild == nullptr || node->RightChild == nullptr))
+        {
+            ++_stats.InvalidTopologyCount;
+        }
+
+        if (node->LeftChild != nullptr && node->LeftChild->Parent != node)
+        {
+            ++_stats.InvalidTopologyCount;
+        }
+
+        if (node->RightChild != nullptr && node->RightChild->Parent != node)
+        {
+            ++_stats.InvalidTopologyCount;
+        }
+
+        if (node != _rootA && node != _rootB && node->Parent == nullptr)
+        {
+            ++_stats.InvalidTopologyCount;
+        }
     }
 }
 
 void ClassicRoamMeshBuilder::EmitLeafTriangles(Terrain::TerrainMeshData& meshData) const
 {
-    // 当前 mesh 直接复制 leaf 顶点，后续可加顶点缓存减少重复顶点
-    for (const std::unique_ptr<ClassicRoamNode>& node : _nodes)
+    std::vector<ClassicRoamNode*> leafNodes;
+    CollectLeafNodes(leafNodes);
+
+    // 当前 mesh 直接复制 active leaf 顶点，后续可加顶点缓存减少重复顶点
+    for (const ClassicRoamNode* node : leafNodes)
     {
         EmitNode(*node, meshData);
     }
@@ -551,14 +1019,17 @@ void ClassicRoamMeshBuilder::EmitNode(const ClassicRoamNode& node, Terrain::Terr
 {
     if (IsLeaf(&node))
     {
-        EmitDomainTriangle(node.Domain, meshData);
+        EmitDomainTriangle(node, meshData);
     }
 }
 
-void ClassicRoamMeshBuilder::EmitDomainTriangle(const TriangleDomain& domain, Terrain::TerrainMeshData& meshData) const
+void ClassicRoamMeshBuilder::EmitDomainTriangle(const ClassicRoamNode& node, Terrain::TerrainMeshData& meshData) const
 {
     const auto baseIndex = static_cast<std::uint32_t>(meshData.Vertices.size());
+    const TriangleDomain& domain = node.Domain;
     const std::array<glm::vec2, 3> uvs{domain.A, domain.B, domain.C};
+    const glm::vec3 debugColor = DebugColorForLeaf(node);
+    const float debugHighlight = DebugHighlightForLeaf(node);
 
     for (const glm::vec2& uv : uvs)
     {
@@ -568,6 +1039,8 @@ void ClassicRoamMeshBuilder::EmitDomainTriangle(const TriangleDomain& domain, Te
         vertex.Normal = SampleNormal(uv);
         vertex.TexCoord = uv;
         vertex.Height = _heightMap->SampleBilinear(uv.x, uv.y);
+        vertex.DebugColor = debugColor;
+        vertex.DebugHighlight = debugHighlight;
         meshData.Vertices.push_back(vertex);
     }
 
@@ -599,7 +1072,16 @@ bool ClassicRoamMeshBuilder::ShouldSplit(const ClassicRoamNode& node) const
         return false;
     }
 
-    const float screenErrorScore = ComputeScreenErrorScore(node);
+    return ShouldSplitWithScore(node, ComputeScreenErrorScore(node));
+}
+
+bool ClassicRoamMeshBuilder::ShouldSplitWithScore(const ClassicRoamNode& node, float screenErrorScore) const
+{
+    if (node.Depth >= _settings.MaxDepth)
+    {
+        return false;
+    }
+
     if (screenErrorScore > _settings.SplitThreshold)
     {
         return true;
@@ -617,6 +1099,61 @@ bool ClassicRoamMeshBuilder::ShouldSplit(const ClassicRoamNode& node) const
 bool ClassicRoamMeshBuilder::WasSplitLastFrame(const ClassicRoamNode& node) const
 {
     return _previousSplitPaths.find(node.PathId) != _previousSplitPaths.end();
+}
+
+ClassicRoamMeshBuilder::LeafDebugClass ClassicRoamMeshBuilder::ClassifyLeafDebug(const ClassicRoamNode& node) const
+{
+    if (node.ActivatedBuildId == _buildSequence || node.MergeBuildId == _buildSequence)
+    {
+        return LeafDebugClass::Rebuilt;
+    }
+
+    if (node.Depth > 0)
+    {
+        return LeafDebugClass::Subdivided;
+    }
+
+    return LeafDebugClass::Original;
+}
+
+glm::vec3 ClassicRoamMeshBuilder::DebugColorForLeaf(const ClassicRoamNode& node) const
+{
+    const float depthRatio = std::clamp(
+        static_cast<float>(node.Depth) / static_cast<float>(std::max(_settings.MaxDepth, 1)),
+        0.0F,
+        1.0F);
+
+    switch (ClassifyLeafDebug(node))
+    {
+    case LeafDebugClass::Original:
+        return glm::vec3{0.28F, 0.34F, 0.30F};
+    case LeafDebugClass::Subdivided:
+        return glm::mix(glm::vec3{0.08F, 0.72F, 0.62F}, glm::vec3{0.10F, 0.34F, 0.95F}, depthRatio);
+    case LeafDebugClass::Rebuilt:
+        if (node.ActivatedByForcedSplit)
+        {
+            return glm::mix(glm::vec3{0.96F, 0.34F, 0.90F}, glm::vec3{0.96F, 0.16F, 0.42F}, depthRatio);
+        }
+
+        return glm::mix(glm::vec3{1.0F, 0.68F, 0.15F}, glm::vec3{1.0F, 0.34F, 0.10F}, depthRatio);
+    }
+
+    return glm::vec3{0.28F, 0.34F, 0.30F};
+}
+
+float ClassicRoamMeshBuilder::DebugHighlightForLeaf(const ClassicRoamNode& node) const
+{
+    switch (ClassifyLeafDebug(node))
+    {
+    case LeafDebugClass::Original:
+        return 0.35F;
+    case LeafDebugClass::Subdivided:
+        return 0.70F;
+    case LeafDebugClass::Rebuilt:
+        return 1.0F;
+    }
+
+    return 0.35F;
 }
 
 float ClassicRoamMeshBuilder::ComputeGeometricError(const TriangleDomain& domain) const
@@ -653,11 +1190,20 @@ float ClassicRoamMeshBuilder::ComputeScreenErrorScore(const ClassicRoamNode& nod
     const glm::vec3 c = DomainToWorld(node.Domain.C);
     // 使用三角形中心估算视距，足够支撑阶段 2 的 LOD 展示
     const glm::vec3 center = (a + b + c) / 3.0F;
-    const float distance = std::max(glm::length(center - _cameraPosition), 0.001F);
+    const float distance = std::max(glm::length(center - _cameraPosition), 0.05F);
     const float worldError = node.GeometricError * _heightScale;
+    const float longestEdgeLength = std::max({
+        glm::length(a - b),
+        glm::length(b - c),
+        glm::length(c - a),
+    });
+    constexpr float ProjectedEdgeWeight = 0.20F;
+    const float heightErrorScore = worldError * _settings.DistanceScale / distance;
+    const float edgeLengthScore = longestEdgeLength * ProjectedEdgeWeight / distance;
 
-    // 这里用简化 screen-space error，阶段 2 先验证近细远粗的 split 行为
-    return worldError * _settings.DistanceScale / distance;
+    // 高度误差负责地形起伏，边长项保证近处平缓地形也会继续细分
+    // 两者取最大值，避免平地近处被过早 merge
+    return std::max(heightErrorScore, edgeLengthScore);
 }
 
 glm::vec3 ClassicRoamMeshBuilder::DomainToWorld(const glm::vec2& uv) const
@@ -701,6 +1247,6 @@ bool ClassicRoamMeshBuilder::IsLeaf(const ClassicRoamNode* node) const
         return false;
     }
 
-    return node->LeftChild == nullptr && node->RightChild == nullptr;
+    return !node->IsSplit;
 }
 } // 命名空间 ParallelRoam::Algorithms::ClassicRoam

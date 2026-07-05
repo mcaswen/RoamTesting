@@ -13,6 +13,7 @@ namespace ParallelRoam::Gui
 struct DebugOverlayData
 {
     float FramesPerSecond{0.0F};
+    float FrameTimeMilliseconds{0.0F};
     int WindowWidth{0};
     int WindowHeight{0};
     int DrawableWidth{0};
@@ -27,8 +28,12 @@ struct DebugOverlayData
     int DrawCallCount{0};
     bool UseClassicRoam{false};
     std::size_t RoamNodeCount{0};
+    std::size_t RoamOriginalTriangleCount{0};
+    std::size_t RoamSubdividedTriangleCount{0};
+    std::size_t RoamRebuiltTriangleCount{0};
 
     // 下列统计直接来自 ClassicRoamStats
+    std::size_t RoamActiveSplitCount{0};
     std::size_t RoamSplitCount{0};
     std::size_t RoamForcedSplitCount{0};
     std::size_t RoamMergeCount{0};
@@ -38,6 +43,21 @@ struct DebugOverlayData
 
     // 约束传播次数越高表示 diamond split 触发越明显
     std::size_t RoamConstraintPassCount{0};
+    std::size_t RoamCandidatePeakCount{0};
+    std::size_t RoamRejectedSplitCount{0};
+    std::size_t RoamRejectedMergeCount{0};
+
+    // 拓扑验证关闭时这两个值保持为 0
+    std::size_t RoamTjunctionCount{0};
+    std::size_t RoamInvalidNeighborCount{0};
+    std::size_t RoamInvalidTopologyCount{0};
+
+    // UI 直接展示算法层统计的阶段耗时
+    float RoamUpdateMilliseconds{0.0F};
+    float RoamSplitMilliseconds{0.0F};
+    float RoamMergeMilliseconds{0.0F};
+    float RoamEmitMilliseconds{0.0F};
+    float RoamValidateMilliseconds{0.0F};
     int RoamMaxDepthReached{0};
 };
 
@@ -49,16 +69,26 @@ struct TerrainPanelState
     float TerrainSize{30.0F};
     float HeightScale{4.0F};
     bool Wireframe{false};
+    int DebugColorMode{0};
+    float DebugOverlayStrength{0.85F};
     bool UseClassicRoam{true};
-    int RoamMaxDepth{8};
+    int RoamMaxDepth{14};
 
     // Split 和 Merge 使用双阈值减少相机移动时的抖动
-    float RoamSplitThreshold{0.16F};
-    float RoamMergeThreshold{0.08F};
+    float RoamSplitThreshold{0.04F};
+    float RoamMergeThreshold{0.02F};
     float RoamDistanceScale{24.0F};
 
-    // 关闭后可观察缺少 diamond split 时的裂缝风险
-    bool RoamEnableCrackFix{true};
+    // SplitBudget 控制单次 Classic ROAM build 的最大 split 数
+    int RoamSplitBudget{8192};
+
+    // 局部约束是 Classic ROAM 消除裂缝的默认路径
+    bool RoamEnableLocalConstraints{true};
+
+    // 拓扑验证会全局扫描 active leaf，只在 debug 时打开
+    bool RoamEnableTopologyValidation{false};
+
+    // 光照字段保持在面板状态中，便于和 terrain 参数一起提交
     glm::vec3 LightDirection{-0.45F, -1.0F, -0.35F};
     glm::vec3 LightColor{1.0F, 0.96F, 0.88F};
     float AmbientStrength{0.28F};

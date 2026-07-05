@@ -1,23 +1,35 @@
 #include "render/TerrainRenderer.h"
 
+#include "algorithms/classic_roam/ClassicRoamTerrainLodAlgorithm.h"
+
 #include <glad/gl.h>
 #include <stb_image.h>
 
 #include <algorithm>
 #include <cstddef>
 #include <iostream>
+#include <memory>
+#include <utility>
 #include <vector>
 
 namespace ParallelRoam::Render
 {
 namespace
 {
+// 相机至少移动这个距离才触发 Classic ROAM rebuild
+constexpr float MinRoamRebuildDistance = 0.30F;
+
+// 地形越大，rebuild 位移阈值也按比例放大
+constexpr float RoamRebuildTerrainScale = 0.01F;
+
 constexpr const char* VertexShaderSource = R"(
 #version 410 core
 layout (location = 0) in vec3 aPosition;
 layout (location = 1) in vec3 aNormal;
 layout (location = 2) in vec2 aTexCoord;
 layout (location = 3) in float aHeight;
+layout (location = 4) in vec3 aDebugColor;
+layout (location = 5) in float aDebugHighlight;
 
 uniform mat4 uView;
 uniform mat4 uProjection;
@@ -26,6 +38,8 @@ out vec3 vWorldPosition;
 out vec3 vNormal;
 out vec2 vTexCoord;
 out float vHeight;
+out vec3 vDebugColor;
+out float vDebugHighlight;
 
 void main()
 {
@@ -33,6 +47,8 @@ void main()
     vNormal = aNormal;
     vTexCoord = aTexCoord;
     vHeight = aHeight;
+    vDebugColor = aDebugColor;
+    vDebugHighlight = aDebugHighlight;
     gl_Position = uProjection * uView * vec4(aPosition, 1.0);
 }
 )";
@@ -43,6 +59,8 @@ in vec3 vWorldPosition;
 in vec3 vNormal;
 in vec2 vTexCoord;
 in float vHeight;
+in vec3 vDebugColor;
+in float vDebugHighlight;
 
 uniform sampler2D uTerrainTexture;
 uniform vec3 uCameraPosition;
@@ -51,6 +69,8 @@ uniform vec3 uLightColor;
 uniform float uAmbientStrength;
 uniform float uDiffuseStrength;
 uniform float uSpecularStrength;
+uniform int uDebugColorMode;
+uniform float uDebugOverlayStrength;
 
 out vec4 FragColor;
 
@@ -70,6 +90,14 @@ void main()
     vec3 lighting = baseColor * (uAmbientStrength + diffuse * uDiffuseStrength) * uLightColor;
     lighting += uLightColor * specular * uSpecularStrength;
 
+    if (uDebugColorMode == 1)
+    {
+        float highlight = clamp(vDebugHighlight, 0.0, 1.0);
+        vec3 debugLit = vDebugColor * (0.45 + 0.45 * diffuse);
+        debugLit += vDebugColor * highlight * 0.35;
+        lighting = mix(lighting, debugLit, clamp(uDebugOverlayStrength, 0.0, 1.0));
+    }
+
     FragColor = vec4(lighting, 1.0);
 }
 )";
@@ -83,7 +111,9 @@ bool NeedsMeshRebuild(const TerrainRenderSettings& previous, const TerrainRender
            previous.RoamSplitThreshold != next.RoamSplitThreshold ||
            previous.RoamMergeThreshold != next.RoamMergeThreshold ||
            previous.RoamDistanceScale != next.RoamDistanceScale ||
-           previous.RoamEnableCrackFix != next.RoamEnableCrackFix;
+           previous.RoamSplitBudget != next.RoamSplitBudget ||
+           previous.RoamEnableLocalConstraints != next.RoamEnableLocalConstraints ||
+           previous.RoamEnableTopologyValidation != next.RoamEnableTopologyValidation;
 }
 
 glm::vec3 NormalizeLightDirection(const glm::vec3& lightDirection)
@@ -160,9 +190,20 @@ bool TerrainRenderer::UpdateForCamera(const glm::vec3& cameraPosition, std::stri
         return true;
     }
 
-    // Classic ROAM 是视点相关 LOD，阶段 2 先每帧重建保证行为直观
+    // Classic ROAM 是视点相关 LOD，但微小移动时复用 mesh 降低卡顿
     if (_settings.UseClassicRoam)
     {
+        const float rebuildDistance = std::max(_settings.TerrainSize * RoamRebuildTerrainScale, MinRoamRebuildDistance);
+        const glm::vec3 buildDelta = cameraPosition - _lastRoamBuildCameraPosition;
+        const bool cameraMovedEnough = !_hasRoamBuildCameraPosition ||
+                                       glm::dot(buildDelta, buildDelta) >= rebuildDistance * rebuildDistance;
+
+        // Classic repair pass 较重，静止或微小移动时复用上一帧 mesh
+        if (!_meshDirty && !cameraMovedEnough)
+        {
+            return true;
+        }
+
         return RebuildClassicRoam(cameraPosition, errorMessage);
     }
 
@@ -220,6 +261,8 @@ void TerrainRenderer::Render(const RenderContext& context)
     _shader.SetFloat("uAmbientStrength", _settings.AmbientStrength);
     _shader.SetFloat("uDiffuseStrength", _settings.DiffuseStrength);
     _shader.SetFloat("uSpecularStrength", _settings.SpecularStrength);
+    _shader.SetInt("uDebugColorMode", static_cast<int>(_settings.DebugColorMode));
+    _shader.SetFloat("uDebugOverlayStrength", _settings.DebugOverlayStrength);
     _shader.SetInt("uTerrainTexture", 0);
 
     glBindVertexArray(_vertexArrayId);
@@ -258,13 +301,28 @@ TerrainRenderStats TerrainRenderer::Stats() const
     stats.TerrainSize = _settings.TerrainSize;
     stats.HeightScale = _settings.HeightScale;
     stats.UseClassicRoam = _settings.UseClassicRoam;
-    stats.RoamNodeCount = _classicRoamStats.NodeCount;
-    stats.RoamSplitCount = _classicRoamStats.SplitCount;
-    stats.RoamForcedSplitCount = _classicRoamStats.ForcedSplitCount;
-    stats.RoamMergeCount = _classicRoamStats.MergeCount;
-    stats.RoamCrackRiskCount = _classicRoamStats.CrackRiskCount;
-    stats.RoamConstraintPassCount = _classicRoamStats.ConstraintPassCount;
-    stats.RoamMaxDepthReached = _classicRoamStats.MaxDepthReached;
+    stats.RoamNodeCount = _terrainLodStats.ActiveNodeCount;
+    stats.RoamOriginalTriangleCount = _terrainLodStats.OriginalTriangleCount;
+    stats.RoamSubdividedTriangleCount = _terrainLodStats.SubdividedTriangleCount;
+    stats.RoamRebuiltTriangleCount = _terrainLodStats.RebuiltTriangleCount;
+    stats.RoamActiveSplitCount = _terrainLodStats.ActiveSplitCount;
+    stats.RoamSplitCount = _terrainLodStats.SplitCount;
+    stats.RoamForcedSplitCount = _terrainLodStats.ForcedSplitCount;
+    stats.RoamMergeCount = _terrainLodStats.MergeCount;
+    stats.RoamCrackRiskCount = _terrainLodStats.CrackRiskCount;
+    stats.RoamConstraintPassCount = _terrainLodStats.ConstraintPassCount;
+    stats.RoamCandidatePeakCount = _terrainLodStats.CandidatePeakCount;
+    stats.RoamRejectedSplitCount = _terrainLodStats.RejectedSplitCount;
+    stats.RoamRejectedMergeCount = _terrainLodStats.RejectedMergeCount;
+    stats.RoamTjunctionCount = _terrainLodStats.TjunctionCount;
+    stats.RoamInvalidNeighborCount = _terrainLodStats.InvalidNeighborCount;
+    stats.RoamInvalidTopologyCount = _terrainLodStats.InvalidTopologyCount;
+    stats.RoamUpdateMilliseconds = _terrainLodStats.CpuUpdateMilliseconds;
+    stats.RoamSplitMilliseconds = _terrainLodStats.SplitMilliseconds;
+    stats.RoamMergeMilliseconds = _terrainLodStats.MergeMilliseconds;
+    stats.RoamEmitMilliseconds = _terrainLodStats.EmitMilliseconds;
+    stats.RoamValidateMilliseconds = _terrainLodStats.ValidateMilliseconds;
+    stats.RoamMaxDepthReached = _terrainLodStats.MaxActiveDepth;
     return stats;
 }
 
@@ -292,7 +350,12 @@ bool TerrainRenderer::RebuildRegularGrid(std::string* errorMessage)
 {
     // 规则网格会重置 ROAM 统计，避免 UI 显示上一次算法结果
     _meshData = Terrain::TerrainMeshBuilder::Build(_heightMap, _settings.TerrainSize, _settings.HeightScale);
-    _classicRoamStats = {};
+    _terrainLodStats = {};
+    if (_terrainLodAlgorithm != nullptr)
+    {
+        _terrainLodAlgorithm->Reset();
+    }
+    _hasRoamBuildCameraPosition = false;
     if (_meshData.Vertices.empty() || _meshData.Indices.empty())
     {
         if (errorMessage != nullptr)
@@ -308,21 +371,38 @@ bool TerrainRenderer::RebuildRegularGrid(std::string* errorMessage)
 
 bool TerrainRenderer::RebuildClassicRoam(const glm::vec3& cameraPosition, std::string* errorMessage)
 {
-    Algorithms::ClassicRoam::ClassicRoamSettings roamSettings{};
-    roamSettings.MaxDepth = _settings.RoamMaxDepth;
-    roamSettings.SplitThreshold = _settings.RoamSplitThreshold;
-    roamSettings.MergeThreshold = _settings.RoamMergeThreshold;
-    roamSettings.DistanceScale = _settings.RoamDistanceScale;
-    roamSettings.EnableCrackFix = _settings.RoamEnableCrackFix;
+    if (_terrainLodAlgorithm == nullptr)
+    {
+        _terrainLodAlgorithm = std::make_unique<Algorithms::ClassicRoam::ClassicRoamTerrainLodAlgorithm>();
+    }
 
-    // Classic ROAM 输出 TerrainMeshData，后续 renderer 不需要关心算法细节
-    _meshData = _classicRoamBuilder.Build(
-        _heightMap,
-        _settings.TerrainSize,
-        _settings.HeightScale,
-        cameraPosition,
-        roamSettings);
-    _classicRoamStats = _classicRoamBuilder.Stats();
+    Algorithms::TerrainLodSettings lodSettings{};
+    lodSettings.TerrainSize = _settings.TerrainSize;
+    lodSettings.HeightScale = _settings.HeightScale;
+    lodSettings.MaxDepth = _settings.RoamMaxDepth;
+    lodSettings.SplitThreshold = _settings.RoamSplitThreshold;
+    lodSettings.MergeThreshold = _settings.RoamMergeThreshold;
+    lodSettings.DistanceScale = _settings.RoamDistanceScale;
+    lodSettings.SplitBudget = _settings.RoamSplitBudget;
+    lodSettings.EnableLocalConstraints = _settings.RoamEnableLocalConstraints;
+    lodSettings.EnableTopologyValidation = _settings.RoamEnableTopologyValidation;
+
+    Algorithms::TerrainLodBuildInput buildInput{};
+    buildInput.HeightMap = &_heightMap;
+    buildInput.CameraPosition = cameraPosition;
+    buildInput.Settings = lodSettings;
+
+    Algorithms::TerrainLodRenderPacket renderPacket{};
+    // TerrainRenderer 只消费统一算法接口输出，不再直接依赖 Classic builder
+    if (!_terrainLodAlgorithm->BuildRenderData(buildInput, renderPacket, errorMessage))
+    {
+        return false;
+    }
+
+    _meshData = std::move(renderPacket.CpuMesh);
+    _terrainLodStats = _terrainLodAlgorithm->Stats();
+    _lastRoamBuildCameraPosition = cameraPosition;
+    _hasRoamBuildCameraPosition = true;
 
     if (_meshData.Vertices.empty() || _meshData.Indices.empty())
     {
@@ -366,18 +446,19 @@ bool TerrainRenderer::UploadMesh(std::string* errorMessage)
 
     glBindVertexArray(_vertexArrayId);
     glBindBuffer(GL_ARRAY_BUFFER, _vertexBufferId);
+    const GLenum bufferUsage = _settings.UseClassicRoam ? GL_DYNAMIC_DRAW : GL_STATIC_DRAW;
     glBufferData(
         GL_ARRAY_BUFFER,
         static_cast<GLsizeiptr>(_meshData.Vertices.size() * sizeof(Terrain::TerrainMeshVertex)),
         _meshData.Vertices.data(),
-        GL_STATIC_DRAW);
+        bufferUsage);
 
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, _indexBufferId);
     glBufferData(
         GL_ELEMENT_ARRAY_BUFFER,
         static_cast<GLsizeiptr>(_meshData.Indices.size() * sizeof(std::uint32_t)),
         _meshData.Indices.data(),
-        GL_STATIC_DRAW);
+        bufferUsage);
 
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(
@@ -414,6 +495,24 @@ bool TerrainRenderer::UploadMesh(std::string* errorMessage)
         GL_FALSE,
         static_cast<GLsizei>(sizeof(Terrain::TerrainMeshVertex)),
         reinterpret_cast<const void*>(offsetof(Terrain::TerrainMeshVertex, Height)));
+
+    glEnableVertexAttribArray(4);
+    glVertexAttribPointer(
+        4,
+        3,
+        GL_FLOAT,
+        GL_FALSE,
+        static_cast<GLsizei>(sizeof(Terrain::TerrainMeshVertex)),
+        reinterpret_cast<const void*>(offsetof(Terrain::TerrainMeshVertex, DebugColor)));
+
+    glEnableVertexAttribArray(5);
+    glVertexAttribPointer(
+        5,
+        1,
+        GL_FLOAT,
+        GL_FALSE,
+        static_cast<GLsizei>(sizeof(Terrain::TerrainMeshVertex)),
+        reinterpret_cast<const void*>(offsetof(Terrain::TerrainMeshVertex, DebugHighlight)));
 
     glBindVertexArray(0);
     glBindBuffer(GL_ARRAY_BUFFER, 0);

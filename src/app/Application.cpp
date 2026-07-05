@@ -37,12 +37,16 @@ Render::TerrainRenderSettings ToRenderSettings(const Gui::TerrainPanelState& sta
     settings.TerrainSize = state.TerrainSize;
     settings.HeightScale = state.HeightScale;
     settings.Wireframe = state.Wireframe;
+    settings.DebugColorMode = static_cast<Render::TerrainDebugColorMode>(std::clamp(state.DebugColorMode, 0, 1));
+    settings.DebugOverlayStrength = std::clamp(state.DebugOverlayStrength, 0.0F, 1.0F);
     settings.UseClassicRoam = state.UseClassicRoam;
     settings.RoamMaxDepth = state.RoamMaxDepth;
     settings.RoamSplitThreshold = state.RoamSplitThreshold;
     settings.RoamMergeThreshold = state.RoamMergeThreshold;
     settings.RoamDistanceScale = state.RoamDistanceScale;
-    settings.RoamEnableCrackFix = state.RoamEnableCrackFix;
+    settings.RoamSplitBudget = static_cast<std::size_t>(std::max(state.RoamSplitBudget, 0));
+    settings.RoamEnableLocalConstraints = state.RoamEnableLocalConstraints;
+    settings.RoamEnableTopologyValidation = state.RoamEnableTopologyValidation;
     settings.LightDirection = state.LightDirection;
     settings.LightColor = state.LightColor;
     settings.AmbientStrength = state.AmbientStrength;
@@ -112,7 +116,7 @@ int Application::Run(int maxFrameCount)
     int frameCount = 0;
     while (!_input.IsQuitRequested())
     {
-        const float deltaSeconds = ComputeDeltaSeconds();
+        const FrameTiming frameTiming = ComputeFrameTiming();
 
         // 鼠标位移是逐帧增量，必须在轮询事件前清零
         _input.BeginFrame();
@@ -125,8 +129,8 @@ int Application::Run(int maxFrameCount)
 
         // 只在右键按住时启用相对鼠标模式，避免普通 GUI 操作丢失光标
         _window.SetRelativeMouseMode(_input.IsRightMouseDown());
-        _camera.Update(_input, deltaSeconds);
-        RenderFrame(deltaSeconds);
+        _camera.Update(_input, frameTiming.ClampedDeltaSeconds);
+        RenderFrame(frameTiming);
         _window.SwapBuffers();
 
         // smoke test 通过固定帧数退出，便于自动验证窗口和 GL context
@@ -172,7 +176,7 @@ bool Application::LoadOpenGL() const
     return true;
 }
 
-float Application::ComputeDeltaSeconds()
+Application::FrameTiming Application::ComputeFrameTiming()
 {
     const auto now = std::chrono::steady_clock::now();
     const std::chrono::duration<float> delta = now - _lastFrameTime;
@@ -180,7 +184,12 @@ float Application::ComputeDeltaSeconds()
 
     // 调试断点或窗口拖拽会造成异常大 delta，需要限制相机单帧位移
     constexpr float MaxDeltaSeconds = 0.1F;
-    return std::clamp(delta.count(), 0.0F, MaxDeltaSeconds);
+    const float rawDeltaSeconds = std::max(delta.count(), 0.0F);
+
+    FrameTiming frameTiming{};
+    frameTiming.RawDeltaSeconds = rawDeltaSeconds;
+    frameTiming.ClampedDeltaSeconds = std::min(rawDeltaSeconds, MaxDeltaSeconds);
+    return frameTiming;
 }
 
 void Application::PollEvents()
@@ -195,7 +204,7 @@ void Application::PollEvents()
     }
 }
 
-void Application::RenderFrame(float deltaSeconds)
+void Application::RenderFrame(const FrameTiming& frameTiming)
 {
     _window.RefreshSize();
 
@@ -204,10 +213,11 @@ void Application::RenderFrame(float deltaSeconds)
     const int drawableHeight = std::max(_window.DrawableHeight(), 1);
     const float aspectRatio = static_cast<float>(drawableWidth) / static_cast<float>(drawableHeight);
 
-    // 当前先显示瞬时 FPS，后续 profiling 模块再替换为滑动平均
-    if (deltaSeconds > 0.0F)
+    // FPS 和帧时间必须使用 raw delta，不能受相机 delta clamp 影响
+    if (frameTiming.RawDeltaSeconds > 0.0F)
     {
-        _framesPerSecond = 1.0F / deltaSeconds;
+        _framesPerSecond = 1.0F / frameTiming.RawDeltaSeconds;
+        _frameTimeMilliseconds = frameTiming.RawDeltaSeconds * 1000.0F;
     }
 
     glClearColor(0.035F, 0.045F, 0.055F, 1.0F);
@@ -225,6 +235,7 @@ void Application::RenderFrame(float deltaSeconds)
     const Render::TerrainRenderStats terrainStats = _terrainRenderer.Stats();
     Gui::DebugOverlayData debugData{};
     debugData.FramesPerSecond = _framesPerSecond;
+    debugData.FrameTimeMilliseconds = _frameTimeMilliseconds;
     debugData.WindowWidth = _window.Width();
     debugData.WindowHeight = _window.Height();
     debugData.DrawableWidth = drawableWidth;
@@ -239,11 +250,26 @@ void Application::RenderFrame(float deltaSeconds)
     debugData.DrawCallCount = terrainStats.DrawCallCount;
     debugData.UseClassicRoam = terrainStats.UseClassicRoam;
     debugData.RoamNodeCount = terrainStats.RoamNodeCount;
+    debugData.RoamOriginalTriangleCount = terrainStats.RoamOriginalTriangleCount;
+    debugData.RoamSubdividedTriangleCount = terrainStats.RoamSubdividedTriangleCount;
+    debugData.RoamRebuiltTriangleCount = terrainStats.RoamRebuiltTriangleCount;
+    debugData.RoamActiveSplitCount = terrainStats.RoamActiveSplitCount;
     debugData.RoamSplitCount = terrainStats.RoamSplitCount;
     debugData.RoamForcedSplitCount = terrainStats.RoamForcedSplitCount;
     debugData.RoamMergeCount = terrainStats.RoamMergeCount;
     debugData.RoamCrackRiskCount = terrainStats.RoamCrackRiskCount;
     debugData.RoamConstraintPassCount = terrainStats.RoamConstraintPassCount;
+    debugData.RoamCandidatePeakCount = terrainStats.RoamCandidatePeakCount;
+    debugData.RoamRejectedSplitCount = terrainStats.RoamRejectedSplitCount;
+    debugData.RoamRejectedMergeCount = terrainStats.RoamRejectedMergeCount;
+    debugData.RoamTjunctionCount = terrainStats.RoamTjunctionCount;
+    debugData.RoamInvalidNeighborCount = terrainStats.RoamInvalidNeighborCount;
+    debugData.RoamInvalidTopologyCount = terrainStats.RoamInvalidTopologyCount;
+    debugData.RoamUpdateMilliseconds = terrainStats.RoamUpdateMilliseconds;
+    debugData.RoamSplitMilliseconds = terrainStats.RoamSplitMilliseconds;
+    debugData.RoamMergeMilliseconds = terrainStats.RoamMergeMilliseconds;
+    debugData.RoamEmitMilliseconds = terrainStats.RoamEmitMilliseconds;
+    debugData.RoamValidateMilliseconds = terrainStats.RoamValidateMilliseconds;
     debugData.RoamMaxDepthReached = terrainStats.RoamMaxDepthReached;
 
     if (_guiLayer.DrawDebugOverlay(debugData, _terrainPanelState))

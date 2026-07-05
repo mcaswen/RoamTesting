@@ -139,6 +139,25 @@ void DrawMetricFloat(const char* label, float value, const char* format)
     std::snprintf(buffer, sizeof(buffer), format, static_cast<double>(value));
     DrawMetricRow(label, buffer);
 }
+
+void DrawDebugColorLegend()
+{
+    const std::array<std::pair<const char*, ImVec4>, 3> legendItems{
+        std::pair<const char*, ImVec4>{"原始", ImVec4{0.28F, 0.34F, 0.30F, 1.0F}},
+        std::pair<const char*, ImVec4>{"细分", ImVec4{0.08F, 0.72F, 0.62F, 1.0F}},
+        std::pair<const char*, ImVec4>{"重建", ImVec4{1.0F, 0.58F, 0.12F, 1.0F}},
+    };
+
+    for (const auto& [label, color] : legendItems)
+    {
+        ImGui::ColorButton(label, color, ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoDragDrop, ImVec2{14.0F, 14.0F});
+        ImGui::SameLine();
+        ImGui::TextUnformatted(label);
+        ImGui::SameLine();
+    }
+
+    ImGui::NewLine();
+}
 } // 匿名命名空间
 
 bool ImGuiLayer::Initialize(SDL_Window* window, SDL_GLContext glContext, const char* glslVersion)
@@ -228,6 +247,7 @@ bool ImGuiLayer::DrawDebugOverlay(const DebugOverlayData& data, TerrainPanelStat
 
     DrawSectionHeader("运行状态");
     DrawMetricFloat("FPS", data.FramesPerSecond, "%.1f");
+    DrawMetricFloat("Frame ms", data.FrameTimeMilliseconds, "%.2f");
     DrawMetricInt("Draw Call", data.DrawCallCount);
     DrawMetricInt("窗口宽度", data.WindowWidth);
     DrawMetricInt("窗口高度", data.WindowHeight);
@@ -252,19 +272,43 @@ bool ImGuiLayer::DrawDebugOverlay(const DebugOverlayData& data, TerrainPanelStat
     DrawMetricRow("模式", data.UseClassicRoam ? "Classic ROAM" : "规则网格");
     changed |= ImGui::Checkbox("线框模式", &terrainState.Wireframe);
     changed |= ImGui::Checkbox("Classic ROAM", &terrainState.UseClassicRoam);
+    const char* debugColorModes[] = {"关闭", "LOD 状态"};
+    changed |= ImGui::Combo("调试着色", &terrainState.DebugColorMode, debugColorModes, 2);
+    changed |= ImGui::SliderFloat("着色强度", &terrainState.DebugOverlayStrength, 0.0F, 1.0F, "%.2f");
+    if (terrainState.DebugColorMode == 1)
+    {
+        DrawDebugColorLegend();
+    }
     changed |= ImGui::SliderFloat("地形尺寸", &terrainState.TerrainSize, 6.0F, 80.0F, "%.1f");
     changed |= ImGui::SliderFloat("高度缩放", &terrainState.HeightScale, 0.0F, 12.0F, "%.2f");
 
     DrawSectionHeader("ROAM");
     DrawMetricSize("节点数", data.RoamNodeCount);
-    DrawMetricSize("Split 数", data.RoamSplitCount);
+    DrawMetricSize("原始三角", data.RoamOriginalTriangleCount);
+    DrawMetricSize("细分三角", data.RoamSubdividedTriangleCount);
+    DrawMetricSize("重建三角", data.RoamRebuiltTriangleCount);
+    DrawMetricSize("活跃 Split", data.RoamActiveSplitCount);
+    DrawMetricSize("本帧 Split", data.RoamSplitCount);
     DrawMetricSize("强制 Split", data.RoamForcedSplitCount);
     DrawMetricSize("Merge 数", data.RoamMergeCount);
     DrawMetricSize("约束传播", data.RoamConstraintPassCount);
-    DrawMetricSize("裂缝风险", data.RoamCrackRiskCount);
+    DrawMetricSize("队列峰值", data.RoamCandidatePeakCount);
+    DrawMetricSize("预算拒绝", data.RoamRejectedSplitCount);
+    DrawMetricSize("Merge 拒绝", data.RoamRejectedMergeCount);
+    DrawMetricSize("T-junction", data.RoamTjunctionCount);
+    DrawMetricSize("邻接错误", data.RoamInvalidNeighborCount);
+    DrawMetricSize("拓扑错误", data.RoamInvalidTopologyCount);
+    DrawMetricFloat("ROAM ms", data.RoamUpdateMilliseconds, "%.2f");
+    DrawMetricFloat("Split ms", data.RoamSplitMilliseconds, "%.2f");
+    DrawMetricFloat("Merge ms", data.RoamMergeMilliseconds, "%.2f");
+    DrawMetricFloat("Emit ms", data.RoamEmitMilliseconds, "%.2f");
+    DrawMetricFloat("Validate ms", data.RoamValidateMilliseconds, "%.2f");
     DrawMetricInt("实际深度", data.RoamMaxDepthReached);
-    changed |= ImGui::Checkbox("裂缝修复", &terrainState.RoamEnableCrackFix);
-    changed |= ImGui::SliderInt("最大深度", &terrainState.RoamMaxDepth, 1, 12);
+    changed |= ImGui::Checkbox("局部约束", &terrainState.RoamEnableLocalConstraints);
+    changed |= ImGui::Checkbox("拓扑验证", &terrainState.RoamEnableTopologyValidation);
+    changed |= ImGui::SliderInt("最大深度", &terrainState.RoamMaxDepth, 1, 16);
+    // 预算调节用于快速确认卡顿来自 split 数量还是拓扑验证
+    changed |= ImGui::SliderInt("Split 预算", &terrainState.RoamSplitBudget, 256, 32768);
     changed |= ImGui::SliderFloat("Split 阈值", &terrainState.RoamSplitThreshold, 0.005F, 1.0F, "%.3f");
     changed |= ImGui::SliderFloat("Merge 阈值", &terrainState.RoamMergeThreshold, 0.001F, 1.0F, "%.3f");
     changed |= ImGui::SliderFloat("距离权重", &terrainState.RoamDistanceScale, 1.0F, 80.0F, "%.1f");
