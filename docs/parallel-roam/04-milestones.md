@@ -292,6 +292,13 @@ assets/textures/Tex_Terrain_Debug_Diffuse.ppm
 - 合并结果；
 - 避免共享 vector 锁竞争。
 
+当前状态：
+
+- DOD split pass 已改为按 node index 分块扫描 active topology，并用 thread-local buffer 收集 active leaves；
+- split candidate 标记读取批量 `ScreenErrors` 缓存并行过滤，合并后统一分配稳定 sequence 再进入 priority queue；
+- merge candidate 标记并行扫描 active internal node，真正 diamond merge 和拓扑提交仍保持串行；
+- `CpuCollectMilliseconds` 已汇总 active leaf 收集、split candidate 标记和 merge candidate 标记耗时。
+
 3E：拓扑提交策略
 
 - 初版保留单线程 topology commit；

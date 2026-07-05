@@ -33,6 +33,7 @@ struct DataOrientedRoamSettings
     float DistanceScale{24.0F};
     std::size_t SplitBudget{8192};
     // 0 自动选择 worker 数 1 保持串行评估
+    // 候选扫描也复用这个并行宽度设置
     std::size_t ErrorEvaluationWorkerCount{0};
     bool EnableLocalConstraints{true};
     bool EnableTopologyValidation{false};
@@ -67,10 +68,20 @@ struct DataOrientedRoamStats
     std::size_t ErrorEvaluationCount{0};
     // worker count 是本帧实际采用的并行宽度
     std::size_t ErrorEvaluationWorkerCount{0};
+    // collect 和 mark 分开统计，便于观察不规则拓扑扫描成本
+    std::size_t CollectWorkerCount{0};
+    std::size_t CandidateMarkWorkerCount{0};
+    // 候选数量用于观察并行标记后的队列规模
+    std::size_t SplitCandidateCount{0};
+    std::size_t MergeCandidateCount{0};
     float UpdateMilliseconds{0.0F};
     // 两个耗时字段按实际路径择一写入
     float ErrorEvaluationSingleThreadMilliseconds{0.0F};
     float ErrorEvaluationParallelMilliseconds{0.0F};
+    // collect/mark 耗时会汇总到统一 CpuCollectMilliseconds
+    float ActiveLeafCollectMilliseconds{0.0F};
+    float SplitCandidateMarkMilliseconds{0.0F};
+    float MergeCandidateMarkMilliseconds{0.0F};
     float SplitMilliseconds{0.0F};
     float EmitMilliseconds{0.0F};
     float ValidateMilliseconds{0.0F};

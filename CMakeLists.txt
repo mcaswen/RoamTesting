@@ -44,6 +44,7 @@ if(PARALLEL_ROAM_BUILD_APP)
                 src/algorithms/classic_roam/ClassicRoamTerrainLodAlgorithm.cpp
                 src/algorithms/classic_roam/ClassicRoamMeshBuilder.cpp
                 src/algorithms/data_oriented_roam/DataOrientedRoamTerrainLodAlgorithm.cpp
+                src/algorithms/data_oriented_roam/DataOrientedRoamCandidateMarking.cpp
                 src/algorithms/data_oriented_roam/DataOrientedRoamErrorEvaluation.cpp
                 src/algorithms/data_oriented_roam/DataOrientedRoamMeshBuilder.cpp
                 src/algorithms/data_oriented_roam/DataOrientedRoamMeshEmit.cpp

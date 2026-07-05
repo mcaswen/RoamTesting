@@ -28,6 +28,28 @@ enum class DataOrientedRoamLeafDebugClass
 };
 
 /// <summary>
+/// split priority queue 的候选快照，由候选标记 pass 生成
+/// </summary>
+struct DataOrientedRoamSplitCandidate
+{
+    // Score 来自批量 ScreenErrors 缓存
+    float Score{0.0F};
+    // Sequence 只用于同分候选的稳定排序
+    std::uint64_t Sequence{0};
+    DataOrientedRoamNodeIndex Node{InvalidDataOrientedRoamNodeIndex};
+};
+
+/// <summary>
+/// merge 队列的候选快照，拓扑提交前不会修改节点关系
+/// </summary>
+struct DataOrientedRoamMergeCandidate
+{
+    // merge 队列按低误差优先回收
+    float Score{0.0F};
+    DataOrientedRoamNodeIndex Node{InvalidDataOrientedRoamNodeIndex};
+};
+
+/// <summary>
 /// SoA 节点池中单个节点的只读视图，字段引用到底层连续数组
 /// </summary>
 struct DataOrientedRoamNodeConstRef
@@ -225,6 +247,15 @@ void EmitLeafTriangles(const DataOrientedRoamState& state, Terrain::TerrainMeshD
 
 // EvaluateScreenErrors 批量刷新 active leaf 的 screen error 缓存
 void EvaluateScreenErrors(DataOrientedRoamState& state, const std::vector<DataOrientedRoamNodeIndex>& leafNodes);
+
+// CollectSplitCandidates 并行收集 active leaf 并标记 split 候选
+void CollectSplitCandidates(DataOrientedRoamState& state, std::vector<DataOrientedRoamSplitCandidate>& candidates);
+
+// CollectMergeCandidates 并行扫描 active internal node 并标记 merge 候选
+void CollectMergeCandidates(DataOrientedRoamState& state, std::vector<DataOrientedRoamMergeCandidate>& candidates);
+
+// CanMergeNode 只检查 diamond merge 前置条件，不修改拓扑
+[[nodiscard]] bool CanMergeNode(const DataOrientedRoamState& state, DataOrientedRoamNodeIndex node);
 
 // ShouldSplitWithScore 汇总 split 阈值、merge 阈值和 hysteresis 规则
 [[nodiscard]] bool ShouldSplitWithScore(

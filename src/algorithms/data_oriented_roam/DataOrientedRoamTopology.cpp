@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <queue>
+#include <vector>
 
 namespace ParallelRoam::Algorithms::DataOrientedRoam
 {
@@ -210,58 +211,6 @@ bool SplitNode(
     return true;
 }
 
-bool CanMergeNode(const DataOrientedRoamState& state, DataOrientedRoamNodeIndex node)
-{
-    if (!state.IsValidNode(node) || state.IsLeaf(node))
-    {
-        // merge candidate 必须是 active internal node
-        return false;
-    }
-
-    const DataOrientedRoamNodeConstRef candidate = state.Nodes[node];
-    if (!state.IsValidNode(candidate.LeftChild) || !state.IsValidNode(candidate.RightChild))
-    {
-        return false;
-    }
-
-    if (!state.IsLeaf(candidate.LeftChild) || !state.IsLeaf(candidate.RightChild))
-    {
-        // 子树更深时必须先从更深层回收
-        return false;
-    }
-
-    if (ComputeScreenErrorScore(state, candidate) > state.Settings.MergeThreshold)
-    {
-        // parent 自身误差仍高时回收会造成可见 LOD 退化
-        return false;
-    }
-
-    const DataOrientedRoamNodeIndex baseNeighbor = candidate.BaseNeighbor;
-    if (!state.IsValidNode(baseNeighbor) || state.IsLeaf(baseNeighbor))
-    {
-        return true;
-    }
-
-    if (state.Nodes[baseNeighbor].BaseNeighbor != node)
-    {
-        // 非互指 diamond 不能单侧 merge，否则会制造 T-junction
-        return false;
-    }
-
-    if (!state.IsValidNode(state.Nodes[baseNeighbor].LeftChild) ||
-        !state.IsValidNode(state.Nodes[baseNeighbor].RightChild))
-    {
-        return false;
-    }
-
-    if (!state.IsLeaf(state.Nodes[baseNeighbor].LeftChild) || !state.IsLeaf(state.Nodes[baseNeighbor].RightChild))
-    {
-        return false;
-    }
-
-    return ComputeScreenErrorScore(state, state.Nodes[baseNeighbor]) <= state.Settings.MergeThreshold;
-}
-
 void MergeSingleNode(DataOrientedRoamState& state, DataOrientedRoamNodeIndex node)
 {
     if (!state.IsValidNode(node) ||
@@ -324,16 +273,9 @@ void RefineWithSplitQueue(DataOrientedRoamState& state)
 {
     // split pass 用优先队列控制预算分配
     // 高 screen error leaf 会先获得本帧 split 机会
-    struct SplitCandidate
-    {
-        float Score{0.0F};
-        std::uint64_t Sequence{0};
-        DataOrientedRoamNodeIndex Node{InvalidDataOrientedRoamNodeIndex};
-    };
-
     struct CandidateCompare
     {
-        bool operator()(const SplitCandidate& left, const SplitCandidate& right) const
+        bool operator()(const DataOrientedRoamSplitCandidate& left, const DataOrientedRoamSplitCandidate& right) const
         {
             if (left.Score == right.Score)
             {
@@ -345,7 +287,7 @@ void RefineWithSplitQueue(DataOrientedRoamState& state)
         }
     };
 
-    std::priority_queue<SplitCandidate, std::vector<SplitCandidate>, CandidateCompare> candidates;
+    std::priority_queue<DataOrientedRoamSplitCandidate, std::vector<DataOrientedRoamSplitCandidate>, CandidateCompare> candidates;
     std::uint64_t sequence = 0;
 
     const auto enqueueCandidateWithScore =
@@ -362,7 +304,7 @@ void RefineWithSplitQueue(DataOrientedRoamState& state)
             return;
         }
 
-        candidates.push(SplitCandidate{score, sequence++, node});
+        candidates.push(DataOrientedRoamSplitCandidate{score, sequence++, node});
         state.Stats.CandidatePeakCount = std::max(state.Stats.CandidatePeakCount, candidates.size());
     };
 
@@ -371,25 +313,18 @@ void RefineWithSplitQueue(DataOrientedRoamState& state)
         enqueueCandidateWithScore(node, score);
     };
 
-    std::vector<DataOrientedRoamNodeIndex> activeLeaves;
-    // 批量评分只覆盖进入 split pass 前已有的 active leaf
-    CollectLeafNodes(state, activeLeaves);
-    // 评估完成前不修改拓扑  leaf index 快照保持有效
-    EvaluateScreenErrors(state, activeLeaves);
-    for (DataOrientedRoamNodeIndex node : activeLeaves)
+    std::vector<DataOrientedRoamSplitCandidate> initialCandidates;
+    CollectSplitCandidates(state, initialCandidates);
+    for (const DataOrientedRoamSplitCandidate& candidate : initialCandidates)
     {
-        if (!state.IsValidNode(node))
-        {
-            continue;
-        }
-
-        // 缓存分数避免初始入队重复采样 HeightMap
-        enqueueCandidateWithScore(node, state.Nodes[node].ScreenError);
+        candidates.push(candidate);
     }
+    sequence = initialCandidates.size();
+    state.Stats.CandidatePeakCount = std::max(state.Stats.CandidatePeakCount, candidates.size());
 
     while (!candidates.empty())
     {
-        const SplitCandidate candidate = candidates.top();
+        const DataOrientedRoamSplitCandidate candidate = candidates.top();
         candidates.pop();
 
         const DataOrientedRoamNodeIndex node = candidate.Node;
@@ -437,42 +372,18 @@ void MergeWithDiamondQueue(DataOrientedRoamState& state)
 {
     // merge pass 先回收低 error 的远处细节
     // 后续 split pass 再补回当前视点需要的细节
-    struct MergeCandidate
-    {
-        float Score{0.0F};
-        DataOrientedRoamNodeIndex Node{InvalidDataOrientedRoamNodeIndex};
-    };
-
-    std::vector<MergeCandidate> candidates;
-    const auto collectCandidates = [&state, &candidates](auto&& self, DataOrientedRoamNodeIndex node) -> void {
-        if (!state.IsValidNode(node) || state.IsLeaf(node))
-        {
-            return;
-        }
-
-        if (CanMergeNode(state, node))
-        {
-            const float score = ComputeScreenErrorScore(state, state.Nodes[node]);
-            // merge 候选也写入同一 score 数组，保持 split / merge 口径一致
-            state.Nodes[node].ScreenError = score;
-            candidates.push_back(MergeCandidate{score, node});
-        }
-
-        self(self, state.Nodes[node].LeftChild);
-        self(self, state.Nodes[node].RightChild);
-    };
-
-    collectCandidates(collectCandidates, state.RootA);
-    collectCandidates(collectCandidates, state.RootB);
+    std::vector<DataOrientedRoamMergeCandidate> candidates;
+    CollectMergeCandidates(state, candidates);
 
     std::sort(
         candidates.begin(),
         candidates.end(),
-        [](const MergeCandidate& left, const MergeCandidate& right) {
+        [](const DataOrientedRoamMergeCandidate& left, const DataOrientedRoamMergeCandidate& right) {
+            // 低误差优先回收  尽量先减少远处细节
             return left.Score < right.Score;
         });
 
-    for (const MergeCandidate& candidate : candidates)
+    for (const DataOrientedRoamMergeCandidate& candidate : candidates)
     {
         if (!CanMergeNode(state, candidate.Node))
         {
