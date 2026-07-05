@@ -10,6 +10,7 @@
 - 命名规范：通用命名和资源命名。
 - Git 与版本管理规范。
 - Benchmark scenario 和资源规范。
+- Bug 记录规范：用户确认修复完成后再记录现象、定位、debug 过程、解决方案和验证方式。
 - 架构边界：避免 GUI、算法、渲染和 profiling 混在一起。
 
 ### AI 辅助开发
@@ -165,16 +166,30 @@ private:
 推荐提交信息格式：
 
 ```text
-type(scope): summary
+feat/fix/update/chore: 中文信息
 ```
+
+提交类型只使用下列四类：
+
+- `feat`：新增功能、阶段能力或可运行路径
+- `fix`：修复 bug、回归或错误行为
+- `update`：调整已有功能、文档、参数、实验口径或架构细节
+- `chore`：构建、脚本、资源整理、依赖和非功能性维护
+
+提交信息要求：
+
+1. 标题使用中文，格式固定为 `feat/fix/update/chore: 中文信息`，不再使用 scope。
+2. 提交正文写两到三句中文，说明本次完成的阶段内容、影响范围和验证方式。
+3. 每完成一个明确阶段或可验证子阶段后提交一次，避免多个阶段长期堆在同一个提交里。
+4. 提交前统计未提交文件，确认没有构建产物、临时 CSV、个人 IDE 配置或无来源资源误入提交。
 
 示例：
 
 ```text
-docs(plan): add engine framework and development guidelines
-build(cmake): add optional SDL2 and OpenGL dependencies
-feat(app): add SDL2 window wrapper
-fix(roam): clamp screen error distance
+feat: 接入 Classic ROAM 统一算法接口
+
+完成阶段 2 的算法接口适配，Classic CPU ROAM 通过统一 Terrain LOD 边界输出渲染包和统计数据。
+验证了 debug-fetch 构建、无窗口 benchmark 和 smoke test，后续 Data-Oriented 与 GPU 版本可复用同一接口。
 ```
 
 ## 5. 代码原则
@@ -380,6 +395,17 @@ void PropagateNeighborConstraints();
 4. 修改公共逻辑时应在提交说明或文档中记录影响范围。
 5. 所有新增业务逻辑和资源操作都在 Git 仓库中统一进行，不在本地长期游离开发。
 
+### 9.3 Bug 记录流程
+
+1. Bug 仍在调查或用户未确认修复完成时，不写入 `docs/parallel-roam/11-bug-fix-log.md` 的正式记录。
+2. 只有当用户明确表示 bug 已修复、可以记录，或任务目标本身就是整理已完成问题时，才追加 bug log。
+3. 记录必须尽量详细，包含状态、严重级别、发生阶段、现象、定位、debug 过程、解决方案、验证方式和后续项。
+4. 发生阶段要写清楚对应里程碑、子阶段或功能分支，例如“阶段 2，2J-2L 持久化拓扑接入后”。
+5. 定位字段要体现完整排查路径，包括关键假设、被排除的原因、临时探针或 benchmark 结果，以及最终指向的代码路径。
+6. 解决方案字段要写清楚修复逻辑，不能只写“修复了某函数”；应说明旧逻辑为什么失败、新逻辑如何覆盖触发场景、影响哪些模块。
+7. 性能问题要记录构建类型、关键参数、场景规模和测量方式，避免 Debug 数据被误当成 Release 数据。
+8. 临时探针、一次性 benchmark 或手工验证结果可以写入定位和验证字段；如果只是一次性验证，不要进入正式源码目录；如果需要长期保留，应放入 `benchmark/`、`profiling/` 或 `tests/` 等对应模块。
+
 ## 10. 主要注意风险点
 
 1. 对 AI 生成的代码不检查就直接使用。
@@ -389,3 +415,4 @@ void PropagateNeighborConstraints();
 5. 把临时 debug 输出、临时资源、临时 benchmark 数据提交进正式目录。
 6. GUI、算法、渲染、profiling 边界混乱，导致后续多算法切换困难。
 7. Benchmark 没有固定配置和相机路径，导致性能数据不可复现。
+8. 未经用户确认修复完成就提前写 bug log，导致记录不准确。
