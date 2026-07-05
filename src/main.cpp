@@ -2,6 +2,8 @@
 
 #if defined(PARALLEL_ROAM_BUILD_FULL_APP)
 #include "app/Application.h"
+#include "benchmark/RoamProbe.h"
+#include "benchmark/TerrainLodBenchmark.h"
 
 #include <string_view>
 #endif
@@ -23,6 +25,17 @@ int main(int argc, char** argv)
         if (std::string_view{argv[index]} == "--smoke-test")
         {
             maxFrameCount = 3;
+        }
+
+        // ROAM 探针不启动窗口，用于快速确认算法层 LOD 是否随相机变化
+        if (std::string_view{argv[index]} == "--roam-probe")
+        {
+            return ParallelRoam::Benchmark::RunRoamProbe();
+        }
+
+        if (std::string_view{argv[index]} == "--benchmark")
+        {
+            return ParallelRoam::Benchmark::RunTerrainLodBenchmarkFromCommandLine(argc, argv);
         }
     }
 
