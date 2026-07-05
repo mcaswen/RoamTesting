@@ -14,24 +14,18 @@ namespace ParallelRoam::Algorithms::DataOrientedRoam
 {
 namespace
 {
-// 3A 的目标不是先追求并行性能
-// 这一版先把 Classic 指针树换成稳定的 index pool
-// 只要 split 语义和 benchmark 结果对齐
-// 后续 3B 才能安全地把字段拆成 SoA 数组
-// 因此本文件会有少量和 Classic 相似的拓扑逻辑
-// 差异点集中在节点生命周期和 neighbor 引用方式
-// 所有跨节点关系都必须经过 NodeIndex
-// 不允许保存 vector 元素地址或引用跨越 push_back
-// ReserveNodePool 是 3A 的关键保障
-// 它降低扩容概率但算法正确性不能依赖地址稳定
-// path id 保持 Classic 的二叉堆编码
-// benchmark 可用同一相机路径比较 hysteresis 行为
-// rootA 和 rootB 构成初始 diamond
-// 两棵根树的 path id 必须隔开
-// 否则左右子树路径会在跨帧 split 记忆中碰撞
+// 3A 先把 Classic 指针树换成稳定 index pool
+// 并行和 SoA 拆分留到后续阶段
 constexpr std::uint64_t RootAPathId = 1ULL;
+
+// 两棵根树的 path id 必须隔开
+// 否则跨帧 split 记忆会碰撞
 constexpr std::uint64_t RootBPathId = 1ULL << 32U;
+
+// 精确容量估算只在安全移位范围内使用
 constexpr int ExactReserveMaxDepth = 20;
+
+// 大深度使用保守 fallback 避免容量计算溢出
 constexpr std::size_t LargeDepthReserveFallback = 1'000'000U;
 
 // split 只沿当前三角形 base edge 执行
@@ -257,8 +251,8 @@ Terrain::TerrainMeshData DataOrientedRoamMeshBuilder::Build(
     if (resetTopology)
     {
         // HeightMap 或几何尺度变化会让缓存误差失效
-        // 降低 maxDepth 时也需要丢弃过深历史节点
         ResetTopology();
+        // 降低 maxDepth 时也需要丢弃过深历史节点
     }
 
     // merge 先于 split
@@ -275,9 +269,9 @@ Terrain::TerrainMeshData DataOrientedRoamMeshBuilder::Build(
     if (_settings.EnableTopologyValidation)
     {
         // validator 是全局扫描
-        // 默认只在 smoke benchmark 和 debug 场景开启
         const auto validateStart = std::chrono::steady_clock::now();
         ValidateTopology();
+        // 默认只在 smoke benchmark 和 debug 场景开启
         const auto validateEnd = std::chrono::steady_clock::now();
         _stats.ValidateMilliseconds = ElapsedMilliseconds(validateStart, validateEnd);
     }
@@ -342,6 +336,8 @@ DataOrientedRoamMeshBuilder::NodeIndex DataOrientedRoamMeshBuilder::AddNode(
     node.Parent = parent;
     node.Depth = depth;
     node.PathId = pathId;
+    // 所有跨节点关系只保存 NodeIndex
+    // vector 扩容后也不能依赖旧元素地址
     node.CreatedBuildId = _buildSequence;
     node.ActivatedBuildId = _buildSequence;
     // geometric error 只依赖 HeightMap 和 domain
@@ -355,21 +351,23 @@ DataOrientedRoamMeshBuilder::NodeIndex DataOrientedRoamMeshBuilder::AddNode(
 
 void DataOrientedRoamMeshBuilder::ReserveNodePool()
 {
-    // split budget 给出本次 build 的增量上界
-    // 完整 bintree 容量给出当前 maxDepth 的理论上界
-    // 取较大值可以减少 3A 节点池扩容频率
+    // ReserveNodePool 是 3A 的关键保障
+    // 它降低扩容概率但正确性不能依赖地址稳定
     std::size_t targetCapacity = 2U + _settings.SplitBudget * 2U;
     if (_settings.MaxDepth <= ExactReserveMaxDepth)
     {
+        // 完整 bintree 容量给出当前 maxDepth 的理论上界
         targetCapacity = std::max(targetCapacity, ExactBintreeNodeCapacity(_settings.MaxDepth));
     }
     else
     {
+        // split budget 给不出深度很大时的完整上界
         targetCapacity = std::max(targetCapacity, LargeDepthReserveFallback);
     }
 
     if (_nodes.capacity() < targetCapacity)
     {
+        // 取较大值可以减少 3A 节点池扩容频率
         _nodes.reserve(targetCapacity);
     }
 }
@@ -987,6 +985,8 @@ void DataOrientedRoamMeshBuilder::ValidateTopology()
     for (auto& [line, vertexParameters] : lineVertices)
     {
         (void)line;
+        // 同一条量化直线会收集多条 leaf 边端点
+        // 排序去重后才能可靠做 interior 查询
         std::sort(vertexParameters.begin(), vertexParameters.end());
         vertexParameters.erase(std::unique(vertexParameters.begin(), vertexParameters.end()), vertexParameters.end());
     }
@@ -1039,6 +1039,8 @@ void DataOrientedRoamMeshBuilder::ValidateTopology()
         ++_stats.InvalidTopologyCount;
     }
 
+    // 遍历整个 index pool 而不是只看 active leaf
+    // inactive child 也必须保持 parent 链路正确
     for (NodeIndex nodeIndex = 0; nodeIndex < _nodes.size(); ++nodeIndex)
     {
         const DataOrientedRoamNode& node = _nodes[nodeIndex];
@@ -1193,11 +1195,13 @@ glm::vec3 DataOrientedRoamMeshBuilder::DebugColorForLeaf(const DataOrientedRoamN
     case LeafDebugClass::Subdivided:
         return glm::mix(glm::vec3{0.08F, 0.72F, 0.62F}, glm::vec3{0.10F, 0.34F, 0.95F}, depthRatio);
     case LeafDebugClass::Rebuilt:
+        // forced split 高亮 crack repair 传播路径
         if (node.ActivatedByForcedSplit)
         {
             return glm::mix(glm::vec3{0.96F, 0.34F, 0.90F}, glm::vec3{0.96F, 0.16F, 0.42F}, depthRatio);
         }
 
+        // 普通 rebuild 使用暖色表示本帧主动拓扑变化
         return glm::mix(glm::vec3{1.0F, 0.68F, 0.15F}, glm::vec3{1.0F, 0.34F, 0.10F}, depthRatio);
     }
 

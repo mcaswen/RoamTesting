@@ -9,16 +9,16 @@ namespace ParallelRoam::Render
 {
 namespace
 {
-// 阶段 0 的顶点格式只保留位置和颜色，后续 terrain mesh 会扩展法线和 UV
+// 阶段 0 顶点格式只保留位置和颜色
 // 这个 renderer 只用于早期 OpenGL 闭环
-// terrain renderer 接入后仍保留
-// 方便排查窗口或 shader 基础链路问题
 struct Vertex
 {
     glm::vec3 Position;
     glm::vec3 Color;
 };
 
+// terrain renderer 接入后仍保留
+// 方便排查窗口或 shader 基础链路问题
 // 先把 shader 内嵌在 cpp 中，阶段 1 再接入 assets/shaders 的资源加载
 constexpr const char* VertexShaderSource = R"(
 #version 410 core

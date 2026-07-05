@@ -17,28 +17,15 @@ namespace ParallelRoam::Algorithms::ClassicRoam
 namespace
 {
 // Classic builder 是后续 DOD 和 GPU 版本的行为基线
-// 它故意保留裸指针拓扑
-// 这样 split、merge、diamond 约束可以用最直接的 ROAM 语义表达
-// Data-Oriented 版必须在相同输入下复现这些行为
-// benchmark 因此能把性能差异归因到数据布局和任务拆分
-// 而不是算法语义漂移
-// 本文件的复杂点主要有三类
-// 第一类是持久化 bintree 生命周期
-// child 被 merge 后不会销毁
-// 后续重新 split 可以复用旧节点和 geometric error
-// 第二类是 baseNeighbor 约束传播
-// 单侧 split 会制造 T-junction
-// 因此必须沿 base edge 追到合法 diamond
-// 第三类是 hysteresis
-// split 和 merge 阈值分离
-// 上一帧 active split path 会影响中间区间决策
-// 这些约束都需要保持稳定
-// 否则 DOD 版很难判断差异来自优化还是行为错误
+// 裸指针拓扑让 ROAM split / merge 语义保持直观
 constexpr std::uint64_t RootAPathId = 1ULL;
 
-// 第二棵根树放到高位区间，避免 rootA child path 与 rootB root 撞号
+// 两棵根树的 path id 必须隔开
+// 否则跨帧 hysteresis 的 split 记忆会碰撞
 constexpr std::uint64_t RootBPathId = 1ULL << 32U;
 
+// SplitEdge 固定描述 base edge split 的三点
+// 这个 A/B/C 约定必须和 DOD 版保持一致
 struct SplitEdge
 {
     // Start 和 End 是本次 split 的边，Apex 是该边对面的顶点
@@ -48,7 +35,7 @@ struct SplitEdge
 };
 
 // validator 不依赖 neighbor 指针直接判断裂缝
-// 它先把 active leaf 的几何边收集出来
+// 它先收集 active leaf 几何边
 // 再用量化线段查找 T-junction 风险
 struct DomainEdge
 {
@@ -57,12 +44,16 @@ struct DomainEdge
     glm::vec2 End{0.0F};
 };
 
+// UV 坐标会在多次二分后产生浮点中点
+// validator 统一量化后再比较端点
 struct QuantizedPoint
 {
     long long X{0};
     long long Y{0};
 };
 
+// 直线 key 用方向和常量表达无限直线
+// 线段长度放在 QuantizedEdge 的参数区间里
 struct QuantizedLineKey
 {
     // Direction 描述归一化直线方向
@@ -79,6 +70,8 @@ struct QuantizedLineKey
     }
 };
 
+// hash 只服务 validator 的 unordered_map 桶分布
+// 不参与任何稳定序列化或跨平台输出
 struct QuantizedLineKeyHash
 {
     std::size_t operator()(const QuantizedLineKey& key) const
@@ -95,6 +88,8 @@ struct QuantizedLineKeyHash
     }
 };
 
+// QuantizedEdge 保存 leaf 边在线上的闭区间
+// 内部端点命中这个区间时代表潜在 T-junction
 struct QuantizedEdge
 {
     // Line 负责把共线边归组
@@ -179,6 +174,7 @@ QuantizedLineKey MakeLineKey(const QuantizedPoint& start, const QuantizedPoint& 
 
 long long ProjectToLineParameter(const QuantizedPoint& point, const QuantizedLineKey& line)
 {
+    // 投影到归一化方向后，二维边界检测可以降成一维区间查找
     return line.DirectionX * point.X + line.DirectionY * point.Y;
 }
 
@@ -213,6 +209,8 @@ Terrain::TerrainMeshData ClassicRoamMeshBuilder::Build(
     const bool resetTopology = NeedsTopologyReset(heightMap, terrainSize, heightScale, settings);
     _heightMap = &heightMap;
     _settings = settings;
+    // 持久化 bintree 只在输入不兼容时重置
+    // 普通相机移动复用旧 child 和 geometric error
     // merge 阈值不能高于 split 阈值，否则同一帧可能反复 split / merge
     _settings.MergeThreshold = std::min(_settings.MergeThreshold, _settings.SplitThreshold);
     _stats = {};
@@ -253,9 +251,9 @@ Terrain::TerrainMeshData ClassicRoamMeshBuilder::Build(
     {
         // validator 是调试路径
         // 不参与默认修复逻辑
-        // 结果通过 stats 暴露给 UI 和 smoke benchmark
         const auto validateStart = std::chrono::steady_clock::now();
         ValidateTopology();
+        // 结果通过 stats 暴露给 UI 和 smoke benchmark
         const auto validateEnd = std::chrono::steady_clock::now();
         _stats.ValidateMilliseconds = ElapsedMilliseconds(validateStart, validateEnd);
     }
@@ -314,8 +312,10 @@ ClassicRoamMeshBuilder::ClassicRoamNode* ClassicRoamMeshBuilder::AddNode(
     node->Parent = parent;
     node->Depth = depth;
     node->PathId = pathId;
+    // CreatedBuildId 记录节点第一次进入持久化池的帧
     node->CreatedBuildId = _buildSequence;
     node->ActivatedBuildId = _buildSequence;
+    // geometric error 不依赖相机，节点复用时不需要重算
     node->GeometricError = ComputeGeometricError(domain);
     _stats.MaxDepthReached = std::max(_stats.MaxDepthReached, depth);
 
@@ -332,6 +332,7 @@ void ClassicRoamMeshBuilder::ResetTopology()
     _previousSplitPaths.clear();
     _currentSplitPaths.clear();
 
+    // rootA 和 rootB 分别覆盖同一正方形的两半
     // 两个根三角形共享对角线 base edge，构成 Classic ROAM 的根 diamond
     _rootA = AddNode(
         TriangleDomain{glm::vec2{0.0F, 1.0F}, glm::vec2{1.0F, 0.0F}, glm::vec2{0.0F, 0.0F}},
@@ -605,8 +606,8 @@ bool ClassicRoamMeshBuilder::SplitNode(
                baseNeighbor->BaseNeighbor != node &&
                guard < _settings.MaxDepth + 2)
         {
-            // 经典 ROAM 要求 baseNeighbor 先回到互为 base 的 diamond 关系
             ++_stats.ConstraintPassCount;
+            // 经典 ROAM 要求 baseNeighbor 先回到互为 base 的 diamond 关系
             if (!SplitNode(baseNeighbor, SplitReason::ForcedByBaseNeighbor, node))
             {
                 return false;
@@ -882,7 +883,8 @@ void ClassicRoamMeshBuilder::CollectLeafNodesFrom(ClassicRoamNode* node, std::ve
 
 void ClassicRoamMeshBuilder::CollectActiveSplitPaths()
 {
-    // active split path 用于 hysteresis，必须反映 merge 后的当前拓扑
+    // 每帧从 active topology 重新构造 split path 集合
+    // merge 掉的旧路径不能继续影响下一帧 hysteresis
     _currentSplitPaths.clear();
     _stats.ActiveSplitCount = 0;
     CollectActiveSplitPathsFrom(_rootA);
@@ -979,6 +981,8 @@ void ClassicRoamMeshBuilder::ValidateTopology()
     for (auto& [line, vertexParameters] : lineVertices)
     {
         (void)line;
+        // 同一 leaf 可能贡献重复端点
+        // 去重后 interior 检测才不会把端点重合当裂缝
         std::sort(vertexParameters.begin(), vertexParameters.end());
         vertexParameters.erase(std::unique(vertexParameters.begin(), vertexParameters.end()), vertexParameters.end());
     }
@@ -1029,6 +1033,8 @@ void ClassicRoamMeshBuilder::ValidateTopology()
         ++_stats.InvalidTopologyCount;
     }
 
+    // 这里遍历整个持久化池
+    // inactive child 也要保持 parent 和 child 指针自洽
     for (const std::unique_ptr<ClassicRoamNode>& ownedNode : _nodes)
     {
         const ClassicRoamNode* node = ownedNode.get();
@@ -1189,11 +1195,13 @@ glm::vec3 ClassicRoamMeshBuilder::DebugColorForLeaf(const ClassicRoamNode& node)
     case LeafDebugClass::Subdivided:
         return glm::mix(glm::vec3{0.08F, 0.72F, 0.62F}, glm::vec3{0.10F, 0.34F, 0.95F}, depthRatio);
     case LeafDebugClass::Rebuilt:
+        // forced split 用粉色系标出 crack repair 触发区域
         if (node.ActivatedByForcedSplit)
         {
             return glm::mix(glm::vec3{0.96F, 0.34F, 0.90F}, glm::vec3{0.96F, 0.16F, 0.42F}, depthRatio);
         }
 
+        // 普通 rebuild 用暖色，便于和历史细分叶子区分
         return glm::mix(glm::vec3{1.0F, 0.68F, 0.15F}, glm::vec3{1.0F, 0.34F, 0.10F}, depthRatio);
     }
 

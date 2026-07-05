@@ -4,8 +4,6 @@ namespace ParallelRoam::Algorithms::ClassicRoam
 {
 // Adapter 层只做接口映射
 // ClassicRoamMeshBuilder 仍然拥有实际拓扑状态
-// 这样 renderer 和 benchmark 不需要依赖 Classic 内部类型
-// 后续 DOD 和 GPU 算法也能通过同一 RenderPacket / Stats 口径比较
 TerrainLodAlgorithmInfo ClassicRoamTerrainLodAlgorithm::Info() const
 {
     return TerrainLodAlgorithmInfo{
@@ -35,10 +33,12 @@ bool ClassicRoamTerrainLodAlgorithm::BuildRenderData(
     _stats = {};
     outPacket = {};
 
-    // 统一接口把无效 HeightMap 作为算法失败处理
-    // builder 自身仍保留返回空 mesh 的低层语义
+    // renderer 和 benchmark 不依赖 Classic 内部类型
+    // 失败语义统一收敛在算法接口层
     if (input.HeightMap == nullptr || !input.HeightMap->IsValid())
     {
+        // 统一接口把无效 HeightMap 作为算法失败处理
+        // builder 自身仍保留返回空 mesh 的低层语义
         if (errorMessage != nullptr)
         {
             *errorMessage = "Classic CPU ROAM build failed: invalid height map";

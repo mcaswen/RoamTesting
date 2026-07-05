@@ -18,10 +18,8 @@ int main(int argc, char** argv)
     (void)argv;
 
 #if defined(PARALLEL_ROAM_BUILD_FULL_APP)
-    // full app 路径支持三类无窗口/短窗口入口
-    // --smoke-test 验证窗口和 GL context
-    // --roam-probe 保留旧探针命令
-    // --benchmark 走三算法共享 benchmark
+    // full app 路径支持无窗口/短窗口入口
+    // 参数分流必须早于 Application 初始化
     int maxFrameCount = -1;
     for (int index = 1; index < argc; ++index)
     {
@@ -34,16 +32,16 @@ int main(int argc, char** argv)
         // ROAM 探针不启动窗口，用于快速确认算法层 LOD 是否随相机变化
         if (std::string_view{argv[index]} == "--roam-probe")
         {
+            // --roam-probe 保留旧探针命令
             // probe 也必须早于 Application 初始化
             // 它只验证算法层
-            // 不需要 OpenGL context
             return ParallelRoam::Benchmark::RunRoamProbe();
         }
 
         if (std::string_view{argv[index]} == "--benchmark")
         {
+            // --benchmark 走三算法共享 benchmark
             // benchmark 必须在 Application 创建前分流
-            // 否则无窗口回归会被 SDL 窗口初始化污染
             return ParallelRoam::Benchmark::RunTerrainLodBenchmarkFromCommandLine(argc, argv);
         }
     }

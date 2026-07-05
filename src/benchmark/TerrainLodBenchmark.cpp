@@ -30,15 +30,7 @@ namespace
 using Clock = std::chrono::steady_clock;
 
 // benchmark 的核心约束是三算法共享同一组输入
-// HeightMap、terrain size、LOD 阈值和相机路径都由 BenchmarkScenario 固定
 // 算法只通过 ITerrainLodAlgorithm 边界接入
-// 这样 Classic、DOD 和 GPU 版本的输出统计才能横向比较
-// smoke profile 偏回归测试
-// standard profile 偏性能样本
-// 两者共用同一套 frame result 和 CSV 字段
-// 任何新算法缺失时只在 all 模式下 skip
-// 显式选择缺失算法必须失败
-// 这个行为能防止 benchmark 悄悄漏跑目标版本
 struct BenchmarkCameraKeyframe
 {
     std::string Name;
@@ -46,22 +38,21 @@ struct BenchmarkCameraKeyframe
     float TimeSeconds{0.0F};
 };
 
-// Scenario 既是输入配置也是验收规则
-// Smoke 会打开拓扑验证并要求近处细节增长
-// Standard 关闭全局拓扑扫描以避免测量被 debug validator 主导
+// HeightMap、terrain size、LOD 阈值和相机路径都由这里固定
+// 这样 Classic、DOD 和 GPU 输出统计才能横向比较
 struct BenchmarkScenario
 {
     std::string Name;
     std::filesystem::path HeightMapPath;
     Algorithms::TerrainLodSettings Settings;
     std::vector<BenchmarkCameraKeyframe> CameraPath;
+    // Smoke 会打开拓扑验证并要求近处细节增长
     bool RequireTopologyClean{false};
     bool RequireNearDetailIncrease{false};
 };
 
-// 单帧结果保存算法输出和 benchmark 自身 wall clock
-// wall clock 用于发现接口外开销
-// TerrainLodStats 用于比较算法内部阶段耗时
+// smoke 偏回归测试，standard 偏性能样本
+// 两者共用同一套 frame result 和 CSV 字段
 struct BenchmarkFrameResult
 {
     std::string AlgorithmName;
@@ -76,16 +67,17 @@ struct BenchmarkFrameResult
     std::size_t IndexCount{0};
     std::size_t TriangleCount{0};
     Algorithms::TerrainLodStats Stats;
+    // wall clock 用于发现接口外开销
     float BuildWallMilliseconds{0.0F};
     bool Passed{false};
 };
 
-// 一个算法的一次完整回放
-// Available 和 Passed 分开保存
-// all 模式可以报告缺失算法但不把 skip 当作失败
+// 新算法缺失时只在 all 模式下 skip
+// 显式选择缺失算法必须失败以防漏跑
 struct BenchmarkAlgorithmRun
 {
     std::string AlgorithmName;
+    // Available 和 Passed 分开保存，all 模式不会把 skip 当作失败
     bool Available{false};
     bool Passed{false};
     std::vector<BenchmarkFrameResult> Frames;
@@ -289,9 +281,9 @@ bool ValidateRunShape(const BenchmarkScenario& scenario, std::vector<BenchmarkFr
     {
         // Smoke 不比较绝对三角形数
         // 只要求近处视点相对 far 有明显细节增长
+        const std::size_t farTriangles = frames[0].TriangleCount;
         // 这样 Classic 和 DOD 可在细节数完全一致时通过
         // GPU 初期实现也能在合理接近时扩展校验口径
-        const std::size_t farTriangles = frames[0].TriangleCount;
         const bool centerHasMoreDetail = frames[1].TriangleCount > farTriangles * 2U;
         const bool cornerHasMoreDetail = frames[2].TriangleCount > farTriangles * 2U;
         const bool returnHasMoreDetail = frames[3].TriangleCount > farTriangles * 2U;
@@ -322,6 +314,8 @@ BenchmarkAlgorithmRun RunAlgorithm(
 
     run.Available = true;
     const Algorithms::TerrainLodAlgorithmInfo info = algorithm->Info();
+    // 输出使用算法自报名称
+    // 这样 CSV 不依赖命令行别名
     run.AlgorithmName = std::string{info.Name};
     run.Frames.reserve(scenario.CameraPath.size());
 
@@ -476,6 +470,8 @@ bool WriteCsv(
         return false;
     }
 
+    // 表头覆盖三类算法的共同阶段
+    // GPU 字段现在可为 0，后续实现后不需要改 CSV 契约
     csv << "profile,algorithm,frameIndex,timeSeconds,cameraName,cameraX,cameraY,cameraZ,"
            "heightMapWidth,heightMapHeight,terrainSize,heightScale,maxDepth,splitThreshold,mergeThreshold,"
            "activeTriangleCount,activeNodeCount,splitCount,forcedSplitCount,mergeCount,candidatePeakCount,"
@@ -635,6 +631,8 @@ int RunTerrainLodBenchmark(const BenchmarkOptions& options)
 
     const bool csvWritten = WriteCsv(options.CsvPath, scenario, runs);
 
+    // all 模式允许 GPU 尚未实现时 skip
+    // 但不能允许三种选择全都没有实际运行
     if (!anyAvailable)
     {
         // 显式选择未实现算法时需要失败

@@ -14,12 +14,12 @@ namespace ParallelRoam::Gui
 namespace
 {
 // GUI 层只编辑配置和展示统计
-// 它不直接触碰 renderer 的 OpenGL buffer
-// 也不直接修改算法内部节点
-// DrawDebugOverlay 通过返回 changed 通知 Application 应用新设置
-// 这样 UI 控件和渲染/算法边界保持单向数据流
+// 它不直接触碰 renderer buffer 或算法节点
 constexpr float PanelMinWidth = 330.0F;
 constexpr float PanelMaxWidth = 390.0F;
+
+// DrawDebugOverlay 通过返回 changed 通知 Application 应用新设置
+// 这样 UI 控件和渲染/算法边界保持单向数据流
 constexpr float MetricValueOffset = 132.0F;
 
 void ApplyEditorStyle()

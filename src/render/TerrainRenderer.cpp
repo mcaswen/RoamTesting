@@ -16,16 +16,13 @@ namespace ParallelRoam::Render
 {
 namespace
 {
-// TerrainRenderer 同时服务规则网格 baseline 和 ROAM LOD mesh
-// 它不实现 LOD 决策
-// 只负责把算法输出转换成 OpenGL draw state
-// 这条边界让 benchmark 和 renderer 都能复用同一 ITerrainLodAlgorithm
-// meshDirty 表示 CPU mesh 或 GPU buffer 内容需要重建
-// shader uniform 变化不应该触发 mesh rebuild
-// 光照和 debug overlay 因此不进入 NeedsMeshRebuild
+// TerrainRenderer 只把算法输出转换成 OpenGL draw state
+// LOD 决策留在 ITerrainLodAlgorithm 边界内
 // 相机至少移动这个距离才触发 Classic ROAM rebuild
 constexpr float MinRoamRebuildDistance = 0.30F;
 
+// meshDirty 只代表 CPU mesh 或 GPU buffer 内容需要重建
+// shader uniform 变化不应该触发 mesh rebuild
 // 地形越大，rebuild 位移阈值也按比例放大
 constexpr float RoamRebuildTerrainScale = 0.01F;
 
@@ -308,6 +305,8 @@ void TerrainRenderer::Render(const RenderContext& context)
 
     if (_settings.Wireframe)
     {
+        // wireframe 是全局 OpenGL 状态
+        // 绘制后必须恢复外部状态
         glPolygonMode(GL_FRONT_AND_BACK, static_cast<GLenum>(previousPolygonMode[0]));
     }
 
@@ -444,6 +443,8 @@ bool TerrainRenderer::RebuildClassicRoam(const glm::vec3& cameraPosition, std::s
 
     if (_meshData.Vertices.empty() || _meshData.Indices.empty())
     {
+        // 算法接口成功但没有 CPU mesh 仍然不能上传
+        // 当前 renderer 还没有 GPU-only packet 分支
         if (errorMessage != nullptr)
         {
             *errorMessage = "Classic ROAM mesh build failed";
