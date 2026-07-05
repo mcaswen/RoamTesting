@@ -49,11 +49,29 @@
       }
     },
     {
+      "name": "release-fetch",
+      "displayName": "Release (FetchContent dependencies)",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "PARALLEL_ROAM_FETCH_MISSING_DEPS": "ON"
+      }
+    },
+    {
       "name": "relwithdebinfo",
       "displayName": "RelWithDebInfo",
       "inherits": "base",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "RelWithDebInfo"
+      }
+    },
+    {
+      "name": "relwithdebinfo-fetch",
+      "displayName": "RelWithDebInfo (FetchContent dependencies)",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "PARALLEL_ROAM_FETCH_MISSING_DEPS": "ON"
       }
     }
   ],
@@ -75,8 +93,16 @@
       "configurePreset": "release"
     },
     {
+      "name": "release-fetch",
+      "configurePreset": "release-fetch"
+    },
+    {
       "name": "relwithdebinfo",
       "configurePreset": "relwithdebinfo"
+    },
+    {
+      "name": "relwithdebinfo-fetch",
+      "configurePreset": "relwithdebinfo-fetch"
     }
   ],
   "testPresets": [
