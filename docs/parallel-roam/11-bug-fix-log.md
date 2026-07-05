@@ -20,6 +20,8 @@
 
 - 默认等用户明确确认“修复完了”之后再记录
 - 不把调查中、尚未验证或刚发现的问题提前写成正式 bug log
+- 每轮构建、smoke、benchmark 或回归测试后，如果结果与本轮预期不符且随后已修复，应作为 bug 记录
+- 注释覆盖率、阶段标签、中文标点、连续注释块等规范门禁修复不算 bug，不写入本日志
 - 如果中途出现错误判断，最终记录中要说明该方向为什么被排除
 - 定位和解决方案不能只写结论，应记录关键代码路径、触发条件、为什么旧逻辑失败、为什么新逻辑能覆盖该场景
 - 每条记录都要写清楚发生阶段，尤其是阶段性实现过程中引入的回归，便于回看里程碑风险
@@ -137,6 +139,30 @@
 - 解决方案：在 `RefineWithSplitQueue` 内新增 `enqueueActiveLeaves` 递归入口，从 `_rootA`、`_rootB` 向下遍历当前 active topology。遇到 active leaf 时再调用原有 `enqueueCandidate`，internal node 继续递归到 left / right child。这样保留 priority queue 的预算、score 排序和 forced split 后 child 重新入队逻辑，同时修正候选入口，使每一次相机触发 rebuild 时所有 active leaf 都能重新计算 `ComputeScreenErrorScore` 并决定是否继续 split。为避免后续再次误判，还新增 `ClassicRoamStats::ActiveSplitCount`，将状态统计和本帧事件统计分开；UI 显示“活跃 Split”和“本帧 Split”。另外新增正式的无窗口诊断入口 `src/benchmark/RoamProbe.cpp`，`main.cpp` 只做 `--roam-probe` 参数分发，避免把探针逻辑堆在入口文件里
 - 验证：用户确认视觉问题已修复。命令行探针 `./build/debug-fetch/bin/ParallelROAM --roam-probe` 使用同一个 `ClassicRoamMeshBuilder` 连续跑多个相机位置，验证持久拓扑会继续变化：`far triangles=823 activeSplits=821 frameSplits=821`，`center triangles=6985 activeSplits=6983 frameSplits=6162`，`near-corner triangles=8188 activeSplits=8186 frameSplits=2237 frameMerges=1034`，`center-return triangles=9408 activeSplits=9406 frameSplits=1618 frameMerges=398`。这些数据证明不同相机位置下 active triangle、active split、本帧 split 和 merge 都会变化，不再停留在第一次 build 的拓扑。`./scripts/run_smoke_test_fetch.sh` 通过，`cmake --build --preset debug-fetch` 通过，注释覆盖率检查为 `15.04%`，注释末尾中文句号/逗号检查无命中
 - 后续：需要把 `--roam-probe` 继续扩展成可复现 benchmark scenario，最好支持指定高度图、相机路径、阈值、最大深度和输出 CSV；后续每次修改 Classic ROAM 的 split / merge / hysteresis 逻辑时，应先跑该探针确认 active leaf 入口没有回归。还需要在阶段 2 完成固定测试入口，把“root-only 候选队列”这类拓扑入口错误变成自动化回归测试，而不是靠人工观察 wireframe
+
+### BUG-011：DOD 候选标记 pass 拆文件后未进入 CMake target
+
+- 状态：`Fixed`
+- 严重级别：`中`
+- 发生阶段：阶段 3，DOD ROAM 并行候选标记和内部架构拆分期间
+- 现象：将 split / merge candidate marking 从 topology pass 中拆到新的 `DataOrientedRoamCandidateMarking.cpp` 后，`debug-fetch` 构建暴露出新源文件没有纳入 `parallel_roam` target 的问题，导致新 pass 的实现不能被链接进应用
+- 定位：实现层已经在 `DataOrientedRoamState.h` 暴露 `CollectSplitCandidates`、`CollectMergeCandidates` 和 `CanMergeNode`，`DataOrientedRoamTopology.cpp` 也改为调用这些函数，但 `CMakeLists.txt` 的 app source 列表缺少 `src/algorithms/data_oriented_roam/DataOrientedRoamCandidateMarking.cpp`。头文件声明和调用点都存在时，构建系统遗漏源文件会让链接阶段找不到实现，属于拆模块时的构建集成错误
+- Debug 过程：先确认新 pass 文件存在且函数签名与 header 一致，再检查 app target 的源文件列表。定位到 CMake source list 仍只包含原有 DOD 文件，没有包含新拆出的 candidate marking 文件。该问题不是算法逻辑错误，也不是 namespace 不一致，而是 build target 没有消费新增 cpp
+- 解决方案：在 `CMakeLists.txt` 的 `parallel_roam` source 列表中加入 `src/algorithms/data_oriented_roam/DataOrientedRoamCandidateMarking.cpp`，保持拆分后的 pass 文件和 app target 同步
+- 验证：`cmake --build --preset debug-fetch` 通过；随后 `./build/debug-fetch/bin/ParallelROAM --benchmark --algorithm all --profile smoke --csv /private/tmp/roam_3d_smoke_after_split.csv` 通过，Classic 与 DOD 的 smoke 场景三角形数保持一致，GPU 不可用时按 benchmark 逻辑跳过；`./scripts/run_smoke_test_fetch.sh` 通过
+- 后续：每次新增 `.cpp` 文件时，构建验证应优先跑 `cmake --build --preset debug-fetch`，并在拆模块提交前检查 `CMakeLists.txt` 的 source list 是否同步
+
+### BUG-012：DOD 保守并发拓扑提交在 smoke benchmark 中出现额外性能回退
+
+- 状态：`Fixed`
+- 严重级别：`中`
+- 发生阶段：阶段 3，DOD ROAM 保守并发 topology commit 接入期间
+- 现象：保守并发提交初版通过了 DOD smoke benchmark，三角形数和拓扑验证结果正确，但单独运行 `--benchmark --algorithm dod --profile smoke` 后，`near-corner` 和 `center-return` 的 Debug 构建耗时明显高于预期。功能正确但性能与“并发提交应减少 topology 压力”的预期不一致
+- 定位：`BuildInteriorMergeChunks` 在分桶阶段对每个 merge candidate 调用完整 `SafeInteriorMergeChunkId`，而该函数内部又调用 `CanMergeNode`。`CanMergeNode` 会计算当前节点和 base neighbor 的 screen error；候选标记阶段已经计算过一次 merge score，分桶阶段再次对大量候选重复做评分，导致 Debug smoke 中 topology 时间被重复校验成本放大。问题不是线程数量不足，也不是 benchmark 三角形数错乱，而是 merge 分桶把“结构安全检查”和“提交前完整校验”混在了一起
+- Debug 过程：先排除并发运行多个验证命令导致的 CPU 争用，因为单独跑 DOD smoke 仍能看到耗时偏高。随后对比优化前后 CSV 中 `cpuTopologyMs`、`cpuCollectMs` 和 `cpuUtilizationPercent`，确认额外成本集中在 topology 路径而不是 collect 或 error evaluation。检查 merge 分桶代码后发现候选筛选阶段重复执行 `CanMergeNode`，这与候选标记 pass 的职责重叠
+- 解决方案：把 merge interior 判定拆成两层：`HasMergeReadyChildren` 和 `HasMergeReadyDiamond` 只做便宜的拓扑形状检查，用于候选分桶；worker 真正提交前再调用带完整 score 校验的 `SafeInteriorMergeChunkId(..., true)` 和原有 `MergeNodeOrDiamond`。这样分桶阶段不再重复计算大量 screen error，同时保留提交前的安全校验和串行回退
+- 验证：优化后单独运行 `./build/debug-fetch/bin/ParallelROAM --benchmark --algorithm dod --profile smoke --csv /private/tmp/roam_3e_optimized_dod_smoke.csv` 通过，输出仍为 `far=823`、`center=6985`、`near-corner=8188`、`center-return=9408` 三角形，拓扑错误为 0。对应 CSV 中 DOD `cpuWorkerCount` 在中心和近景为 8，`cpuTopologyMs` 为 `far 7.18025`、`center 45.7321`、`near-corner 22.1229`、`center-return 12.3545`。`all smoke benchmark` 和 `./scripts/run_smoke_test_fetch.sh` 也通过
+- 后续：当前保守并发策略仍会为 chunk 安全性付出额外判定成本，后续如果要继续优化，应把 chunk id 缓存到 node pool 或候选快照中，并把 interior / boundary 候选数量输出到 benchmark CSV，避免只能从 CPU 时间间接判断覆盖面
 
 ## 模板
 
