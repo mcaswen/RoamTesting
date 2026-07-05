@@ -76,7 +76,14 @@ void main()
 
 bool NeedsMeshRebuild(const TerrainRenderSettings& previous, const TerrainRenderSettings& next)
 {
-    return previous.TerrainSize != next.TerrainSize || previous.HeightScale != next.HeightScale;
+    return previous.TerrainSize != next.TerrainSize ||
+           previous.HeightScale != next.HeightScale ||
+           previous.UseClassicRoam != next.UseClassicRoam ||
+           previous.RoamMaxDepth != next.RoamMaxDepth ||
+           previous.RoamSplitThreshold != next.RoamSplitThreshold ||
+           previous.RoamMergeThreshold != next.RoamMergeThreshold ||
+           previous.RoamDistanceScale != next.RoamDistanceScale ||
+           previous.RoamEnableCrackFix != next.RoamEnableCrackFix;
 }
 
 glm::vec3 NormalizeLightDirection(const glm::vec3& lightDirection)
@@ -134,9 +141,29 @@ bool TerrainRenderer::ApplySettings(const TerrainRenderSettings& settings, std::
     const bool rebuildMesh = NeedsMeshRebuild(_settings, settings);
     _settings = settings;
 
-    if (!rebuildMesh)
+    _meshDirty = _meshDirty || rebuildMesh;
+    if (!_meshDirty)
     {
         return true;
+    }
+
+    return RebuildMesh(errorMessage);
+}
+
+bool TerrainRenderer::UpdateForCamera(const glm::vec3& cameraPosition, std::string* errorMessage)
+{
+    _lastCameraPosition = cameraPosition;
+
+    // 规则网格不依赖相机，只有 UI 改变 mesh 参数时才重建
+    if (!_settings.UseClassicRoam && !_meshDirty)
+    {
+        return true;
+    }
+
+    // Classic ROAM 是视点相关 LOD，阶段 2 先每帧重建保证行为直观
+    if (_settings.UseClassicRoam)
+    {
+        return RebuildClassicRoam(cameraPosition, errorMessage);
     }
 
     return RebuildMesh(errorMessage);
@@ -230,6 +257,14 @@ TerrainRenderStats TerrainRenderer::Stats() const
     stats.DrawCallCount = _initialized ? 1 : 0;
     stats.TerrainSize = _settings.TerrainSize;
     stats.HeightScale = _settings.HeightScale;
+    stats.UseClassicRoam = _settings.UseClassicRoam;
+    stats.RoamNodeCount = _classicRoamStats.NodeCount;
+    stats.RoamSplitCount = _classicRoamStats.SplitCount;
+    stats.RoamForcedSplitCount = _classicRoamStats.ForcedSplitCount;
+    stats.RoamMergeCount = _classicRoamStats.MergeCount;
+    stats.RoamCrackRiskCount = _classicRoamStats.CrackRiskCount;
+    stats.RoamConstraintPassCount = _classicRoamStats.ConstraintPassCount;
+    stats.RoamMaxDepthReached = _classicRoamStats.MaxDepthReached;
     return stats;
 }
 
@@ -245,7 +280,19 @@ const std::filesystem::path& TerrainRenderer::TexturePath() const
 
 bool TerrainRenderer::RebuildMesh(std::string* errorMessage)
 {
+    if (_settings.UseClassicRoam)
+    {
+        return RebuildClassicRoam(_lastCameraPosition, errorMessage);
+    }
+
+    return RebuildRegularGrid(errorMessage);
+}
+
+bool TerrainRenderer::RebuildRegularGrid(std::string* errorMessage)
+{
+    // 规则网格会重置 ROAM 统计，避免 UI 显示上一次算法结果
     _meshData = Terrain::TerrainMeshBuilder::Build(_heightMap, _settings.TerrainSize, _settings.HeightScale);
+    _classicRoamStats = {};
     if (_meshData.Vertices.empty() || _meshData.Indices.empty())
     {
         if (errorMessage != nullptr)
@@ -255,11 +302,44 @@ bool TerrainRenderer::RebuildMesh(std::string* errorMessage)
         return false;
     }
 
+    _meshDirty = false;
+    return UploadMesh(errorMessage);
+}
+
+bool TerrainRenderer::RebuildClassicRoam(const glm::vec3& cameraPosition, std::string* errorMessage)
+{
+    Algorithms::ClassicRoam::ClassicRoamSettings roamSettings{};
+    roamSettings.MaxDepth = _settings.RoamMaxDepth;
+    roamSettings.SplitThreshold = _settings.RoamSplitThreshold;
+    roamSettings.MergeThreshold = _settings.RoamMergeThreshold;
+    roamSettings.DistanceScale = _settings.RoamDistanceScale;
+    roamSettings.EnableCrackFix = _settings.RoamEnableCrackFix;
+
+    // Classic ROAM 输出 TerrainMeshData，后续 renderer 不需要关心算法细节
+    _meshData = _classicRoamBuilder.Build(
+        _heightMap,
+        _settings.TerrainSize,
+        _settings.HeightScale,
+        cameraPosition,
+        roamSettings);
+    _classicRoamStats = _classicRoamBuilder.Stats();
+
+    if (_meshData.Vertices.empty() || _meshData.Indices.empty())
+    {
+        if (errorMessage != nullptr)
+        {
+            *errorMessage = "Classic ROAM mesh build failed";
+        }
+        return false;
+    }
+
+    _meshDirty = false;
     return UploadMesh(errorMessage);
 }
 
 bool TerrainRenderer::UploadMesh(std::string* errorMessage)
 {
+    // buffer 对象只创建一次，后续 mesh 变化只更新数据内容
     if (_vertexArrayId == 0)
     {
         glGenVertexArrays(1, &_vertexArrayId);

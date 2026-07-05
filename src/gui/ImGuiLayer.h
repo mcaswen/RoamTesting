@@ -25,6 +25,20 @@ struct DebugOverlayData
     std::size_t VertexCount{0};
     std::size_t TriangleCount{0};
     int DrawCallCount{0};
+    bool UseClassicRoam{false};
+    std::size_t RoamNodeCount{0};
+
+    // 下列统计直接来自 ClassicRoamStats
+    std::size_t RoamSplitCount{0};
+    std::size_t RoamForcedSplitCount{0};
+    std::size_t RoamMergeCount{0};
+
+    // 裂缝风险用于判断当前最大深度是否过低
+    std::size_t RoamCrackRiskCount{0};
+
+    // 约束传播次数越高表示 diamond split 触发越明显
+    std::size_t RoamConstraintPassCount{0};
+    int RoamMaxDepthReached{0};
 };
 
 /// <summary>
@@ -35,6 +49,16 @@ struct TerrainPanelState
     float TerrainSize{30.0F};
     float HeightScale{4.0F};
     bool Wireframe{false};
+    bool UseClassicRoam{true};
+    int RoamMaxDepth{8};
+
+    // Split 和 Merge 使用双阈值减少相机移动时的抖动
+    float RoamSplitThreshold{0.16F};
+    float RoamMergeThreshold{0.08F};
+    float RoamDistanceScale{24.0F};
+
+    // 关闭后可观察缺少 diamond split 时的裂缝风险
+    bool RoamEnableCrackFix{true};
     glm::vec3 LightDirection{-0.45F, -1.0F, -0.35F};
     glm::vec3 LightColor{1.0F, 0.96F, 0.88F};
     float AmbientStrength{0.28F};

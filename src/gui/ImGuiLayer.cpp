@@ -249,9 +249,26 @@ bool ImGuiLayer::DrawDebugOverlay(const DebugOverlayData& data, TerrainPanelStat
     DrawMetricInt("高度图高", data.HeightMapHeight);
     DrawMetricSize("顶点数", data.VertexCount);
     DrawMetricSize("三角形数", data.TriangleCount);
+    DrawMetricRow("模式", data.UseClassicRoam ? "Classic ROAM" : "规则网格");
     changed |= ImGui::Checkbox("线框模式", &terrainState.Wireframe);
+    changed |= ImGui::Checkbox("Classic ROAM", &terrainState.UseClassicRoam);
     changed |= ImGui::SliderFloat("地形尺寸", &terrainState.TerrainSize, 6.0F, 80.0F, "%.1f");
     changed |= ImGui::SliderFloat("高度缩放", &terrainState.HeightScale, 0.0F, 12.0F, "%.2f");
+
+    DrawSectionHeader("ROAM");
+    DrawMetricSize("节点数", data.RoamNodeCount);
+    DrawMetricSize("Split 数", data.RoamSplitCount);
+    DrawMetricSize("强制 Split", data.RoamForcedSplitCount);
+    DrawMetricSize("Merge 数", data.RoamMergeCount);
+    DrawMetricSize("约束传播", data.RoamConstraintPassCount);
+    DrawMetricSize("裂缝风险", data.RoamCrackRiskCount);
+    DrawMetricInt("实际深度", data.RoamMaxDepthReached);
+    changed |= ImGui::Checkbox("裂缝修复", &terrainState.RoamEnableCrackFix);
+    changed |= ImGui::SliderInt("最大深度", &terrainState.RoamMaxDepth, 1, 12);
+    changed |= ImGui::SliderFloat("Split 阈值", &terrainState.RoamSplitThreshold, 0.005F, 1.0F, "%.3f");
+    changed |= ImGui::SliderFloat("Merge 阈值", &terrainState.RoamMergeThreshold, 0.001F, 1.0F, "%.3f");
+    changed |= ImGui::SliderFloat("距离权重", &terrainState.RoamDistanceScale, 1.0F, 80.0F, "%.1f");
+    terrainState.RoamMergeThreshold = std::min(terrainState.RoamMergeThreshold, terrainState.RoamSplitThreshold);
 
     DrawSectionHeader("光照");
     changed |= ImGui::SliderFloat3("方向", &terrainState.LightDirection.x, -1.0F, 1.0F, "%.2f");

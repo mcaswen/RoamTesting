@@ -124,18 +124,21 @@ assets/textures/Tex_Terrain_Debug_Diffuse.ppm
 
 2D：邻接关系与裂缝处理
 
-- 引入 `baseNeighbor`；
-- 实现 forced split；
-- 可视化 neighbor link；
-- 处理常见 T-junction；
-- 条件允许时再引入 `leftNeighbor/rightNeighbor` 和完整 diamond split。
+- Classic 节点使用裸指针表达 `parent`、`leftChild/rightChild`、`baseNeighbor/leftNeighbor/rightNeighbor`；
+- split 前检查 `baseNeighbor`，若对侧 leaf 尚未 split 则先执行 forced split；
+- split 后按 diamond 关系连接四个 child 的 neighbor 指针；
+- 构建结束后重建 active leaf 的 neighbor 指针，便于后续调试和可视化；
+- 统计 forced split 次数、baseNeighbor 约束传播次数和无法继续修复的裂缝风险；
+- UI 提供裂缝修复开关，便于对照开启/关闭后的 wireframe 结果；
+- 后续可增加 neighbor link 可视化和 diamond 传播调试视图。
 
 2E：merge 与 hysteresis
 
 - 引入 `splitThreshold > mergeThreshold`；
-- 相机远离时 merge；
-- 防止频繁 split/merge 抖动；
-- 记录 splitCount / mergeCount。
+- 相机远离且误差低于 `mergeThreshold` 时允许回落为粗 leaf；
+- 误差位于 split / merge 阈值之间时沿用上一帧路径 ID 的 split 状态；
+- 防止阈值附近频繁 split/merge 抖动；
+- 记录 splitCount / forcedSplitCount / mergeCount。
 
 ### 验收标准
 
@@ -145,6 +148,23 @@ assets/textures/Tex_Terrain_Debug_Diffuse.ppm
 - 基本无裂缝；
 - 能输出 active triangle count；
 - 可作为三版本视觉一致性的 baseline。
+
+### 当前实现状态（2026-07-05）
+
+- 已新增 `algorithms/classic_roam/ClassicRoamMeshBuilder`，实现 Classic CPU ROAM 的基础闭环；
+- Classic 节点已经采用裸指针结构，包含 parent、child 和 base/left/right neighbor 指针；
+- 已使用两个根三角形覆盖完整 Height Map domain，并以二叉三角树方式沿 base edge 递归 split；
+- 当前 split 决策基于边中点和重心最大几何误差、相机距离、`SplitThreshold`、`MergeThreshold` 和 `DistanceScale`；
+- `PathId` 已按两棵 root tree 分区，避免 hysteresis 和 merge 统计发生路径碰撞；
+- 新生成的 split 顶点会从 Height Map 双线性采样高度，并用 Height Map 梯度估算法线；
+- ROAM 输出三角绕序会统一修正到正 Y 方向，与规则网格 baseline 保持一致；
+- 已接入基于 `baseNeighbor` 的 diamond forced split 传播，右侧面板显示强制 split、约束传播次数和裂缝风险；
+- 已加入 T-junction repair pass，能修复一条粗边被多个细边贴住的情况；
+- 已接入基于路径 ID 的 hysteresis，右侧面板提供 merge 阈值并显示 merge 统计；
+- `TerrainRenderer` 支持在规则网格 baseline 和 Classic ROAM mesh 之间切换；
+- 右侧 ImGui 面板已加入 Classic ROAM 开关、裂缝修复开关、节点数、split/merge 统计、实际深度、最大深度、split/merge 阈值和距离权重；
+- 当前覆盖 2A、2B、2C、2D、2E 的核心展示目标；
+- 当前 2D 已完成基于裸指针 neighbor 的 Classic diamond split 传播，后续重点转向可视化和性能对比。
 
 ## 阶段 3：Data-Oriented CPU 版本
 

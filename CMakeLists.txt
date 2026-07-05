@@ -40,6 +40,7 @@ if(PARALLEL_ROAM_BUILD_APP)
                 src/app/Application.cpp
                 src/app/CameraController.cpp
                 src/app/InputState.cpp
+                src/algorithms/classic_roam/ClassicRoamMeshBuilder.cpp
                 src/gui/ImGuiLayer.cpp
                 src/platform/Window.cpp
                 src/render/Shader.cpp

@@ -37,6 +37,12 @@ Render::TerrainRenderSettings ToRenderSettings(const Gui::TerrainPanelState& sta
     settings.TerrainSize = state.TerrainSize;
     settings.HeightScale = state.HeightScale;
     settings.Wireframe = state.Wireframe;
+    settings.UseClassicRoam = state.UseClassicRoam;
+    settings.RoamMaxDepth = state.RoamMaxDepth;
+    settings.RoamSplitThreshold = state.RoamSplitThreshold;
+    settings.RoamMergeThreshold = state.RoamMergeThreshold;
+    settings.RoamDistanceScale = state.RoamDistanceScale;
+    settings.RoamEnableCrackFix = state.RoamEnableCrackFix;
     settings.LightDirection = state.LightDirection;
     settings.LightColor = state.LightColor;
     settings.AmbientStrength = state.AmbientStrength;
@@ -207,7 +213,15 @@ void Application::RenderFrame(float deltaSeconds)
     glClearColor(0.035F, 0.045F, 0.055F, 1.0F);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
+    _guiLayer.BeginFrame();
+
     const glm::vec3 cameraPosition = _camera.Position();
+    std::string meshUpdateError;
+    if (!_terrainRenderer.UpdateForCamera(cameraPosition, &meshUpdateError))
+    {
+        std::cerr << meshUpdateError << '\n';
+    }
+
     const Render::TerrainRenderStats terrainStats = _terrainRenderer.Stats();
     Gui::DebugOverlayData debugData{};
     debugData.FramesPerSecond = _framesPerSecond;
@@ -223,8 +237,15 @@ void Application::RenderFrame(float deltaSeconds)
     debugData.VertexCount = terrainStats.VertexCount;
     debugData.TriangleCount = terrainStats.TriangleCount;
     debugData.DrawCallCount = terrainStats.DrawCallCount;
+    debugData.UseClassicRoam = terrainStats.UseClassicRoam;
+    debugData.RoamNodeCount = terrainStats.RoamNodeCount;
+    debugData.RoamSplitCount = terrainStats.RoamSplitCount;
+    debugData.RoamForcedSplitCount = terrainStats.RoamForcedSplitCount;
+    debugData.RoamMergeCount = terrainStats.RoamMergeCount;
+    debugData.RoamCrackRiskCount = terrainStats.RoamCrackRiskCount;
+    debugData.RoamConstraintPassCount = terrainStats.RoamConstraintPassCount;
+    debugData.RoamMaxDepthReached = terrainStats.RoamMaxDepthReached;
 
-    _guiLayer.BeginFrame();
     if (_guiLayer.DrawDebugOverlay(debugData, _terrainPanelState))
     {
         _terrainSettings = ToRenderSettings(_terrainPanelState);
