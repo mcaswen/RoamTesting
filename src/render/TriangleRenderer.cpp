@@ -10,6 +10,9 @@ namespace ParallelRoam::Render
 namespace
 {
 // 阶段 0 的顶点格式只保留位置和颜色，后续 terrain mesh 会扩展法线和 UV
+// 这个 renderer 只用于早期 OpenGL 闭环
+// terrain renderer 接入后仍保留
+// 方便排查窗口或 shader 基础链路问题
 struct Vertex
 {
     glm::vec3 Position;
@@ -73,6 +76,8 @@ bool TriangleRenderer::Initialize(std::string* errorMessage)
     glBindBuffer(GL_ARRAY_BUFFER, _vertexBufferId);
 
     // 顶点数据在阶段 0 不会变化，因此使用 GL_STATIC_DRAW
+    // 这里不走 TerrainMeshVertex
+    // 避免最小 smoke 路径依赖后续 terrain 数据结构
     glBufferData(
         GL_ARRAY_BUFFER,
         static_cast<GLsizeiptr>(vertices.size() * sizeof(Vertex)),
@@ -80,7 +85,6 @@ bool TriangleRenderer::Initialize(std::string* errorMessage)
         GL_STATIC_DRAW);
 
     glEnableVertexAttribArray(0);
-    // location 0 对应顶点位置
     glVertexAttribPointer(
         0,
         3,
@@ -90,7 +94,6 @@ bool TriangleRenderer::Initialize(std::string* errorMessage)
         reinterpret_cast<const void*>(offsetof(Vertex, Position)));
 
     glEnableVertexAttribArray(1);
-    // location 1 对应调试颜色
     glVertexAttribPointer(
         1,
         3,
@@ -107,6 +110,7 @@ bool TriangleRenderer::Initialize(std::string* errorMessage)
 void TriangleRenderer::Shutdown()
 {
     // VBO 和 VAO 独立删除，便于后续 renderer 拆出更多 buffer
+    // 删除后清零保证重复 Shutdown 安全
     if (_vertexBufferId != 0)
     {
         glDeleteBuffers(1, &_vertexBufferId);
@@ -125,6 +129,8 @@ void TriangleRenderer::Shutdown()
 void TriangleRenderer::Render(const TriangleRenderContext& context)
 {
     // viewport 每帧使用 drawable 尺寸刷新，支持窗口拖拽和 HiDPI
+    // 即使三角形本身静态
+    // 输出尺寸仍必须跟随窗口变化
     glViewport(0, 0, context.DrawableWidth, context.DrawableHeight);
     glEnable(GL_DEPTH_TEST);
 

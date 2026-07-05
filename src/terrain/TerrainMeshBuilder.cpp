@@ -4,6 +4,9 @@
 
 namespace ParallelRoam::Terrain
 {
+// 规则网格 builder 是视觉 baseline
+// 它不做任何 LOD
+// ROAM 输出的世界坐标、UV 和高度缩放必须和这里保持一致
 TerrainMeshData TerrainMeshBuilder::Build(const HeightMap& heightMap, float terrainSize, float heightScale)
 {
     TerrainMeshData meshData{};
@@ -14,6 +17,7 @@ TerrainMeshData TerrainMeshBuilder::Build(const HeightMap& heightMap, float terr
 
     if (!heightMap.IsValid() || meshData.GridWidth < 2 || meshData.GridHeight < 2)
     {
+        // 少于 2x2 无法形成三角网格
         return meshData;
     }
 
@@ -21,6 +25,8 @@ TerrainMeshData TerrainMeshBuilder::Build(const HeightMap& heightMap, float terr
     meshData.Vertices.resize(vertexCount);
 
     // Height Map 的 UV 直接映射到 XZ 平面，地形中心落在世界原点
+    // ROAM 的 DomainToWorld 使用相同公式
+    // benchmark 才能比较规则网格和 LOD mesh 的视觉位置
     for (int y = 0; y < meshData.GridHeight; ++y)
     {
         for (int x = 0; x < meshData.GridWidth; ++x)
@@ -46,6 +52,8 @@ TerrainMeshData TerrainMeshBuilder::Build(const HeightMap& heightMap, float terr
                            static_cast<std::size_t>(meshData.GridHeight - 1);
     meshData.Indices.reserve(quadCount * 6U);
 
+    // 每个 heightmap cell 拆成两个三角形
+    // 索引顺序要和 ROAM emit 阶段统一朝向正 Y
     for (int y = 0; y < meshData.GridHeight - 1; ++y)
     {
         for (int x = 0; x < meshData.GridWidth - 1; ++x)
@@ -71,6 +79,8 @@ TerrainMeshData TerrainMeshBuilder::Build(const HeightMap& heightMap, float terr
 
 void TerrainMeshBuilder::AccumulateNormals(TerrainMeshData& meshData)
 {
+    // 顶点法线按相邻三角形面积加权累积
+    // 规则网格路径因此比单三角面法线更平滑
     for (TerrainMeshVertex& vertex : meshData.Vertices)
     {
         vertex.Normal = glm::vec3{0.0F};
@@ -86,6 +96,7 @@ void TerrainMeshBuilder::AccumulateNormals(TerrainMeshData& meshData)
         const glm::vec3 edge1 = c.Position - a.Position;
         const glm::vec3 normal = glm::cross(edge0, edge1);
 
+        // 未归一化法线保留三角形面积权重
         a.Normal += normal;
         b.Normal += normal;
         c.Normal += normal;

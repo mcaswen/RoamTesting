@@ -29,6 +29,16 @@ namespace
 {
 using Clock = std::chrono::steady_clock;
 
+// benchmark 的核心约束是三算法共享同一组输入
+// HeightMap、terrain size、LOD 阈值和相机路径都由 BenchmarkScenario 固定
+// 算法只通过 ITerrainLodAlgorithm 边界接入
+// 这样 Classic、DOD 和 GPU 版本的输出统计才能横向比较
+// smoke profile 偏回归测试
+// standard profile 偏性能样本
+// 两者共用同一套 frame result 和 CSV 字段
+// 任何新算法缺失时只在 all 模式下 skip
+// 显式选择缺失算法必须失败
+// 这个行为能防止 benchmark 悄悄漏跑目标版本
 struct BenchmarkCameraKeyframe
 {
     std::string Name;
@@ -36,6 +46,9 @@ struct BenchmarkCameraKeyframe
     float TimeSeconds{0.0F};
 };
 
+// Scenario 既是输入配置也是验收规则
+// Smoke 会打开拓扑验证并要求近处细节增长
+// Standard 关闭全局拓扑扫描以避免测量被 debug validator 主导
 struct BenchmarkScenario
 {
     std::string Name;
@@ -46,6 +59,9 @@ struct BenchmarkScenario
     bool RequireNearDetailIncrease{false};
 };
 
+// 单帧结果保存算法输出和 benchmark 自身 wall clock
+// wall clock 用于发现接口外开销
+// TerrainLodStats 用于比较算法内部阶段耗时
 struct BenchmarkFrameResult
 {
     std::string AlgorithmName;
@@ -64,6 +80,9 @@ struct BenchmarkFrameResult
     bool Passed{false};
 };
 
+// 一个算法的一次完整回放
+// Available 和 Passed 分开保存
+// all 模式可以报告缺失算法但不把 skip 当作失败
 struct BenchmarkAlgorithmRun
 {
     std::string AlgorithmName;
@@ -104,6 +123,9 @@ std::string ToString(BenchmarkAlgorithmSelection selection)
 
 std::vector<BenchmarkCameraKeyframe> MakeStandardCameraPath()
 {
+    // Standard 使用 64 帧闭合 flyover
+    // 轨迹覆盖远景、中心、侧向和高度变化
+    // 目的是让 split 与 merge 都在同一次回放中出现
     std::vector<BenchmarkCameraKeyframe> path;
     path.reserve(64);
 
@@ -114,6 +136,8 @@ std::vector<BenchmarkCameraKeyframe> MakeStandardCameraPath()
 
     for (int index = 0; index < FrameCount; ++index)
     {
+        // wave 让路径不是纯圆
+        // 这样同一距离下会经过不同局部高度变化区域
         const float t = static_cast<float>(index) / static_cast<float>(FrameCount - 1);
         const float angle = t * 6.28318530718F;
         const float wave = std::sin(t * 12.56637061436F) * 3.5F;
@@ -134,6 +158,9 @@ std::vector<BenchmarkCameraKeyframe> MakeStandardCameraPath()
 BenchmarkScenario MakeScenario(BenchmarkProfile profile)
 {
     BenchmarkScenario scenario{};
+    // 这些参数是三版本对比的控制变量
+    // 不在算法内部各自决定
+    // 否则 CSV 里的时间和三角形数没有公平比较意义
     scenario.Name = ToString(profile);
     scenario.Settings.TerrainSize = 30.0F;
     scenario.Settings.HeightScale = 4.0F;
@@ -146,19 +173,29 @@ BenchmarkScenario MakeScenario(BenchmarkProfile profile)
 
     if (profile == BenchmarkProfile::Smoke)
     {
+        // Smoke 使用小高度图和 4 个代表性视点
+        // 拓扑验证开启
+        // 适合提交前快速发现裂缝和近细远粗退化
         scenario.HeightMapPath = "assets/heightmaps/Hm_Terrain_Test_129.pgm";
         scenario.Settings.EnableTopologyValidation = true;
         scenario.RequireTopologyClean = true;
         scenario.RequireNearDetailIncrease = true;
         scenario.CameraPath = {
+            // far 建立远处低细节基线
             BenchmarkCameraKeyframe{"far", glm::vec3{0.0F, 14.0F, 28.0F}, 0.0F},
+            // center 要显著增加 active triangles
             BenchmarkCameraKeyframe{"center", glm::vec3{0.0F, 4.0F, 0.0F}, 1.0F},
+            // near-corner 检查非中心区域也能触发局部细分
             BenchmarkCameraKeyframe{"near-corner", glm::vec3{-13.0F, 2.5F, -13.0F}, 2.0F},
+            // center-return 检查持久拓扑和 merge 后的再次细分稳定性
             BenchmarkCameraKeyframe{"center-return", glm::vec3{0.0F, 4.0F, 0.0F}, 3.0F},
         };
         return scenario;
     }
 
+    // Standard 使用更大 HeightMap 和较长路径
+    // 不要求每帧拓扑验证
+    // 重点是记录稳定的阶段耗时分布
     scenario.HeightMapPath = "assets/heightmaps/Hm_Terrain_Peking_513.png";
     scenario.Settings.EnableTopologyValidation = false;
     scenario.RequireTopologyClean = false;
@@ -169,6 +206,9 @@ BenchmarkScenario MakeScenario(BenchmarkProfile profile)
 
 std::unique_ptr<Algorithms::ITerrainLodAlgorithm> CreateAlgorithm(BenchmarkAlgorithmSelection selection)
 {
+    // benchmark factory 是算法可用性的单一入口
+    // 新算法接入后必须在这里注册
+    // renderer 侧不需要知道 benchmark 的选择枚举
     if (selection == BenchmarkAlgorithmSelection::Classic)
     {
         return std::make_unique<Algorithms::ClassicRoam::ClassicRoamTerrainLodAlgorithm>();
@@ -189,6 +229,8 @@ std::vector<BenchmarkAlgorithmSelection> ExpandAlgorithmSelection(BenchmarkAlgor
         return {selection};
     }
 
+    // all 的顺序固定为 Classic、DOD、GPU
+    // 输出和 CSV 都能保持稳定列对比
     return {
         BenchmarkAlgorithmSelection::Classic,
         BenchmarkAlgorithmSelection::DataOriented,
@@ -198,6 +240,8 @@ std::vector<BenchmarkAlgorithmSelection> ExpandAlgorithmSelection(BenchmarkAlgor
 
 bool HasInvalidTopology(const Algorithms::TerrainLodStats& stats)
 {
+    // 三类拓扑错误都属于 smoke profile 的硬失败
+    // Standard profile 可选择关闭 validator 只采集性能
     return stats.TjunctionCount != 0U ||
            stats.InvalidNeighborCount != 0U ||
            stats.InvalidTopologyCount != 0U;
@@ -211,17 +255,21 @@ bool ValidateFrame(
 {
     if (!buildSucceeded)
     {
+        // 算法显式失败时不再继续解释 mesh 内容
         return false;
     }
 
     if (renderPacket.Mode == Algorithms::TerrainLodRenderMode::CpuMesh &&
         (renderPacket.CpuMesh.Vertices.empty() || renderPacket.CpuMesh.Indices.empty()))
     {
+        // 当前 Classic 和 DOD 都必须输出 CPU mesh
+        // 后续 GPU 路径可通过 RenderMode 放宽这个条件
         return false;
     }
 
     if (stats.ActiveTriangleCount == 0U || stats.MaxActiveDepth > scenario.Settings.MaxDepth)
     {
+        // max depth 越界通常说明算法没有正确遵守统一 settings
         return false;
     }
 
@@ -239,6 +287,10 @@ bool ValidateRunShape(const BenchmarkScenario& scenario, std::vector<BenchmarkFr
 
     if (scenario.RequireNearDetailIncrease && frames.size() >= 4U)
     {
+        // Smoke 不比较绝对三角形数
+        // 只要求近处视点相对 far 有明显细节增长
+        // 这样 Classic 和 DOD 可在细节数完全一致时通过
+        // GPU 初期实现也能在合理接近时扩展校验口径
         const std::size_t farTriangles = frames[0].TriangleCount;
         const bool centerHasMoreDetail = frames[1].TriangleCount > farTriangles * 2U;
         const bool cornerHasMoreDetail = frames[2].TriangleCount > farTriangles * 2U;
@@ -263,6 +315,8 @@ BenchmarkAlgorithmRun RunAlgorithm(
     std::unique_ptr<Algorithms::ITerrainLodAlgorithm> algorithm = CreateAlgorithm(selection);
     if (algorithm == nullptr)
     {
+        // all 模式下 unavailable 会被打印为 SKIP
+        // 显式选择该算法时 RunTerrainLodBenchmark 会返回失败
         return run;
     }
 
@@ -273,6 +327,8 @@ BenchmarkAlgorithmRun RunAlgorithm(
 
     for (std::size_t index = 0; index < scenario.CameraPath.size(); ++index)
     {
+        // 每帧都重新构造 BuildInput
+        // 防止算法修改输入 settings 后污染后续帧
         const BenchmarkCameraKeyframe& camera = scenario.CameraPath[index];
         Algorithms::TerrainLodBuildInput buildInput{};
         buildInput.HeightMap = &heightMap;
@@ -286,6 +342,8 @@ BenchmarkAlgorithmRun RunAlgorithm(
         const auto end = Clock::now();
         if (!errorMessage.empty())
         {
+            // 错误信息不吞掉
+            // benchmark 输出需要能定位失败算法和帧
             std::cerr << "[" << info.Name << "] " << errorMessage << '\n';
         }
 
@@ -303,6 +361,8 @@ BenchmarkAlgorithmRun RunAlgorithm(
         frame.IndexCount = renderPacket.IndexCount;
         frame.TriangleCount = stats.ActiveTriangleCount;
         frame.Stats = stats;
+        // BuildWallMilliseconds 包括接口调用外层开销
+        // Stats.CpuUpdateMilliseconds 则由算法自己报告
         frame.BuildWallMilliseconds = std::chrono::duration<float, std::milli>(end - start).count();
         frame.Passed = ValidateFrame(scenario, renderPacket, stats, buildSucceeded);
         run.Frames.push_back(frame);
@@ -320,6 +380,8 @@ float Median(std::vector<float> values)
     }
 
     std::sort(values.begin(), values.end());
+    // 当前样本量较小
+    // 使用上中位数足够支撑 smoke 和 standard 摘要
     return values[values.size() / 2U];
 }
 
@@ -331,6 +393,8 @@ float Percentile95(std::vector<float> values)
     }
 
     std::sort(values.begin(), values.end());
+    // p95 使用 ceiling 选择保守样本
+    // 避免短路径下把最大 spike 过早平滑掉
     const std::size_t index = static_cast<std::size_t>(
         std::ceil(static_cast<float>(values.size()) * 0.95F) - 1.0F);
     return values[std::min(index, values.size() - 1U)];
@@ -363,6 +427,8 @@ void PrintRunSummary(const BenchmarkAlgorithmRun& run)
 
         if (run.Frames.size() <= 8U)
         {
+            // 短 profile 打印逐帧摘要
+            // 长 profile 只输出聚合指标避免日志干扰性能阅读
             std::cout << (frame.Passed ? "[PASS] " : "[FAIL] ")
                       << run.AlgorithmName
                       << '/' << frame.CameraName
@@ -394,6 +460,7 @@ bool WriteCsv(
 {
     if (csvPath.empty())
     {
+        // 没有传 csv 时 benchmark 只做控制台回归
         return true;
     }
 
@@ -420,11 +487,15 @@ bool WriteCsv(
     {
         if (!run.Available)
         {
+            // CSV 只记录实际运行的算法
+            // SKIP 已经在控制台摘要中呈现
             continue;
         }
 
         for (const BenchmarkFrameResult& frame : run.Frames)
         {
+            // 字段顺序保持和表头一致
+            // 新算法只要填 TerrainLodStats 就能复用同一 CSV
             csv << frame.ProfileName << ','
                 << frame.AlgorithmName << ','
                 << frame.FrameIndex << ','
@@ -472,6 +543,9 @@ bool WriteCsv(
 
 bool ParseAlgorithm(std::string_view value, BenchmarkAlgorithmSelection& outSelection)
 {
+    // 接受少量别名
+    // 方便脚本里使用短名
+    // 也兼容接口内部算法名
     if (value == "classic" || value == "classic_cpu_roam")
     {
         outSelection = BenchmarkAlgorithmSelection::Classic;
@@ -501,6 +575,8 @@ bool ParseAlgorithm(std::string_view value, BenchmarkAlgorithmSelection& outSele
 
 bool ParseProfile(std::string_view value, BenchmarkProfile& outProfile)
 {
+    // profile 名只保留 smoke 和 standard
+    // 参数面保持小而稳定
     if (value == "smoke")
     {
         outProfile = BenchmarkProfile::Smoke;
@@ -525,6 +601,8 @@ int RunTerrainLodBenchmark(const BenchmarkOptions& options)
     std::string errorMessage;
     if (!heightMap.LoadFromFile(scenario.HeightMapPath, &errorMessage))
     {
+        // HeightMap 是所有算法共享输入
+        // 加载失败时没有可比较的基准
         std::cerr << errorMessage << '\n';
         return 1;
     }
@@ -546,6 +624,8 @@ int RunTerrainLodBenchmark(const BenchmarkOptions& options)
     bool allAvailablePassed = true;
     for (BenchmarkAlgorithmSelection selection : selections)
     {
+        // allAvailablePassed 只统计实际运行的算法
+        // GPU 尚未实现时 all 仍可用于 Classic 和 DOD 回归
         BenchmarkAlgorithmRun run = RunAlgorithm(selection, scenario, heightMap);
         PrintRunSummary(run);
         anyAvailable = anyAvailable || run.Available;
@@ -557,12 +637,16 @@ int RunTerrainLodBenchmark(const BenchmarkOptions& options)
 
     if (!anyAvailable)
     {
+        // 显式选择未实现算法时需要失败
+        // 否则 CI 会误把空跑当作通过
         std::cerr << "No requested benchmark algorithm is available.\n";
         return 1;
     }
 
     if (options.Algorithm != BenchmarkAlgorithmSelection::All && !runs.empty() && !runs.front().Available)
     {
+        // 非 all 模式下 unavailable 不是 skip
+        // 用户明确要求了该算法
         return 1;
     }
 
@@ -580,17 +664,22 @@ int RunTerrainLodBenchmarkFromCommandLine(int argc, char** argv)
         const std::string_view argument{argv[index]};
         if (argument == "--benchmark")
         {
+            // main 已经根据 --benchmark 分流
+            // 这里允许重复看到该 flag
             continue;
         }
 
         if (argument == "--help" || argument == "-h")
         {
+            // benchmark help 不启动窗口也不加载 HeightMap
             std::cout << BenchmarkUsage();
             return 0;
         }
 
         if (argument == "--algorithm" && index + 1 < argc)
         {
+            // 所有带值参数都在消费后递增 index
+            // 避免下一轮把值当成未知参数
             if (!ParseAlgorithm(argv[++index], options.Algorithm))
             {
                 std::cerr << "Unknown benchmark algorithm: " << argv[index] << '\n';
@@ -602,6 +691,8 @@ int RunTerrainLodBenchmarkFromCommandLine(int argc, char** argv)
 
         if (argument == "--algorithm")
         {
+            // 缺值错误需要在解析阶段返回
+            // 不进入默认 benchmark
             std::cerr << "--algorithm requires a value.\n";
             std::cerr << BenchmarkUsage();
             return 1;
@@ -609,6 +700,8 @@ int RunTerrainLodBenchmarkFromCommandLine(int argc, char** argv)
 
         if (argument == "--profile" && index + 1 < argc)
         {
+            // profile 控制场景和验收规则
+            // 不允许静默 fallback 到 smoke
             if (!ParseProfile(argv[++index], options.Profile))
             {
                 std::cerr << "Unknown benchmark profile: " << argv[index] << '\n';
@@ -627,6 +720,8 @@ int RunTerrainLodBenchmarkFromCommandLine(int argc, char** argv)
 
         if (argument == "--csv" && index + 1 < argc)
         {
+            // CSV 路径可以指向尚不存在的父目录
+            // WriteCsv 会负责创建
             options.CsvPath = argv[++index];
             continue;
         }
@@ -643,6 +738,8 @@ int RunTerrainLodBenchmarkFromCommandLine(int argc, char** argv)
         return 1;
     }
 
+    // 命令行解析只负责轻量参数
+    // 实际场景构造和算法运行集中在 RunTerrainLodBenchmark
     return RunTerrainLodBenchmark(options);
 }
 

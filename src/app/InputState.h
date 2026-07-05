@@ -13,58 +13,17 @@ namespace ParallelRoam::App
 class InputState
 {
 public:
-    /// <summary>
-    /// 开始新帧时清理只在单帧内有效的输入量
-    /// </summary>
     void BeginFrame();
 
-    /// <summary>
-    /// 吸收一个 SDL 事件并更新输入快照
-    /// </summary>
-    /// <param name="event">SDL 事件。</param>
     void HandleEvent(const SDL_Event& event);
-
-    /// <summary>
-    /// 更新窗口逻辑尺寸，供 GUI 和调试面板显示
-    /// </summary>
-    /// <param name="width">窗口宽度。</param>
-    /// <param name="height">窗口高度。</param>
     void SetWindowSize(int width, int height);
 
-    /// <summary>
-    /// 返回当前是否收到退出请求
-    /// </summary>
     [[nodiscard]] bool IsQuitRequested() const;
-
-    /// <summary>
-    /// 查询指定键是否处于按下状态
-    /// </summary>
-    /// <param name="scancode">SDL 扫描码。</param>
     [[nodiscard]] bool IsKeyDown(SDL_Scancode scancode) const;
-
-    /// <summary>
-    /// 返回鼠标右键是否按下，用于启用视角控制
-    /// </summary>
     [[nodiscard]] bool IsRightMouseDown() const;
-
-    /// <summary>
-    /// 返回当前帧鼠标横向移动量
-    /// </summary>
     [[nodiscard]] float MouseDeltaX() const;
-
-    /// <summary>
-    /// 返回当前帧鼠标纵向移动量
-    /// </summary>
     [[nodiscard]] float MouseDeltaY() const;
-
-    /// <summary>
-    /// 返回窗口逻辑宽度
-    /// </summary>
     [[nodiscard]] int WindowWidth() const;
-
-    /// <summary>
-    /// 返回窗口逻辑高度
-    /// </summary>
     [[nodiscard]] int WindowHeight() const;
 
 private:

@@ -105,37 +105,17 @@ public:
     /// <summary>
     /// 初始化 ImGui context 和 SDL2/OpenGL3 backend
     /// </summary>
-    /// <param name="window">SDL 窗口。</param>
-    /// <param name="glContext">SDL OpenGL context。</param>
-    /// <param name="glslVersion">OpenGL backend 使用的 GLSL 版本字符串。</param>
     bool Initialize(SDL_Window* window, SDL_GLContext glContext, const char* glslVersion);
 
-    /// <summary>
-    /// 释放 ImGui backend 和 context
-    /// </summary>
     void Shutdown();
-
-    /// <summary>
-    /// 将 SDL 事件转交给 ImGui backend
-    /// </summary>
-    /// <param name="event">SDL 事件。</param>
     void ProcessEvent(const SDL_Event& event);
-
-    /// <summary>
-    /// 开始新一帧 ImGui 绘制
-    /// </summary>
     void BeginFrame();
 
     /// <summary>
-    /// 绘制阶段 1 调试和 terrain 控制面板
+    /// 返回 true 表示 terrain 面板参数发生变化，调用方需要重新应用 renderer 设置
     /// </summary>
-    /// <param name="data">当前帧调试数据。</param>
-    /// <param name="terrainState">可编辑的 terrain 参数。</param>
     [[nodiscard]] bool DrawDebugOverlay(const DebugOverlayData& data, TerrainPanelState& terrainState);
 
-    /// <summary>
-    /// 提交并渲染 ImGui draw data
-    /// </summary>
     void EndFrame();
 
 private:

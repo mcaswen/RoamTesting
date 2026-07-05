@@ -2,6 +2,10 @@
 
 namespace ParallelRoam::Algorithms::ClassicRoam
 {
+// Adapter 层只做接口映射
+// ClassicRoamMeshBuilder 仍然拥有实际拓扑状态
+// 这样 renderer 和 benchmark 不需要依赖 Classic 内部类型
+// 后续 DOD 和 GPU 算法也能通过同一 RenderPacket / Stats 口径比较
 TerrainLodAlgorithmInfo ClassicRoamTerrainLodAlgorithm::Info() const
 {
     return TerrainLodAlgorithmInfo{
@@ -31,6 +35,8 @@ bool ClassicRoamTerrainLodAlgorithm::BuildRenderData(
     _stats = {};
     outPacket = {};
 
+    // 统一接口把无效 HeightMap 作为算法失败处理
+    // builder 自身仍保留返回空 mesh 的低层语义
     if (input.HeightMap == nullptr || !input.HeightMap->IsValid())
     {
         if (errorMessage != nullptr)
@@ -40,6 +46,8 @@ bool ClassicRoamTerrainLodAlgorithm::BuildRenderData(
         return false;
     }
 
+    // 当前 Classic 路径输出 CPU mesh
+    // GPU buffer 和 indirect draw 字段留给后续 GPU ROAM-like
     outPacket.Mode = TerrainLodRenderMode::CpuMesh;
     outPacket.CpuMesh = _builder.Build(
         *input.HeightMap,
@@ -60,12 +68,16 @@ const TerrainLodStats& ClassicRoamTerrainLodAlgorithm::Stats() const
 
 void ClassicRoamTerrainLodAlgorithm::Reset()
 {
+    // Reset 通过重建 builder 丢弃持久拓扑
+    // renderer 在算法开关或规则网格回退时会调用
     _builder = ClassicRoamMeshBuilder{};
     _stats = {};
 }
 
 ClassicRoamSettings ClassicRoamTerrainLodAlgorithm::ToClassicSettings(const TerrainLodSettings& settings)
 {
+    // 只复制 Classic builder 已支持的控制变量
+    // TerrainLodSettings 中的 GPU 统计字段不进入此层
     ClassicRoamSettings classicSettings{};
     classicSettings.MaxDepth = settings.MaxDepth;
     classicSettings.SplitThreshold = settings.SplitThreshold;
@@ -79,6 +91,8 @@ ClassicRoamSettings ClassicRoamTerrainLodAlgorithm::ToClassicSettings(const Terr
 
 TerrainLodStats ClassicRoamTerrainLodAlgorithm::ToTerrainLodStats(const ClassicRoamStats& stats)
 {
+    // 统一 Stats 字段是 benchmark CSV 的稳定契约
+    // Classic 的 split/merge/emit 时间映射到 CPU topology 和 mesh build 桶
     TerrainLodStats lodStats{};
     lodStats.ActiveTriangleCount = stats.ActiveTriangleCount;
     lodStats.ActiveNodeCount = stats.NodeCount;

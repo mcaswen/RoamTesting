@@ -16,6 +16,24 @@ namespace ParallelRoam::Algorithms::ClassicRoam
 {
 namespace
 {
+// Classic builder 是后续 DOD 和 GPU 版本的行为基线
+// 它故意保留裸指针拓扑
+// 这样 split、merge、diamond 约束可以用最直接的 ROAM 语义表达
+// Data-Oriented 版必须在相同输入下复现这些行为
+// benchmark 因此能把性能差异归因到数据布局和任务拆分
+// 而不是算法语义漂移
+// 本文件的复杂点主要有三类
+// 第一类是持久化 bintree 生命周期
+// child 被 merge 后不会销毁
+// 后续重新 split 可以复用旧节点和 geometric error
+// 第二类是 baseNeighbor 约束传播
+// 单侧 split 会制造 T-junction
+// 因此必须沿 base edge 追到合法 diamond
+// 第三类是 hysteresis
+// split 和 merge 阈值分离
+// 上一帧 active split path 会影响中间区间决策
+// 这些约束都需要保持稳定
+// 否则 DOD 版很难判断差异来自优化还是行为错误
 constexpr std::uint64_t RootAPathId = 1ULL;
 
 // 第二棵根树放到高位区间，避免 rootA child path 与 rootB root 撞号
@@ -29,6 +47,9 @@ struct SplitEdge
     glm::vec2 Apex{0.0F};
 };
 
+// validator 不依赖 neighbor 指针直接判断裂缝
+// 它先把 active leaf 的几何边收集出来
+// 再用量化线段查找 T-junction 风险
 struct DomainEdge
 {
     // DomainEdge 用 UV 空间表达 leaf 边界
@@ -44,6 +65,8 @@ struct QuantizedPoint
 
 struct QuantizedLineKey
 {
+    // Direction 描述归一化直线方向
+    // Constant 描述直线相对原点的位置
     long long DirectionX{0};
     long long DirectionY{0};
     long long Constant{0};
@@ -74,6 +97,8 @@ struct QuantizedLineKeyHash
 
 struct QuantizedEdge
 {
+    // Line 负责把共线边归组
+    // 参数区间负责判断端点是否落入某条粗边内部
     QuantizedLineKey Line;
     long long MinParameter{0};
     long long MaxParameter{0};
@@ -137,6 +162,8 @@ QuantizedLineKey MakeLineKey(const QuantizedPoint& start, const QuantizedPoint& 
     directionX /= divisor;
     directionY /= divisor;
 
+    // 同一条无向直线必须得到唯一方向
+    // 否则相邻三角形的反向边会落入不同桶
     if (directionX < 0 || (directionX == 0 && directionY < 0))
     {
         directionX = -directionX;
@@ -202,6 +229,7 @@ Terrain::TerrainMeshData ClassicRoamMeshBuilder::Build(
 
     if (!heightMap.IsValid())
     {
+        // 与规则网格 builder 保持空 mesh 失败语义
         return meshData;
     }
 
@@ -223,6 +251,9 @@ Terrain::TerrainMeshData ClassicRoamMeshBuilder::Build(
 
     if (_settings.EnableTopologyValidation)
     {
+        // validator 是调试路径
+        // 不参与默认修复逻辑
+        // 结果通过 stats 暴露给 UI 和 smoke benchmark
         const auto validateStart = std::chrono::steady_clock::now();
         ValidateTopology();
         const auto validateEnd = std::chrono::steady_clock::now();
@@ -240,6 +271,8 @@ Terrain::TerrainMeshData ClassicRoamMeshBuilder::Build(
     _stats.MaxDepthReached = 0;
     for (const ClassicRoamNode* leaf : activeLeaves)
     {
+        // 只统计 active leaf
+        // node pool 中保留的 inactive child 不参与当前帧数据
         _stats.MaxDepthReached = std::max(_stats.MaxDepthReached, leaf->Depth);
         switch (ClassifyLeafDebug(*leaf))
         {
@@ -259,6 +292,7 @@ Terrain::TerrainMeshData ClassicRoamMeshBuilder::Build(
     _stats.EmitMilliseconds = ElapsedMilliseconds(emitStart, emitEnd);
     _stats.UpdateMilliseconds = ElapsedMilliseconds(updateStart, std::chrono::steady_clock::now());
     CollectActiveSplitPaths();
+    // hysteresis 只使用 merge 和 split 完成后的最终 active topology
     _previousSplitPaths = _currentSplitPaths;
     _topologyMaxDepth = _settings.MaxDepth;
     return meshData;
@@ -374,6 +408,8 @@ void ClassicRoamMeshBuilder::RefineNode(ClassicRoamNode* node)
 
 void ClassicRoamMeshBuilder::RefineWithSplitQueue(ClassicRoamNode* rootA, ClassicRoamNode* rootB)
 {
+    // priority queue 把 split budget 用在最高 screen error 的 leaf 上
+    // 避免递归遍历时某条局部路径抢占整帧预算
     struct SplitCandidate
     {
         float Score{0.0F};
@@ -387,6 +423,8 @@ void ClassicRoamMeshBuilder::RefineWithSplitQueue(ClassicRoamNode* rootA, Classi
         {
             if (left.Score == right.Score)
             {
+                // sequence 让同分候选稳定排序
+                // 减少相机静止时的拓扑抖动
                 return left.Sequence > right.Sequence;
             }
 
@@ -445,6 +483,7 @@ void ClassicRoamMeshBuilder::RefineWithSplitQueue(ClassicRoamNode* rootA, Classi
         // 候选可能已经被 forced split 拆掉，需要在弹出时再次确认
         if (node == nullptr || !IsLeaf(node))
         {
+            // candidate 可能已经被 forced split 消耗
             continue;
         }
 
@@ -452,6 +491,8 @@ void ClassicRoamMeshBuilder::RefineWithSplitQueue(ClassicRoamNode* rootA, Classi
         // 分数会随 forced split 后的拓扑变化重新计算，避免使用过期候选
         if (!ShouldSplitWithScore(*node, score))
         {
+            // score 在弹出时重算
+            // 约束传播产生的新拓扑可能让旧候选过期
             continue;
         }
 
@@ -484,6 +525,9 @@ void ClassicRoamMeshBuilder::RefineWithSplitQueue(ClassicRoamNode* rootA, Classi
 
 void ClassicRoamMeshBuilder::MergeWithDiamondQueue()
 {
+    // merge 从可回收 internal node 中收集候选
+    // 低 error 先回收
+    // 让远处细节比近处更早退回粗网格
     struct MergeCandidate
     {
         float Score{0.0F};
@@ -555,6 +599,7 @@ bool ClassicRoamMeshBuilder::SplitNode(
     {
         int guard = 0;
         // baseNeighbor 不是互指关系时，先沿邻接链追到合法 diamond
+        // guard 防止损坏拓扑导致无限递归
         while (baseNeighbor != nullptr &&
                baseNeighbor != forcedFrom &&
                baseNeighbor->BaseNeighbor != node &&
@@ -605,6 +650,8 @@ bool ClassicRoamMeshBuilder::SplitNode(
     node->IsSplit = true;
     node->SplitBuildId = _buildSequence;
     // 重新激活 child 前清空旧邻接，避免历史 merge 状态污染本次 split
+    // child 指针复用是性能优化
+    // 但 neighbor 指针必须按当前 active topology 重建
     node->LeftChild->BaseNeighbor = nullptr;
     node->LeftChild->LeftNeighbor = nullptr;
     node->LeftChild->RightNeighbor = nullptr;
@@ -647,6 +694,8 @@ void ClassicRoamMeshBuilder::LinkSplitNeighbors(ClassicRoamNode* node, ClassicRo
 
     if (baseNeighbor == nullptr || IsLeaf(baseNeighbor))
     {
+        // 对侧仍是粗 leaf 时没有可连接的 child pair
+        // 后续 forced split 会补齐 diamond
         return;
     }
 
@@ -758,6 +807,7 @@ void ClassicRoamMeshBuilder::MergeSingleNode(ClassicRoamNode* node)
 
     // parent 的 left/right 边分别来自两个 child 的 base 边
     // 外部 neighbor 必须改指向 parent，不能继续指向 inactive child
+    // 否则 validator 会发现 neighbor 指向非 active leaf
     ReplaceNeighborReference(newLeftNeighbor, leftChild, node);
     ReplaceNeighborReference(newRightNeighbor, rightChild, node);
     node->LeftNeighbor = newLeftNeighbor;
@@ -781,6 +831,7 @@ bool ClassicRoamMeshBuilder::MergeNodeOrDiamond(ClassicRoamNode* node)
     if (baseNeighbor != nullptr && !IsLeaf(baseNeighbor))
     {
         // 完整 diamond merge 要同时回收当前 parent 和 base parent
+        // 单侧回收会让对侧 child 贴到粗边上
         if (!CanMergeNode(baseNeighbor) || baseNeighbor->BaseNeighbor != node)
         {
             return false;
@@ -855,6 +906,8 @@ void ClassicRoamMeshBuilder::CollectActiveSplitPathsFrom(const ClassicRoamNode* 
 void ClassicRoamMeshBuilder::ValidateTopology()
 {
     // validator 使用量化边线索引检查裂缝，避免 leaf 之间两两扫描
+    // 这里故意独立于 neighbor 指针做几何裂缝检测
+    // 可以同时发现 neighbor 链路正确但 leaf 尺度不一致的问题
     std::vector<ClassicRoamNode*> leafNodes;
     CollectLeafNodes(leafNodes);
     std::unordered_set<const ClassicRoamNode*> leafSet;
@@ -903,6 +956,8 @@ void ClassicRoamMeshBuilder::ValidateTopology()
 
         for (const DomainEdge& edge : edges)
         {
+            // 每条边都映射到量化直线
+            // 同线端点集合用于检测粗边内部是否存在细边端点
             const QuantizedPoint start = QuantizePoint(edge.Start, _settings.MaxDepth);
             const QuantizedPoint end = QuantizePoint(edge.End, _settings.MaxDepth);
             const QuantizedLineKey line = MakeLineKey(start, end);
@@ -941,6 +996,7 @@ void ClassicRoamMeshBuilder::ValidateTopology()
         if (interiorIt != vertexParameters.end() && *interiorIt < edge.MaxParameter)
         {
             // validator 只记录 T-junction，不主动 split 修复
+            // 修复仍由 split 约束传播负责
             ++_stats.TjunctionCount;
             ++_stats.CrackRiskCount;
         }
@@ -969,6 +1025,7 @@ void ClassicRoamMeshBuilder::ValidateTopology()
 
     if (_rootA == nullptr || _rootB == nullptr || _rootA->BaseNeighbor != _rootB || _rootB->BaseNeighbor != _rootA)
     {
+        // 根 diamond 互指是所有后续 diamond 约束的基础
         ++_stats.InvalidTopologyCount;
     }
 
@@ -1034,6 +1091,7 @@ void ClassicRoamMeshBuilder::EmitDomainTriangle(const ClassicRoamNode& node, Ter
     for (const glm::vec2& uv : uvs)
     {
         // ROAM leaf 顶点从 Height Map 即时采样，保证 split 后新点高度正确
+        // 不缓存顶点能避免 merge/split 后共享顶点生命周期复杂化
         Terrain::TerrainMeshVertex vertex{};
         vertex.Position = DomainToWorld(uv);
         vertex.Normal = SampleNormal(uv);
@@ -1093,6 +1151,7 @@ bool ClassicRoamMeshBuilder::ShouldSplitWithScore(const ClassicRoamNode& node, f
     }
 
     // hysteresis 区间沿用上一帧 split 状态，降低 split/merge 抖动
+    // 这也是 fixed camera benchmark 稳定的重要条件
     return WasSplitLastFrame(node);
 }
 

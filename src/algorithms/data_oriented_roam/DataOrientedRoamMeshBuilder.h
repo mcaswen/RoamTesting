@@ -14,7 +14,7 @@
 namespace ParallelRoam::Algorithms::DataOrientedRoam
 {
 /// <summary>
-/// 使用 UV 空间表达一个 ROAM 三角形域，避免节点池重复保存世界空间顶点。
+/// 使用 UV 空间表达一个 ROAM 三角形域，避免节点池重复保存世界空间顶点
 /// </summary>
 struct TriangleDomain
 {
@@ -24,7 +24,7 @@ struct TriangleDomain
 };
 
 /// <summary>
-/// Data-Oriented CPU ROAM 3A 的单帧细分、合并和拓扑验证参数。
+/// Data-Oriented CPU ROAM 3A 的单帧细分、合并和拓扑验证参数
 /// </summary>
 struct DataOrientedRoamSettings
 {
@@ -38,7 +38,7 @@ struct DataOrientedRoamSettings
 };
 
 /// <summary>
-/// Data-Oriented CPU ROAM 的运行统计，补充节点池容量以观察预分配效果。
+/// Data-Oriented CPU ROAM 的运行统计，补充节点池容量以观察预分配效果
 /// </summary>
 struct DataOrientedRoamStats
 {
@@ -94,7 +94,7 @@ private:
     };
 
     /// <summary>
-    /// 3A 的 AoS 节点记录，所有拓扑关系都保存为 NodeIndex，后续 3B 会拆分为 SoA 数组。
+    /// 3A 的 AoS 节点记录，所有拓扑关系都保存为 NodeIndex，后续 3B 会拆分为 SoA 数组
     /// </summary>
     struct DataOrientedRoamNode
     {

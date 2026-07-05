@@ -14,11 +14,29 @@ namespace ParallelRoam::Algorithms::DataOrientedRoam
 {
 namespace
 {
+// 3A 的目标不是先追求并行性能
+// 这一版先把 Classic 指针树换成稳定的 index pool
+// 只要 split 语义和 benchmark 结果对齐
+// 后续 3B 才能安全地把字段拆成 SoA 数组
+// 因此本文件会有少量和 Classic 相似的拓扑逻辑
+// 差异点集中在节点生命周期和 neighbor 引用方式
+// 所有跨节点关系都必须经过 NodeIndex
+// 不允许保存 vector 元素地址或引用跨越 push_back
+// ReserveNodePool 是 3A 的关键保障
+// 它降低扩容概率但算法正确性不能依赖地址稳定
+// path id 保持 Classic 的二叉堆编码
+// benchmark 可用同一相机路径比较 hysteresis 行为
+// rootA 和 rootB 构成初始 diamond
+// 两棵根树的 path id 必须隔开
+// 否则左右子树路径会在跨帧 split 记忆中碰撞
 constexpr std::uint64_t RootAPathId = 1ULL;
 constexpr std::uint64_t RootBPathId = 1ULL << 32U;
 constexpr int ExactReserveMaxDepth = 20;
 constexpr std::size_t LargeDepthReserveFallback = 1'000'000U;
 
+// split 只沿当前三角形 base edge 执行
+// Start 和 End 是 base 两端
+// Apex 是对侧顶点
 struct SplitEdge
 {
     glm::vec2 Start{0.0F};
@@ -26,18 +44,27 @@ struct SplitEdge
     glm::vec2 Apex{0.0F};
 };
 
+// validator 使用完整 leaf 边界检测共享边和 T-junction
+// 这里保留连续 UV 坐标
+// 量化只发生在裂缝扫描阶段
 struct DomainEdge
 {
     glm::vec2 Start{0.0F};
     glm::vec2 End{0.0F};
 };
 
+// UV 坐标会在多次二分后产生浮点中点
+// validator 先量化到 maxDepth 网格再比较
+// 这样能避免浮点微小误差让同一条边匹配失败
 struct QuantizedPoint
 {
     long long X{0};
     long long Y{0};
 };
 
+// 同一直线上的边共用 LineKey
+// MinParameter 和 MaxParameter 再描述这条线段的区间
+// 这样可以用一维参数查找粗边内部是否被更细顶点切开
 struct QuantizedLineKey
 {
     long long DirectionX{0};
@@ -52,6 +79,9 @@ struct QuantizedLineKey
     }
 };
 
+// 自定义 hash 让 validator 可以把量化直线放进 unordered_map
+// 这里不追求加密质量
+// 只需要在大量 leaf 边上保持分布稳定
 struct QuantizedLineKeyHash
 {
     std::size_t operator()(const QuantizedLineKey& key) const
@@ -68,6 +98,9 @@ struct QuantizedLineKeyHash
     }
 };
 
+// QuantizedEdge 保存某条 leaf 边在量化直线上的闭区间
+// 如果同一直线上存在落在区间内部的端点
+// 说明当前拓扑存在潜在 T-junction
 struct QuantizedEdge
 {
     QuantizedLineKey Line;
@@ -83,6 +116,8 @@ float DistanceSquared(const glm::vec2& a, const glm::vec2& b)
 
 bool SamePoint(const glm::vec2& a, const glm::vec2& b)
 {
+    // UV 中点由浮点计算产生
+    // 使用容差能避免同一几何点因为舍入误差被判为不同点
     constexpr float Epsilon = 0.000001F;
     return DistanceSquared(a, b) <= Epsilon * Epsilon;
 }
@@ -98,11 +133,15 @@ std::array<DomainEdge, 3> DomainEdges(const TriangleDomain& domain)
 
 SplitEdge ChooseBaseEdge(const TriangleDomain& domain)
 {
+    // Classic ROAM 固定把 A-B 作为 base edge
+    // DOD 版必须保留这个约定才能和 Classic benchmark 对齐
     return SplitEdge{domain.A, domain.B, domain.C};
 }
 
 bool SameUndirectedEdge(const DomainEdge& left, const DomainEdge& right)
 {
+    // 邻接三角形通常以反向绕序保存共享边
+    // validator 因此必须同时接受两个方向
     return (SamePoint(left.Start, right.Start) && SamePoint(left.End, right.End)) ||
            (SamePoint(left.Start, right.End) && SamePoint(left.End, right.Start));
 }
@@ -114,6 +153,8 @@ long long AbsoluteGcd(long long a, long long b)
 
 QuantizedPoint QuantizePoint(const glm::vec2& point, int maxDepth)
 {
+    // maxDepth 决定理论最细网格
+    // clamp 到 30 避免左移溢出 long long 的安全区间
     const auto scale = static_cast<long long>(1ULL << static_cast<unsigned int>(std::clamp(maxDepth, 0, 30)));
     return QuantizedPoint{
         static_cast<long long>(std::llround(static_cast<double>(point.x) * static_cast<double>(scale))),
@@ -129,6 +170,8 @@ QuantizedLineKey MakeLineKey(const QuantizedPoint& start, const QuantizedPoint& 
     directionX /= divisor;
     directionY /= divisor;
 
+    // 方向归一到统一半平面
+    // 同一条无向直线才能得到相同 key
     if (directionX < 0 || (directionX == 0 && directionY < 0))
     {
         directionX = -directionX;
@@ -149,11 +192,14 @@ long long ProjectToLineParameter(const QuantizedPoint& point, const QuantizedLin
 
 std::uint64_t LeftChildPathId(std::uint64_t parentPathId)
 {
+    // path id 使用二叉堆编码
+    // merge 后重新 split 可以复用上一帧 hysteresis 状态
     return parentPathId * 2ULL;
 }
 
 std::uint64_t RightChildPathId(std::uint64_t parentPathId)
 {
+    // right child 通过末位 1 和 left child 区分
     return parentPathId * 2ULL + 1ULL;
 }
 
@@ -165,6 +211,8 @@ float ElapsedMilliseconds(std::chrono::steady_clock::time_point start, std::chro
 
 std::size_t ExactBintreeNodeCapacity(int maxDepth)
 {
+    // 两棵根树都可能展开成完整二叉树
+    // 3A 预分配容量按完整 bintree 上界估算
     const int safeDepth = std::clamp(maxDepth, 0, ExactReserveMaxDepth);
     const std::size_t nodesPerRoot = (std::size_t{1} << static_cast<unsigned int>(safeDepth + 1)) - 1U;
     return nodesPerRoot * 2U;
@@ -183,6 +231,8 @@ Terrain::TerrainMeshData DataOrientedRoamMeshBuilder::Build(
     const bool resetTopology = NeedsTopologyReset(heightMap, terrainSize, heightScale, settings);
     _heightMap = &heightMap;
     _settings = settings;
+    // merge 阈值不能高于 split 阈值
+    // 否则同一帧可能在 hysteresis 区间反复展开和回收
     _settings.MergeThreshold = std::min(_settings.MergeThreshold, _settings.SplitThreshold);
     _stats = {};
     _currentSplitPaths.clear();
@@ -198,6 +248,7 @@ Terrain::TerrainMeshData DataOrientedRoamMeshBuilder::Build(
 
     if (!heightMap.IsValid())
     {
+        // 保持返回空 mesh 的语义和 Classic builder 一致
         return meshData;
     }
 
@@ -205,9 +256,14 @@ Terrain::TerrainMeshData DataOrientedRoamMeshBuilder::Build(
 
     if (resetTopology)
     {
+        // HeightMap 或几何尺度变化会让缓存误差失效
+        // 降低 maxDepth 时也需要丢弃过深历史节点
         ResetTopology();
     }
 
+    // merge 先于 split
+    // 这样远处旧细节会先回收
+    // 新 split 不会在同一帧立刻被低阈值撤销
     const auto mergeStart = std::chrono::steady_clock::now();
     MergeWithDiamondQueue();
     const auto mergeEnd = std::chrono::steady_clock::now();
@@ -218,6 +274,8 @@ Terrain::TerrainMeshData DataOrientedRoamMeshBuilder::Build(
 
     if (_settings.EnableTopologyValidation)
     {
+        // validator 是全局扫描
+        // 默认只在 smoke benchmark 和 debug 场景开启
         const auto validateStart = std::chrono::steady_clock::now();
         ValidateTopology();
         const auto validateEnd = std::chrono::steady_clock::now();
@@ -237,6 +295,9 @@ Terrain::TerrainMeshData DataOrientedRoamMeshBuilder::Build(
     _stats.MaxDepthReached = 0;
     for (NodeIndex leafIndex : activeLeaves)
     {
+        // leaf 分类服务于 debug color 和 benchmark 统计
+        // 只遍历 active topology
+        // inactive child 仍留在 node pool 中但不参与统计
         const DataOrientedRoamNode& leaf = _nodes[leafIndex];
         _stats.MaxDepthReached = std::max(_stats.MaxDepthReached, leaf.Depth);
         switch (ClassifyLeafDebug(leaf))
@@ -258,6 +319,8 @@ Terrain::TerrainMeshData DataOrientedRoamMeshBuilder::Build(
     _stats.EmitMilliseconds = ElapsedMilliseconds(emitStart, emitEnd);
     _stats.UpdateMilliseconds = ElapsedMilliseconds(updateStart, std::chrono::steady_clock::now());
     CollectActiveSplitPaths();
+    // split path 集合是 hysteresis 的跨帧状态
+    // 必须在 merge 和 split 都完成后再更新
     _previousSplitPaths = _currentSplitPaths;
     _topologyMaxDepth = _settings.MaxDepth;
     return meshData;
@@ -281,6 +344,8 @@ DataOrientedRoamMeshBuilder::NodeIndex DataOrientedRoamMeshBuilder::AddNode(
     node.PathId = pathId;
     node.CreatedBuildId = _buildSequence;
     node.ActivatedBuildId = _buildSequence;
+    // geometric error 只依赖 HeightMap 和 domain
+    // 节点创建后可跨帧复用
     node.GeometricError = ComputeGeometricError(domain);
     _stats.MaxDepthReached = std::max(_stats.MaxDepthReached, depth);
 
@@ -290,6 +355,9 @@ DataOrientedRoamMeshBuilder::NodeIndex DataOrientedRoamMeshBuilder::AddNode(
 
 void DataOrientedRoamMeshBuilder::ReserveNodePool()
 {
+    // split budget 给出本次 build 的增量上界
+    // 完整 bintree 容量给出当前 maxDepth 的理论上界
+    // 取较大值可以减少 3A 节点池扩容频率
     std::size_t targetCapacity = 2U + _settings.SplitBudget * 2U;
     if (_settings.MaxDepth <= ExactReserveMaxDepth)
     {
@@ -308,6 +376,8 @@ void DataOrientedRoamMeshBuilder::ReserveNodePool()
 
 void DataOrientedRoamMeshBuilder::ResetTopology()
 {
+    // ResetTopology 是唯一清空 node pool 的入口
+    // 普通相机移动保留历史节点和 split path
     _nodes.clear();
     _previousSplitPaths.clear();
     _currentSplitPaths.clear();
@@ -323,6 +393,8 @@ void DataOrientedRoamMeshBuilder::ResetTopology()
         0,
         RootBPathId);
 
+    // 两个根三角形跨共享对角线互为 base neighbor
+    // 这是 Classic ROAM 根 diamond 的起点
     _nodes[_rootA].BaseNeighbor = _rootB;
     _nodes[_rootB].BaseNeighbor = _rootA;
     _topologyMaxDepth = _settings.MaxDepth;
@@ -341,11 +413,13 @@ bool DataOrientedRoamMeshBuilder::NeedsTopologyReset(
 
     if (_heightMap != &heightMap)
     {
+        // HeightMap 指针变化意味着所有 geometric error 缓存失效
         return true;
     }
 
     if (settings.MaxDepth < _topologyMaxDepth)
     {
+        // 降低深度时历史节点可能超过新上限
         return true;
     }
 
@@ -354,6 +428,9 @@ bool DataOrientedRoamMeshBuilder::NeedsTopologyReset(
 
 void DataOrientedRoamMeshBuilder::RefineWithSplitQueue(NodeIndex rootA, NodeIndex rootB)
 {
+    // 候选队列让最显著的 screen error 先 split
+    // 相比递归深挖单一路径
+    // 这种策略更适合受 SplitBudget 限制的交互帧
     struct SplitCandidate
     {
         float Score{0.0F};
@@ -367,6 +444,8 @@ void DataOrientedRoamMeshBuilder::RefineWithSplitQueue(NodeIndex rootA, NodeInde
         {
             if (left.Score == right.Score)
             {
+                // sequence 保证同分候选的处理顺序稳定
+                // 相机静止时可以减少 mesh 抖动
                 return left.Sequence > right.Sequence;
             }
 
@@ -378,6 +457,8 @@ void DataOrientedRoamMeshBuilder::RefineWithSplitQueue(NodeIndex rootA, NodeInde
     std::uint64_t sequence = 0;
 
     const auto enqueueCandidate = [this, &candidates, &sequence](NodeIndex node) {
+        // 只有 active leaf 才能进入 split 队列
+        // internal node 已经由 child 接管后续细分决策
         if (!IsValidNode(node) || !IsLeaf(node) || _nodes[node].Depth >= _settings.MaxDepth)
         {
             return;
@@ -386,6 +467,8 @@ void DataOrientedRoamMeshBuilder::RefineWithSplitQueue(NodeIndex rootA, NodeInde
         const float score = ComputeScreenErrorScore(_nodes[node]);
         if (!ShouldSplitWithScore(_nodes[node], score))
         {
+            // hysteresis 区间可能沿用上一帧状态
+            // 这里统一由 ShouldSplitWithScore 决定
             return;
         }
 
@@ -394,6 +477,8 @@ void DataOrientedRoamMeshBuilder::RefineWithSplitQueue(NodeIndex rootA, NodeInde
     };
 
     const auto enqueueActiveLeaves = [&enqueueCandidate, this](auto&& self, NodeIndex node) -> void {
+        // 持久拓扑中 root 通常已经 split
+        // 每帧需要从当前 active leaf 重新评估 screen error
         if (!IsValidNode(node))
         {
             return;
@@ -420,17 +505,22 @@ void DataOrientedRoamMeshBuilder::RefineWithSplitQueue(NodeIndex rootA, NodeInde
         const NodeIndex node = candidate.Node;
         if (!IsValidNode(node) || !IsLeaf(node))
         {
+            // forced split 可能已经拆掉这个候选
+            // 弹出时必须重新验证 active 状态
             continue;
         }
 
         const float score = ComputeScreenErrorScore(_nodes[node]);
         if (!ShouldSplitWithScore(_nodes[node], score))
         {
+            // 候选分数可能因拓扑传播或相机状态变化而过期
             continue;
         }
 
         if (_settings.SplitBudget > 0U && _stats.SplitCount >= _settings.SplitBudget)
         {
+            // 预算耗尽后停止本帧细分
+            // 下一帧会从新的 active leaf 集合继续推进
             ++_stats.RejectedSplitCount;
             break;
         }
@@ -447,6 +537,8 @@ void DataOrientedRoamMeshBuilder::RefineWithSplitQueue(NodeIndex rootA, NodeInde
 
         if (IsValidNode(baseNeighborBeforeSplit) && !IsLeaf(baseNeighborBeforeSplit))
         {
+            // base neighbor 可能被约束传播提前 split
+            // 新产生的 child 也要回到候选队列继续按误差评估
             enqueueCandidate(_nodes[baseNeighborBeforeSplit].LeftChild);
             enqueueCandidate(_nodes[baseNeighborBeforeSplit].RightChild);
         }
@@ -455,6 +547,9 @@ void DataOrientedRoamMeshBuilder::RefineWithSplitQueue(NodeIndex rootA, NodeInde
 
 void DataOrientedRoamMeshBuilder::MergeWithDiamondQueue()
 {
+    // merge candidate 从 active internal node 收集
+    // 低 screen error 优先回收
+    // 这样远处细节能更快回落到粗拓扑
     struct MergeCandidate
     {
         float Score{0.0F};
@@ -491,6 +586,7 @@ void DataOrientedRoamMeshBuilder::MergeWithDiamondQueue()
     {
         if (!CanMergeNode(candidate.Node))
         {
+            // 前面的 merge 可能改变后面候选的 active 状态
             continue;
         }
 
@@ -518,6 +614,8 @@ bool DataOrientedRoamMeshBuilder::SplitNode(NodeIndex node, SplitReason reason, 
     if (_settings.EnableLocalConstraints)
     {
         int guard = 0;
+        // 非互为 base 的邻接链必须先追到合法 diamond
+        // 否则单侧 split 会把一条粗边贴到多条细边上
         while (IsValidNode(baseNeighbor) &&
                baseNeighbor != forcedFrom &&
                _nodes[baseNeighbor].BaseNeighbor != node &&
@@ -529,6 +627,8 @@ bool DataOrientedRoamMeshBuilder::SplitNode(NodeIndex node, SplitReason reason, 
                 return false;
             }
 
+            // forced split 可能改写当前节点的 base neighbor
+            // 每次传播后都要刷新
             baseNeighbor = _nodes[node].BaseNeighbor;
             ++guard;
         }
@@ -536,6 +636,8 @@ bool DataOrientedRoamMeshBuilder::SplitNode(NodeIndex node, SplitReason reason, 
 
     if (_settings.EnableLocalConstraints && IsValidNode(baseNeighbor) && IsLeaf(baseNeighbor) && baseNeighbor != forcedFrom)
     {
+        // 对侧仍是 leaf 时先补齐 base neighbor split
+        // forcedFrom 防止互为 base 的两个 leaf 递归回跳
         ++_stats.ConstraintPassCount;
         if (!SplitNode(baseNeighbor, SplitReason::ForcedByBaseNeighbor, node))
         {
@@ -548,6 +650,8 @@ bool DataOrientedRoamMeshBuilder::SplitNode(NodeIndex node, SplitReason reason, 
     const std::uint64_t parentPathId = _nodes[node].PathId;
     if (!IsValidNode(_nodes[node].LeftChild) || !IsValidNode(_nodes[node].RightChild))
     {
+        // 首次 split 创建 child
+        // merge 后再次 split 时会复用同一 child index
         const TriangleDomain domain = _nodes[node].Domain;
         const int childDepth = _nodes[node].Depth + 1;
         const SplitEdge edge = ChooseBaseEdge(domain);
@@ -567,6 +671,8 @@ bool DataOrientedRoamMeshBuilder::SplitNode(NodeIndex node, SplitReason reason, 
 
     DataOrientedRoamNode& leftChild = _nodes[parent.LeftChild];
     DataOrientedRoamNode& rightChild = _nodes[parent.RightChild];
+    // child 可能从历史 merge 状态复用
+    // 激活前必须清空旧 neighbor
     leftChild.BaseNeighbor = InvalidNodeIndex;
     leftChild.LeftNeighbor = InvalidNodeIndex;
     leftChild.RightNeighbor = InvalidNodeIndex;
@@ -605,6 +711,9 @@ void DataOrientedRoamMeshBuilder::LinkSplitNeighbors(NodeIndex node, NodeIndex b
     _nodes[leftChild].LeftNeighbor = rightChild;
     _nodes[rightChild].RightNeighbor = leftChild;
 
+    // child 的 base edge 分别来自父节点 left edge 和 right edge
+    // 外侧 neighbor 若仍指向旧 parent
+    // 必须改到 split 后共享完整边的 child
     _nodes[leftChild].BaseNeighbor = _nodes[node].LeftNeighbor;
     _nodes[rightChild].BaseNeighbor = _nodes[node].RightNeighbor;
     ReplaceNeighborReference(_nodes[node].LeftNeighbor, node, leftChild);
@@ -612,9 +721,12 @@ void DataOrientedRoamMeshBuilder::LinkSplitNeighbors(NodeIndex node, NodeIndex b
 
     if (!IsValidNode(baseNeighbor) || IsLeaf(baseNeighbor))
     {
+        // 对侧没有 split 时没有完整 diamond child 可以连接
         return;
     }
 
+    // baseNeighbor 已 split 时四个 child 共同组成 diamond
+    // 这里建立跨 base edge 的左右 child 互指关系
     _nodes[leftChild].RightNeighbor = _nodes[baseNeighbor].RightChild;
     _nodes[rightChild].LeftNeighbor = _nodes[baseNeighbor].LeftChild;
     if (IsValidNode(_nodes[baseNeighbor].RightChild))
@@ -653,6 +765,9 @@ void DataOrientedRoamMeshBuilder::ReplaceNeighborReference(NodeIndex neighbor, N
 
 bool DataOrientedRoamMeshBuilder::CanMergeNode(NodeIndex node) const
 {
+    // merge 只能回收两个 active leaf child
+    // 如果 child 下面还有更深细分
+    // 必须从更深层开始回收
     if (!IsValidNode(node) || IsLeaf(node))
     {
         return false;
@@ -671,6 +786,7 @@ bool DataOrientedRoamMeshBuilder::CanMergeNode(NodeIndex node) const
 
     if (ComputeScreenErrorScore(candidate) > _settings.MergeThreshold)
     {
+        // parent 自身误差仍高时回收会造成可见 LOD 退化
         return false;
     }
 
@@ -682,6 +798,8 @@ bool DataOrientedRoamMeshBuilder::CanMergeNode(NodeIndex node) const
 
     if (_nodes[baseNeighbor].BaseNeighbor != node)
     {
+        // 非互指 diamond 不能单侧 merge
+        // 否则会制造 T-junction
         return false;
     }
 
@@ -710,6 +828,8 @@ void DataOrientedRoamMeshBuilder::MergeSingleNode(NodeIndex node)
     const NodeIndex newLeftNeighbor = _nodes[leftChild].BaseNeighbor;
     const NodeIndex newRightNeighbor = _nodes[rightChild].BaseNeighbor;
 
+    // parent 重新成为 leaf 后
+    // 外部 neighbor 必须从 inactive child 改回 parent
     ReplaceNeighborReference(newLeftNeighbor, leftChild, node);
     ReplaceNeighborReference(newRightNeighbor, rightChild, node);
     _nodes[node].LeftNeighbor = newLeftNeighbor;
@@ -731,6 +851,8 @@ bool DataOrientedRoamMeshBuilder::MergeNodeOrDiamond(NodeIndex node)
     const NodeIndex baseNeighbor = _nodes[node].BaseNeighbor;
     if (IsValidNode(baseNeighbor) && !IsLeaf(baseNeighbor))
     {
+        // 完整 diamond merge 要同时回收两侧 parent
+        // 只回收一侧会让对侧 child 贴上粗边
         if (!CanMergeNode(baseNeighbor) || _nodes[baseNeighbor].BaseNeighbor != node)
         {
             return false;
@@ -751,6 +873,8 @@ bool DataOrientedRoamMeshBuilder::MergeNodeOrDiamond(NodeIndex node)
 
 void DataOrientedRoamMeshBuilder::CollectLeafNodes(std::vector<NodeIndex>& leafNodes) const
 {
+    // 只能从 root 递归收集 active topology
+    // node pool 中的 inactive child 不属于当前 mesh
     leafNodes.clear();
     leafNodes.reserve(_nodes.size());
     CollectLeafNodesFrom(_rootA, leafNodes);
@@ -776,6 +900,8 @@ void DataOrientedRoamMeshBuilder::CollectLeafNodesFrom(NodeIndex node, std::vect
 
 void DataOrientedRoamMeshBuilder::CollectActiveSplitPaths()
 {
+    // active split path 反映 merge 后的当前拓扑
+    // hysteresis 下一帧只沿这些 path 复用 split 状态
     _currentSplitPaths.clear();
     _stats.ActiveSplitCount = 0;
     CollectActiveSplitPathsFrom(_rootA);
@@ -797,6 +923,9 @@ void DataOrientedRoamMeshBuilder::CollectActiveSplitPathsFrom(NodeIndex node)
 
 void DataOrientedRoamMeshBuilder::ValidateTopology()
 {
+    // validator 不修复拓扑
+    // 它只把裂缝风险和邻接错误写入统计
+    // smoke benchmark 用这些统计判断回归
     std::vector<NodeIndex> leafNodes;
     CollectLeafNodes(leafNodes);
     std::vector<bool> leafSet(_nodes.size(), false);
@@ -806,6 +935,8 @@ void DataOrientedRoamMeshBuilder::ValidateTopology()
     }
 
     const auto validateNeighbor = [this, &leafSet](NodeIndex owner, NodeIndex neighbor, const DomainEdge& edge) {
+        // 非空 neighbor 必须是当前 active leaf
+        // 还必须能在对侧找到同一条完整共享边
         if (!IsValidNode(neighbor) || !leafSet[neighbor])
         {
             return false;
@@ -831,6 +962,8 @@ void DataOrientedRoamMeshBuilder::ValidateTopology()
 
     for (NodeIndex node : leafNodes)
     {
+        // 每条 leaf 边都记录到量化直线索引中
+        // 同一直线上的端点集合用于发现粗边内部切点
         const std::array<DomainEdge, 3> edges = DomainEdges(_nodes[node].Domain);
         for (const DomainEdge& edge : edges)
         {
@@ -870,6 +1003,8 @@ void DataOrientedRoamMeshBuilder::ValidateTopology()
         const auto interiorIt = std::upper_bound(vertexParameters.begin(), vertexParameters.end(), edge.MinParameter);
         if (interiorIt != vertexParameters.end() && *interiorIt < edge.MaxParameter)
         {
+            // 粗边内部存在其他 leaf 端点
+            // 这就是典型 T-junction 风险
             ++_stats.TjunctionCount;
             ++_stats.CrackRiskCount;
         }
@@ -900,6 +1035,7 @@ void DataOrientedRoamMeshBuilder::ValidateTopology()
         _nodes[_rootA].BaseNeighbor != _rootB ||
         _nodes[_rootB].BaseNeighbor != _rootA)
     {
+        // 根 diamond 失效通常意味着 split/merge 改写了不该改的 base neighbor
         ++_stats.InvalidTopologyCount;
     }
 
@@ -923,6 +1059,7 @@ void DataOrientedRoamMeshBuilder::ValidateTopology()
 
         if (nodeIndex != _rootA && nodeIndex != _rootB && !IsValidNode(node.Parent))
         {
+            // 除 root 外的节点必须能回溯到 parent
             ++_stats.InvalidTopologyCount;
         }
     }
@@ -930,6 +1067,8 @@ void DataOrientedRoamMeshBuilder::ValidateTopology()
 
 void DataOrientedRoamMeshBuilder::EmitLeafTriangles(Terrain::TerrainMeshData& meshData) const
 {
+    // 3A 仍输出 CPU mesh
+    // 后续 SoA 和并行阶段会先保持这个渲染出口稳定
     std::vector<NodeIndex> leafNodes;
     CollectLeafNodes(leafNodes);
 
@@ -959,6 +1098,8 @@ void DataOrientedRoamMeshBuilder::EmitDomainTriangle(
 
     for (const glm::vec2& uv : uvs)
     {
+        // leaf 顶点从 HeightMap 即时采样
+        // 这样 split 后的新中点高度和规则网格 baseline 一致
         Terrain::TerrainMeshVertex vertex{};
         vertex.Position = DomainToWorld(uv);
         vertex.Normal = SampleNormal(uv);
@@ -973,6 +1114,9 @@ void DataOrientedRoamMeshBuilder::EmitDomainTriangle(
     const glm::vec3 edge1 = meshData.Vertices[baseIndex + 2U].Position - meshData.Vertices[baseIndex].Position;
     const bool pointsTowardPositiveY = glm::cross(edge0, edge1).y >= 0.0F;
 
+    // domain 绕序在递归 split 后可能和渲染面朝向相反
+    // emit 阶段统一翻到正 Y
+    // 后续开启 face culling 时不会出现随机消隐
     meshData.Indices.push_back(baseIndex);
     if (pointsTowardPositiveY)
     {
@@ -1002,9 +1146,13 @@ bool DataOrientedRoamMeshBuilder::ShouldSplitWithScore(
 
     if (screenErrorScore < _settings.MergeThreshold)
     {
+        // 低于 merge 阈值时明确不 split
+        // 中间区间才交给 hysteresis 保持稳定
         return false;
     }
 
+    // hysteresis 区间沿用上一帧 split 状态
+    // 避免相机轻微移动造成频繁 split / merge 抖动
     return WasSplitLastFrame(node);
 }
 
@@ -1016,6 +1164,8 @@ bool DataOrientedRoamMeshBuilder::WasSplitLastFrame(const DataOrientedRoamNode& 
 DataOrientedRoamMeshBuilder::LeafDebugClass DataOrientedRoamMeshBuilder::ClassifyLeafDebug(
     const DataOrientedRoamNode& node) const
 {
+    // Rebuilt 同时覆盖新 split child 和本帧 merge 回来的 parent
+    // debug color 用它突出本帧拓扑变化区域
     if (node.ActivatedBuildId == _buildSequence || node.MergeBuildId == _buildSequence)
     {
         return LeafDebugClass::Rebuilt;
@@ -1071,11 +1221,16 @@ float DataOrientedRoamMeshBuilder::DebugHighlightForLeaf(const DataOrientedRoamN
 
 float DataOrientedRoamMeshBuilder::ComputeGeometricError(const TriangleDomain& domain) const
 {
+    // 误差缓存只看 domain 对应的高度变化
+    // 不依赖相机
+    // 因此 node 创建后可以跨帧复用
     const float heightA = _heightMap->SampleBilinear(domain.A.x, domain.A.y);
     const float heightB = _heightMap->SampleBilinear(domain.B.x, domain.B.y);
     const float heightC = _heightMap->SampleBilinear(domain.C.x, domain.C.y);
 
     const auto edgeMidpointError = [this](const glm::vec2& start, const glm::vec2& end, float startHeight, float endHeight) {
+        // 边中点误差能捕获边界起伏
+        // 只看三角形重心会漏掉沿边的高频变化
         const glm::vec2 midpoint = (start + end) * 0.5F;
         const float midpointHeight = _heightMap->SampleBilinear(midpoint.x, midpoint.y);
         const float interpolatedHeight = (startHeight + endHeight) * 0.5F;
@@ -1086,6 +1241,8 @@ float DataOrientedRoamMeshBuilder::ComputeGeometricError(const TriangleDomain& d
     const float centroidHeight = _heightMap->SampleBilinear(centroid.x, centroid.y);
     const float centroidInterpolatedHeight = (heightA + heightB + heightC) / 3.0F;
 
+    // 取边中点和重心的最大误差
+    // 平衡边界裂缝风险和三角形内部起伏
     return std::max({
         edgeMidpointError(domain.A, domain.B, heightA, heightB),
         edgeMidpointError(domain.B, domain.C, heightB, heightC),
@@ -1096,6 +1253,9 @@ float DataOrientedRoamMeshBuilder::ComputeGeometricError(const TriangleDomain& d
 
 float DataOrientedRoamMeshBuilder::ComputeScreenErrorScore(const DataOrientedRoamNode& node) const
 {
+    // 当前阶段使用简化 screen error
+    // 高度误差负责山体起伏
+    // 边长项保证近处平坦区域仍能细分
     const glm::vec3 a = DomainToWorld(node.Domain.A);
     const glm::vec3 b = DomainToWorld(node.Domain.B);
     const glm::vec3 c = DomainToWorld(node.Domain.C);
@@ -1110,11 +1270,15 @@ float DataOrientedRoamMeshBuilder::ComputeScreenErrorScore(const DataOrientedRoa
     constexpr float ProjectedEdgeWeight = 0.20F;
     const float heightErrorScore = worldError * _settings.DistanceScale / distance;
     const float edgeLengthScore = longestEdgeLength * ProjectedEdgeWeight / distance;
+    // 两项取最大值
+    // 避免高频地形和近处平地互相掩盖
     return std::max(heightErrorScore, edgeLengthScore);
 }
 
 glm::vec3 DataOrientedRoamMeshBuilder::DomainToWorld(const glm::vec2& uv) const
 {
+    // 地形中心放在世界原点
+    // 这和规则网格 builder 保持同一坐标系
     const float height = _heightMap->SampleBilinear(uv.x, uv.y);
     return glm::vec3{
         (uv.x - 0.5F) * _terrainSize,
@@ -1125,6 +1289,9 @@ glm::vec3 DataOrientedRoamMeshBuilder::DomainToWorld(const glm::vec2& uv) const
 
 glm::vec3 DataOrientedRoamMeshBuilder::SampleNormal(const glm::vec2& uv) const
 {
+    // 法线从 HeightMap 梯度估计
+    // 不依赖相邻 leaf
+    // 可以避免重复顶点导致的硬边过重
     const float stepU = 1.0F / static_cast<float>(std::max(_heightMap->Width() - 1, 1));
     const float stepV = 1.0F / static_cast<float>(std::max(_heightMap->Height() - 1, 1));
     const float left = _heightMap->SampleBilinear(uv.x - stepU, uv.y);
@@ -1138,6 +1305,8 @@ glm::vec3 DataOrientedRoamMeshBuilder::SampleNormal(const glm::vec2& uv) const
 
     if (glm::dot(normal, normal) <= std::numeric_limits<float>::epsilon())
     {
+        // 极端平坦或退化采样时回退竖直法线
+        // shader 侧不需要处理 NaN
         return glm::vec3{0.0F, 1.0F, 0.0F};
     }
 

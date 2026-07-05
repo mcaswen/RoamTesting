@@ -6,6 +6,9 @@
 
 namespace ParallelRoam::Render
 {
+// Shader 封装的关键语义是失败不破坏旧 program
+// Load 只有在新 program 编译和链接都成功后才替换 _programId
+// 因此 renderer 可以在 shader 重载失败后继续使用旧状态
 Shader::~Shader()
 {
     Destroy();
@@ -29,6 +32,8 @@ bool Shader::Load(const char* vertexSource, const char* fragmentSource, std::str
     }
 
     const unsigned int programId = glCreateProgram();
+    // attach 后 shader object 生命周期仍由本函数负责
+    // link 完成后无论成功失败都不再需要 shader object
     glAttachShader(programId, vertexShader);
     glAttachShader(programId, fragmentShader);
     glLinkProgram(programId);
@@ -59,6 +64,8 @@ void Shader::Destroy()
 {
     if (_programId != 0)
     {
+        // Destroy 可重复调用
+        // program id 清零后后续析构不会二次删除
         glDeleteProgram(_programId);
         _programId = 0;
     }
@@ -81,6 +88,8 @@ void Shader::SetMat4(const char* uniformName, const glm::mat4& value) const
 
 void Shader::SetVec3(const char* uniformName, const glm::vec3& value) const
 {
+    // SetMat4 已说明 uniform 被优化掉的情况
+    // 其它 setter 保持同一容错语义
     const int location = glGetUniformLocation(_programId, uniformName);
     if (location >= 0)
     {
@@ -90,6 +99,9 @@ void Shader::SetVec3(const char* uniformName, const glm::vec3& value) const
 
 void Shader::SetFloat(const char* uniformName, float value) const
 {
+    // uniform 查询放在 setter 内
+    // 当前 shader 数量小
+    // 先保持调用方简单
     const int location = glGetUniformLocation(_programId, uniformName);
     if (location >= 0)
     {
@@ -122,6 +134,8 @@ unsigned int Shader::CompileShader(unsigned int shaderType, const char* source, 
     glGetShaderiv(shaderId, GL_COMPILE_STATUS, &success);
     if (success == 0)
     {
+        // 编译失败的 shader id 不能泄漏
+        // 错误日志在删除前读取
         if (errorMessage != nullptr)
         {
             *errorMessage = "OpenGL shader compile failed:\n" + ReadShaderLog(shaderId);
@@ -145,6 +159,8 @@ std::string Shader::ReadShaderLog(unsigned int shaderId)
     }
 
     std::string log(static_cast<std::size_t>(logLength), '\0');
+    // OpenGL 会写入尾部空字符
+    // std::string 保留它不影响错误输出
     glGetShaderInfoLog(shaderId, logLength, nullptr, log.data());
     return log;
 }

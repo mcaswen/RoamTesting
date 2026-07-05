@@ -26,6 +26,9 @@
 
 namespace ParallelRoam::Terrain
 {
+// HeightMap 只保存归一化高度
+// 世界尺寸和高度缩放留给 mesh builder 或 ROAM builder
+// 这样同一张图可以在 benchmark 中复用不同 terrain 参数
 bool HeightMap::LoadFromFile(const std::filesystem::path& filePath, std::string* errorMessage)
 {
     int width = 0;
@@ -47,6 +50,8 @@ bool HeightMap::LoadFromFile(const std::filesystem::path& filePath, std::string*
     _heightValues.resize(static_cast<std::size_t>(width) * static_cast<std::size_t>(height));
 
     // 高度统一归一化到 0..1，terrain size 和 height scale 由 mesh builder 决定
+    // 16-bit 输入保留更细的地形起伏
+    // 8-bit 输入也会被 stb 扩展到相同归一化路径
     for (std::size_t index = 0; index < _heightValues.size(); ++index)
     {
         _heightValues[index] = static_cast<float>(pixels[index]) / 65535.0F;
@@ -67,6 +72,7 @@ float HeightMap::SamplePixel(int x, int y) const
         return 0.0F;
     }
 
+    // clamp 让边界法线和 ROAM 中点采样不需要额外处理越界
     const int clampedX = std::clamp(x, 0, _width - 1);
     const int clampedY = std::clamp(y, 0, _height - 1);
     const auto index = static_cast<std::size_t>(clampedY) * static_cast<std::size_t>(_width) +
@@ -81,6 +87,8 @@ float HeightMap::SampleBilinear(float u, float v) const
         return 0.0F;
     }
 
+    // 归一化 UV 是算法层的公共坐标
+    // Classic、DOD 和规则网格都通过这个入口采样高度
     const float clampedU = std::clamp(u, 0.0F, 1.0F);
     const float clampedV = std::clamp(v, 0.0F, 1.0F);
     const float x = clampedU * static_cast<float>(_width - 1);
@@ -99,6 +107,8 @@ float HeightMap::SampleBilinear(float u, float v) const
     const float h11 = SamplePixel(x1, y1);
     const float h0 = h00 * (1.0F - tx) + h10 * tx;
     const float h1 = h01 * (1.0F - tx) + h11 * tx;
+    // 先横向后纵向插值
+    // 与 terrain UV 到像素坐标的映射保持一致
     return h0 * (1.0F - ty) + h1 * ty;
 }
 

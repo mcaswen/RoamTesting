@@ -31,21 +31,8 @@ public:
     TriangleRenderer(const TriangleRenderer&) = delete;
     TriangleRenderer& operator=(const TriangleRenderer&) = delete;
 
-    /// <summary>
-    /// 创建 shader、VAO 和 VBO
-    /// </summary>
-    /// <param name="errorMessage">失败时写入 shader 编译或链接日志。</param>
     bool Initialize(std::string* errorMessage);
-
-    /// <summary>
-    /// 释放 OpenGL buffer、VAO 和 shader program
-    /// </summary>
     void Shutdown();
-
-    /// <summary>
-    /// 绘制阶段 0 的地面三角形
-    /// </summary>
-    /// <param name="context">当前帧渲染上下文。</param>
     void Render(const TriangleRenderContext& context);
 
 private:

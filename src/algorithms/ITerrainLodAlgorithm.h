@@ -13,7 +13,7 @@
 namespace ParallelRoam::Algorithms
 {
 /// <summary>
-/// 标识当前 terrain LOD 算法实现，供 UI、benchmark 和日志输出使用。
+/// 标识当前 terrain LOD 算法实现，供 UI、benchmark 和日志输出使用
 /// </summary>
 enum class TerrainLodAlgorithmId
 {
@@ -23,7 +23,7 @@ enum class TerrainLodAlgorithmId
 };
 
 /// <summary>
-/// terrain LOD 算法的展示名称和简短描述。
+/// terrain LOD 算法的展示名称和简短描述
 /// </summary>
 struct TerrainLodAlgorithmInfo
 {
@@ -34,7 +34,7 @@ struct TerrainLodAlgorithmInfo
 };
 
 /// <summary>
-/// 描述某个 terrain LOD 算法当前可输出的渲染路径和拓扑能力。
+/// 描述某个 terrain LOD 算法当前可输出的渲染路径和拓扑能力
 /// </summary>
 struct TerrainLodAlgorithmCapabilities
 {
@@ -47,7 +47,7 @@ struct TerrainLodAlgorithmCapabilities
 };
 
 /// <summary>
-/// 三种 ROAM 算法共享的运行参数，benchmark 和 renderer 使用同一套字段做公平对比。
+/// 三种 ROAM 算法共享的运行参数，benchmark 和 renderer 使用同一套字段做公平对比
 /// </summary>
 struct TerrainLodSettings
 {
@@ -63,7 +63,7 @@ struct TerrainLodSettings
 };
 
 /// <summary>
-/// 单帧 LOD 构建输入，固定高度图、相机位置和统一算法参数。
+/// 单帧 LOD 构建输入，固定高度图、相机位置和统一算法参数
 /// </summary>
 struct TerrainLodBuildInput
 {
@@ -73,7 +73,7 @@ struct TerrainLodBuildInput
 };
 
 /// <summary>
-/// 算法渲染输出模式，区分 CPU mesh、GPU buffer 和 GPU driven 路径。
+/// 算法渲染输出模式，区分 CPU mesh、GPU buffer 和 GPU driven 路径
 /// </summary>
 enum class TerrainLodRenderMode
 {
@@ -84,7 +84,7 @@ enum class TerrainLodRenderMode
 };
 
 /// <summary>
-/// 算法输出给 renderer 或 benchmark 的统一渲染数据包。
+/// 算法输出给 renderer 或 benchmark 的统一渲染数据包
 /// </summary>
 struct TerrainLodRenderPacket
 {
@@ -99,7 +99,7 @@ struct TerrainLodRenderPacket
 };
 
 /// <summary>
-/// 跨 Classic / Data-Oriented / GPU 版本共享的统计字段，用于 UI 展示、回归测试和 CSV 输出。
+/// 跨 Classic / Data-Oriented / GPU 版本共享的统计字段，用于 UI 展示、回归测试和 CSV 输出
 /// </summary>
 struct TerrainLodStats
 {
@@ -150,11 +150,8 @@ public:
     [[nodiscard]] virtual TerrainLodAlgorithmCapabilities Capabilities() const = 0;
 
     /// <summary>
-    /// 根据固定输入构建当前帧统一渲染包
+    /// 根据固定输入构建当前帧统一渲染包，失败时通过 errorMessage 暴露可诊断原因
     /// </summary>
-    /// <param name="input">高度图、相机和统一 LOD 配置。</param>
-    /// <param name="outPacket">算法输出的 CPU mesh 或 GPU 资源描述。</param>
-    /// <param name="errorMessage">失败时写入错误信息。</param>
     [[nodiscard]] virtual bool BuildRenderData(
         const TerrainLodBuildInput& input,
         TerrainLodRenderPacket& outPacket,

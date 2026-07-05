@@ -2,6 +2,9 @@
 
 namespace ParallelRoam::App
 {
+// InputState 是帧快照
+// 它不派发业务命令
+// Application 每帧读取快照后再决定相机和窗口行为
 void InputState::BeginFrame()
 {
     // 鼠标移动量是事件累积值，每帧开始前归零
@@ -11,6 +14,8 @@ void InputState::BeginFrame()
 
 void InputState::HandleEvent(const SDL_Event& event)
 {
+    // SDL event 在同一帧内按到达顺序合并
+    // 最终状态由按键数组和鼠标增量表达
     switch (event.type)
     {
     case SDL_QUIT:
@@ -29,6 +34,8 @@ void InputState::HandleEvent(const SDL_Event& event)
         break;
     case SDL_KEYUP:
     {
+        // keyup 不检查 repeat
+        // SDL 的 repeat 只对 keydown 有意义
         const auto index = static_cast<std::size_t>(event.key.keysym.scancode);
         if (index < _keys.size())
         {
@@ -67,6 +74,8 @@ void InputState::HandleEvent(const SDL_Event& event)
 
 void InputState::SetWindowSize(int width, int height)
 {
+    // 保存逻辑尺寸
+    // drawable 尺寸由 Window 单独提供给 renderer
     _windowWidth = width;
     _windowHeight = height;
 }

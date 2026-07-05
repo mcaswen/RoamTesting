@@ -16,6 +16,13 @@ namespace ParallelRoam::Render
 {
 namespace
 {
+// TerrainRenderer 同时服务规则网格 baseline 和 ROAM LOD mesh
+// 它不实现 LOD 决策
+// 只负责把算法输出转换成 OpenGL draw state
+// 这条边界让 benchmark 和 renderer 都能复用同一 ITerrainLodAlgorithm
+// meshDirty 表示 CPU mesh 或 GPU buffer 内容需要重建
+// shader uniform 变化不应该触发 mesh rebuild
+// 光照和 debug overlay 因此不进入 NeedsMeshRebuild
 // 相机至少移动这个距离才触发 Classic ROAM rebuild
 constexpr float MinRoamRebuildDistance = 0.30F;
 
@@ -104,6 +111,9 @@ void main()
 
 bool NeedsMeshRebuild(const TerrainRenderSettings& previous, const TerrainRenderSettings& next)
 {
+    // 只比较会改变 mesh 拓扑或顶点位置的参数
+    // Wireframe 和光照只影响渲染状态
+    // 不应该导致 CPU mesh 重算
     return previous.TerrainSize != next.TerrainSize ||
            previous.HeightScale != next.HeightScale ||
            previous.UseClassicRoam != next.UseClassicRoam ||
@@ -120,6 +130,8 @@ glm::vec3 NormalizeLightDirection(const glm::vec3& lightDirection)
 {
     if (glm::dot(lightDirection, lightDirection) <= 0.000001F)
     {
+        // 零向量会让 shader normalize 产生未定义结果
+        // 这里回退到默认斜向光
         return glm::normalize(glm::vec3{-0.45F, -1.0F, -0.35F});
     }
 
@@ -142,6 +154,8 @@ bool TerrainRenderer::Initialize(
     _heightMapPath = heightMapPath;
     _texturePath = texturePath;
 
+    // HeightMap 必须先加载
+    // 后续规则网格和 ROAM builder 都依赖它的尺寸和采样
     if (!_heightMap.LoadFromFile(heightMapPath, errorMessage))
     {
         return false;
@@ -168,6 +182,8 @@ bool TerrainRenderer::Initialize(
 
 bool TerrainRenderer::ApplySettings(const TerrainRenderSettings& settings, std::string* errorMessage)
 {
+    // ApplySettings 允许 UI 每帧调用
+    // 只有真正影响 mesh 的字段变化才设置 dirty flag
     const bool rebuildMesh = NeedsMeshRebuild(_settings, settings);
     _settings = settings;
 
@@ -193,6 +209,8 @@ bool TerrainRenderer::UpdateForCamera(const glm::vec3& cameraPosition, std::stri
     // Classic ROAM 是视点相关 LOD，但微小移动时复用 mesh 降低卡顿
     if (_settings.UseClassicRoam)
     {
+        // rebuild 距离随 terrain size 放大
+        // 大地形下同样的世界位移对 screen error 影响更小
         const float rebuildDistance = std::max(_settings.TerrainSize * RoamRebuildTerrainScale, MinRoamRebuildDistance);
         const glm::vec3 buildDelta = cameraPosition - _lastRoamBuildCameraPosition;
         const bool cameraMovedEnough = !_hasRoamBuildCameraPosition ||
@@ -212,6 +230,9 @@ bool TerrainRenderer::UpdateForCamera(const glm::vec3& cameraPosition, std::stri
 
 void TerrainRenderer::Shutdown()
 {
+    // OpenGL 资源允许重复 Shutdown
+    // 每个 id 删除后都清零
+    // 析构和显式 Shutdown 可以共用同一路径
     if (_textureId != 0)
     {
         glDeleteTextures(1, &_textureId);
@@ -247,6 +268,8 @@ void TerrainRenderer::Render(const RenderContext& context)
         return;
     }
 
+    // viewport 使用 drawable 尺寸而不是窗口逻辑尺寸
+    // HiDPI 屏幕上两者可能不同
     glViewport(0, 0, context.DrawableWidth, context.DrawableHeight);
     glEnable(GL_DEPTH_TEST);
     glActiveTexture(GL_TEXTURE0);
@@ -267,6 +290,8 @@ void TerrainRenderer::Render(const RenderContext& context)
 
     glBindVertexArray(_vertexArrayId);
 
+    // wireframe 是临时渲染状态
+    // 绘制后必须恢复调用前 polygon mode
     GLint previousPolygonMode[2] = {GL_FILL, GL_FILL};
     glGetIntegerv(GL_POLYGON_MODE, previousPolygonMode);
 
@@ -293,6 +318,8 @@ void TerrainRenderer::Render(const RenderContext& context)
 TerrainRenderStats TerrainRenderer::Stats() const
 {
     TerrainRenderStats stats{};
+    // GUI 只读取汇总后的 TerrainRenderStats
+    // 避免面板直接依赖算法内部类型
     stats.HeightMapWidth = _heightMap.Width();
     stats.HeightMapHeight = _heightMap.Height();
     stats.VertexCount = _meshData.Vertices.size();
@@ -338,6 +365,8 @@ const std::filesystem::path& TerrainRenderer::TexturePath() const
 
 bool TerrainRenderer::RebuildMesh(std::string* errorMessage)
 {
+    // UseClassicRoam 是当前 UI 的算法开关
+    // 规则网格保留为视觉和性能 baseline
     if (_settings.UseClassicRoam)
     {
         return RebuildClassicRoam(_lastCameraPosition, errorMessage);
@@ -353,6 +382,8 @@ bool TerrainRenderer::RebuildRegularGrid(std::string* errorMessage)
     _terrainLodStats = {};
     if (_terrainLodAlgorithm != nullptr)
     {
+        // 从 ROAM 切回规则网格时清空持久拓扑
+        // 再切回 ROAM 会从当前设置重新建立 root diamond
         _terrainLodAlgorithm->Reset();
     }
     _hasRoamBuildCameraPosition = false;
@@ -373,10 +404,15 @@ bool TerrainRenderer::RebuildClassicRoam(const glm::vec3& cameraPosition, std::s
 {
     if (_terrainLodAlgorithm == nullptr)
     {
+        // renderer 只持有统一接口
+        // 当前 UI 仍只有 Classic 开关
+        // benchmark 已经能单独创建 DOD 算法
         _terrainLodAlgorithm = std::make_unique<Algorithms::ClassicRoam::ClassicRoamTerrainLodAlgorithm>();
     }
 
     Algorithms::TerrainLodSettings lodSettings{};
+    // TerrainRenderSettings 包含光照和 UI 状态
+    // TerrainLodSettings 只传算法真正需要的控制变量
     lodSettings.TerrainSize = _settings.TerrainSize;
     lodSettings.HeightScale = _settings.HeightScale;
     lodSettings.MaxDepth = _settings.RoamMaxDepth;
@@ -401,6 +437,8 @@ bool TerrainRenderer::RebuildClassicRoam(const glm::vec3& cameraPosition, std::s
 
     _meshData = std::move(renderPacket.CpuMesh);
     _terrainLodStats = _terrainLodAlgorithm->Stats();
+    // camera rebuild 位置只在算法成功后更新
+    // 失败时下一帧仍会尝试基于旧 mesh 状态重建
     _lastRoamBuildCameraPosition = cameraPosition;
     _hasRoamBuildCameraPosition = true;
 
@@ -446,6 +484,8 @@ bool TerrainRenderer::UploadMesh(std::string* errorMessage)
 
     glBindVertexArray(_vertexArrayId);
     glBindBuffer(GL_ARRAY_BUFFER, _vertexBufferId);
+    // ROAM mesh 会随相机更新
+    // 规则网格只在参数变化时更新
     const GLenum bufferUsage = _settings.UseClassicRoam ? GL_DYNAMIC_DRAW : GL_STATIC_DRAW;
     glBufferData(
         GL_ARRAY_BUFFER,
@@ -461,6 +501,8 @@ bool TerrainRenderer::UploadMesh(std::string* errorMessage)
         bufferUsage);
 
     glEnableVertexAttribArray(0);
+    // attribute layout 必须和 TerrainMeshVertex 以及 shader location 保持一致
+    // 新增字段时这里和 shader 要一起改
     glVertexAttribPointer(
         0,
         3,
@@ -516,6 +558,8 @@ bool TerrainRenderer::UploadMesh(std::string* errorMessage)
 
     glBindVertexArray(0);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
+    // GL_ELEMENT_ARRAY_BUFFER 绑定记录在 VAO 中
+    // 因此这里只解绑 ARRAY_BUFFER
     return true;
 }
 
@@ -537,9 +581,12 @@ bool TerrainRenderer::LoadTexture(const std::filesystem::path& texturePath, std:
 
     if (_textureId == 0)
     {
+        // texture id 复用可以支持未来热重载
         glGenTextures(1, &_textureId);
     }
 
+    // 纹理强制上传为 RGBA8
+    // source channel count 不进入 shader 分支
     glBindTexture(GL_TEXTURE_2D, _textureId);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -558,6 +605,7 @@ bool TerrainRenderer::LoadTexture(const std::filesystem::path& texturePath, std:
     glGenerateMipmap(GL_TEXTURE_2D);
     glBindTexture(GL_TEXTURE_2D, 0);
 
+    // stb 分配的像素内存必须在上传后释放
     stbi_image_free(pixels);
     return true;
 }

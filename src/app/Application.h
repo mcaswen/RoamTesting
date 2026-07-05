@@ -22,25 +22,18 @@ public:
     Application(const Application&) = delete;
     Application& operator=(const Application&) = delete;
 
-    /// <summary>
-    /// 初始化窗口、OpenGL、阶段 1 terrain renderer 和 ImGui
-    /// </summary>
     bool Initialize();
 
     /// <summary>
-    /// 运行应用主循环
+    /// 运行应用主循环，maxFrameCount 大于 0 时用于 smoke test 固定帧退出
     /// </summary>
-    /// <param name="maxFrameCount">大于 0 时在指定帧数后自动退出，供 smoke test 使用。</param>
     int Run(int maxFrameCount = -1);
 
-    /// <summary>
-    /// 按依赖顺序释放 GUI、渲染器、窗口和 SDL 资源
-    /// </summary>
     void Shutdown();
 
 private:
     /// <summary>
-    /// 单帧时间数据，同时保留真实帧耗时和模拟用钳制时间。
+    /// 单帧时间数据，同时保留真实帧耗时和模拟用钳制时间
     /// </summary>
     struct FrameTiming
     {

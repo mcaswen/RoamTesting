@@ -13,12 +13,20 @@ namespace ParallelRoam::Gui
 {
 namespace
 {
+// GUI 层只编辑配置和展示统计
+// 它不直接触碰 renderer 的 OpenGL buffer
+// 也不直接修改算法内部节点
+// DrawDebugOverlay 通过返回 changed 通知 Application 应用新设置
+// 这样 UI 控件和渲染/算法边界保持单向数据流
 constexpr float PanelMinWidth = 330.0F;
 constexpr float PanelMaxWidth = 390.0F;
 constexpr float MetricValueOffset = 132.0F;
 
 void ApplyEditorStyle()
 {
+    // 样式在初始化时集中设置
+    // 避免每帧重复写 ImGuiStyle
+    // 也让截图和录屏的 UI 外观稳定
     ImGuiStyle& style = ImGui::GetStyle();
     style.WindowPadding = ImVec2{16.0F, 14.0F};
     style.FramePadding = ImVec2{10.0F, 6.0F};
@@ -66,6 +74,9 @@ void ApplyEditorStyle()
 void LoadChineseFont()
 {
     ImGuiIO& io = ImGui::GetIO();
+    // 项目可能只携带其中一个中文字体文件
+    // 按常见命名顺序探测
+    // 找不到时回退默认字体让程序仍可启动
     const std::array<std::filesystem::path, 8> fontCandidates{
         std::filesystem::path{"assets/fonts/NotoSansSC-Regular.otf"},
         std::filesystem::path{"assets/fonts/NotoSansSC-Regular.ttf"},
@@ -86,6 +97,8 @@ void LoadChineseFont()
         }
 
         ImFontConfig fontConfig{};
+        // CJK 字体边缘在小字号下容易糊
+        // 适度 oversample 提升调试面板可读性
         fontConfig.OversampleH = 3;
         fontConfig.OversampleV = 2;
         fontConfig.PixelSnapH = false;
@@ -114,6 +127,8 @@ void DrawSectionHeader(const char* label)
 
 void DrawMetricRow(const char* label, const char* value)
 {
+    // metric 使用固定 value 偏移
+    // 长 label 不会挤压右侧数值列
     ImGui::TextDisabled("%s", label);
     ImGui::SameLine(MetricValueOffset);
     ImGui::TextUnformatted(value);
@@ -142,6 +157,8 @@ void DrawMetricFloat(const char* label, float value, const char* format)
 
 void DrawDebugColorLegend()
 {
+    // legend 与 TerrainMeshVertex 的 debug color 语义对应
+    // 用户打开 LOD 着色后能直接解释当前颜色
     const std::array<std::pair<const char*, ImVec4>, 3> legendItems{
         std::pair<const char*, ImVec4>{"原始", ImVec4{0.28F, 0.34F, 0.30F, 1.0F}},
         std::pair<const char*, ImVec4>{"细分", ImVec4{0.08F, 0.72F, 0.62F, 1.0F}},
@@ -175,6 +192,8 @@ bool ImGuiLayer::Initialize(SDL_Window* window, SDL_GLContext glContext, const c
     ApplyEditorStyle();
 
     // SDL2 backend 负责事件和输入状态桥接
+    // 失败时必须销毁 context
+    // 否则后续重新初始化会留下 ImGui 全局状态
     if (!ImGui_ImplSDL2_InitForOpenGL(window, glContext))
     {
         ImGui::DestroyContext();
@@ -182,6 +201,8 @@ bool ImGuiLayer::Initialize(SDL_Window* window, SDL_GLContext glContext, const c
     }
 
     // OpenGL3 backend 负责生成 GUI draw call
+    // SDL backend 已经成功时
+    // OpenGL backend 失败必须按相反顺序清理
     if (!ImGui_ImplOpenGL3_Init(glslVersion))
     {
         ImGui_ImplSDL2_Shutdown();
@@ -224,6 +245,9 @@ bool ImGuiLayer::DrawDebugOverlay(const DebugOverlayData& data, TerrainPanelStat
 {
     bool changed = false;
     const ImGuiIO& io = ImGui::GetIO();
+    // 面板宽度跟随窗口
+    // 同时限制最小和最大值
+    // 避免宽屏上占用过多 terrain 视野
     const float panelWidth = std::clamp(io.DisplaySize.x * 0.25F, PanelMinWidth, PanelMaxWidth);
     const float panelX = std::max(0.0F, io.DisplaySize.x - panelWidth);
 
@@ -232,6 +256,9 @@ bool ImGuiLayer::DrawDebugOverlay(const DebugOverlayData& data, TerrainPanelStat
     ImGui::SetNextWindowSize(ImVec2{panelWidth, io.DisplaySize.y}, ImGuiCond_Always);
 
     constexpr ImGuiWindowFlags PanelFlags =
+        // inspector 固定为工具面板
+        // 不保存 ImGui ini 状态
+        // 每次启动都出现在相同位置
         ImGuiWindowFlags_NoTitleBar |
         ImGuiWindowFlags_NoResize |
         ImGuiWindowFlags_NoMove |
@@ -312,6 +339,9 @@ bool ImGuiLayer::DrawDebugOverlay(const DebugOverlayData& data, TerrainPanelStat
     changed |= ImGui::SliderFloat("Split 阈值", &terrainState.RoamSplitThreshold, 0.005F, 1.0F, "%.3f");
     changed |= ImGui::SliderFloat("Merge 阈值", &terrainState.RoamMergeThreshold, 0.001F, 1.0F, "%.3f");
     changed |= ImGui::SliderFloat("距离权重", &terrainState.RoamDistanceScale, 1.0F, 80.0F, "%.1f");
+    // merge 阈值不能超过 split 阈值
+    // UI 层先限制一次
+    // 算法层仍会再次做防御性 clamp
     terrainState.RoamMergeThreshold = std::min(terrainState.RoamMergeThreshold, terrainState.RoamSplitThreshold);
 
     DrawSectionHeader("光照");

@@ -7,6 +7,9 @@
 
 namespace ParallelRoam::App
 {
+// 相机控制只依赖 InputState
+// 它不直接读取 SDL event
+// 这样 GUI 可以先消费事件而不破坏相机更新顺序
 CameraController::CameraController()
 {
     UpdateBasis();
@@ -17,6 +20,8 @@ void CameraController::Update(const InputState& input, float deltaSeconds)
     // 右键按住才更新视角，避免鼠标操作 ImGui 面板时相机乱动
     if (input.IsRightMouseDown())
     {
+        // pitch 夹到接近竖直但不到 90 度
+        // 避免 lookAt 基向量退化
         _yawDegrees += input.MouseDeltaX() * _mouseSensitivity;
         _pitchDegrees -= input.MouseDeltaY() * _mouseSensitivity;
         _pitchDegrees = std::clamp(_pitchDegrees, -89.0F, 89.0F);
@@ -26,6 +31,8 @@ void CameraController::Update(const InputState& input, float deltaSeconds)
     glm::vec3 movement{0.0F};
 
     // WASD 使用相机局部前向和右向，Space/Ctrl 保持世界竖直方向
+    // 这样观察地形时水平移动跟随视角
+    // 上下移动仍保持世界坐标语义
     if (input.IsKeyDown(SDL_SCANCODE_W))
     {
         movement += _front;
@@ -95,6 +102,8 @@ void CameraController::UpdateBasis()
     const float pitchRadians = glm::radians(_pitchDegrees);
 
     glm::vec3 front{};
+    // yaw 为 -90 时默认看向 -Z
+    // 与 OpenGL 常见相机初始方向一致
     front.x = std::cos(yawRadians) * std::cos(pitchRadians);
     front.y = std::sin(pitchRadians);
     front.z = std::sin(yawRadians) * std::cos(pitchRadians);

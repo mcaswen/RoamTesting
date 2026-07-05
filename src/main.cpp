@@ -18,6 +18,10 @@ int main(int argc, char** argv)
     (void)argv;
 
 #if defined(PARALLEL_ROAM_BUILD_FULL_APP)
+    // full app 路径支持三类无窗口/短窗口入口
+    // --smoke-test 验证窗口和 GL context
+    // --roam-probe 保留旧探针命令
+    // --benchmark 走三算法共享 benchmark
     int maxFrameCount = -1;
     for (int index = 1; index < argc; ++index)
     {
@@ -30,11 +34,16 @@ int main(int argc, char** argv)
         // ROAM 探针不启动窗口，用于快速确认算法层 LOD 是否随相机变化
         if (std::string_view{argv[index]} == "--roam-probe")
         {
+            // probe 也必须早于 Application 初始化
+            // 它只验证算法层
+            // 不需要 OpenGL context
             return ParallelRoam::Benchmark::RunRoamProbe();
         }
 
         if (std::string_view{argv[index]} == "--benchmark")
         {
+            // benchmark 必须在 Application 创建前分流
+            // 否则无窗口回归会被 SDL 窗口初始化污染
             return ParallelRoam::Benchmark::RunTerrainLodBenchmarkFromCommandLine(argc, argv);
         }
     }
@@ -83,6 +92,8 @@ int main(int argc, char** argv)
 #if defined(PARALLEL_ROAM_HAS_SDL2)
     SDL_SetMainReady();
 
+    // bootstrap 只初始化 timer subsystem
+    // 用于确认 SDL2 链接和基础运行时可用
     if (SDL_Init(SDL_INIT_TIMER) != 0)
     {
         std::cerr << "SDL_Init failed: " << SDL_GetError() << '\n';

@@ -2,6 +2,9 @@
 
 namespace ParallelRoam::Algorithms::DataOrientedRoam
 {
+// 3A adapter 保持和 Classic adapter 相同的接口形状
+// 差异只在内部 builder 的 node pool 表达
+// benchmark 因此可以在同一 profile 下直接比较 Classic 与 DOD
 TerrainLodAlgorithmInfo DataOrientedRoamTerrainLodAlgorithm::Info() const
 {
     return TerrainLodAlgorithmInfo{
@@ -31,6 +34,8 @@ bool DataOrientedRoamTerrainLodAlgorithm::BuildRenderData(
     _stats = {};
     outPacket = {};
 
+    // 无效 HeightMap 在算法边界上直接失败
+    // 避免 benchmark 把空 mesh 当作合法低细节输出
     if (input.HeightMap == nullptr || !input.HeightMap->IsValid())
     {
         if (errorMessage != nullptr)
@@ -40,6 +45,8 @@ bool DataOrientedRoamTerrainLodAlgorithm::BuildRenderData(
         return false;
     }
 
+    // 3A 仍然输出 CPU mesh
+    // SoA 和多线程阶段先不改变 renderer 消费方式
     outPacket.Mode = TerrainLodRenderMode::CpuMesh;
     outPacket.CpuMesh = _builder.Build(
         *input.HeightMap,
@@ -60,6 +67,8 @@ const TerrainLodStats& DataOrientedRoamTerrainLodAlgorithm::Stats() const
 
 void DataOrientedRoamTerrainLodAlgorithm::Reset()
 {
+    // Reset 丢弃 index pool 和 hysteresis path
+    // 下一帧会重新建立 root diamond
     _builder = DataOrientedRoamMeshBuilder{};
     _stats = {};
 }
@@ -67,6 +76,8 @@ void DataOrientedRoamTerrainLodAlgorithm::Reset()
 DataOrientedRoamSettings DataOrientedRoamTerrainLodAlgorithm::ToDataOrientedSettings(
     const TerrainLodSettings& settings)
 {
+    // DOD 3A 使用与 Classic 相同的控制变量
+    // 这是三版本 benchmark 可比性的前提
     DataOrientedRoamSettings dataSettings{};
     dataSettings.MaxDepth = settings.MaxDepth;
     dataSettings.SplitThreshold = settings.SplitThreshold;
@@ -80,6 +91,8 @@ DataOrientedRoamSettings DataOrientedRoamTerrainLodAlgorithm::ToDataOrientedSett
 
 TerrainLodStats DataOrientedRoamTerrainLodAlgorithm::ToTerrainLodStats(const DataOrientedRoamStats& stats)
 {
+    // DOD 私有统计映射到统一字段
+    // CSV 不暴露具体 node pool 实现细节
     TerrainLodStats lodStats{};
     lodStats.ActiveTriangleCount = stats.ActiveTriangleCount;
     lodStats.ActiveNodeCount = stats.NodeCount;

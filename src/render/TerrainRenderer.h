@@ -13,7 +13,7 @@
 namespace ParallelRoam::Render
 {
 /// <summary>
-/// terrain shader 的调试着色模式。
+/// terrain shader 的调试着色模式
 /// </summary>
 enum class TerrainDebugColorMode
 {
@@ -34,7 +34,7 @@ struct RenderContext
 };
 
 /// <summary>
-/// terrain renderer 的可编辑运行参数，来自 GUI 面板并驱动 mesh 重建或 shader uniform 更新。
+/// terrain renderer 的可编辑运行参数，来自 GUI 面板并驱动 mesh 重建或 shader uniform 更新
 /// </summary>
 struct TerrainRenderSettings
 {
@@ -70,7 +70,7 @@ struct TerrainRenderSettings
 };
 
 /// <summary>
-/// terrain renderer 汇总给 GUI 的渲染规模、ROAM 拓扑和阶段耗时统计。
+/// terrain renderer 汇总给 GUI 的渲染规模、ROAM 拓扑和阶段耗时统计
 /// </summary>
 struct TerrainRenderStats
 {
@@ -144,42 +144,15 @@ public:
     TerrainRenderer(const TerrainRenderer&) = delete;
     TerrainRenderer& operator=(const TerrainRenderer&) = delete;
 
-    /// <summary>
-    /// 加载高度图、地表纹理并创建 OpenGL 资源
-    /// </summary>
-    /// <param name="heightMapPath">高度图路径。</param>
-    /// <param name="texturePath">地表纹理路径。</param>
-    /// <param name="settings">初始渲染设置。</param>
-    /// <param name="errorMessage">失败时写入错误信息。</param>
     bool Initialize(
         const std::filesystem::path& heightMapPath,
         const std::filesystem::path& texturePath,
         const TerrainRenderSettings& settings,
         std::string* errorMessage);
 
-    /// <summary>
-    /// 应用 UI 修改后的渲染设置，必要时重建 mesh
-    /// </summary>
-    /// <param name="settings">新的渲染设置。</param>
-    /// <param name="errorMessage">失败时写入错误信息。</param>
     bool ApplySettings(const TerrainRenderSettings& settings, std::string* errorMessage);
-
-    /// <summary>
-    /// 根据相机位置更新 Classic ROAM mesh
-    /// </summary>
-    /// <param name="cameraPosition">相机世界坐标。</param>
-    /// <param name="errorMessage">失败时写入错误信息。</param>
     bool UpdateForCamera(const glm::vec3& cameraPosition, std::string* errorMessage);
-
-    /// <summary>
-    /// 释放 OpenGL buffer、texture 和 shader program
-    /// </summary>
     void Shutdown();
-
-    /// <summary>
-    /// 绘制当前 terrain mesh
-    /// </summary>
-    /// <param name="context">当前帧渲染上下文。</param>
     void Render(const RenderContext& context);
 
     [[nodiscard]] TerrainRenderStats Stats() const;

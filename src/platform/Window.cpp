@@ -4,6 +4,9 @@
 
 namespace ParallelRoam::Platform
 {
+// Window 是唯一拥有 SDL_Window 和 SDL_GLContext 的对象
+// 其他模块只能借用 native pointer
+// 这样 Shutdown 顺序能集中控制
 Window::~Window()
 {
     Destroy();
@@ -14,6 +17,8 @@ bool Window::Create(const std::string& title, int width, int height)
     // SDL main ready 在部分平台会影响 SDL 初始化入口行为
     SDL_SetMainReady();
 
+    // SDL_Init 成功后如果后续任一步失败
+    // 都通过 Destroy 回收已创建的部分资源
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_EVENTS) != 0)
     {
         std::cerr << "SDL_Init failed: " << SDL_GetError() << '\n';
@@ -21,6 +26,8 @@ bool Window::Create(const std::string& title, int width, int height)
     }
 
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+    // 深度和 stencil 在阶段 1 就启用
+    // 后续 debug overlay 和 terrain wireframe 不需要重新创建 context
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
     SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
@@ -47,6 +54,8 @@ bool Window::Create(const std::string& title, int width, int height)
 
     if (_window == nullptr)
     {
+        // window 创建失败后也调用 Destroy
+        // 它会安全处理空 context 和空 window
         std::cerr << "SDL_CreateWindow failed: " << SDL_GetError() << '\n';
         Destroy();
         return false;
@@ -55,6 +64,8 @@ bool Window::Create(const std::string& title, int width, int height)
     _glContext = SDL_GL_CreateContext(_window);
     if (_glContext == nullptr)
     {
+        // context 失败时窗口已经存在
+        // Destroy 会按正确顺序释放
         std::cerr << "SDL_GL_CreateContext failed: " << SDL_GetError() << '\n';
         Destroy();
         return false;
@@ -84,6 +95,7 @@ void Window::Destroy()
     SetRelativeMouseMode(false);
 
     // OpenGL context 必须先于 SDL window 销毁
+    // 否则某些平台会在窗口释放后访问已失效 native handle
     if (_glContext != nullptr)
     {
         SDL_GL_DeleteContext(_glContext);
@@ -101,6 +113,8 @@ void Window::Destroy()
 
 void Window::ProcessEvent(const SDL_Event& event)
 {
+    // RESIZED 和 SIZE_CHANGED 在不同平台触发时机不同
+    // 两者统一刷新 cached 尺寸
     if (event.type == SDL_WINDOWEVENT &&
         (event.window.event == SDL_WINDOWEVENT_RESIZED || event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED))
     {
@@ -123,6 +137,8 @@ void Window::SetRelativeMouseMode(bool enabled)
 
     if (SDL_SetRelativeMouseMode(enabled ? SDL_TRUE : SDL_FALSE) == 0)
     {
+        // 只有 SDL 调用成功后才更新缓存
+        // 防止缓存状态和系统状态分叉
         _relativeMouseMode = enabled;
     }
     else
@@ -139,6 +155,8 @@ void Window::RefreshSize()
         return;
     }
 
+    // Window size 给 GUI 和输入层使用
+    // Drawable size 给 OpenGL viewport 使用
     SDL_GetWindowSize(_window, &_width, &_height);
     SDL_GL_GetDrawableSize(_window, &_drawableWidth, &_drawableHeight);
 }

@@ -10,7 +10,7 @@
 namespace ParallelRoam::Terrain
 {
 /// <summary>
-/// terrain mesh 的单个顶点，携带渲染、采样和 LOD debug overlay 所需属性。
+/// terrain mesh 的单个顶点，携带渲染、采样和 LOD debug overlay 所需属性
 /// </summary>
 struct TerrainMeshVertex
 {
@@ -23,7 +23,7 @@ struct TerrainMeshVertex
 };
 
 /// <summary>
-/// CPU 侧 terrain 网格数据，供规则网格、ROAM 输出和 OpenGL 上传路径共用。
+/// CPU 侧 terrain 网格数据，供规则网格、ROAM 输出和 OpenGL 上传路径共用
 /// </summary>
 struct TerrainMeshData
 {
@@ -41,12 +41,6 @@ struct TerrainMeshData
 class TerrainMeshBuilder
 {
 public:
-    /// <summary>
-    /// 按给定世界尺寸和高度缩放生成顶点、索引和基础法线
-    /// </summary>
-    /// <param name="heightMap">已加载的高度图。</param>
-    /// <param name="terrainSize">地形在 XZ 平面的世界尺寸。</param>
-    /// <param name="heightScale">高度缩放。</param>
     [[nodiscard]] static TerrainMeshData Build(const HeightMap& heightMap, float terrainSize, float heightScale);
 
 private:

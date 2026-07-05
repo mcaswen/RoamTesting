@@ -14,31 +14,11 @@ class CameraController
 public:
     CameraController();
 
-    /// <summary>
-    /// 根据当前输入状态更新位置和朝向
-    /// </summary>
-    /// <param name="input">当前帧输入快照。</param>
-    /// <param name="deltaSeconds">当前帧耗时秒数。</param>
     void Update(const InputState& input, float deltaSeconds);
 
-    /// <summary>
-    /// 返回用于渲染的 view matrix
-    /// </summary>
     [[nodiscard]] glm::mat4 GetViewMatrix() const;
-
-    /// <summary>
-    /// 返回相机世界坐标
-    /// </summary>
     [[nodiscard]] glm::vec3 Position() const;
-
-    /// <summary>
-    /// 返回相机 yaw 角度，单位为度
-    /// </summary>
     [[nodiscard]] float YawDegrees() const;
-
-    /// <summary>
-    /// 返回相机 pitch 角度，单位为度
-    /// </summary>
     [[nodiscard]] float PitchDegrees() const;
 
 private:

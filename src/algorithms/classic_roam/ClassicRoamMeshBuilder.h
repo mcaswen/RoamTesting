@@ -14,7 +14,7 @@
 namespace ParallelRoam::Algorithms::ClassicRoam
 {
 /// <summary>
-/// 使用 UV 空间表达一个 ROAM 三角形域，实际顶点在 emit 阶段采样高度图生成。
+/// 使用 UV 空间表达一个 ROAM 三角形域，实际顶点在 emit 阶段采样高度图生成
 /// </summary>
 struct TriangleDomain
 {
@@ -25,7 +25,7 @@ struct TriangleDomain
 };
 
 /// <summary>
-/// Classic CPU ROAM 的单帧细分、合并和拓扑验证参数。
+/// Classic CPU ROAM 的单帧细分、合并和拓扑验证参数
 /// </summary>
 struct ClassicRoamSettings
 {
@@ -52,7 +52,7 @@ struct ClassicRoamSettings
 };
 
 /// <summary>
-/// Classic CPU ROAM 的运行统计，记录拓扑规模、split/merge 行为和阶段耗时。
+/// Classic CPU ROAM 的运行统计，记录拓扑规模、split/merge 行为和阶段耗时
 /// </summary>
 struct ClassicRoamStats
 {
@@ -135,11 +135,6 @@ public:
     /// <summary>
     /// 根据相机位置和误差阈值生成当前 active leaf triangle mesh
     /// </summary>
-    /// <param name="heightMap">高度图数据。</param>
-    /// <param name="terrainSize">地形世界尺寸。</param>
-    /// <param name="heightScale">高度缩放。</param>
-    /// <param name="cameraPosition">相机世界坐标。</param>
-    /// <param name="settings">ROAM split 配置。</param>
     [[nodiscard]] Terrain::TerrainMeshData Build(
         const Terrain::HeightMap& heightMap,
         float terrainSize,
@@ -160,7 +155,7 @@ private:
     };
 
     /// <summary>
-    /// Classic ROAM 的持久化二叉三角树节点，使用裸指针表达 parent / child / neighbor 拓扑。
+    /// Classic ROAM 的持久化二叉三角树节点，使用裸指针表达 parent / child / neighbor 拓扑
     /// </summary>
     struct ClassicRoamNode
     {

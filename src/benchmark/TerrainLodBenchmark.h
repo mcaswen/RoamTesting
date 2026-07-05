@@ -6,7 +6,7 @@
 namespace ParallelRoam::Benchmark
 {
 /// <summary>
-/// benchmark CLI 可选择的 terrain LOD 算法集合。
+/// benchmark CLI 可选择的 terrain LOD 算法集合
 /// </summary>
 enum class BenchmarkAlgorithmSelection
 {
@@ -17,7 +17,7 @@ enum class BenchmarkAlgorithmSelection
 };
 
 /// <summary>
-/// benchmark 内置场景规模，smoke 用于回归，standard 用于较长相机路径统计。
+/// benchmark 内置场景规模，smoke 用于回归，standard 用于较长相机路径统计
 /// </summary>
 enum class BenchmarkProfile
 {
@@ -26,7 +26,7 @@ enum class BenchmarkProfile
 };
 
 /// <summary>
-/// benchmark 命令行解析后的运行选项。
+/// benchmark 命令行解析后的运行选项
 /// </summary>
 struct BenchmarkOptions
 {
