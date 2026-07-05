@@ -343,6 +343,8 @@ TerrainRenderStats TerrainRenderer::Stats() const
     stats.RoamTjunctionCount = _terrainLodStats.TjunctionCount;
     stats.RoamInvalidNeighborCount = _terrainLodStats.InvalidNeighborCount;
     stats.RoamInvalidTopologyCount = _terrainLodStats.InvalidTopologyCount;
+    stats.RoamCpuWorkerCount = _terrainLodStats.CpuWorkerCount;
+    stats.RoamCpuUtilizationPercent = _terrainLodStats.CpuUtilizationPercent;
     stats.RoamUpdateMilliseconds = _terrainLodStats.CpuUpdateMilliseconds;
     stats.RoamSplitMilliseconds = _terrainLodStats.SplitMilliseconds;
     stats.RoamMergeMilliseconds = _terrainLodStats.MergeMilliseconds;

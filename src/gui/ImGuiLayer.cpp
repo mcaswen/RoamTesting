@@ -325,6 +325,8 @@ bool ImGuiLayer::DrawDebugOverlay(const DebugOverlayData& data, TerrainPanelStat
     DrawMetricSize("T-junction", data.RoamTjunctionCount);
     DrawMetricSize("邻接错误", data.RoamInvalidNeighborCount);
     DrawMetricSize("拓扑错误", data.RoamInvalidTopologyCount);
+    DrawMetricSize("CPU Worker", data.RoamCpuWorkerCount);
+    DrawMetricFloat("CPU 占用", data.RoamCpuUtilizationPercent, "%.1f%%");
     DrawMetricFloat("ROAM ms", data.RoamUpdateMilliseconds, "%.2f");
     DrawMetricFloat("Split ms", data.RoamSplitMilliseconds, "%.2f");
     DrawMetricFloat("Merge ms", data.RoamMergeMilliseconds, "%.2f");

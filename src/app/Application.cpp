@@ -265,6 +265,8 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
     debugData.RoamTjunctionCount = terrainStats.RoamTjunctionCount;
     debugData.RoamInvalidNeighborCount = terrainStats.RoamInvalidNeighborCount;
     debugData.RoamInvalidTopologyCount = terrainStats.RoamInvalidTopologyCount;
+    debugData.RoamCpuWorkerCount = terrainStats.RoamCpuWorkerCount;
+    debugData.RoamCpuUtilizationPercent = terrainStats.RoamCpuUtilizationPercent;
     debugData.RoamUpdateMilliseconds = terrainStats.RoamUpdateMilliseconds;
     debugData.RoamSplitMilliseconds = terrainStats.RoamSplitMilliseconds;
     debugData.RoamMergeMilliseconds = terrainStats.RoamMergeMilliseconds;

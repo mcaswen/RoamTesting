@@ -1,5 +1,7 @@
 #include "algorithms/classic_roam/ClassicRoamTerrainLodAlgorithm.h"
 
+#include "algorithms/TerrainLodProfiling.h"
+
 namespace ParallelRoam::Algorithms::ClassicRoam
 {
 // Adapter 层只做接口映射
@@ -49,13 +51,16 @@ bool ClassicRoamTerrainLodAlgorithm::BuildRenderData(
     // 当前 Classic 路径输出 CPU mesh
     // GPU buffer 和 indirect draw 字段留给后续 GPU ROAM-like
     outPacket.Mode = TerrainLodRenderMode::CpuMesh;
+    const TerrainLodCpuSample cpuSampleStart = CaptureTerrainLodCpuSample();
     outPacket.CpuMesh = _builder.Build(
         *input.HeightMap,
         input.Settings.TerrainSize,
         input.Settings.HeightScale,
         input.CameraPosition,
         ToClassicSettings(input.Settings));
+    const TerrainLodCpuSample cpuSampleEnd = CaptureTerrainLodCpuSample();
     _stats = ToTerrainLodStats(_builder.Stats());
+    _stats.CpuUtilizationPercent = ComputeCpuUtilizationPercent(cpuSampleStart, cpuSampleEnd);
     outPacket.ActiveTriangleCount = _stats.ActiveTriangleCount;
     outPacket.IndexCount = outPacket.CpuMesh.Indices.size();
     return !outPacket.CpuMesh.Vertices.empty() && !outPacket.CpuMesh.Indices.empty();
@@ -111,6 +116,7 @@ TerrainLodStats ClassicRoamTerrainLodAlgorithm::ToTerrainLodStats(const ClassicR
     lodStats.TjunctionCount = stats.TjunctionCount;
     lodStats.InvalidNeighborCount = stats.InvalidNeighborCount;
     lodStats.InvalidTopologyCount = stats.InvalidTopologyCount;
+    lodStats.CpuWorkerCount = 1U;
     lodStats.CpuUpdateMilliseconds = stats.UpdateMilliseconds;
     lodStats.CpuDecisionMilliseconds = stats.SplitMilliseconds;
     lodStats.CpuTopologyMilliseconds = stats.SplitMilliseconds + stats.MergeMilliseconds;

@@ -1,5 +1,7 @@
 #include "algorithms/data_oriented_roam/DataOrientedRoamTerrainLodAlgorithm.h"
 
+#include "algorithms/TerrainLodProfiling.h"
+
 #include <algorithm>
 
 namespace ParallelRoam::Algorithms::DataOrientedRoam
@@ -60,13 +62,16 @@ bool DataOrientedRoamTerrainLodAlgorithm::BuildRenderData(
     // 当前路径仍然输出 CPU mesh
     // 并行误差评估不改变 renderer 消费方式
     outPacket.Mode = TerrainLodRenderMode::CpuMesh;
+    const TerrainLodCpuSample cpuSampleStart = CaptureTerrainLodCpuSample();
     outPacket.CpuMesh = _builder.Build(
         *input.HeightMap,
         input.Settings.TerrainSize,
         input.Settings.HeightScale,
         input.CameraPosition,
         ToDataOrientedSettings(input.Settings));
+    const TerrainLodCpuSample cpuSampleEnd = CaptureTerrainLodCpuSample();
     _stats = ToTerrainLodStats(_builder.Stats());
+    _stats.CpuUtilizationPercent = ComputeCpuUtilizationPercent(cpuSampleStart, cpuSampleEnd);
     outPacket.ActiveTriangleCount = _stats.ActiveTriangleCount;
     outPacket.IndexCount = outPacket.CpuMesh.Indices.size();
     return !outPacket.CpuMesh.Vertices.empty() && !outPacket.CpuMesh.Indices.empty();
@@ -125,6 +130,7 @@ TerrainLodStats DataOrientedRoamTerrainLodAlgorithm::ToTerrainLodStats(const Dat
     lodStats.TjunctionCount = stats.TjunctionCount;
     lodStats.InvalidNeighborCount = stats.InvalidNeighborCount;
     lodStats.InvalidTopologyCount = stats.InvalidTopologyCount;
+    lodStats.CpuWorkerCount = std::max(std::size_t{1}, stats.ErrorEvaluationWorkerCount);
     // error eval 从 split pass 里拆出独立 CSV 字段
     const float errorEvaluationMilliseconds = ErrorEvaluationMilliseconds(stats);
     lodStats.CpuUpdateMilliseconds = stats.UpdateMilliseconds;

@@ -122,7 +122,11 @@ struct TerrainLodStats
     std::size_t InvalidTopologyCount{0};
     std::size_t CpuGpuUploadBytes{0};
     std::size_t CpuGpuReadbackBytes{0};
+    // CpuWorkerCount 表示本次 CPU LOD build 的实际并行宽度
+    std::size_t CpuWorkerCount{0};
     float CpuUpdateMilliseconds{0.0F};
+    // CpuUtilizationPercent 按单核 100% 口径记录进程 CPU 占用
+    float CpuUtilizationPercent{0.0F};
     float CpuErrorEvalMilliseconds{0.0F};
     float CpuDecisionMilliseconds{0.0F};
     float CpuTopologyMilliseconds{0.0F};

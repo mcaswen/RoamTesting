@@ -475,7 +475,8 @@ bool WriteCsv(
     csv << "profile,algorithm,frameIndex,timeSeconds,cameraName,cameraX,cameraY,cameraZ,"
            "heightMapWidth,heightMapHeight,terrainSize,heightScale,maxDepth,splitThreshold,mergeThreshold,"
            "activeTriangleCount,activeNodeCount,splitCount,forcedSplitCount,mergeCount,candidatePeakCount,"
-           "tjunctionCount,invalidNeighborCount,invalidTopologyCount,cpuUpdateMs,cpuErrorEvalMs,"
+           "tjunctionCount,invalidNeighborCount,invalidTopologyCount,cpuWorkerCount,cpuUtilizationPercent,"
+           "cpuUpdateMs,cpuErrorEvalMs,"
            "cpuDecisionMs,cpuTopologyMs,cpuCollectMs,cpuMeshBuildMs,cpuUploadMs,gpuComputeMs,renderMs,"
            "cpuGpuUploadBytes,cpuGpuReadbackBytes,buildWallMs,passed\n";
 
@@ -516,6 +517,8 @@ bool WriteCsv(
                 << frame.Stats.TjunctionCount << ','
                 << frame.Stats.InvalidNeighborCount << ','
                 << frame.Stats.InvalidTopologyCount << ','
+                << frame.Stats.CpuWorkerCount << ','
+                << frame.Stats.CpuUtilizationPercent << ','
                 << frame.Stats.CpuUpdateMilliseconds << ','
                 << frame.Stats.CpuErrorEvalMilliseconds << ','
                 << frame.Stats.CpuDecisionMilliseconds << ','

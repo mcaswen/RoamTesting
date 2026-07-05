@@ -62,6 +62,8 @@ Debug View 的价值不只是展示效果，也用于定位算法问题。比如
 | CPU LOD Decision |  |  |  |
 | CPU Topology Update |  |  |  |
 | CPU Collect / Mesh Build |  |  |  |
+| CPU Worker Count |  |  |  |
+| CPU Utilization |  |  |  |
 | GPU Compute |  |  |  |
 | Render Time |  |  |  |
 | Total Frame Time |  |  |  |
@@ -123,6 +125,7 @@ maxDepth
 splitThreshold
 mergeThreshold
 workerThreadCount
+cpuUtilizationPercent
 activeTriangleCount
 activeNodeCount
 splitCount
@@ -143,6 +146,8 @@ cpuGpuUploadBytes
 cpuGpuReadbackBytes
 ```
 
+`cpuUtilizationPercent` 使用进程 CPU time / build wall time 的口径，单个逻辑核心满载约为 100%，多线程算法可以超过 100%。
+
 ## 结论写法
 
 报告中的结论可以采用如下框架：
@@ -150,4 +155,3 @@ cpuGpuReadbackBytes
 > 经典 ROAM 在 CPU 上具有清晰的局部自适应拓扑维护能力；数据导向重构能显著改善可并行阶段的 CPU 利用率；GPU 化进一步减少了大规模误差评估和 LOD 决策的 CPU 负担，但不规则拓扑更新与邻接一致性仍是其主要限制。不同实现不存在绝对优劣，适用性取决于场景规模、拓扑变化频率、质量目标和工程复杂度约束。
 
 具体数值必须由实验填充，不要提前写死。
-

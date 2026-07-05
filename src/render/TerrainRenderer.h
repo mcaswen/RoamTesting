@@ -123,6 +123,10 @@ struct TerrainRenderStats
     // InvalidTopologyCount 用于定位 parent / child / root diamond 不变量错误
     std::size_t RoamInvalidTopologyCount{0};
 
+    // CPU worker 和占用率用于观察并行路径是否真正生效
+    std::size_t RoamCpuWorkerCount{0};
+    float RoamCpuUtilizationPercent{0.0F};
+
     // 下列耗时用于拆分 Classic ROAM 的 CPU 成本来源
     float RoamUpdateMilliseconds{0.0F};
     float RoamSplitMilliseconds{0.0F};

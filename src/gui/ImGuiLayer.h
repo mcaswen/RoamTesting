@@ -52,6 +52,10 @@ struct DebugOverlayData
     std::size_t RoamInvalidNeighborCount{0};
     std::size_t RoamInvalidTopologyCount{0};
 
+    // CPU 诊断字段来自统一算法 stats
+    std::size_t RoamCpuWorkerCount{0};
+    float RoamCpuUtilizationPercent{0.0F};
+
     // UI 直接展示算法层统计的各 pass 耗时
     float RoamUpdateMilliseconds{0.0F};
     float RoamSplitMilliseconds{0.0F};

@@ -282,6 +282,7 @@ assets/textures/Tex_Terrain_Debug_Diffuse.ppm
 - 新增 DOD `ErrorEvaluation` pass，先收集当前 active leaf，再批量刷新 SoA `ScreenErrors`；
 - 自动 worker 模式会按硬件线程数保守封顶，小批量 leaf 保持串行以避免线程启动成本吞掉收益；
 - 统一 benchmark 的 `CpuErrorEvalMilliseconds` 已接入 DOD 批量误差评估耗时，`CpuDecisionMilliseconds` 记录扣除该批量评估后的 split 决策时间；
+- 统一 UI 和 benchmark 已输出 CPU worker 数与 CPU 占用率，用于观察并行评估是否真正吃到多核；
 - 拓扑提交、约束传播和 split / merge 仍保持单线程，为 3D 的并行候选标记与 thread-local 收集保留清晰边界。
 
 3D：并行标记与收集
