@@ -2,6 +2,7 @@
 
 #include "algorithms/ITerrainLodAlgorithm.h"
 #include "algorithms/classic_roam/ClassicRoamTerrainLodAlgorithm.h"
+#include "algorithms/data_oriented_roam/DataOrientedRoamTerrainLodAlgorithm.h"
 #include "terrain/HeightMap.h"
 
 #include <glm/glm.hpp>
@@ -171,6 +172,11 @@ std::unique_ptr<Algorithms::ITerrainLodAlgorithm> CreateAlgorithm(BenchmarkAlgor
     if (selection == BenchmarkAlgorithmSelection::Classic)
     {
         return std::make_unique<Algorithms::ClassicRoam::ClassicRoamTerrainLodAlgorithm>();
+    }
+
+    if (selection == BenchmarkAlgorithmSelection::DataOriented)
+    {
+        return std::make_unique<Algorithms::DataOrientedRoam::DataOrientedRoamTerrainLodAlgorithm>();
     }
 
     return nullptr;

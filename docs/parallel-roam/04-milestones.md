@@ -251,6 +251,12 @@ assets/textures/Tex_Terrain_Debug_Diffuse.ppm
 - 避免运行期频繁 new/delete；
 - 保留与 Classic 版一致的 split 语义。
 
+当前状态：
+
+- 已新增 `DataOrientedRoamMeshBuilder`，节点池由 `std::vector` 预分配管理，parent / child / neighbor 统一使用 `NodeIndex`；
+- 已通过统一 `ITerrainLodAlgorithm` 接口接入 benchmark，`--algorithm dod` 可运行 index-based 3A 版本；
+- 3A 暂保持 AoS 节点结构，SoA 拆分和并行阶段留给 3B / 3C。
+
 3B：AoS 转 SoA
 
 - 将 error、depth、flags、neighbor indices 分离；
