@@ -305,6 +305,13 @@ assets/textures/Tex_Terrain_Debug_Diffuse.ppm
 - 可选：按 Terrain Chunk 分区处理；
 - 可选：边界采用 skirt 或边界约束，降低跨 chunk 同步复杂度。
 
+当前状态：
+
+- DOD topology commit 已加入固定 `8x8` terrain chunk 分区，只有完整落在同一 chunk 的候选会进入并发提交；
+- split 并发提交只处理已有 child 可复用、且不会触发 forced split 的内部候选，fresh child 分配和跨 chunk 邻接继续串行回退；
+- merge 并发提交只处理影响节点全集都在同一 chunk 内的候选，diamond merge 跨 chunk 时仍由串行路径保证 neighbor 一致性；
+- 统一 `CpuWorkerCount` 已纳入 topology commit worker 数，`CpuTopologyMilliseconds` 继续覆盖并发 batch 与串行回退的总拓扑提交耗时。
+
 ### 验收标准
 
 - 视觉结果与 Classic 版相同或接近；

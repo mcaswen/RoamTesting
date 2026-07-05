@@ -74,6 +74,22 @@ struct DataOrientedRoamStats
     // 候选数量用于观察并行标记后的队列规模
     std::size_t SplitCandidateCount{0};
     std::size_t MergeCandidateCount{0};
+    // terrain chunk 统计用于观察保守并发提交覆盖面
+    std::size_t TopologyChunkCount{0};
+    // commit worker 数只统计 topology commit batch
+    std::size_t TopologyCommitWorkerCount{0};
+    // interior candidate 满足同 chunk 写入约束
+    std::size_t InteriorSplitCandidateCount{0};
+    // boundary candidate 由串行回退处理
+    std::size_t BoundarySplitCandidateCount{0};
+    // merge interior 需要 diamond 影响节点都在同一 chunk
+    std::size_t InteriorMergeCandidateCount{0};
+    // 跨 chunk diamond merge 必须保持串行
+    std::size_t BoundaryMergeCandidateCount{0};
+    // 并发提交只统计真正修改的拓扑节点
+    std::size_t ParallelSplitCommitCount{0};
+    // parallel merge count 可用于观察 chunk commit 覆盖面
+    std::size_t ParallelMergeCommitCount{0};
     float UpdateMilliseconds{0.0F};
     // 两个耗时字段按实际路径择一写入
     float ErrorEvaluationSingleThreadMilliseconds{0.0F};

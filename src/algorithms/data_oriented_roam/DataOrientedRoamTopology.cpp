@@ -1,13 +1,49 @@
 #include "algorithms/data_oriented_roam/DataOrientedRoamState.h"
 
 #include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <limits>
 #include <queue>
+#include <thread>
 #include <vector>
 
 namespace ParallelRoam::Algorithms::DataOrientedRoam
 {
 namespace
 {
+constexpr int TopologyChunkGridSize = 8;
+// 固定 chunk 数避免把分块策略暴露成额外 UI 参数
+constexpr std::uint32_t InvalidTopologyChunkId = std::numeric_limits<std::uint32_t>::max();
+constexpr std::size_t MaxTopologyCommitWorkerCount = 8;
+// 候选太少时保留串行提交，避免调度成本超过收益
+constexpr std::size_t MinParallelCommitCandidateCount = 32;
+
+/// <summary>
+/// 并发 worker 的本地提交计数，join 后再合并回全局 stats
+/// </summary>
+struct TopologyCommitCounters
+{
+    // split 和 forced split 分开保留，便于维持原有统计语义
+    std::size_t SplitCount{0};
+    std::size_t ForcedSplitCount{0};
+    std::size_t RejectedSplitCount{0};
+    // 约束传播理论上不会出现在并发 split，但计数器仍保留防御口径
+    std::size_t ConstraintPassCount{0};
+    std::size_t MergeCount{0};
+};
+
+/// <summary>
+/// 并发 split 成功后返回给串行 priority queue 的增量节点
+/// </summary>
+struct CommittedSplit
+{
+    // Node 已经从 leaf 变为 internal
+    DataOrientedRoamNodeIndex Node{InvalidDataOrientedRoamNodeIndex};
+    // split 前的 base neighbor 用于重新评价 diamond 对侧 child
+    DataOrientedRoamNodeIndex BaseNeighborBeforeSplit{InvalidDataOrientedRoamNodeIndex};
+};
+
 struct SplitEdge
 {
     // Start 和 End 是 base edge 两端
@@ -16,6 +52,162 @@ struct SplitEdge
     // Apex 是 base edge 对侧顶点
     glm::vec2 Apex{0.0F};
 };
+
+int ChunkCoord(float value)
+{
+    // uv=1 必须落到最后一个 chunk，而不是越过网格边界
+    const float clamped = std::clamp(value, 0.0F, 1.0F);
+    const int coord = static_cast<int>(clamped * static_cast<float>(TopologyChunkGridSize));
+    return std::clamp(coord, 0, TopologyChunkGridSize - 1);
+}
+
+std::uint32_t ChunkIdForUv(const glm::vec2& uv)
+{
+    // chunk id 使用 row-major 编码，便于作为 vector 下标
+    const int x = ChunkCoord(uv.x);
+    const int y = ChunkCoord(uv.y);
+    return static_cast<std::uint32_t>(y * TopologyChunkGridSize + x);
+}
+
+std::uint32_t InteriorChunkIdForDomain(const TriangleDomain& domain)
+{
+    // 只有三个顶点都落在同一格内才算 chunk interior
+    const std::uint32_t chunkA = ChunkIdForUv(domain.A);
+    const std::uint32_t chunkB = ChunkIdForUv(domain.B);
+    const std::uint32_t chunkC = ChunkIdForUv(domain.C);
+    if (chunkA == chunkB && chunkA == chunkC)
+    {
+        return chunkA;
+    }
+
+    return InvalidTopologyChunkId;
+}
+
+std::uint32_t InteriorChunkIdForNode(const DataOrientedRoamState& state, DataOrientedRoamNodeIndex node)
+{
+    if (!state.IsValidNode(node))
+    {
+        // invalid node 不能被分配给任何 chunk
+        return InvalidTopologyChunkId;
+    }
+
+    // 只有完整落在同一 chunk 内的三角形才允许并发提交
+    return InteriorChunkIdForDomain(state.Nodes[node].Domain);
+}
+
+bool NodeBelongsToChunk(
+    const DataOrientedRoamState& state,
+    DataOrientedRoamNodeIndex node,
+    std::uint32_t chunkId)
+{
+    if (!state.IsValidNode(node))
+    {
+        // invalid neighbor 不会被写入，视作不阻塞 chunk 内提交
+        return true;
+    }
+
+    return InteriorChunkIdForNode(state, node) == chunkId;
+}
+
+std::size_t ResolveTopologyCommitWorkerCount(
+    const DataOrientedRoamState& state,
+    std::size_t candidateCount,
+    std::size_t nonEmptyChunkCount)
+{
+    if (candidateCount < MinParallelCommitCandidateCount || nonEmptyChunkCount < 2U)
+    {
+        // 单 chunk 或小批量没有并发提交价值
+        return 1U;
+    }
+
+    if (state.Settings.ErrorEvaluationWorkerCount == 1U)
+    {
+        // 拓扑提交沿用 worker 设置，避免新增 UI 参数
+        return 1U;
+    }
+
+    std::size_t requestedWorkerCount = state.Settings.ErrorEvaluationWorkerCount;
+    if (requestedWorkerCount == 0U)
+    {
+        // 自动模式保守封顶，避免 topology commit 抢占过多线程
+        const unsigned int hardwareWorkerCount = std::thread::hardware_concurrency();
+        requestedWorkerCount = hardwareWorkerCount == 0U ? 1U : static_cast<std::size_t>(hardwareWorkerCount);
+        requestedWorkerCount = std::min(requestedWorkerCount, MaxTopologyCommitWorkerCount);
+    }
+
+    return std::clamp(requestedWorkerCount, std::size_t{1}, nonEmptyChunkCount);
+}
+
+void MergeCountersIntoStats(DataOrientedRoamState& state, const TopologyCommitCounters& counters)
+{
+    // worker 本地计数在主线程合并，避免 stats 字段数据竞争
+    state.Stats.SplitCount += counters.SplitCount;
+    state.Stats.ForcedSplitCount += counters.ForcedSplitCount;
+    state.Stats.RejectedSplitCount += counters.RejectedSplitCount;
+    state.Stats.ConstraintPassCount += counters.ConstraintPassCount;
+    state.Stats.MergeCount += counters.MergeCount;
+}
+
+void RecordConstraintPass(DataOrientedRoamState& state, TopologyCommitCounters* counters)
+{
+    if (counters != nullptr)
+    {
+        // 并发路径只写本地计数器
+        ++counters->ConstraintPassCount;
+        return;
+    }
+
+    ++state.Stats.ConstraintPassCount;
+}
+
+void RecordRejectedSplit(DataOrientedRoamState& state, TopologyCommitCounters* counters)
+{
+    if (counters != nullptr)
+    {
+        // 并发路径延迟合并 rejected split
+        ++counters->RejectedSplitCount;
+        return;
+    }
+
+    ++state.Stats.RejectedSplitCount;
+}
+
+void RecordSplit(
+    DataOrientedRoamState& state,
+    std::uint64_t parentPathId,
+    DataOrientedRoamSplitReason reason,
+    TopologyCommitCounters* counters)
+{
+    if (counters != nullptr)
+    {
+        // 并发 split 不直接写 CurrentSplitPaths
+        ++counters->SplitCount;
+        if (reason != DataOrientedRoamSplitReason::Requested)
+        {
+            ++counters->ForcedSplitCount;
+        }
+        return;
+    }
+
+    state.CurrentSplitPaths.insert(parentPathId);
+    ++state.Stats.SplitCount;
+    if (reason != DataOrientedRoamSplitReason::Requested)
+    {
+        ++state.Stats.ForcedSplitCount;
+    }
+}
+
+void RecordMerge(DataOrientedRoamState& state, TopologyCommitCounters* counters)
+{
+    if (counters != nullptr)
+    {
+        // 并发 merge 只累积本地成功次数
+        ++counters->MergeCount;
+        return;
+    }
+
+    ++state.Stats.MergeCount;
+}
 
 SplitEdge ChooseBaseEdge(const TriangleDomain& domain)
 {
@@ -106,7 +298,8 @@ bool SplitNode(
     DataOrientedRoamState& state,
     DataOrientedRoamNodeIndex node,
     DataOrientedRoamSplitReason reason,
-    DataOrientedRoamNodeIndex forcedFrom)
+    DataOrientedRoamNodeIndex forcedFrom,
+    TopologyCommitCounters* counters = nullptr)
 {
     if (!state.IsValidNode(node) || !state.IsLeaf(node))
     {
@@ -117,7 +310,7 @@ bool SplitNode(
     if (state.Nodes[node].Depth >= state.Settings.MaxDepth)
     {
         // maxDepth 是硬限制，不进入约束传播
-        ++state.Stats.RejectedSplitCount;
+        RecordRejectedSplit(state, counters);
         return false;
     }
 
@@ -133,8 +326,8 @@ bool SplitNode(
                state.Nodes[baseNeighbor].BaseNeighbor != node &&
                guard < state.Settings.MaxDepth + 2)
         {
-            ++state.Stats.ConstraintPassCount;
-            if (!SplitNode(state, baseNeighbor, DataOrientedRoamSplitReason::ForcedByBaseNeighbor, node))
+            RecordConstraintPass(state, counters);
+            if (!SplitNode(state, baseNeighbor, DataOrientedRoamSplitReason::ForcedByBaseNeighbor, node, counters))
             {
                 // 约束传播失败时当前 split 也必须失败
                 return false;
@@ -152,8 +345,8 @@ bool SplitNode(
     {
         // 对侧仍是 leaf 时先补齐 base neighbor split
         // forcedFrom 防止互为 base 的两个 leaf 递归回跳
-        ++state.Stats.ConstraintPassCount;
-        if (!SplitNode(state, baseNeighbor, DataOrientedRoamSplitReason::ForcedByBaseNeighbor, node))
+        RecordConstraintPass(state, counters);
+        if (!SplitNode(state, baseNeighbor, DataOrientedRoamSplitReason::ForcedByBaseNeighbor, node, counters))
         {
             // 对侧 leaf 无法补齐时不能单侧 split
             return false;
@@ -201,17 +394,15 @@ bool SplitNode(
     rightChild.ActivatedByForcedSplit = reason != DataOrientedRoamSplitReason::Requested;
 
     LinkSplitNeighbors(state, node, baseNeighbor);
-    // parent path 进入本帧 split 集合，后续用于 hysteresis
-    state.CurrentSplitPaths.insert(parentPathId);
-    ++state.Stats.SplitCount;
-    if (reason != DataOrientedRoamSplitReason::Requested)
-    {
-        ++state.Stats.ForcedSplitCount;
-    }
+    // 串行路径会记录 path，最终仍由 CollectActiveSplitPaths 重建一次
+    RecordSplit(state, parentPathId, reason, counters);
     return true;
 }
 
-void MergeSingleNode(DataOrientedRoamState& state, DataOrientedRoamNodeIndex node)
+void MergeSingleNode(
+    DataOrientedRoamState& state,
+    DataOrientedRoamNodeIndex node,
+    TopologyCommitCounters* counters = nullptr)
 {
     if (!state.IsValidNode(node) ||
         !state.IsValidNode(state.Nodes[node].LeftChild) ||
@@ -234,10 +425,13 @@ void MergeSingleNode(DataOrientedRoamState& state, DataOrientedRoamNodeIndex nod
     state.Nodes[node].ActivatedBuildId = state.BuildSequence;
     state.Nodes[node].MergeBuildId = state.BuildSequence;
     state.Nodes[node].ActivatedByForcedSplit = false;
-    ++state.Stats.MergeCount;
+    RecordMerge(state, counters);
 }
 
-bool MergeNodeOrDiamond(DataOrientedRoamState& state, DataOrientedRoamNodeIndex node)
+bool MergeNodeOrDiamond(
+    DataOrientedRoamState& state,
+    DataOrientedRoamNodeIndex node,
+    TopologyCommitCounters* counters = nullptr)
 {
     if (!CanMergeNode(state, node))
     {
@@ -257,15 +451,412 @@ bool MergeNodeOrDiamond(DataOrientedRoamState& state, DataOrientedRoamNodeIndex 
         state.Nodes[node].BaseNeighbor = baseNeighbor;
         state.Nodes[baseNeighbor].BaseNeighbor = node;
         // MergeSingleNode 不改 baseNeighbor，互指关系需要前后显式保持
-        MergeSingleNode(state, node);
-        MergeSingleNode(state, baseNeighbor);
+        MergeSingleNode(state, node, counters);
+        MergeSingleNode(state, baseNeighbor, counters);
         state.Nodes[node].BaseNeighbor = baseNeighbor;
         state.Nodes[baseNeighbor].BaseNeighbor = node;
         return true;
     }
 
-    MergeSingleNode(state, node);
+    MergeSingleNode(state, node, counters);
     return true;
+}
+
+bool HasReusableChildren(const DataOrientedRoamState& state, DataOrientedRoamNodeIndex node)
+{
+    // 并发 split 第一版不做 node pool 分配，只复用历史 child
+    return state.IsValidNode(node) &&
+           state.IsValidNode(state.Nodes[node].LeftChild) &&
+           state.IsValidNode(state.Nodes[node].RightChild);
+}
+
+bool SplitWouldNeedForcedNeighbor(const DataOrientedRoamState& state, DataOrientedRoamNodeIndex node)
+{
+    if (!state.Settings.EnableLocalConstraints)
+    {
+        // 关闭约束时不会递归触发 base neighbor split
+        return false;
+    }
+
+    const DataOrientedRoamNodeIndex baseNeighbor = state.Nodes[node].BaseNeighbor;
+    if (!state.IsValidNode(baseNeighbor))
+    {
+        // 地形边界没有对侧三角形
+        return false;
+    }
+
+    if (state.IsLeaf(baseNeighbor))
+    {
+        // leaf base neighbor 会触发 forced split，必须串行处理
+        return true;
+    }
+
+    // 非互指 diamond 需要沿 neighbor 链修复，也交给串行路径
+    return state.Nodes[baseNeighbor].BaseNeighbor != node;
+}
+
+std::uint32_t SafeInteriorSplitChunkId(const DataOrientedRoamState& state, DataOrientedRoamNodeIndex node)
+{
+    if (!state.IsValidNode(node) ||
+        !state.IsLeaf(node) ||
+        state.Nodes[node].Depth >= state.Settings.MaxDepth ||
+        !HasReusableChildren(state, node) ||
+        SplitWouldNeedForcedNeighbor(state, node))
+    {
+        // 任一条件不满足都会回退到原有串行 split queue
+        return InvalidTopologyChunkId;
+    }
+
+    const std::uint32_t chunkId = InteriorChunkIdForNode(state, node);
+    if (chunkId == InvalidTopologyChunkId)
+    {
+        // 跨 chunk 三角形属于 boundary candidate
+        return InvalidTopologyChunkId;
+    }
+
+    const DataOrientedRoamNodeConstRef candidate = state.Nodes[node];
+    // split 会写 parent、两个 child 和左右外侧 neighbor
+    if (!NodeBelongsToChunk(state, candidate.LeftChild, chunkId) ||
+        !NodeBelongsToChunk(state, candidate.RightChild, chunkId) ||
+        !NodeBelongsToChunk(state, candidate.LeftNeighbor, chunkId) ||
+        !NodeBelongsToChunk(state, candidate.RightNeighbor, chunkId))
+    {
+        return InvalidTopologyChunkId;
+    }
+
+    const DataOrientedRoamNodeIndex baseNeighbor = candidate.BaseNeighbor;
+    if (state.IsValidNode(baseNeighbor) && !state.IsLeaf(baseNeighbor))
+    {
+        // diamond 对侧已 split 时还会写入对侧 child 的 neighbor
+        if (!NodeBelongsToChunk(state, baseNeighbor, chunkId) ||
+            !NodeBelongsToChunk(state, state.Nodes[baseNeighbor].LeftChild, chunkId) ||
+            !NodeBelongsToChunk(state, state.Nodes[baseNeighbor].RightChild, chunkId))
+        {
+            return InvalidTopologyChunkId;
+        }
+    }
+
+    return chunkId;
+}
+
+bool HasMergeReadyChildren(const DataOrientedRoamState& state, DataOrientedRoamNodeIndex node)
+{
+    if (!state.IsValidNode(node) || state.IsLeaf(node))
+    {
+        // merge 只作用于 active internal node
+        return false;
+    }
+
+    const DataOrientedRoamNodeConstRef candidate = state.Nodes[node];
+    // 分桶时只检查拓扑形状，score 校验留到提交前
+    return state.IsValidNode(candidate.LeftChild) &&
+           state.IsValidNode(candidate.RightChild) &&
+           state.IsLeaf(candidate.LeftChild) &&
+           state.IsLeaf(candidate.RightChild);
+}
+
+bool HasMergeReadyDiamond(const DataOrientedRoamState& state, DataOrientedRoamNodeIndex node)
+{
+    const DataOrientedRoamNodeIndex baseNeighbor = state.Nodes[node].BaseNeighbor;
+    if (!state.IsValidNode(baseNeighbor) || state.IsLeaf(baseNeighbor))
+    {
+        // 没有对侧 internal diamond 时可以单侧 merge
+        return true;
+    }
+
+    // 对侧 diamond 也必须是可回收的两片 leaf
+    return state.Nodes[baseNeighbor].BaseNeighbor == node && HasMergeReadyChildren(state, baseNeighbor);
+}
+
+std::uint32_t SafeInteriorMergeChunkId(
+    const DataOrientedRoamState& state,
+    DataOrientedRoamNodeIndex node,
+    bool validateMergeScore)
+{
+    if (!HasMergeReadyChildren(state, node) || !HasMergeReadyDiamond(state, node))
+    {
+        // merge 前置拓扑不满足时不进入任何提交队列
+        return InvalidTopologyChunkId;
+    }
+
+    if (validateMergeScore && !CanMergeNode(state, node))
+    {
+        // worker 真正提交前再做完整 score 校验
+        return InvalidTopologyChunkId;
+    }
+
+    const std::uint32_t chunkId = InteriorChunkIdForNode(state, node);
+    if (chunkId == InvalidTopologyChunkId)
+    {
+        // parent 自身跨 chunk 时不能并发回收
+        return InvalidTopologyChunkId;
+    }
+
+    const DataOrientedRoamNodeConstRef candidate = state.Nodes[node];
+    // MergeSingleNode 会写两个 child 的 base neighbor 所指向的外侧节点
+    if (!NodeBelongsToChunk(state, candidate.LeftChild, chunkId) ||
+        !NodeBelongsToChunk(state, candidate.RightChild, chunkId) ||
+        !NodeBelongsToChunk(state, state.Nodes[candidate.LeftChild].BaseNeighbor, chunkId) ||
+        !NodeBelongsToChunk(state, state.Nodes[candidate.RightChild].BaseNeighbor, chunkId))
+    {
+        return InvalidTopologyChunkId;
+    }
+
+    const DataOrientedRoamNodeIndex baseNeighbor = candidate.BaseNeighbor;
+    if (state.IsValidNode(baseNeighbor) && !state.IsLeaf(baseNeighbor))
+    {
+        // diamond merge 会同时回收 base neighbor 一侧
+        if ((validateMergeScore && !CanMergeNode(state, baseNeighbor)) ||
+            !NodeBelongsToChunk(state, baseNeighbor, chunkId) ||
+            !NodeBelongsToChunk(state, state.Nodes[baseNeighbor].LeftChild, chunkId) ||
+            !NodeBelongsToChunk(state, state.Nodes[baseNeighbor].RightChild, chunkId) ||
+            !NodeBelongsToChunk(state, state.Nodes[state.Nodes[baseNeighbor].LeftChild].BaseNeighbor, chunkId) ||
+            !NodeBelongsToChunk(state, state.Nodes[state.Nodes[baseNeighbor].RightChild].BaseNeighbor, chunkId))
+        {
+            return InvalidTopologyChunkId;
+        }
+    }
+
+    return chunkId;
+}
+
+std::vector<std::vector<DataOrientedRoamSplitCandidate>> BuildInteriorSplitChunks(
+    DataOrientedRoamState& state,
+    const std::vector<DataOrientedRoamSplitCandidate>& candidates)
+{
+    // 先按原 priority queue 口径排序，再截取可并发提交的安全候选
+    std::vector<DataOrientedRoamSplitCandidate> sortedCandidates = candidates;
+    std::sort(
+        sortedCandidates.begin(),
+        sortedCandidates.end(),
+        [](const DataOrientedRoamSplitCandidate& left, const DataOrientedRoamSplitCandidate& right) {
+            if (left.Score == right.Score)
+            {
+                return left.Sequence < right.Sequence;
+            }
+
+            return left.Score > right.Score;
+        });
+
+    std::vector<std::vector<DataOrientedRoamSplitCandidate>> chunks(
+        static_cast<std::size_t>(TopologyChunkGridSize * TopologyChunkGridSize));
+    // 并发 batch 不能绕过 split budget
+    const std::size_t remainingBudget = state.Settings.SplitBudget == 0U ?
+        std::numeric_limits<std::size_t>::max() :
+        state.Settings.SplitBudget - std::min(state.Settings.SplitBudget, state.Stats.SplitCount);
+    std::size_t selectedCount = 0U;
+
+    for (const DataOrientedRoamSplitCandidate& candidate : sortedCandidates)
+    {
+        if (selectedCount >= remainingBudget)
+        {
+            // budget 后面的候选交给后续帧或串行逻辑自然处理
+            break;
+        }
+
+        const std::uint32_t chunkId = SafeInteriorSplitChunkId(state, candidate.Node);
+        if (chunkId == InvalidTopologyChunkId)
+        {
+            // boundary candidate 保留给串行 queue
+            ++state.Stats.BoundarySplitCandidateCount;
+            continue;
+        }
+
+        // chunk 下标即并发任务的 ownership
+        chunks[chunkId].push_back(candidate);
+        ++state.Stats.InteriorSplitCandidateCount;
+        ++selectedCount;
+    }
+
+    return chunks;
+}
+
+std::vector<std::vector<DataOrientedRoamMergeCandidate>> BuildInteriorMergeChunks(
+    DataOrientedRoamState& state,
+    const std::vector<DataOrientedRoamMergeCandidate>& candidates)
+{
+    std::vector<std::vector<DataOrientedRoamMergeCandidate>> chunks(
+        static_cast<std::size_t>(TopologyChunkGridSize * TopologyChunkGridSize));
+
+    for (const DataOrientedRoamMergeCandidate& candidate : candidates)
+    {
+        // merge candidate 已按 score 排好序，chunk 内保留这个顺序
+        const std::uint32_t chunkId = SafeInteriorMergeChunkId(state, candidate.Node, false);
+        if (chunkId == InvalidTopologyChunkId)
+        {
+            // 跨 chunk diamond 仍由串行路径提交
+            ++state.Stats.BoundaryMergeCandidateCount;
+            continue;
+        }
+
+        // 同一 chunk 内由同一个 worker 顺序提交
+        chunks[chunkId].push_back(candidate);
+        ++state.Stats.InteriorMergeCandidateCount;
+    }
+
+    return chunks;
+}
+
+std::size_t CountNonEmptyChunks(auto& chunks)
+{
+    std::size_t nonEmptyChunkCount = 0U;
+    for (const auto& chunk : chunks)
+    {
+        if (!chunk.empty())
+        {
+            // 非空 chunk 数决定最多能并行多少个独立任务
+            ++nonEmptyChunkCount;
+        }
+    }
+
+    return nonEmptyChunkCount;
+}
+
+std::size_t CountChunkCandidates(auto& chunks)
+{
+    std::size_t candidateCount = 0U;
+    for (const auto& chunk : chunks)
+    {
+        // 只统计 interior candidate，不含串行 boundary 回退
+        candidateCount += chunk.size();
+    }
+
+    return candidateCount;
+}
+
+std::vector<CommittedSplit> CommitInteriorSplitChunks(
+    DataOrientedRoamState& state,
+    std::vector<std::vector<DataOrientedRoamSplitCandidate>>& chunks)
+{
+    std::vector<CommittedSplit> committedSplits;
+    const std::size_t nonEmptyChunkCount = CountNonEmptyChunks(chunks);
+    const std::size_t candidateCount = CountChunkCandidates(chunks);
+    const std::size_t workerCount = ResolveTopologyCommitWorkerCount(state, candidateCount, nonEmptyChunkCount);
+    state.Stats.TopologyCommitWorkerCount = std::max(state.Stats.TopologyCommitWorkerCount, workerCount);
+
+    if (workerCount <= 1U)
+    {
+        // worker 不足时不预提交 split，保持原串行 queue 语义
+        return committedSplits;
+    }
+
+    std::vector<TopologyCommitCounters> localCounters(workerCount);
+    std::vector<std::vector<CommittedSplit>> localCommittedSplits(workerCount);
+    std::vector<std::thread> workers;
+    workers.reserve(workerCount);
+
+    for (std::size_t workerIndex = 0U; workerIndex < workerCount; ++workerIndex)
+    {
+        workers.emplace_back([&state, &chunks, &localCounters, &localCommittedSplits, workerIndex, workerCount]() {
+            // 每个 chunk 只会被一个 worker 访问
+            for (std::size_t chunkIndex = workerIndex; chunkIndex < chunks.size(); chunkIndex += workerCount)
+            {
+                for (const DataOrientedRoamSplitCandidate& candidate : chunks[chunkIndex])
+                {
+                    const DataOrientedRoamNodeIndex node = candidate.Node;
+                    const std::uint32_t chunkId = SafeInteriorSplitChunkId(state, node);
+                    if (chunkId != chunkIndex)
+                    {
+                        // 同 chunk 前序提交可能让候选不再安全
+                        continue;
+                    }
+
+                    const DataOrientedRoamNodeIndex baseNeighborBeforeSplit = state.Nodes[node].BaseNeighbor;
+                    // 并发 split 只允许不分配新 node 的安全候选
+                    if (SplitNode(
+                            state,
+                            node,
+                            DataOrientedRoamSplitReason::Requested,
+                            InvalidDataOrientedRoamNodeIndex,
+                            &localCounters[workerIndex]))
+                    {
+                        // child 会在主线程重新入队，保持级联细分
+                        localCommittedSplits[workerIndex].push_back(CommittedSplit{node, baseNeighborBeforeSplit});
+                    }
+                }
+            }
+        });
+    }
+
+    for (std::thread& worker : workers)
+    {
+        worker.join();
+    }
+
+    std::size_t totalCommittedCount = 0U;
+    for (const TopologyCommitCounters& counters : localCounters)
+    {
+        // 所有全局 stats 更新集中在主线程完成
+        MergeCountersIntoStats(state, counters);
+        totalCommittedCount += counters.SplitCount;
+    }
+
+    for (const std::vector<CommittedSplit>& localSplits : localCommittedSplits)
+    {
+        // 合并顺序只影响后续同分 sequence，不影响拓扑正确性
+        committedSplits.insert(committedSplits.end(), localSplits.begin(), localSplits.end());
+    }
+
+    state.Stats.ParallelSplitCommitCount += totalCommittedCount;
+    return committedSplits;
+}
+
+void CommitInteriorMergeChunks(
+    DataOrientedRoamState& state,
+    std::vector<std::vector<DataOrientedRoamMergeCandidate>>& chunks)
+{
+    const std::size_t nonEmptyChunkCount = CountNonEmptyChunks(chunks);
+    const std::size_t candidateCount = CountChunkCandidates(chunks);
+    const std::size_t workerCount = ResolveTopologyCommitWorkerCount(state, candidateCount, nonEmptyChunkCount);
+    state.Stats.TopologyCommitWorkerCount = std::max(state.Stats.TopologyCommitWorkerCount, workerCount);
+
+    if (workerCount <= 1U)
+    {
+        // 小批量 merge 直接交给原串行路径
+        return;
+    }
+
+    std::vector<TopologyCommitCounters> localCounters(workerCount);
+    std::vector<std::thread> workers;
+    workers.reserve(workerCount);
+
+    for (std::size_t workerIndex = 0U; workerIndex < workerCount; ++workerIndex)
+    {
+        workers.emplace_back([&state, &chunks, &localCounters, workerIndex, workerCount]() {
+            // chunk ownership 保证不同 worker 不写同一组 neighbor
+            for (std::size_t chunkIndex = workerIndex; chunkIndex < chunks.size(); chunkIndex += workerCount)
+            {
+                for (const DataOrientedRoamMergeCandidate& candidate : chunks[chunkIndex])
+                {
+                    const DataOrientedRoamNodeIndex node = candidate.Node;
+                    const std::uint32_t chunkId = SafeInteriorMergeChunkId(state, node, true);
+                    if (chunkId != chunkIndex)
+                    {
+                        // 前序 merge 可能已经改变 diamond 结构
+                        continue;
+                    }
+
+                    // 真正提交前仍复用原 diamond merge 逻辑
+                    MergeNodeOrDiamond(state, node, &localCounters[workerIndex]);
+                }
+            }
+        });
+    }
+
+    for (std::thread& worker : workers)
+    {
+        worker.join();
+    }
+
+    std::size_t totalCommittedCount = 0U;
+    for (const TopologyCommitCounters& counters : localCounters)
+    {
+        // merge 成功次数由 worker 本地计数器汇总
+        MergeCountersIntoStats(state, counters);
+        totalCommittedCount += counters.MergeCount;
+    }
+
+    state.Stats.ParallelMergeCommitCount += totalCommittedCount;
 }
 } // 匿名命名空间
 
@@ -273,6 +864,7 @@ void RefineWithSplitQueue(DataOrientedRoamState& state)
 {
     // split pass 用优先队列控制预算分配
     // 高 screen error leaf 会先获得本帧 split 机会
+    state.Stats.TopologyChunkCount = static_cast<std::size_t>(TopologyChunkGridSize * TopologyChunkGridSize);
     struct CandidateCompare
     {
         bool operator()(const DataOrientedRoamSplitCandidate& left, const DataOrientedRoamSplitCandidate& right) const
@@ -315,11 +907,44 @@ void RefineWithSplitQueue(DataOrientedRoamState& state)
 
     std::vector<DataOrientedRoamSplitCandidate> initialCandidates;
     CollectSplitCandidates(state, initialCandidates);
+    // 并发 batch 只消费 initial snapshot 中的安全子集
+    std::vector<std::vector<DataOrientedRoamSplitCandidate>> interiorChunks =
+        BuildInteriorSplitChunks(state, initialCandidates);
+    const std::vector<CommittedSplit> committedSplits =
+        CommitInteriorSplitChunks(state, interiorChunks);
+
     for (const DataOrientedRoamSplitCandidate& candidate : initialCandidates)
     {
-        candidates.push(candidate);
+        // 并发 batch 可能已经把 leaf 变成 internal node
+        if (state.IsValidNode(candidate.Node) && state.IsLeaf(candidate.Node))
+        {
+            // 已由并发 batch 提交的 candidate 不再进入串行队列
+            candidates.push(candidate);
+        }
     }
     sequence = initialCandidates.size();
+
+    for (const CommittedSplit& committedSplit : committedSplits)
+    {
+        // committed node 仍可能被后续串行约束改变，先做防御检查
+        if (!state.IsValidNode(committedSplit.Node))
+        {
+            continue;
+        }
+
+        // 并发 split 产生的新 child 仍进入串行 priority queue 继续细分
+        enqueueCandidate(state.Nodes[committedSplit.Node].LeftChild);
+        enqueueCandidate(state.Nodes[committedSplit.Node].RightChild);
+
+        // 对侧 diamond child 可能因为本次 split 获得新的细分机会
+        if (state.IsValidNode(committedSplit.BaseNeighborBeforeSplit) &&
+            !state.IsLeaf(committedSplit.BaseNeighborBeforeSplit))
+        {
+            enqueueCandidate(state.Nodes[committedSplit.BaseNeighborBeforeSplit].LeftChild);
+            enqueueCandidate(state.Nodes[committedSplit.BaseNeighborBeforeSplit].RightChild);
+        }
+    }
+
     state.Stats.CandidatePeakCount = std::max(state.Stats.CandidatePeakCount, candidates.size());
 
     while (!candidates.empty())
@@ -327,6 +952,7 @@ void RefineWithSplitQueue(DataOrientedRoamState& state)
         const DataOrientedRoamSplitCandidate candidate = candidates.top();
         candidates.pop();
 
+        // 串行 queue 是并发 batch 之后的最终一致性收尾
         const DataOrientedRoamNodeIndex node = candidate.Node;
         if (!state.IsValidNode(node) || !state.IsLeaf(node))
         {
@@ -351,6 +977,7 @@ void RefineWithSplitQueue(DataOrientedRoamState& state)
         const DataOrientedRoamNodeIndex baseNeighborBeforeSplit = state.Nodes[node].BaseNeighbor;
         if (!SplitNode(state, node, DataOrientedRoamSplitReason::Requested, InvalidDataOrientedRoamNodeIndex))
         {
+            // 失败通常来自 budget、maxDepth 或 forced split 传播
             ++state.Stats.RejectedSplitCount;
             continue;
         }
@@ -372,9 +999,11 @@ void MergeWithDiamondQueue(DataOrientedRoamState& state)
 {
     // merge pass 先回收低 error 的远处细节
     // 后续 split pass 再补回当前视点需要的细节
+    state.Stats.TopologyChunkCount = static_cast<std::size_t>(TopologyChunkGridSize * TopologyChunkGridSize);
     std::vector<DataOrientedRoamMergeCandidate> candidates;
     CollectMergeCandidates(state, candidates);
 
+    // merge 仍按低 error 优先，但 interior chunk 可先并发提交
     std::sort(
         candidates.begin(),
         candidates.end(),
@@ -383,8 +1012,13 @@ void MergeWithDiamondQueue(DataOrientedRoamState& state)
             return left.Score < right.Score;
         });
 
+    std::vector<std::vector<DataOrientedRoamMergeCandidate>> interiorChunks =
+        BuildInteriorMergeChunks(state, candidates);
+    CommitInteriorMergeChunks(state, interiorChunks);
+
     for (const DataOrientedRoamMergeCandidate& candidate : candidates)
     {
+        // 并发 merge 已处理的 candidate 会在这里自然失效
         if (!CanMergeNode(state, candidate.Node))
         {
             // 前面的 merge 可能改变后面候选的 active 状态
@@ -393,6 +1027,7 @@ void MergeWithDiamondQueue(DataOrientedRoamState& state)
 
         if (!MergeNodeOrDiamond(state, candidate.Node))
         {
+            // 串行回退仍记录无法提交的边界候选
             ++state.Stats.RejectedMergeCount;
         }
     }
