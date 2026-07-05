@@ -35,6 +35,7 @@ Terrain::TerrainMeshData DataOrientedRoamMeshBuilder::Build(
     state.Settings.MergeThreshold = std::min(state.Settings.MergeThreshold, state.Settings.SplitThreshold);
     state.Stats = {};
     state.CurrentSplitPaths.clear();
+    state.FinalActiveLeaves.clear();
     state.CameraPosition = cameraPosition;
     state.TerrainSize = terrainSize;
     state.HeightScale = heightScale;
@@ -77,12 +78,14 @@ Terrain::TerrainMeshData DataOrientedRoamMeshBuilder::Build(
     }
 
     const auto emitStart = std::chrono::steady_clock::now();
-    // emit pass 是算法层到 CPU mesh 的唯一出口
-    EmitLeafTriangles(state, meshData);
+    // 最终 leaf 快照在拓扑稳定后收集，emit 和统计复用同一份视图
+    CollectLeafNodes(state, state.FinalActiveLeaves);
+    // emit 计时包含最终快照收集，保持和旧路径的 mesh build 口径一致
+    EmitLeafTriangles(state, meshData, state.FinalActiveLeaves);
     const auto emitEnd = std::chrono::steady_clock::now();
 
     // stats 聚合放在 emit 后，确保 active triangle 数来自实际输出
-    AccumulateLeafStats(state, meshData);
+    AccumulateLeafStats(state, meshData, state.FinalActiveLeaves);
     state.Stats.MergeMilliseconds = ElapsedMilliseconds(mergeStart, mergeEnd);
     state.Stats.SplitMilliseconds = ElapsedMilliseconds(splitStart, splitEnd);
     state.Stats.EmitMilliseconds = ElapsedMilliseconds(emitStart, emitEnd);

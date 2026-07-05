@@ -144,6 +144,7 @@ TerrainLodStats DataOrientedRoamTerrainLodAlgorithm::ToTerrainLodStats(const Dat
         stats.ErrorEvaluationWorkerCount,
         stats.CollectWorkerCount,
         stats.CandidateMarkWorkerCount,
+        stats.EmitWorkerCount,
         stats.TopologyCommitWorkerCount,
     });
     // error eval 从 split pass 里拆出独立 CSV 字段

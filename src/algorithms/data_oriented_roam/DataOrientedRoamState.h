@@ -13,6 +13,12 @@ namespace ParallelRoam::Algorithms::DataOrientedRoam
 using DataOrientedRoamNodeIndex = std::uint32_t;
 constexpr DataOrientedRoamNodeIndex InvalidDataOrientedRoamNodeIndex =
     std::numeric_limits<DataOrientedRoamNodeIndex>::max();
+// chunk id 是并发 topology commit 的 ownership 键
+using DataOrientedRoamChunkId = std::uint32_t;
+constexpr DataOrientedRoamChunkId InvalidDataOrientedRoamChunkId =
+    std::numeric_limits<DataOrientedRoamChunkId>::max();
+// 固定分块数避免把内部调度策略暴露成 UI 参数
+constexpr int DataOrientedRoamTopologyChunkGridSize = 8;
 
 enum class DataOrientedRoamSplitReason
 {
@@ -61,6 +67,7 @@ struct DataOrientedRoamNodeConstRef
     const DataOrientedRoamNodeIndex& BaseNeighbor;
     const DataOrientedRoamNodeIndex& LeftNeighbor;
     const DataOrientedRoamNodeIndex& RightNeighbor;
+    const DataOrientedRoamChunkId& InteriorChunkId;
     const float& GeometricError;
     const float& ScreenError;
     const std::uint64_t& PathId;
@@ -85,6 +92,7 @@ struct DataOrientedRoamNodeRef
     DataOrientedRoamNodeIndex& BaseNeighbor;
     DataOrientedRoamNodeIndex& LeftNeighbor;
     DataOrientedRoamNodeIndex& RightNeighbor;
+    DataOrientedRoamChunkId& InteriorChunkId;
     float& GeometricError;
     float& ScreenError;
     std::uint64_t& PathId;
@@ -117,6 +125,8 @@ struct DataOrientedRoamNodePool
     std::vector<DataOrientedRoamNodeIndex> LeftNeighbors;
     // RightNeighbors 让边向邻接关系不需要临时对象
     std::vector<DataOrientedRoamNodeIndex> RightNeighbors;
+    // InteriorChunkIds 缓存分块归属，避免 topology pass 反复按 UV 计算
+    std::vector<DataOrientedRoamChunkId> InteriorChunkIds;
     // GeometricErrors 与相机无关，节点创建后跨帧复用
     std::vector<float> GeometricErrors;
     // ScreenErrors 缓存最近一次队列评分，供误差评估批量复用
@@ -175,6 +185,8 @@ struct DataOrientedRoamState
     std::unordered_set<std::uint64_t> PreviousSplitPaths;
     // CurrentSplitPaths 在 merge/split 完成后重新收集
     std::unordered_set<std::uint64_t> CurrentSplitPaths;
+    // FinalActiveLeaves 是拓扑稳定后的 leaf 快照，emit 和统计共用
+    std::vector<DataOrientedRoamNodeIndex> FinalActiveLeaves;
     // RootA 和 RootB 构成初始 diamond
     DataOrientedRoamNodeIndex RootA{InvalidDataOrientedRoamNodeIndex};
     DataOrientedRoamNodeIndex RootB{InvalidDataOrientedRoamNodeIndex};
@@ -198,6 +210,9 @@ struct DataOrientedRoamState
 
 [[nodiscard]] std::uint64_t LeftChildPathId(std::uint64_t parentPathId);
 [[nodiscard]] std::uint64_t RightChildPathId(std::uint64_t parentPathId);
+
+// ComputeInteriorChunkId 把完全落入同一分块的 domain 编码成 row-major id
+[[nodiscard]] DataOrientedRoamChunkId ComputeInteriorChunkId(const TriangleDomain& domain);
 
 // AddNode 是唯一写入 node pool 并计算 geometric error 的入口
 [[nodiscard]] DataOrientedRoamNodeIndex AddNode(
@@ -228,7 +243,10 @@ void CollectLeafNodes(const DataOrientedRoamState& state, std::vector<DataOrient
 void CollectActiveSplitPaths(DataOrientedRoamState& state);
 
 // AccumulateLeafStats 聚合当前帧 active leaf 的 debug 分类
-void AccumulateLeafStats(DataOrientedRoamState& state, const Terrain::TerrainMeshData& meshData);
+void AccumulateLeafStats(
+    DataOrientedRoamState& state,
+    const Terrain::TerrainMeshData& meshData,
+    const std::vector<DataOrientedRoamNodeIndex>& leafNodes);
 
 // RefineWithSplitQueue 是 split pass，受 SplitBudget 限制
 void RefineWithSplitQueue(DataOrientedRoamState& state);
@@ -240,7 +258,10 @@ void MergeWithDiamondQueue(DataOrientedRoamState& state);
 void ValidateTopology(DataOrientedRoamState& state);
 
 // EmitLeafTriangles 是当前 DOD 路径的 CPU mesh 输出 pass
-void EmitLeafTriangles(const DataOrientedRoamState& state, Terrain::TerrainMeshData& meshData);
+void EmitLeafTriangles(
+    DataOrientedRoamState& state,
+    Terrain::TerrainMeshData& meshData,
+    const std::vector<DataOrientedRoamNodeIndex>& leafNodes);
 
 // EvaluateScreenErrorForNode 写回单个节点的 screen error 缓存
 [[nodiscard]] float EvaluateScreenErrorForNode(DataOrientedRoamState& state, DataOrientedRoamNodeIndex node);

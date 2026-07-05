@@ -11,6 +11,24 @@ constexpr std::uint64_t RootBPathId = 1ULL << 32U;
 constexpr int ExactReserveMaxDepth = 20;
 constexpr std::size_t LargeDepthReserveFallback = 1'000'000U;
 
+int ChunkCoord(float value)
+{
+    // uv=1 必须落到最后一个 chunk，而不是越过网格边界
+    const float clamped = std::clamp(value, 0.0F, 1.0F);
+    const int coord = static_cast<int>(
+        clamped * static_cast<float>(DataOrientedRoamTopologyChunkGridSize));
+    return std::clamp(coord, 0, DataOrientedRoamTopologyChunkGridSize - 1);
+}
+
+DataOrientedRoamChunkId ChunkIdForUv(const glm::vec2& uv)
+{
+    // chunk id 使用 row-major 编码，便于作为 vector 下标
+    const int x = ChunkCoord(uv.x);
+    const int y = ChunkCoord(uv.y);
+    // 这里不依赖 terrainSize，heightmap 切换才需要重建缓存
+    return static_cast<DataOrientedRoamChunkId>(y * DataOrientedRoamTopologyChunkGridSize + x);
+}
+
 std::size_t ExactBintreeNodeCapacity(int maxDepth)
 {
     // 两棵根树都可能展开成完整二叉树
@@ -65,6 +83,7 @@ DataOrientedRoamNodeRef::operator DataOrientedRoamNodeConstRef() const
         BaseNeighbor,
         LeftNeighbor,
         RightNeighbor,
+        InteriorChunkId,
         GeometricError,
         ScreenError,
         PathId,
@@ -101,6 +120,7 @@ std::size_t DataOrientedRoamNodePool::storage_bytes() const
            BaseNeighbors.capacity() * sizeof(DataOrientedRoamNodeIndex) +
            LeftNeighbors.capacity() * sizeof(DataOrientedRoamNodeIndex) +
            RightNeighbors.capacity() * sizeof(DataOrientedRoamNodeIndex) +
+           InteriorChunkIds.capacity() * sizeof(DataOrientedRoamChunkId) +
            // error arrays 与拓扑 index 分离，方便后续批量评估
            GeometricErrors.capacity() * sizeof(float) +
            ScreenErrors.capacity() * sizeof(float) +
@@ -119,7 +139,7 @@ std::size_t DataOrientedRoamNodePool::storage_bytes() const
 std::size_t DataOrientedRoamNodePool::array_count() const
 {
     // array_count 用数组数量描述 SoA 字段拆分程度
-    return 17U;
+    return 18U;
 }
 
 bool DataOrientedRoamNodePool::empty() const
@@ -138,6 +158,7 @@ void DataOrientedRoamNodePool::clear()
     BaseNeighbors.clear();
     LeftNeighbors.clear();
     RightNeighbors.clear();
+    InteriorChunkIds.clear();
     GeometricErrors.clear();
     ScreenErrors.clear();
     PathIds.clear();
@@ -161,6 +182,7 @@ void DataOrientedRoamNodePool::reserve(std::size_t capacity)
     BaseNeighbors.reserve(capacity);
     LeftNeighbors.reserve(capacity);
     RightNeighbors.reserve(capacity);
+    InteriorChunkIds.reserve(capacity);
     // error 数组单独连续，可批量写入 ScreenErrors
     GeometricErrors.reserve(capacity);
     ScreenErrors.reserve(capacity);
@@ -195,6 +217,7 @@ DataOrientedRoamNodeIndex DataOrientedRoamNodePool::Add(
     BaseNeighbors.push_back(InvalidDataOrientedRoamNodeIndex);
     LeftNeighbors.push_back(InvalidDataOrientedRoamNodeIndex);
     RightNeighbors.push_back(InvalidDataOrientedRoamNodeIndex);
+    InteriorChunkIds.push_back(ComputeInteriorChunkId(domain));
     GeometricErrors.push_back(geometricError);
     // 新节点还没有经过 screen error pass
     ScreenErrors.push_back(0.0F);
@@ -223,6 +246,7 @@ DataOrientedRoamNodeRef DataOrientedRoamNodePool::operator[](DataOrientedRoamNod
         BaseNeighbors[node],
         LeftNeighbors[node],
         RightNeighbors[node],
+        InteriorChunkIds[node],
         GeometricErrors[node],
         ScreenErrors[node],
         PathIds[node],
@@ -247,6 +271,7 @@ DataOrientedRoamNodeConstRef DataOrientedRoamNodePool::operator[](DataOrientedRo
         BaseNeighbors[node],
         LeftNeighbors[node],
         RightNeighbors[node],
+        InteriorChunkIds[node],
         GeometricErrors[node],
         ScreenErrors[node],
         PathIds[node],
@@ -290,6 +315,21 @@ std::uint64_t RightChildPathId(std::uint64_t parentPathId)
 {
     // right child 通过末位 1 和 left child 区分
     return parentPathId * 2ULL + 1ULL;
+}
+
+DataOrientedRoamChunkId ComputeInteriorChunkId(const TriangleDomain& domain)
+{
+    // 三个顶点完全落在同一格内才允许按 chunk 独占写拓扑
+    const DataOrientedRoamChunkId chunkA = ChunkIdForUv(domain.A);
+    const DataOrientedRoamChunkId chunkB = ChunkIdForUv(domain.B);
+    const DataOrientedRoamChunkId chunkC = ChunkIdForUv(domain.C);
+    // boundary triangle 可能写跨 chunk neighbor，必须回退串行路径
+    if (chunkA == chunkB && chunkA == chunkC)
+    {
+        return chunkA;
+    }
+
+    return InvalidDataOrientedRoamChunkId;
 }
 
 DataOrientedRoamNodeIndex AddNode(
@@ -338,6 +378,7 @@ void ResetTopology(DataOrientedRoamState& state)
     state.Nodes.clear();
     state.PreviousSplitPaths.clear();
     state.CurrentSplitPaths.clear();
+    state.FinalActiveLeaves.clear();
 
     state.RootA = AddNode(
         state,
@@ -409,7 +450,10 @@ void CollectActiveSplitPaths(DataOrientedRoamState& state)
     CollectActiveSplitPathsFrom(state, state.RootB);
 }
 
-void AccumulateLeafStats(DataOrientedRoamState& state, const Terrain::TerrainMeshData& meshData)
+void AccumulateLeafStats(
+    DataOrientedRoamState& state,
+    const Terrain::TerrainMeshData& meshData,
+    const std::vector<DataOrientedRoamNodeIndex>& leafNodes)
 {
     state.Stats.NodeCount = state.Nodes.size();
     state.Stats.ReservedNodeCapacity = state.Nodes.capacity();
@@ -417,10 +461,9 @@ void AccumulateLeafStats(DataOrientedRoamState& state, const Terrain::TerrainMes
     state.Stats.NodeStorageArrayCount = state.Nodes.array_count();
     state.Stats.ActiveTriangleCount = meshData.Indices.size() / 3U;
 
-    std::vector<DataOrientedRoamNodeIndex> activeLeaves;
-    CollectLeafNodes(state, activeLeaves);
     state.Stats.MaxDepthReached = 0;
-    for (DataOrientedRoamNodeIndex leafIndex : activeLeaves)
+    // leafNodes 来自最终快照，避免统计环节再递归扫描 active topology
+    for (DataOrientedRoamNodeIndex leafIndex : leafNodes)
     {
         // inactive child 仍留在 node pool 中但不参与当前帧统计
         const DataOrientedRoamNodeConstRef leaf = state.Nodes[leafIndex];

@@ -12,9 +12,6 @@ namespace ParallelRoam::Algorithms::DataOrientedRoam
 {
 namespace
 {
-constexpr int TopologyChunkGridSize = 8;
-// 固定 chunk 数避免把分块策略暴露成额外 UI 参数
-constexpr std::uint32_t InvalidTopologyChunkId = std::numeric_limits<std::uint32_t>::max();
 constexpr std::size_t MaxTopologyCommitWorkerCount = 8;
 // 候选太少时保留串行提交，避免调度成本超过收益
 constexpr std::size_t MinParallelCommitCandidateCount = 32;
@@ -53,52 +50,22 @@ struct SplitEdge
     glm::vec2 Apex{0.0F};
 };
 
-int ChunkCoord(float value)
-{
-    // uv=1 必须落到最后一个 chunk，而不是越过网格边界
-    const float clamped = std::clamp(value, 0.0F, 1.0F);
-    const int coord = static_cast<int>(clamped * static_cast<float>(TopologyChunkGridSize));
-    return std::clamp(coord, 0, TopologyChunkGridSize - 1);
-}
-
-std::uint32_t ChunkIdForUv(const glm::vec2& uv)
-{
-    // chunk id 使用 row-major 编码，便于作为 vector 下标
-    const int x = ChunkCoord(uv.x);
-    const int y = ChunkCoord(uv.y);
-    return static_cast<std::uint32_t>(y * TopologyChunkGridSize + x);
-}
-
-std::uint32_t InteriorChunkIdForDomain(const TriangleDomain& domain)
-{
-    // 只有三个顶点都落在同一格内才算 chunk interior
-    const std::uint32_t chunkA = ChunkIdForUv(domain.A);
-    const std::uint32_t chunkB = ChunkIdForUv(domain.B);
-    const std::uint32_t chunkC = ChunkIdForUv(domain.C);
-    if (chunkA == chunkB && chunkA == chunkC)
-    {
-        return chunkA;
-    }
-
-    return InvalidTopologyChunkId;
-}
-
-std::uint32_t InteriorChunkIdForNode(const DataOrientedRoamState& state, DataOrientedRoamNodeIndex node)
+DataOrientedRoamChunkId InteriorChunkIdForNode(const DataOrientedRoamState& state, DataOrientedRoamNodeIndex node)
 {
     if (!state.IsValidNode(node))
     {
         // invalid node 不能被分配给任何 chunk
-        return InvalidTopologyChunkId;
+        return InvalidDataOrientedRoamChunkId;
     }
 
-    // 只有完整落在同一 chunk 内的三角形才允许并发提交
-    return InteriorChunkIdForDomain(state.Nodes[node].Domain);
+    // node 创建时已缓存 chunk 归属
+    return state.Nodes[node].InteriorChunkId;
 }
 
 bool NodeBelongsToChunk(
     const DataOrientedRoamState& state,
     DataOrientedRoamNodeIndex node,
-    std::uint32_t chunkId)
+    DataOrientedRoamChunkId chunkId)
 {
     if (!state.IsValidNode(node))
     {
@@ -495,7 +462,7 @@ bool SplitWouldNeedForcedNeighbor(const DataOrientedRoamState& state, DataOrient
     return state.Nodes[baseNeighbor].BaseNeighbor != node;
 }
 
-std::uint32_t SafeInteriorSplitChunkId(const DataOrientedRoamState& state, DataOrientedRoamNodeIndex node)
+DataOrientedRoamChunkId SafeInteriorSplitChunkId(const DataOrientedRoamState& state, DataOrientedRoamNodeIndex node)
 {
     if (!state.IsValidNode(node) ||
         !state.IsLeaf(node) ||
@@ -504,14 +471,14 @@ std::uint32_t SafeInteriorSplitChunkId(const DataOrientedRoamState& state, DataO
         SplitWouldNeedForcedNeighbor(state, node))
     {
         // 任一条件不满足都会回退到原有串行 split queue
-        return InvalidTopologyChunkId;
+        return InvalidDataOrientedRoamChunkId;
     }
 
-    const std::uint32_t chunkId = InteriorChunkIdForNode(state, node);
-    if (chunkId == InvalidTopologyChunkId)
+    const DataOrientedRoamChunkId chunkId = InteriorChunkIdForNode(state, node);
+    if (chunkId == InvalidDataOrientedRoamChunkId)
     {
         // 跨 chunk 三角形属于 boundary candidate
-        return InvalidTopologyChunkId;
+        return InvalidDataOrientedRoamChunkId;
     }
 
     const DataOrientedRoamNodeConstRef candidate = state.Nodes[node];
@@ -521,7 +488,7 @@ std::uint32_t SafeInteriorSplitChunkId(const DataOrientedRoamState& state, DataO
         !NodeBelongsToChunk(state, candidate.LeftNeighbor, chunkId) ||
         !NodeBelongsToChunk(state, candidate.RightNeighbor, chunkId))
     {
-        return InvalidTopologyChunkId;
+        return InvalidDataOrientedRoamChunkId;
     }
 
     const DataOrientedRoamNodeIndex baseNeighbor = candidate.BaseNeighbor;
@@ -532,7 +499,7 @@ std::uint32_t SafeInteriorSplitChunkId(const DataOrientedRoamState& state, DataO
             !NodeBelongsToChunk(state, state.Nodes[baseNeighbor].LeftChild, chunkId) ||
             !NodeBelongsToChunk(state, state.Nodes[baseNeighbor].RightChild, chunkId))
         {
-            return InvalidTopologyChunkId;
+            return InvalidDataOrientedRoamChunkId;
         }
     }
 
@@ -568,7 +535,7 @@ bool HasMergeReadyDiamond(const DataOrientedRoamState& state, DataOrientedRoamNo
     return state.Nodes[baseNeighbor].BaseNeighbor == node && HasMergeReadyChildren(state, baseNeighbor);
 }
 
-std::uint32_t SafeInteriorMergeChunkId(
+DataOrientedRoamChunkId SafeInteriorMergeChunkId(
     const DataOrientedRoamState& state,
     DataOrientedRoamNodeIndex node,
     bool validateMergeScore)
@@ -576,20 +543,20 @@ std::uint32_t SafeInteriorMergeChunkId(
     if (!HasMergeReadyChildren(state, node) || !HasMergeReadyDiamond(state, node))
     {
         // merge 前置拓扑不满足时不进入任何提交队列
-        return InvalidTopologyChunkId;
+        return InvalidDataOrientedRoamChunkId;
     }
 
     if (validateMergeScore && !CanMergeNode(state, node))
     {
         // worker 真正提交前再做完整 score 校验
-        return InvalidTopologyChunkId;
+        return InvalidDataOrientedRoamChunkId;
     }
 
-    const std::uint32_t chunkId = InteriorChunkIdForNode(state, node);
-    if (chunkId == InvalidTopologyChunkId)
+    const DataOrientedRoamChunkId chunkId = InteriorChunkIdForNode(state, node);
+    if (chunkId == InvalidDataOrientedRoamChunkId)
     {
         // parent 自身跨 chunk 时不能并发回收
-        return InvalidTopologyChunkId;
+        return InvalidDataOrientedRoamChunkId;
     }
 
     const DataOrientedRoamNodeConstRef candidate = state.Nodes[node];
@@ -599,7 +566,7 @@ std::uint32_t SafeInteriorMergeChunkId(
         !NodeBelongsToChunk(state, state.Nodes[candidate.LeftChild].BaseNeighbor, chunkId) ||
         !NodeBelongsToChunk(state, state.Nodes[candidate.RightChild].BaseNeighbor, chunkId))
     {
-        return InvalidTopologyChunkId;
+        return InvalidDataOrientedRoamChunkId;
     }
 
     const DataOrientedRoamNodeIndex baseNeighbor = candidate.BaseNeighbor;
@@ -613,7 +580,7 @@ std::uint32_t SafeInteriorMergeChunkId(
             !NodeBelongsToChunk(state, state.Nodes[state.Nodes[baseNeighbor].LeftChild].BaseNeighbor, chunkId) ||
             !NodeBelongsToChunk(state, state.Nodes[state.Nodes[baseNeighbor].RightChild].BaseNeighbor, chunkId))
         {
-            return InvalidTopologyChunkId;
+            return InvalidDataOrientedRoamChunkId;
         }
     }
 
@@ -639,8 +606,10 @@ std::vector<std::vector<DataOrientedRoamSplitCandidate>> BuildInteriorSplitChunk
         });
 
     std::vector<std::vector<DataOrientedRoamSplitCandidate>> chunks(
-        static_cast<std::size_t>(TopologyChunkGridSize * TopologyChunkGridSize));
+        static_cast<std::size_t>(
+            DataOrientedRoamTopologyChunkGridSize * DataOrientedRoamTopologyChunkGridSize));
     // 并发 batch 不能绕过 split budget
+    // 串行回退仍会继续处理未进入 batch 的候选
     const std::size_t remainingBudget = state.Settings.SplitBudget == 0U ?
         std::numeric_limits<std::size_t>::max() :
         state.Settings.SplitBudget - std::min(state.Settings.SplitBudget, state.Stats.SplitCount);
@@ -654,8 +623,8 @@ std::vector<std::vector<DataOrientedRoamSplitCandidate>> BuildInteriorSplitChunk
             break;
         }
 
-        const std::uint32_t chunkId = SafeInteriorSplitChunkId(state, candidate.Node);
-        if (chunkId == InvalidTopologyChunkId)
+        const DataOrientedRoamChunkId chunkId = SafeInteriorSplitChunkId(state, candidate.Node);
+        if (chunkId == InvalidDataOrientedRoamChunkId)
         {
             // boundary candidate 保留给串行 queue
             ++state.Stats.BoundarySplitCandidateCount;
@@ -676,13 +645,15 @@ std::vector<std::vector<DataOrientedRoamMergeCandidate>> BuildInteriorMergeChunk
     const std::vector<DataOrientedRoamMergeCandidate>& candidates)
 {
     std::vector<std::vector<DataOrientedRoamMergeCandidate>> chunks(
-        static_cast<std::size_t>(TopologyChunkGridSize * TopologyChunkGridSize));
+        static_cast<std::size_t>(
+            DataOrientedRoamTopologyChunkGridSize * DataOrientedRoamTopologyChunkGridSize));
 
+    // merge 不受 split budget 限制，所有安全 interior 候选都可先分桶
     for (const DataOrientedRoamMergeCandidate& candidate : candidates)
     {
         // merge candidate 已按 score 排好序，chunk 内保留这个顺序
-        const std::uint32_t chunkId = SafeInteriorMergeChunkId(state, candidate.Node, false);
-        if (chunkId == InvalidTopologyChunkId)
+        const DataOrientedRoamChunkId chunkId = SafeInteriorMergeChunkId(state, candidate.Node, false);
+        if (chunkId == InvalidDataOrientedRoamChunkId)
         {
             // 跨 chunk diamond 仍由串行路径提交
             ++state.Stats.BoundaryMergeCandidateCount;
@@ -754,7 +725,8 @@ std::vector<CommittedSplit> CommitInteriorSplitChunks(
                 for (const DataOrientedRoamSplitCandidate& candidate : chunks[chunkIndex])
                 {
                     const DataOrientedRoamNodeIndex node = candidate.Node;
-                    const std::uint32_t chunkId = SafeInteriorSplitChunkId(state, node);
+                    // 同 chunk 前序提交后需要重新确认 cached chunk ownership
+                    const DataOrientedRoamChunkId chunkId = SafeInteriorSplitChunkId(state, node);
                     if (chunkId != chunkIndex)
                     {
                         // 同 chunk 前序提交可能让候选不再安全
@@ -829,7 +801,7 @@ void CommitInteriorMergeChunks(
                 for (const DataOrientedRoamMergeCandidate& candidate : chunks[chunkIndex])
                 {
                     const DataOrientedRoamNodeIndex node = candidate.Node;
-                    const std::uint32_t chunkId = SafeInteriorMergeChunkId(state, node, true);
+                    const DataOrientedRoamChunkId chunkId = SafeInteriorMergeChunkId(state, node, true);
                     if (chunkId != chunkIndex)
                     {
                         // 前序 merge 可能已经改变 diamond 结构
@@ -864,7 +836,8 @@ void RefineWithSplitQueue(DataOrientedRoamState& state)
 {
     // split pass 用优先队列控制预算分配
     // 高 screen error leaf 会先获得本帧 split 机会
-    state.Stats.TopologyChunkCount = static_cast<std::size_t>(TopologyChunkGridSize * TopologyChunkGridSize);
+    state.Stats.TopologyChunkCount = static_cast<std::size_t>(
+        DataOrientedRoamTopologyChunkGridSize * DataOrientedRoamTopologyChunkGridSize);
     struct CandidateCompare
     {
         bool operator()(const DataOrientedRoamSplitCandidate& left, const DataOrientedRoamSplitCandidate& right) const
@@ -999,7 +972,8 @@ void MergeWithDiamondQueue(DataOrientedRoamState& state)
 {
     // merge pass 先回收低 error 的远处细节
     // 后续 split pass 再补回当前视点需要的细节
-    state.Stats.TopologyChunkCount = static_cast<std::size_t>(TopologyChunkGridSize * TopologyChunkGridSize);
+    state.Stats.TopologyChunkCount = static_cast<std::size_t>(
+        DataOrientedRoamTopologyChunkGridSize * DataOrientedRoamTopologyChunkGridSize);
     std::vector<DataOrientedRoamMergeCandidate> candidates;
     CollectMergeCandidates(state, candidates);
 

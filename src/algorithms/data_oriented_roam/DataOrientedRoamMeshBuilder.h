@@ -71,6 +71,8 @@ struct DataOrientedRoamStats
     // collect 和 mark 分开统计，便于观察不规则拓扑扫描成本
     std::size_t CollectWorkerCount{0};
     std::size_t CandidateMarkWorkerCount{0};
+    // emit worker 数用于确认 CPU mesh 输出是否进入并行路径
+    std::size_t EmitWorkerCount{0};
     // 候选数量用于观察并行标记后的队列规模
     std::size_t SplitCandidateCount{0};
     std::size_t MergeCandidateCount{0};
