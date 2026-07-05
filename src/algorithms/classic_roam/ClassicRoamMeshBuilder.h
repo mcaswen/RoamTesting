@@ -242,11 +242,18 @@ private:
     void CollectActiveSplitPaths();
     void CollectActiveSplitPathsFrom(const ClassicRoamNode* node);
 
+    // 聚合当前帧 leaf 分类和深度统计
+    void AccumulateLeafStats(
+        const Terrain::TerrainMeshData& meshData,
+        const std::vector<ClassicRoamNode*>& leafNodes);
+
     // validator 只检查当前拓扑，不在默认路径修复裂缝
     void ValidateTopology();
 
     // 遍历 leaf 节点并输出渲染用 mesh
-    void EmitLeafTriangles(Terrain::TerrainMeshData& meshData) const;
+    void EmitLeafTriangles(
+        Terrain::TerrainMeshData& meshData,
+        const std::vector<ClassicRoamNode*>& leafNodes) const;
     void EmitNode(const ClassicRoamNode& node, Terrain::TerrainMeshData& meshData) const;
     void EmitDomainTriangle(const ClassicRoamNode& node, Terrain::TerrainMeshData& meshData) const;
 
@@ -293,6 +300,8 @@ private:
     std::vector<std::unique_ptr<ClassicRoamNode>> _nodes;
     std::unordered_set<std::uint64_t> _previousSplitPaths;
     std::unordered_set<std::uint64_t> _currentSplitPaths;
+    // _activeLeaves 是拓扑稳定后的最终 leaf 快照，emit 和 stats 共用
+    std::vector<ClassicRoamNode*> _activeLeaves;
     ClassicRoamNode* _rootA{nullptr};
     ClassicRoamNode* _rootB{nullptr};
     glm::vec3 _cameraPosition{0.0F};

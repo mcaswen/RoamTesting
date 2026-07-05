@@ -43,6 +43,11 @@ if(PARALLEL_ROAM_BUILD_APP)
                 src/app/InputState.cpp
                 src/algorithms/classic_roam/ClassicRoamTerrainLodAlgorithm.cpp
                 src/algorithms/classic_roam/ClassicRoamMeshBuilder.cpp
+                src/algorithms/classic_roam/ClassicRoamMeshEmit.cpp
+                src/algorithms/classic_roam/ClassicRoamScoring.cpp
+                src/algorithms/classic_roam/ClassicRoamState.cpp
+                src/algorithms/classic_roam/ClassicRoamTopology.cpp
+                src/algorithms/classic_roam/ClassicRoamValidation.cpp
                 src/algorithms/data_oriented_roam/DataOrientedRoamTerrainLodAlgorithm.cpp
                 src/algorithms/data_oriented_roam/DataOrientedRoamCandidateMarking.cpp
                 src/algorithms/data_oriented_roam/DataOrientedRoamErrorEvaluation.cpp
