@@ -1,0 +1,87 @@
+#include <iostream>
+
+#if defined(PARALLEL_ROAM_BUILD_FULL_APP)
+#include "app/Application.h"
+
+#include <string_view>
+#endif
+
+#if defined(PARALLEL_ROAM_HAS_SDL2)
+#include <SDL.h>
+#endif
+
+int main(int argc, char** argv)
+{
+    (void)argc;
+    (void)argv;
+
+#if defined(PARALLEL_ROAM_BUILD_FULL_APP)
+    int maxFrameCount = -1;
+    for (int index = 1; index < argc; ++index)
+    {
+        // smoke test 用固定帧数退出，避免自动化验证卡在窗口循环里
+        if (std::string_view{argv[index]} == "--smoke-test")
+        {
+            maxFrameCount = 3;
+        }
+    }
+
+    ParallelRoam::App::Application application;
+    if (!application.Initialize())
+    {
+        return 1;
+    }
+
+    return application.Run(maxFrameCount);
+#else
+    // 依赖不完整时保留 bootstrap，方便只验证 CMake 和基础链接
+    std::cout << "Parallel ROAM bootstrap\n";
+
+#if defined(PARALLEL_ROAM_HAS_OPENGL)
+    std::cout << "OpenGL: linked\n";
+#else
+    std::cout << "OpenGL: not linked\n";
+#endif
+
+#if defined(PARALLEL_ROAM_HAS_GLM)
+    std::cout << "GLM: linked\n";
+#else
+    std::cout << "GLM: not linked\n";
+#endif
+
+#if defined(PARALLEL_ROAM_HAS_GLAD)
+    std::cout << "GLAD: linked\n";
+#else
+    std::cout << "GLAD: not linked\n";
+#endif
+
+#if defined(PARALLEL_ROAM_HAS_STB)
+    std::cout << "stb: linked\n";
+#else
+    std::cout << "stb: not linked\n";
+#endif
+
+#if defined(PARALLEL_ROAM_HAS_IMGUI)
+    std::cout << "Dear ImGui: linked\n";
+#else
+    std::cout << "Dear ImGui: not linked\n";
+#endif
+
+#if defined(PARALLEL_ROAM_HAS_SDL2)
+    SDL_SetMainReady();
+
+    if (SDL_Init(SDL_INIT_TIMER) != 0)
+    {
+        std::cerr << "SDL_Init failed: " << SDL_GetError() << '\n';
+        return 1;
+    }
+
+    SDL_Quit();
+    std::cout << "SDL2: initialized timer subsystem\n";
+#else
+    std::cout << "SDL2: not linked\n";
+#endif
+
+    return 0;
+#endif
+}
