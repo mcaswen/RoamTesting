@@ -43,19 +43,25 @@ cmake --build --preset debug-vcpkg
 
 ## Windows 无系统 CMake 时
 
-如果目标 Windows 机器没有安装 CMake，可以使用项目内 portable CMake 路径。先在项目根目录运行：
-
-```bat
-scripts\setup_portable_cmake.bat
-```
-
-该脚本会下载 CMake Windows x86_64 zip，并解压到：
+如果目标 Windows 机器没有安装 CMake，`.bat` 构建脚本会自动下载 portable CMake 到项目目录：
 
 ```text
 tools\cmake\bin\cmake.exe
 ```
 
-后续 `.bat` 构建脚本会优先使用这个项目内 CMake；如果不存在，才使用系统 `PATH` 里的 `cmake`。也可以手动下载 CMake zip，把内容解压成同样的目录结构。
+也可以手动提前在项目根目录运行：
+
+```bat
+scripts\setup_portable_cmake.bat
+```
+
+该脚本会下载 CMake Windows x86_64 zip，并解压到同一路径：
+
+```text
+tools\cmake\bin\cmake.exe
+```
+
+后续 `.bat` 构建脚本会优先使用这个项目内 CMake；如果不存在，会先尝试系统 `PATH` 里的 `cmake`；两者都不可用时才自动下载。也可以手动下载 CMake zip，把内容解压成同样的目录结构。
 
 ## 备用路径：FetchContent
 

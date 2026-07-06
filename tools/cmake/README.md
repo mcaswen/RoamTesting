@@ -6,7 +6,7 @@ Windows CMD scripts will first look for CMake here:
 tools/cmake/bin/cmake.exe
 ```
 
-Run this from the project root on a Windows machine to download and unpack a portable CMake copy:
+If neither this portable copy nor a system `cmake` is available, the `.bat` build scripts automatically call:
 
 ```bat
 scripts\setup_portable_cmake.bat
