@@ -164,6 +164,18 @@
 - 验证：优化后单独运行 `./build/debug-fetch/bin/ParallelROAM --benchmark --algorithm dod --profile smoke --csv /private/tmp/roam_3e_optimized_dod_smoke.csv` 通过，输出仍为 `far=823`、`center=6985`、`near-corner=8188`、`center-return=9408` 三角形，拓扑错误为 0。对应 CSV 中 DOD `cpuWorkerCount` 在中心和近景为 8，`cpuTopologyMs` 为 `far 7.18025`、`center 45.7321`、`near-corner 22.1229`、`center-return 12.3545`。`all smoke benchmark` 和 `./scripts/run_smoke_test_fetch.sh` 也通过
 - 后续：当前保守并发策略仍会为 chunk 安全性付出额外判定成本，后续如果要继续优化，应把 chunk id 缓存到 node pool 或候选快照中，并把 interior / boundary 候选数量输出到 benchmark CSV，避免只能从 CPU 时间间接判断覆盖面
 
+### BUG-013：性能分析缺少统一运行时标准流程
+
+- 状态：`Fixed`
+- 严重级别：`高`
+- 发生阶段：阶段 3，Classic ROAM、DOD ROAM 和后续 GPU ROAM 横向比较准备期间
+- 现象：性能分析主要依赖手动移动相机、观察 UI 即时数值或运行无窗口 `--benchmark`。这些方式能发现单点问题，但很难保证 Classic、DOD 和未来 GPU 版本使用同一条相机路径、同一组 UI 参数、同一段采样时长和同一套汇总口径。结果是平均耗时、最大帧耗时、三角形规模、CPU worker 数和 CPU 占用率容易因为观察方式不同而不可复现，也不方便把测试结果交给后续回归和阶段评审
+- 定位：已有 `src/benchmark/TerrainLodBenchmark.cpp` 解决的是无窗口算法层 benchmark，适合 smoke 和标准路径回归，但它不覆盖真实应用中的相机控制、renderer 更新缓存、OpenGL mesh upload、UI 状态锁定和用户可见输出流程。运行时 UI 只显示当前帧统计，没有“启动一轮标准实验”的入口，也没有把整个过程写成表格输出。`TerrainRenderer::UpdateForCamera` 还会按相机位移阈值复用 mesh，如果直接用普通交互路径采样，会把“缓存复用帧”和“真实重建帧”混在一起，导致性能数据不适合作为算法横向比较
+- Debug 过程：先回顾此前性能问题的定位方式：BUG-009 依赖临时 benchmark 判断 Debug 构建下 Classic 全局 repair 过慢，BUG-012 依赖 CLI smoke CSV 判断 DOD topology pass 的额外回退。这些手段能解决局部问题，但都不是用户在应用内一键复现的标准流程。随后检查现有 UI 和 Application 主循环，确认 `ImGuiLayer` 只有参数面板和即时统计，`Application::Run` 只支持自由飞行相机，`TerrainRenderer` 没有外部强制重建和重置算法持久拓扑的入口。由此确认问题不是单个算法统计字段缺失，而是缺少贯穿 UI、相机、renderer 和报告输出的运行时 benchmark 流程
+- 解决方案：新增运行时 benchmark 流程：UI 面板加入“开始 Benchmark”按钮；Application 保存用户当前面板状态和相机姿态后，依次运行 `Classic CPU ROAM` 与 `Data-Oriented CPU ROAM`；每个算法都从地形 `Z+` 边中点上方出发，朝向地形中心，在 10 秒内用 smoothstep 平滑移动到中心上方；测试期间锁定 UI 参数，并在画面中心上方显示 `正在应用xxx算法进行性能测试`。为保证每个采样点都代表真实算法输出，`TerrainRenderer` 增加 `RequestMeshRebuild` 和 `ResetTerrainLodAlgorithm`，benchmark 帧会绕过普通相机位移缓存并在切换算法时清空持久拓扑。新增 `RuntimeBenchmark` 模块把逐帧样本写入 `benchmark-output/runtime-benchmark-*.csv`，并输出 Markdown 汇总表，统计样本数、平均/最大帧耗时、平均/最大 ROAM 耗时、平均/最大三角形数、平均/最大节点数、平均/最大 CPU 占用、最大 worker 数、最大深度和最大拓扑问题数
+- 验证：`cmake --build --preset debug-fetch` 通过；`./scripts/run_smoke_test_fetch.sh` 通过，窗口 smoke 能正常创建 OpenGL context 并退出；`git diff --check` 通过；源码注释检查确认无中文句号和阶段标签；注释覆盖率为 `15.01%`，连续注释最大 3 行。运行时完整 20 秒流程需要在交互窗口中点击“开始 Benchmark”人工触发，输出目录为 `benchmark-output/`
+- 后续：GPU ROAM 真正接入 renderer 后，需要把算法序列扩展为 Classic、DOD、GPU 三者，并在表格中继续保留同一路径和同一汇总口径。后续还应增加可选的自动触发参数，例如 `--runtime-benchmark`，让 CI 或录屏脚本不依赖人工点击；如果要做正式性能报告，应优先使用 `RelWithDebInfo` 或 `Release` 构建，并把构建类型、地形尺寸、高度图、阈值和最大深度写入报告头部
+
 ## 模板
 
 ```text
