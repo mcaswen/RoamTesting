@@ -74,6 +74,8 @@ struct TerrainRenderSettings
 /// </summary>
 struct TerrainRenderStats
 {
+    // HeightMapPath 记录 benchmark 实际使用的资源路径
+    std::filesystem::path HeightMapPath;
     int HeightMapWidth{0};
     int HeightMapHeight{0};
     std::size_t VertexCount{0};
@@ -85,6 +87,13 @@ struct TerrainRenderStats
     float HeightScale{0.0F};
     bool UseTerrainLod{false};
     Algorithms::TerrainLodAlgorithmId TerrainLodAlgorithm{Algorithms::TerrainLodAlgorithmId::ClassicCpuRoam};
+
+    // setting 字段来自 UI 配置，用于和实际运行结果分开记录
+    int RoamMaxDepthSetting{0};
+    // 误差阈值和距离权重决定同一深度上限下的细分积极程度
+    float RoamSplitThreshold{0.0F};
+    float RoamMergeThreshold{0.0F};
+    float RoamDistanceScale{0.0F};
     std::size_t RoamNodeCount{0};
     std::size_t RoamOriginalTriangleCount{0};
     std::size_t RoamSubdividedTriangleCount{0};
@@ -134,6 +143,8 @@ struct TerrainRenderStats
     float RoamMergeMilliseconds{0.0F};
     float RoamEmitMilliseconds{0.0F};
     float RoamValidateMilliseconds{0.0F};
+
+    // reached depth 是算法在当前相机和误差阈值下真正展开到的深度
     int RoamMaxDepthReached{0};
 };
 

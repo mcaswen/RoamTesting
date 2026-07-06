@@ -326,6 +326,7 @@ void DrawDetailedPerformanceMetrics(const DebugOverlayData& data)
     DrawMetricFloat("Merge ms", data.RoamMergeMilliseconds, "%.2f");
     DrawMetricFloat("Emit ms", data.RoamEmitMilliseconds, "%.2f");
     DrawMetricFloat("Validate ms", data.RoamValidateMilliseconds, "%.2f");
+    DrawMetricInt("设置深度", data.RoamMaxDepthSetting);
     DrawMetricInt("实际深度", data.RoamMaxDepthReached);
 }
 

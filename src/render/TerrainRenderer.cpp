@@ -366,6 +366,7 @@ TerrainRenderStats TerrainRenderer::Stats() const
     TerrainRenderStats stats{};
     // GUI 只读取汇总后的 TerrainRenderStats
     // 避免面板直接依赖算法内部类型
+    stats.HeightMapPath = _heightMapPath;
     stats.HeightMapWidth = _heightMap.Width();
     stats.HeightMapHeight = _heightMap.Height();
     stats.VertexCount = _meshData.Vertices.size();
@@ -375,6 +376,10 @@ TerrainRenderStats TerrainRenderer::Stats() const
     stats.HeightScale = _settings.HeightScale;
     stats.UseTerrainLod = _settings.UseTerrainLod;
     stats.TerrainLodAlgorithm = _settings.TerrainLodAlgorithm;
+    stats.RoamMaxDepthSetting = _settings.RoamMaxDepth;
+    stats.RoamSplitThreshold = _settings.RoamSplitThreshold;
+    stats.RoamMergeThreshold = _settings.RoamMergeThreshold;
+    stats.RoamDistanceScale = _settings.RoamDistanceScale;
     stats.RoamNodeCount = _terrainLodStats.ActiveNodeCount;
     stats.RoamOriginalTriangleCount = _terrainLodStats.OriginalTriangleCount;
     stats.RoamSubdividedTriangleCount = _terrainLodStats.SubdividedTriangleCount;

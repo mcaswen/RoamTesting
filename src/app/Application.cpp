@@ -327,6 +327,7 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
     debugData.RoamMergeMilliseconds = terrainStats.RoamMergeMilliseconds;
     debugData.RoamEmitMilliseconds = terrainStats.RoamEmitMilliseconds;
     debugData.RoamValidateMilliseconds = terrainStats.RoamValidateMilliseconds;
+    debugData.RoamMaxDepthSetting = terrainStats.RoamMaxDepthSetting;
     debugData.RoamMaxDepthReached = terrainStats.RoamMaxDepthReached;
     // benchmark 状态走 DebugOverlayData，GUI 不直接读取 Application 成员
     debugData.BenchmarkRunning = _runtimeBenchmark.Active;

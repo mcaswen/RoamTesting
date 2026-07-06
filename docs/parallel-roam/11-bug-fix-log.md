@@ -176,6 +176,18 @@
 - 验证：`cmake --build --preset debug-fetch` 通过；`./scripts/run_smoke_test_fetch.sh` 通过，窗口 smoke 能正常创建 OpenGL context 并退出；`git diff --check` 通过；源码注释检查确认无中文句号和阶段标签；注释覆盖率为 `15.01%`，连续注释最大 3 行。运行时完整 20 秒流程需要在交互窗口中点击“开始 Benchmark”人工触发，输出目录为 `benchmark-output/`
 - 后续：GPU ROAM 真正接入 renderer 后，需要把算法序列扩展为 Classic、DOD、GPU 三者，并在表格中继续保留同一路径和同一汇总口径。后续还应增加可选的自动触发参数，例如 `--runtime-benchmark`，让 CI 或录屏脚本不依赖人工点击；如果要做正式性能报告，应优先使用 `RelWithDebInfo` 或 `Release` 构建，并把构建类型、地形尺寸、高度图、阈值和最大深度写入报告头部
 
+### BUG-014：运行时 benchmark 报告缺少关键配置并混淆最大深度口径
+
+- 状态：`Fixed`
+- 严重级别：`中`
+- 发生阶段：阶段 3，运行时 benchmark 输出和极限地形参数对比期间
+- 现象：用户使用更高精度高度图和更高最大深度跑完 benchmark 后，报告只显示平均/最大三角形数、节点数和单个 `Max Depth` 字段，没有记录本轮使用的高度图、地形尺寸、高度缩放、最大深度设置和距离权重。用户在 UI 中设置最大深度为 20，但旧报告显示 `Max Depth=17`，容易误判为 benchmark 没有使用 UI 参数或三角形数量记录有误
+- 定位：运行时 benchmark 的采样数据来自 `TerrainRenderer::Stats()`，旧版 `TerrainRenderStats` 只暴露高度图尺寸、三角形数和算法实际达到的 `MaxActiveDepth`，没有把 UI 配置中的高度图路径、地形尺寸、高度缩放、最大深度设置和距离权重一起带入报告。`RuntimeBenchmarkSummary::MaxDepthReached` 又在 Markdown 中显示为 `Max Depth`，把“配置上限”和“当前相机路径实际展开到的最深层级”混成一个表头
+- Debug 过程：先检查最新输出 `benchmark-output/runtime-benchmark-20260706-150156.md` 和对应 CSV，确认旧报告最大三角形来自逐帧 `stats.TriangleCount`，即 OpenGL 实际提交 index 数除以 3；再检查 `Application::RecordRuntimeBenchmarkSample`、`TerrainRenderer::Stats()` 和 `RuntimeBenchmark.cpp`，确认采样时并没有丢帧后重算三角形，而是报告缺少配置上下文。三角形数与用户手动观察 UI 不一致的主要解释是运行时 benchmark 只统计固定 10 秒路径上的样本，手动飞行到其他位置或 benchmark 完成后恢复原相机时，UI 可能显示更高的当前帧三角形数
+- 解决方案：扩展 `TerrainRenderStats`，加入 `HeightMapPath`、`RoamMaxDepthSetting`、`RoamSplitThreshold`、`RoamMergeThreshold` 和 `RoamDistanceScale`，并继续记录 `TerrainSize`、`HeightScale` 和实际达到深度。运行时 benchmark CSV 在时间序列前写入高度图路径、宽高、地形尺寸、高度缩放、最大深度设置、阈值和距离权重；Markdown 顶部新增本轮配置块，汇总表把 `Max Depth` 拆成 `Config Max Depth` 和 `Reached Max Depth`。左上角详细性能面板也补充“设置深度”，和“实际深度”并排展示
+- 验证：`cmake --build --preset debug-fetch` 通过；`./scripts/run_smoke_test_fetch.sh` 通过；`git diff --check` 通过。新报告生成后应能在 Markdown 顶部看到高度图路径、地形尺寸、高度缩放、最大深度设置、距离权重和阈值，并在汇总表中同时看到设置深度与实际达到深度
+- 后续：后续若增加自动 `--runtime-benchmark` 或 GPU benchmark，应继续复用同一套配置字段；正式性能报告建议额外写入构建类型和 VSync 状态，避免 FPS 或 frame ms 被运行环境误读
+
 ## 模板
 
 ```text

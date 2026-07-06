@@ -69,6 +69,7 @@ struct DebugOverlayData
     float RoamMergeMilliseconds{0.0F};
     float RoamEmitMilliseconds{0.0F};
     float RoamValidateMilliseconds{0.0F};
+    int RoamMaxDepthSetting{0};
     int RoamMaxDepthReached{0};
 
     // 运行时 benchmark 状态用于绘制顶部提示和输出路径

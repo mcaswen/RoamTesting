@@ -42,7 +42,8 @@ struct RuntimeBenchmarkSummary
     // Worker 数记录算法本帧实际使用的 CPU 并行宽度
     std::size_t MaxCpuWorkerCount{0};
 
-    // 最大深度用于确认两种算法是否遵守同一 LOD 上限
+    // 配置深度和实际达到深度分开，避免把 UI 设置误读成结果
+    int MaxDepthSetting{0};
     int MaxDepthReached{0};
 
     // 拓扑问题合并输出，汇总表不用展开三类错误
@@ -71,6 +72,22 @@ std::string MakeReportTimestamp()
     std::ostringstream stream;
     stream << std::put_time(&localTime, "%Y%m%d-%H%M%S");
     return stream.str();
+}
+
+const Render::TerrainRenderStats* FindFirstSampleStats(
+    const std::vector<RuntimeBenchmarkAlgorithmResult>& results)
+{
+    // 同一轮 benchmark 中算法共享地形和 UI 参数
+    // 首个样本足够代表本轮配置
+    for (const RuntimeBenchmarkAlgorithmResult& result : results)
+    {
+        if (!result.Samples.empty())
+        {
+            return &result.Samples.front().Stats;
+        }
+    }
+
+    return nullptr;
 }
 
 RuntimeBenchmarkSummary SummarizeRuntimeBenchmark(const RuntimeBenchmarkAlgorithmResult& result)
@@ -112,6 +129,7 @@ RuntimeBenchmarkSummary SummarizeRuntimeBenchmark(const RuntimeBenchmarkAlgorith
         summary.MaxCpuUtilizationPercent =
             std::max(summary.MaxCpuUtilizationPercent, stats.RoamCpuUtilizationPercent);
         summary.MaxCpuWorkerCount = std::max(summary.MaxCpuWorkerCount, stats.RoamCpuWorkerCount);
+        summary.MaxDepthSetting = std::max(summary.MaxDepthSetting, stats.RoamMaxDepthSetting);
         summary.MaxDepthReached = std::max(summary.MaxDepthReached, stats.RoamMaxDepthReached);
         summary.MaxInvalidTopologyCount = std::max(summary.MaxInvalidTopologyCount, invalidTopologyCount);
     }
@@ -136,10 +154,13 @@ void WriteDetailedCsv(
         throw std::runtime_error{"Failed to create runtime benchmark CSV: " + csvPath.string()};
     }
 
-    csv << "algorithm,timeSeconds,cameraX,cameraY,cameraZ,frameMilliseconds,triangles,nodes,"
+    // 配置字段放在时间序列前，方便按高度图和参数筛选
+    csv << "algorithm,heightMapPath,heightMapWidth,heightMapHeight,terrainSize,heightScale,"
+        << "maxDepthSetting,splitThreshold,mergeThreshold,distanceScale,"
+        << "timeSeconds,cameraX,cameraY,cameraZ,frameMilliseconds,triangles,nodes,"
         << "activeSplits,splits,forcedSplits,merges,candidatePeak,tjunctions,invalidNeighbors,"
         << "invalidTopology,cpuWorkers,cpuUtilizationPercent,roamMilliseconds,splitMilliseconds,"
-        << "mergeMilliseconds,emitMilliseconds,validateMilliseconds,maxDepth\n";
+        << "mergeMilliseconds,emitMilliseconds,validateMilliseconds,maxDepthReached\n";
 
     csv << std::fixed << std::setprecision(3);
     for (const RuntimeBenchmarkAlgorithmResult& result : results)
@@ -149,6 +170,15 @@ void WriteDetailedCsv(
         {
             const Render::TerrainRenderStats& stats = sample.Stats;
             csv << result.AlgorithmName << ','
+                << stats.HeightMapPath.generic_string() << ','
+                << stats.HeightMapWidth << ','
+                << stats.HeightMapHeight << ','
+                << stats.TerrainSize << ','
+                << stats.HeightScale << ','
+                << stats.RoamMaxDepthSetting << ','
+                << stats.RoamSplitThreshold << ','
+                << stats.RoamMergeThreshold << ','
+                << stats.RoamDistanceScale << ','
                 << sample.TimeSeconds << ','
                 << sample.CameraPosition.x << ','
                 << sample.CameraPosition.y << ','
@@ -192,10 +222,22 @@ void WriteSummaryMarkdown(
     markdown << "- Camera path: edge midpoint to terrain center\n";
     markdown << "- Duration per algorithm: 10 seconds\n";
     markdown << "- Detailed CSV: `" << csvPath.filename().string() << "`\n\n";
+    if (const Render::TerrainRenderStats* stats = FindFirstSampleStats(results))
+    {
+        // 顶部配置块解释 UI 设置和实际达到深度的差异
+        markdown << "- Height map: `" << stats->HeightMapPath.generic_string() << "` "
+                 << stats->HeightMapWidth << "x" << stats->HeightMapHeight << "\n";
+        markdown << "- Terrain size: " << stats->TerrainSize << "\n";
+        markdown << "- Height scale: " << stats->HeightScale << "\n";
+        markdown << "- Max depth setting: " << stats->RoamMaxDepthSetting << "\n";
+        markdown << "- Distance scale: " << stats->RoamDistanceScale << "\n";
+        markdown << "- Split/Merge thresholds: "
+                 << stats->RoamSplitThreshold << " / " << stats->RoamMergeThreshold << "\n\n";
+    }
     markdown << "| Algorithm | Samples | Avg Frame ms | Max Frame ms | Avg ROAM ms | Max ROAM ms | "
              << "Avg Triangles | Max Triangles | Avg Nodes | Max Nodes | Avg CPU % | Max CPU % | "
-             << "Max Workers | Max Depth | Max Topology Issues |\n";
-    markdown << "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n";
+             << "Max Workers | Config Max Depth | Reached Max Depth | Max Topology Issues |\n";
+    markdown << "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n";
     markdown << std::fixed << std::setprecision(2);
 
     for (const RuntimeBenchmarkAlgorithmResult& result : results)
@@ -215,6 +257,7 @@ void WriteSummaryMarkdown(
                  << " | " << summary.AverageCpuUtilizationPercent
                  << " | " << summary.MaxCpuUtilizationPercent
                  << " | " << summary.MaxCpuWorkerCount
+                 << " | " << summary.MaxDepthSetting
                  << " | " << summary.MaxDepthReached
                  << " | " << summary.MaxInvalidTopologyCount
                  << " |\n";
