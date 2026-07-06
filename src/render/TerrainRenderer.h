@@ -87,6 +87,7 @@ struct TerrainRenderStats
     float HeightScale{0.0F};
     bool UseTerrainLod{false};
     Algorithms::TerrainLodAlgorithmId TerrainLodAlgorithm{Algorithms::TerrainLodAlgorithmId::ClassicCpuRoam};
+    std::string TerrainLodStatusMessage;
 
     // setting 字段来自 UI 配置，用于和实际运行结果分开记录
     int RoamMaxDepthSetting{0};
@@ -143,6 +144,10 @@ struct TerrainRenderStats
     float RoamMergeMilliseconds{0.0F};
     float RoamEmitMilliseconds{0.0F};
     float RoamValidateMilliseconds{0.0F};
+    float RoamGpuComputeMilliseconds{0.0F};
+    float RoamRenderMilliseconds{0.0F};
+    std::size_t RoamCpuGpuUploadBytes{0};
+    std::size_t RoamCpuGpuReadbackBytes{0};
 
     // reached depth 是算法在当前相机和误差阈值下真正展开到的深度
     int RoamMaxDepthReached{0};
@@ -198,6 +203,7 @@ private:
     Terrain::TerrainMeshData _meshData;
     std::unique_ptr<Algorithms::ITerrainLodAlgorithm> _terrainLodAlgorithm;
     Algorithms::TerrainLodStats _terrainLodStats;
+    std::string _terrainLodStatusMessage;
     TerrainRenderSettings _settings;
     std::filesystem::path _heightMapPath;
     std::filesystem::path _texturePath;

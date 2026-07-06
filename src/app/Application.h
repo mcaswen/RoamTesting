@@ -155,6 +155,7 @@ private:
     Render::TerrainRenderSettings _terrainSettings;
     Gui::TerrainPanelState _terrainPanelState;
     RuntimeBenchmarkState _runtimeBenchmark;
+    std::string _lastMeshUpdateError;
     std::chrono::steady_clock::time_point _lastFrameTime{};
     bool _initialized{false};
     float _framesPerSecond{0.0F};

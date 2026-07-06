@@ -169,14 +169,24 @@ int TerrainModeIndex(bool useTerrainLod, Algorithms::TerrainLodAlgorithmId algor
         return 2;
     }
 
+    if (algorithmId == Algorithms::TerrainLodAlgorithmId::GpuRoamLike)
+    {
+        return 3;
+    }
+
     return 1;
 }
 
 Algorithms::TerrainLodAlgorithmId TerrainAlgorithmFromModeIndex(int modeIndex)
 {
+    if (modeIndex == 3)
+    {
+        return Algorithms::TerrainLodAlgorithmId::GpuRoamLike;
+    }
+
     if (modeIndex == 2)
     {
-        // UI 目前只暴露已能输出 CPU mesh 的新算法
+        // DOD 仍走 CPU mesh 输出路径
         return Algorithms::TerrainLodAlgorithmId::DataOrientedCpuRoam;
     }
 
@@ -194,6 +204,11 @@ const char* TerrainModeName(bool useTerrainLod, Algorithms::TerrainLodAlgorithmI
     if (algorithmId == Algorithms::TerrainLodAlgorithmId::DataOrientedCpuRoam)
     {
         return "Data-Oriented CPU ROAM";
+    }
+
+    if (algorithmId == Algorithms::TerrainLodAlgorithmId::GpuRoamLike)
+    {
+        return "GPU ROAM-like";
     }
 
     return "Classic CPU ROAM";
@@ -276,6 +291,12 @@ void DrawCompactPerformanceMetrics(const DebugOverlayData& data)
     DrawMetricFloat("ROAM ms", data.RoamUpdateMilliseconds, "%.2f");
     DrawMetricSize("CPU Worker", data.RoamCpuWorkerCount);
     DrawMetricFloat("CPU 占用", data.RoamCpuUtilizationPercent, "%.1f%%");
+    DrawMetricFloat("GPU ms", data.RoamGpuComputeMilliseconds, "%.2f");
+    if (!data.TerrainLodStatusMessage.empty())
+    {
+        DrawMetricRow("LOD 状态", "不可用");
+        ImGui::TextWrapped("%s", data.TerrainLodStatusMessage.c_str());
+    }
 }
 
 void DrawDetailedPerformanceMetrics(const DebugOverlayData& data)
@@ -326,8 +347,16 @@ void DrawDetailedPerformanceMetrics(const DebugOverlayData& data)
     DrawMetricFloat("Merge ms", data.RoamMergeMilliseconds, "%.2f");
     DrawMetricFloat("Emit ms", data.RoamEmitMilliseconds, "%.2f");
     DrawMetricFloat("Validate ms", data.RoamValidateMilliseconds, "%.2f");
+    DrawMetricFloat("GPU ms", data.RoamGpuComputeMilliseconds, "%.2f");
+    DrawMetricSize("GPU 上传 B", data.RoamCpuGpuUploadBytes);
+    DrawMetricSize("GPU 回读 B", data.RoamCpuGpuReadbackBytes);
     DrawMetricInt("设置深度", data.RoamMaxDepthSetting);
     DrawMetricInt("实际深度", data.RoamMaxDepthReached);
+    if (!data.TerrainLodStatusMessage.empty())
+    {
+        DrawSectionHeader("LOD 状态");
+        ImGui::TextWrapped("%s", data.TerrainLodStatusMessage.c_str());
+    }
 }
 
 void DrawPerformanceOverlay(const DebugOverlayData& data, bool& detailedMode)
@@ -505,8 +534,8 @@ bool ImGuiLayer::DrawDebugOverlay(const DebugOverlayData& data, TerrainPanelStat
     }
     changed |= ImGui::Checkbox("线框模式", &terrainState.Wireframe);
     int terrainModeIndex = TerrainModeIndex(terrainState.UseTerrainLod, terrainState.TerrainLodAlgorithm);
-    const char* terrainModeItems[] = {"规则网格", "Classic CPU ROAM", "Data-Oriented CPU ROAM"};
-    if (ImGui::Combo("LOD 算法", &terrainModeIndex, terrainModeItems, 3))
+    const char* terrainModeItems[] = {"规则网格", "Classic CPU ROAM", "Data-Oriented CPU ROAM", "GPU ROAM-like"};
+    if (ImGui::Combo("LOD 算法", &terrainModeIndex, terrainModeItems, 4))
     {
         changed = true;
         terrainState.UseTerrainLod = terrainModeIndex != 0;

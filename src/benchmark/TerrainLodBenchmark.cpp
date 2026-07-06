@@ -3,6 +3,7 @@
 #include "algorithms/ITerrainLodAlgorithm.h"
 #include "algorithms/classic_roam/ClassicRoamTerrainLodAlgorithm.h"
 #include "algorithms/data_oriented_roam/DataOrientedRoamTerrainLodAlgorithm.h"
+#include "algorithms/gpu_roam/GpuRoamTerrainLodAlgorithm.h"
 #include "terrain/HeightMap.h"
 
 #include <glm/glm.hpp>
@@ -77,6 +78,7 @@ struct BenchmarkFrameResult
 struct BenchmarkAlgorithmRun
 {
     std::string AlgorithmName;
+    std::string UnavailableReason;
     // Available 和 Passed 分开保存，all 模式不会把 skip 当作失败
     bool Available{false};
     bool Passed{false};
@@ -210,6 +212,11 @@ std::unique_ptr<Algorithms::ITerrainLodAlgorithm> CreateAlgorithm(BenchmarkAlgor
         return std::make_unique<Algorithms::DataOrientedRoam::DataOrientedRoamTerrainLodAlgorithm>();
     }
 
+    if (selection == BenchmarkAlgorithmSelection::Gpu)
+    {
+        return std::make_unique<Algorithms::GpuRoam::GpuRoamTerrainLodAlgorithm>();
+    }
+
     return nullptr;
 }
 
@@ -302,6 +309,15 @@ BenchmarkAlgorithmRun RunAlgorithm(
 {
     BenchmarkAlgorithmRun run{};
     run.AlgorithmName = ToString(selection);
+
+    if (selection == BenchmarkAlgorithmSelection::Gpu)
+    {
+        run.UnavailableReason = Algorithms::GpuRoam::GpuRoamLikeUnavailableReason();
+        if (!run.UnavailableReason.empty())
+        {
+            return run;
+        }
+    }
 
     std::unique_ptr<Algorithms::ITerrainLodAlgorithm> algorithm = CreateAlgorithm(selection);
     if (algorithm == nullptr)
@@ -397,7 +413,12 @@ void PrintRunSummary(const BenchmarkAlgorithmRun& run)
 {
     if (!run.Available)
     {
-        std::cout << "[SKIP] " << run.AlgorithmName << " unavailable\n";
+        std::cout << "[SKIP] " << run.AlgorithmName << " unavailable";
+        if (!run.UnavailableReason.empty())
+        {
+            std::cout << ": " << run.UnavailableReason;
+        }
+        std::cout << '\n';
         return;
     }
 

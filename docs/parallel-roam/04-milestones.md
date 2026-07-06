@@ -367,6 +367,15 @@ Level E：GPU split-only 或 split/merge topology update
 - `GpuRoamLike` 的 `Info()`、`Capabilities()`、`Stats()` 和 `Reset()` 路径完整；
 - 不支持 compute 的机器上也能通过 smoke test。
 
+当前实现记录：
+
+- 已新增 `GpuRoamLike` 算法壳并接入 renderer、UI 下拉框和 CLI benchmark；
+- 已新增 OpenGL GPU capability 查询，记录 context、OpenGL version、renderer、compute shader、SSBO、atomic counter、indirect draw 和 timer query 能力；
+- 无窗口 benchmark 没有 OpenGL context 时，`--algorithm all` 会把 GPU 明确标为 skip，`--algorithm gpu` 会返回失败并输出原因；
+- macOS OpenGL 4.1 环境下，UI 选择 GPU ROAM-like 时会显示 OpenGL 4.3 / compute shader 不可用原因，不会静默回退成 CPU 成绩；
+- 运行时 benchmark CSV 和汇总表已预留 `gpuComputeMs`、CPU-GPU upload bytes 和 readback bytes；
+- 当前 GPU 版仍处于 Level A，尚未执行 compute shader、GPU mesh emit 或 GPU buffer rendering。
+
 4B：GPU buffer schema 与 DOD 快照对齐
 
 - 以 DOD SoA 字段为基准定义 GPU node buffer 布局；

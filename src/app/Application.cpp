@@ -282,7 +282,15 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
     std::string meshUpdateError;
     if (!_terrainRenderer.UpdateForCamera(cameraPosition, &meshUpdateError))
     {
-        std::cerr << meshUpdateError << '\n';
+        if (meshUpdateError != _lastMeshUpdateError)
+        {
+            std::cerr << meshUpdateError << '\n';
+            _lastMeshUpdateError = meshUpdateError;
+        }
+    }
+    else
+    {
+        _lastMeshUpdateError.clear();
     }
 
     const Render::TerrainRenderStats terrainStats = _terrainRenderer.Stats();
@@ -304,6 +312,7 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
     debugData.DrawCallCount = terrainStats.DrawCallCount;
     debugData.UseTerrainLod = terrainStats.UseTerrainLod;
     debugData.TerrainLodAlgorithm = terrainStats.TerrainLodAlgorithm;
+    debugData.TerrainLodStatusMessage = terrainStats.TerrainLodStatusMessage;
     debugData.RoamNodeCount = terrainStats.RoamNodeCount;
     debugData.RoamOriginalTriangleCount = terrainStats.RoamOriginalTriangleCount;
     debugData.RoamSubdividedTriangleCount = terrainStats.RoamSubdividedTriangleCount;
@@ -327,6 +336,10 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
     debugData.RoamMergeMilliseconds = terrainStats.RoamMergeMilliseconds;
     debugData.RoamEmitMilliseconds = terrainStats.RoamEmitMilliseconds;
     debugData.RoamValidateMilliseconds = terrainStats.RoamValidateMilliseconds;
+    debugData.RoamGpuComputeMilliseconds = terrainStats.RoamGpuComputeMilliseconds;
+    debugData.RoamRenderMilliseconds = terrainStats.RoamRenderMilliseconds;
+    debugData.RoamCpuGpuUploadBytes = terrainStats.RoamCpuGpuUploadBytes;
+    debugData.RoamCpuGpuReadbackBytes = terrainStats.RoamCpuGpuReadbackBytes;
     debugData.RoamMaxDepthSetting = terrainStats.RoamMaxDepthSetting;
     debugData.RoamMaxDepthReached = terrainStats.RoamMaxDepthReached;
     // benchmark 状态走 DebugOverlayData，GUI 不直接读取 Application 成员

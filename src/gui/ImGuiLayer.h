@@ -34,6 +34,7 @@ struct DebugOverlayData
     int DrawCallCount{0};
     bool UseTerrainLod{false};
     Algorithms::TerrainLodAlgorithmId TerrainLodAlgorithm{Algorithms::TerrainLodAlgorithmId::ClassicCpuRoam};
+    std::string TerrainLodStatusMessage;
     std::size_t RoamNodeCount{0};
     std::size_t RoamOriginalTriangleCount{0};
     std::size_t RoamSubdividedTriangleCount{0};
@@ -69,6 +70,10 @@ struct DebugOverlayData
     float RoamMergeMilliseconds{0.0F};
     float RoamEmitMilliseconds{0.0F};
     float RoamValidateMilliseconds{0.0F};
+    float RoamGpuComputeMilliseconds{0.0F};
+    float RoamRenderMilliseconds{0.0F};
+    std::size_t RoamCpuGpuUploadBytes{0};
+    std::size_t RoamCpuGpuReadbackBytes{0};
     int RoamMaxDepthSetting{0};
     int RoamMaxDepthReached{0};
 

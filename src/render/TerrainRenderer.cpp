@@ -2,6 +2,7 @@
 
 #include "algorithms/classic_roam/ClassicRoamTerrainLodAlgorithm.h"
 #include "algorithms/data_oriented_roam/DataOrientedRoamTerrainLodAlgorithm.h"
+#include "algorithms/gpu_roam/GpuRoamTerrainLodAlgorithm.h"
 
 #include <glad/gl.h>
 #include <stb_image.h>
@@ -149,6 +150,11 @@ std::unique_ptr<Algorithms::ITerrainLodAlgorithm> CreateTerrainLodAlgorithm(
         return std::make_unique<Algorithms::DataOrientedRoam::DataOrientedRoamTerrainLodAlgorithm>();
     }
 
+    if (algorithmId == Algorithms::TerrainLodAlgorithmId::GpuRoamLike)
+    {
+        return std::make_unique<Algorithms::GpuRoam::GpuRoamTerrainLodAlgorithm>();
+    }
+
     return nullptr;
 }
 } // 匿名命名空间
@@ -268,6 +274,7 @@ void TerrainRenderer::ResetTerrainLodAlgorithm()
 {
     _terrainLodAlgorithm.reset();
     _terrainLodStats = {};
+    _terrainLodStatusMessage.clear();
     _hasRoamBuildCameraPosition = false;
     _meshDirty = true;
 }
@@ -376,6 +383,7 @@ TerrainRenderStats TerrainRenderer::Stats() const
     stats.HeightScale = _settings.HeightScale;
     stats.UseTerrainLod = _settings.UseTerrainLod;
     stats.TerrainLodAlgorithm = _settings.TerrainLodAlgorithm;
+    stats.TerrainLodStatusMessage = _terrainLodStatusMessage;
     stats.RoamMaxDepthSetting = _settings.RoamMaxDepth;
     stats.RoamSplitThreshold = _settings.RoamSplitThreshold;
     stats.RoamMergeThreshold = _settings.RoamMergeThreshold;
@@ -403,6 +411,10 @@ TerrainRenderStats TerrainRenderer::Stats() const
     stats.RoamMergeMilliseconds = _terrainLodStats.MergeMilliseconds;
     stats.RoamEmitMilliseconds = _terrainLodStats.EmitMilliseconds;
     stats.RoamValidateMilliseconds = _terrainLodStats.ValidateMilliseconds;
+    stats.RoamGpuComputeMilliseconds = _terrainLodStats.GpuComputeMilliseconds;
+    stats.RoamRenderMilliseconds = _terrainLodStats.RenderMilliseconds;
+    stats.RoamCpuGpuUploadBytes = _terrainLodStats.CpuGpuUploadBytes;
+    stats.RoamCpuGpuReadbackBytes = _terrainLodStats.CpuGpuReadbackBytes;
     stats.RoamMaxDepthReached = _terrainLodStats.MaxActiveDepth;
     return stats;
 }
@@ -434,6 +446,7 @@ bool TerrainRenderer::RebuildRegularGrid(std::string* errorMessage)
     // 规则网格会重置 ROAM 统计，避免 UI 显示上一次算法结果
     _meshData = Terrain::TerrainMeshBuilder::Build(_heightMap, _settings.TerrainSize, _settings.HeightScale);
     _terrainLodStats = {};
+    _terrainLodStatusMessage.clear();
     // 从 ROAM 切回规则网格时清空持久拓扑
     // 再切回 ROAM 会从当前设置重新建立 root diamond
     _terrainLodAlgorithm.reset();
@@ -468,6 +481,7 @@ bool TerrainRenderer::RebuildTerrainLod(const glm::vec3& cameraPosition, std::st
         {
             *errorMessage = "Selected terrain LOD algorithm is not available";
         }
+        _terrainLodStatusMessage = "Selected terrain LOD algorithm is not available";
         return false;
     }
 
@@ -490,13 +504,18 @@ bool TerrainRenderer::RebuildTerrainLod(const glm::vec3& cameraPosition, std::st
 
     Algorithms::TerrainLodRenderPacket renderPacket{};
     // TerrainRenderer 只消费统一算法接口输出，不直接依赖具体 builder
-    if (!_terrainLodAlgorithm->BuildRenderData(buildInput, renderPacket, errorMessage))
+    std::string localErrorMessage;
+    std::string* buildErrorMessage = errorMessage != nullptr ? errorMessage : &localErrorMessage;
+    buildErrorMessage->clear();
+    if (!_terrainLodAlgorithm->BuildRenderData(buildInput, renderPacket, buildErrorMessage))
     {
+        _terrainLodStatusMessage = buildErrorMessage->empty() ? "Terrain LOD build failed" : *buildErrorMessage;
         return false;
     }
 
     _meshData = std::move(renderPacket.CpuMesh);
     _terrainLodStats = _terrainLodAlgorithm->Stats();
+    _terrainLodStatusMessage.clear();
     // camera rebuild 位置只在算法成功后更新
     // 失败时下一帧仍会尝试基于旧 mesh 状态重建
     _lastRoamBuildCameraPosition = cameraPosition;
@@ -510,6 +529,7 @@ bool TerrainRenderer::RebuildTerrainLod(const glm::vec3& cameraPosition, std::st
         {
             *errorMessage = "Terrain LOD mesh build failed";
         }
+        _terrainLodStatusMessage = "Terrain LOD mesh build failed";
         return false;
     }
 

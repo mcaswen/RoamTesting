@@ -26,6 +26,8 @@ struct RuntimeBenchmarkSummary
     // ROAM ms 代表算法层自报的 terrain LOD 更新成本
     float AverageRoamMilliseconds{0.0F};
     float MaxRoamMilliseconds{0.0F};
+    float AverageGpuComputeMilliseconds{0.0F};
+    float MaxGpuComputeMilliseconds{0.0F};
 
     // 三角形数量是画面复杂度和 GPU 提交压力的共同代理
     double AverageTriangles{0.0};
@@ -41,6 +43,8 @@ struct RuntimeBenchmarkSummary
 
     // Worker 数记录算法本帧实际使用的 CPU 并行宽度
     std::size_t MaxCpuWorkerCount{0};
+    std::size_t MaxCpuGpuUploadBytes{0};
+    std::size_t MaxCpuGpuReadbackBytes{0};
 
     // 配置深度和实际达到深度分开，避免把 UI 设置误读成结果
     int MaxDepthSetting{0};
@@ -103,6 +107,7 @@ RuntimeBenchmarkSummary SummarizeRuntimeBenchmark(const RuntimeBenchmarkAlgorith
     // 累加使用 double，避免长时间采样后平均值被 float 精度吞掉
     double totalFrameMilliseconds = 0.0;
     double totalRoamMilliseconds = 0.0;
+    double totalGpuComputeMilliseconds = 0.0;
     double totalTriangles = 0.0;
     double totalNodes = 0.0;
     double totalCpuUtilization = 0.0;
@@ -117,18 +122,23 @@ RuntimeBenchmarkSummary SummarizeRuntimeBenchmark(const RuntimeBenchmarkAlgorith
         // 平均值用于整体对比，最大值用于定位尖峰卡顿
         totalFrameMilliseconds += sample.FrameMilliseconds;
         totalRoamMilliseconds += stats.RoamUpdateMilliseconds;
+        totalGpuComputeMilliseconds += stats.RoamGpuComputeMilliseconds;
         totalTriangles += static_cast<double>(stats.TriangleCount);
         totalNodes += static_cast<double>(stats.RoamNodeCount);
         totalCpuUtilization += stats.RoamCpuUtilizationPercent;
 
         summary.MaxFrameMilliseconds = std::max(summary.MaxFrameMilliseconds, sample.FrameMilliseconds);
         summary.MaxRoamMilliseconds = std::max(summary.MaxRoamMilliseconds, stats.RoamUpdateMilliseconds);
+        summary.MaxGpuComputeMilliseconds =
+            std::max(summary.MaxGpuComputeMilliseconds, stats.RoamGpuComputeMilliseconds);
         summary.MaxTriangles = std::max(summary.MaxTriangles, stats.TriangleCount);
         summary.MaxNodes = std::max(summary.MaxNodes, stats.RoamNodeCount);
         // CPU 占用和 worker 数一起观察并行路径是否真正生效
         summary.MaxCpuUtilizationPercent =
             std::max(summary.MaxCpuUtilizationPercent, stats.RoamCpuUtilizationPercent);
         summary.MaxCpuWorkerCount = std::max(summary.MaxCpuWorkerCount, stats.RoamCpuWorkerCount);
+        summary.MaxCpuGpuUploadBytes = std::max(summary.MaxCpuGpuUploadBytes, stats.RoamCpuGpuUploadBytes);
+        summary.MaxCpuGpuReadbackBytes = std::max(summary.MaxCpuGpuReadbackBytes, stats.RoamCpuGpuReadbackBytes);
         summary.MaxDepthSetting = std::max(summary.MaxDepthSetting, stats.RoamMaxDepthSetting);
         summary.MaxDepthReached = std::max(summary.MaxDepthReached, stats.RoamMaxDepthReached);
         summary.MaxInvalidTopologyCount = std::max(summary.MaxInvalidTopologyCount, invalidTopologyCount);
@@ -137,6 +147,7 @@ RuntimeBenchmarkSummary SummarizeRuntimeBenchmark(const RuntimeBenchmarkAlgorith
     const double sampleCount = static_cast<double>(summary.SampleCount);
     summary.AverageFrameMilliseconds = static_cast<float>(totalFrameMilliseconds / sampleCount);
     summary.AverageRoamMilliseconds = static_cast<float>(totalRoamMilliseconds / sampleCount);
+    summary.AverageGpuComputeMilliseconds = static_cast<float>(totalGpuComputeMilliseconds / sampleCount);
     summary.AverageTriangles = totalTriangles / sampleCount;
     summary.AverageNodes = totalNodes / sampleCount;
     summary.AverageCpuUtilizationPercent = static_cast<float>(totalCpuUtilization / sampleCount);
@@ -159,7 +170,8 @@ void WriteDetailedCsv(
         << "maxDepthSetting,splitThreshold,mergeThreshold,distanceScale,"
         << "timeSeconds,cameraX,cameraY,cameraZ,frameMilliseconds,triangles,nodes,"
         << "activeSplits,splits,forcedSplits,merges,candidatePeak,tjunctions,invalidNeighbors,"
-        << "invalidTopology,cpuWorkers,cpuUtilizationPercent,roamMilliseconds,splitMilliseconds,"
+        << "invalidTopology,cpuWorkers,cpuUtilizationPercent,gpuComputeMilliseconds,"
+        << "cpuGpuUploadBytes,cpuGpuReadbackBytes,roamMilliseconds,splitMilliseconds,"
         << "mergeMilliseconds,emitMilliseconds,validateMilliseconds,maxDepthReached\n";
 
     csv << std::fixed << std::setprecision(3);
@@ -196,6 +208,9 @@ void WriteDetailedCsv(
                 << stats.RoamInvalidTopologyCount << ','
                 << stats.RoamCpuWorkerCount << ','
                 << stats.RoamCpuUtilizationPercent << ','
+                << stats.RoamGpuComputeMilliseconds << ','
+                << stats.RoamCpuGpuUploadBytes << ','
+                << stats.RoamCpuGpuReadbackBytes << ','
                 << stats.RoamUpdateMilliseconds << ','
                 << stats.RoamSplitMilliseconds << ','
                 << stats.RoamMergeMilliseconds << ','
@@ -235,9 +250,10 @@ void WriteSummaryMarkdown(
                  << stats->RoamSplitThreshold << " / " << stats->RoamMergeThreshold << "\n\n";
     }
     markdown << "| Algorithm | Samples | Avg Frame ms | Max Frame ms | Avg ROAM ms | Max ROAM ms | "
+             << "Avg GPU ms | Max GPU ms | "
              << "Avg Triangles | Max Triangles | Avg Nodes | Max Nodes | Avg CPU % | Max CPU % | "
-             << "Max Workers | Config Max Depth | Reached Max Depth | Max Topology Issues |\n";
-    markdown << "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n";
+             << "Max Workers | Max Upload B | Max Readback B | Config Max Depth | Reached Max Depth | Max Topology Issues |\n";
+    markdown << "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n";
     markdown << std::fixed << std::setprecision(2);
 
     for (const RuntimeBenchmarkAlgorithmResult& result : results)
@@ -250,6 +266,8 @@ void WriteSummaryMarkdown(
                  << " | " << summary.MaxFrameMilliseconds
                  << " | " << summary.AverageRoamMilliseconds
                  << " | " << summary.MaxRoamMilliseconds
+                 << " | " << summary.AverageGpuComputeMilliseconds
+                 << " | " << summary.MaxGpuComputeMilliseconds
                  << " | " << summary.AverageTriangles
                  << " | " << summary.MaxTriangles
                  << " | " << summary.AverageNodes
@@ -257,6 +275,8 @@ void WriteSummaryMarkdown(
                  << " | " << summary.AverageCpuUtilizationPercent
                  << " | " << summary.MaxCpuUtilizationPercent
                  << " | " << summary.MaxCpuWorkerCount
+                 << " | " << summary.MaxCpuGpuUploadBytes
+                 << " | " << summary.MaxCpuGpuReadbackBytes
                  << " | " << summary.MaxDepthSetting
                  << " | " << summary.MaxDepthReached
                  << " | " << summary.MaxInvalidTopologyCount
@@ -274,7 +294,7 @@ std::string RuntimeBenchmarkAlgorithmDisplayName(Algorithms::TerrainLodAlgorithm
     case Algorithms::TerrainLodAlgorithmId::DataOrientedCpuRoam:
         return "Data-Oriented CPU ROAM";
     case Algorithms::TerrainLodAlgorithmId::GpuRoamLike:
-        return "GPU ROAM";
+        return "GPU ROAM-like";
     }
 
     return "Unknown ROAM";
