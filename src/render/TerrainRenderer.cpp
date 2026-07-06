@@ -281,6 +281,10 @@ void TerrainRenderer::ResetTerrainLodAlgorithm()
 
 void TerrainRenderer::Shutdown()
 {
+    _terrainLodAlgorithm.reset();
+    _terrainLodStats = {};
+    _terrainLodStatusMessage.clear();
+
     // OpenGL 资源允许重复 Shutdown
     // 每个 id 删除后都清零
     // 析构和显式 Shutdown 可以共用同一路径
@@ -515,7 +519,7 @@ bool TerrainRenderer::RebuildTerrainLod(const glm::vec3& cameraPosition, std::st
 
     _meshData = std::move(renderPacket.CpuMesh);
     _terrainLodStats = _terrainLodAlgorithm->Stats();
-    _terrainLodStatusMessage.clear();
+    _terrainLodStatusMessage = renderPacket.StatusMessage;
     // camera rebuild 位置只在算法成功后更新
     // 失败时下一帧仍会尝试基于旧 mesh 状态重建
     _lastRoamBuildCameraPosition = cameraPosition;

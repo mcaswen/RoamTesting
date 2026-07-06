@@ -134,4 +134,9 @@ const DataOrientedRoamStats& DataOrientedRoamMeshBuilder::Stats() const
 {
     return _state->Stats;
 }
+
+const DataOrientedRoamState& DataOrientedRoamMeshBuilder::State() const
+{
+    return *_state;
+}
 } // 命名空间 ParallelRoam::Algorithms::DataOrientedRoam

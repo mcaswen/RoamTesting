@@ -392,6 +392,16 @@ Level E：GPU split-only 或 split/merge topology update
 - 支持 debug readback 少量 node 做字段一致性抽样；
 - 不引入额外 UI 参数，沿用三版本统一核心参数。
 
+当前实现记录：
+
+- 已定义 `GpuRoamNodeRecord`，按 16 字节组打包 domain、geometric/screen error、parent/child/neighbor、chunk、flag、path id、build id 和 depth；
+- 已定义 `GpuRoamBufferSnapshot`，从 DOD `DataOrientedRoamState` 导出 node buffer 与 active leaf index buffer；
+- DOD builder 已提供只读 `State()` 快照入口，GPU 模块读取快照但不修改 DOD 拓扑；
+- GPU ROAM-like 在 OpenGL 4.3 可用时会先运行 DOD CPU topology，随后上传 node SSBO、active leaf SSBO 和 R32F height map texture；
+- `TerrainLodRenderPacket` 已补充 GPU node buffer、height map texture、active leaf count 和 status message 字段；
+- 当前 4B 仍使用 CPU mesh fallback，UI 会显示 “CPU DOD topology + GPU staging”，不把它静默标成完整 GPU 渲染；
+- 本机 macOS OpenGL 4.1 环境无法执行 SSBO 上传路径，只验证了 build、smoke 和无窗口 benchmark 的 GPU skip 语义。
+
 4C：GPU Error Evaluation
 
 - Compute shader 读取 height map texture、node buffer、camera/settings UBO；

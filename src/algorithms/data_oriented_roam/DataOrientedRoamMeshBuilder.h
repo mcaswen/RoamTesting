@@ -129,6 +129,7 @@ public:
         const DataOrientedRoamSettings& settings);
 
     [[nodiscard]] const DataOrientedRoamStats& Stats() const;
+    [[nodiscard]] const DataOrientedRoamState& State() const;
 
 private:
     std::unique_ptr<DataOrientedRoamState> _state;

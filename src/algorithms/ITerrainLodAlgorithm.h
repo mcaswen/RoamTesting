@@ -89,10 +89,14 @@ struct TerrainLodRenderPacket
 {
     TerrainLodRenderMode Mode{TerrainLodRenderMode::CpuMesh};
     Terrain::TerrainMeshData CpuMesh;
+    std::string StatusMessage;
+    std::uint32_t GpuNodeBufferId{0};
+    std::uint32_t GpuHeightMapTextureId{0};
     std::uint32_t GpuVertexBufferId{0};
     std::uint32_t GpuIndexBufferId{0};
     std::uint32_t ActiveLeafBufferId{0};
     std::uint32_t IndirectDrawBufferId{0};
+    std::size_t ActiveLeafCount{0};
     std::size_t ActiveTriangleCount{0};
     std::size_t IndexCount{0};
 };

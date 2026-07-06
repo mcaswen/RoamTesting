@@ -1,7 +1,9 @@
 #pragma once
 
 #include "algorithms/ITerrainLodAlgorithm.h"
+#include "algorithms/data_oriented_roam/DataOrientedRoamMeshBuilder.h"
 
+#include <cstdint>
 #include <string>
 
 namespace ParallelRoam::Algorithms::GpuRoam
@@ -12,6 +14,8 @@ namespace ParallelRoam::Algorithms::GpuRoam
 class GpuRoamTerrainLodAlgorithm final : public ITerrainLodAlgorithm
 {
 public:
+    ~GpuRoamTerrainLodAlgorithm() override;
+
     [[nodiscard]] TerrainLodAlgorithmInfo Info() const override;
     [[nodiscard]] TerrainLodAlgorithmCapabilities Capabilities() const override;
 
@@ -24,7 +28,13 @@ public:
     void Reset() override;
 
 private:
+    void DestroyGpuResources();
+
+    DataOrientedRoam::DataOrientedRoamMeshBuilder _cpuTopologyBuilder;
     TerrainLodStats _stats{};
+    std::uint32_t _nodeBufferId{0};
+    std::uint32_t _activeLeafBufferId{0};
+    std::uint32_t _heightMapTextureId{0};
 };
 
 [[nodiscard]] std::string GpuRoamLikeUnavailableReason();
