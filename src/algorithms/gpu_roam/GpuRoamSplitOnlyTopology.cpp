@@ -1,18 +1,15 @@
 #include "algorithms/gpu_roam/GpuRoamSplitOnlyTopology.h"
 
+#include "algorithms/gpu_roam/GpuRoamComputeSupport.h"
+
 #include <glad/gl.h>
 
 #include <algorithm>
-#include <string>
-#include <string_view>
 
 namespace ParallelRoam::Algorithms::GpuRoam
 {
 namespace
 {
-constexpr GLuint InvalidProgramId = 0U;
-constexpr GLuint LocalWorkGroupSize = 128U;
-
 constexpr const char* SplitOnlyTopologyComputeSource = R"(
 #version 430 core
 layout(local_size_x = 128) in;
@@ -202,112 +199,13 @@ void main()
 }
 )";
 
-std::uint32_t Low32(std::uint64_t value)
-{
-    return static_cast<std::uint32_t>(value & 0xFFFFFFFFULL);
-}
-
-std::uint32_t High32(std::uint64_t value)
-{
-    return static_cast<std::uint32_t>(value >> 32U);
-}
-
-GLuint WorkGroupCount(std::size_t itemCount)
-{
-    if (itemCount == 0U)
-    {
-        return 1U;
-    }
-
-    return static_cast<GLuint>((itemCount + LocalWorkGroupSize - 1U) / LocalWorkGroupSize);
-}
-
-std::string ReadShaderLog(GLuint shaderId)
-{
-    GLint logLength = 0;
-    glGetShaderiv(shaderId, GL_INFO_LOG_LENGTH, &logLength);
-    if (logLength <= 1)
-    {
-        return {};
-    }
-
-    std::string log(static_cast<std::size_t>(logLength), '\0');
-    GLsizei written = 0;
-    glGetShaderInfoLog(shaderId, logLength, &written, log.data());
-    log.resize(static_cast<std::size_t>(std::max(written, 0)));
-    return log;
-}
-
-std::string ReadProgramLog(GLuint programId)
-{
-    GLint logLength = 0;
-    glGetProgramiv(programId, GL_INFO_LOG_LENGTH, &logLength);
-    if (logLength <= 1)
-    {
-        return {};
-    }
-
-    std::string log(static_cast<std::size_t>(logLength), '\0');
-    GLsizei written = 0;
-    glGetProgramInfoLog(programId, logLength, &written, log.data());
-    log.resize(static_cast<std::size_t>(std::max(written, 0)));
-    return log;
-}
-
 bool EnsureSplitOnlyProgram(std::uint32_t& programId, std::string* errorMessage)
 {
-    if (programId != InvalidProgramId)
-    {
-        return true;
-    }
-
-    const GLuint shaderId = glCreateShader(GL_COMPUTE_SHADER);
-    const GLchar* shaderSource = SplitOnlyTopologyComputeSource;
-    glShaderSource(shaderId, 1, &shaderSource, nullptr);
-    glCompileShader(shaderId);
-
-    GLint shaderCompiled = GL_FALSE;
-    glGetShaderiv(shaderId, GL_COMPILE_STATUS, &shaderCompiled);
-    if (shaderCompiled != GL_TRUE)
-    {
-        if (errorMessage != nullptr)
-        {
-            *errorMessage = "GPU ROAM-like compute shader compile failed (split-only topology):\n" +
-                            ReadShaderLog(shaderId);
-        }
-        glDeleteShader(shaderId);
-        return false;
-    }
-
-    const GLuint nextProgramId = glCreateProgram();
-    glAttachShader(nextProgramId, shaderId);
-    glLinkProgram(nextProgramId);
-    glDeleteShader(shaderId);
-
-    GLint programLinked = GL_FALSE;
-    glGetProgramiv(nextProgramId, GL_LINK_STATUS, &programLinked);
-    if (programLinked != GL_TRUE)
-    {
-        if (errorMessage != nullptr)
-        {
-            *errorMessage = "GPU ROAM-like compute program link failed (split-only topology):\n" +
-                            ReadProgramLog(nextProgramId);
-        }
-        glDeleteProgram(nextProgramId);
-        return false;
-    }
-
-    programId = nextProgramId;
-    return true;
-}
-
-void SetProgramUInt(GLuint programId, const char* name, std::uint32_t value)
-{
-    const GLint location = glGetUniformLocation(programId, name);
-    if (location >= 0)
-    {
-        glUniform1ui(location, value);
-    }
+    return EnsureGpuRoamComputeProgram(
+        programId,
+        SplitOnlyTopologyComputeSource,
+        "split-only topology",
+        errorMessage);
 }
 } // namespace
 
@@ -338,11 +236,11 @@ bool RunGpuRoamSplitOnlyTopologyPass(
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, input.SplitCandidateBufferId);
 
     glUseProgram(programId);
-    SetProgramUInt(programId, "uNodeCapacity", static_cast<std::uint32_t>(input.NodeCapacity));
-    SetProgramUInt(programId, "uMaxDepth", static_cast<std::uint32_t>(std::max(input.MaxDepth, 0)));
-    SetProgramUInt(programId, "uBuildSequenceLow", Low32(input.BuildSequence));
-    SetProgramUInt(programId, "uBuildSequenceHigh", High32(input.BuildSequence));
-    glDispatchCompute(WorkGroupCount(input.CandidateDispatchCount), 1U, 1U);
+    SetGpuRoamProgramUInt(programId, "uNodeCapacity", static_cast<std::uint32_t>(input.NodeCapacity));
+    SetGpuRoamProgramUInt(programId, "uMaxDepth", static_cast<std::uint32_t>(std::max(input.MaxDepth, 0)));
+    SetGpuRoamProgramUInt(programId, "uBuildSequenceLow", GpuRoamLow32(input.BuildSequence));
+    SetGpuRoamProgramUInt(programId, "uBuildSequenceHigh", GpuRoamHigh32(input.BuildSequence));
+    glDispatchCompute(GpuRoamWorkGroupCount(input.CandidateDispatchCount), 1U, 1U);
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_BUFFER_UPDATE_BARRIER_BIT);
     return true;
 }

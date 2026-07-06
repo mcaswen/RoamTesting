@@ -59,8 +59,15 @@ if(PARALLEL_ROAM_BUILD_APP)
                 src/algorithms/data_oriented_roam/DataOrientedRoamThreadPool.cpp
                 src/algorithms/data_oriented_roam/DataOrientedRoamTopology.cpp
                 src/algorithms/data_oriented_roam/DataOrientedRoamValidation.cpp
+                src/algorithms/gpu_roam/GpuRoamActiveLeafCompaction.cpp
                 src/algorithms/gpu_roam/GpuRoamBufferSchema.cpp
+                src/algorithms/gpu_roam/GpuRoamCandidateMarking.cpp
+                src/algorithms/gpu_roam/GpuRoamComputeSupport.cpp
+                src/algorithms/gpu_roam/GpuRoamErrorEvaluation.cpp
+                src/algorithms/gpu_roam/GpuRoamMeshBuilder.cpp
+                src/algorithms/gpu_roam/GpuRoamMeshEmit.cpp
                 src/algorithms/gpu_roam/GpuRoamSplitOnlyTopology.cpp
+                src/algorithms/gpu_roam/GpuRoamState.cpp
                 src/algorithms/gpu_roam/GpuRoamTerrainLodAlgorithm.cpp
                 src/benchmark/TerrainLodBenchmark.cpp
                 src/benchmark/RoamProbe.cpp
