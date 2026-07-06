@@ -6,6 +6,8 @@
 *.swp
 *.swo
 *~
+__pycache__/
+*.py[cod]
 
 # IDEs
 .idea/
@@ -70,6 +72,7 @@ captures/
 screenshots/
 benchmark-output/
 experiment-output/
+code-output/
 *.csv.tmp
 
 # Local dependency/vendor drops. Keep explicit placeholders if needed.
