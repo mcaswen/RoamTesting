@@ -79,11 +79,8 @@ bool Window::Create(const std::string& title, int width, int height)
         return false;
     }
 
-    // 默认开启 vsync，避免空场景渲染占满 CPU/GPU
-    if (SDL_GL_SetSwapInterval(1) != 0)
-    {
-        std::cerr << "SDL_GL_SetSwapInterval failed: " << SDL_GetError() << '\n';
-    }
+    // 默认关闭 vsync，benchmark 的 Frame ms 才能反映真实吞吐
+    SetVSyncEnabled(false);
 
     RefreshSize();
     return true;
@@ -125,6 +122,24 @@ void Window::ProcessEvent(const SDL_Event& event)
 void Window::SwapBuffers() const
 {
     SDL_GL_SwapWindow(_window);
+}
+
+bool Window::SetVSyncEnabled(bool enabled)
+{
+    const int requestedInterval = enabled ? 1 : 0;
+    if (_swapInterval == requestedInterval)
+    {
+        return true;
+    }
+
+    if (SDL_GL_SetSwapInterval(requestedInterval) != 0)
+    {
+        std::cerr << "SDL_GL_SetSwapInterval failed: " << SDL_GetError() << '\n';
+        return false;
+    }
+
+    _swapInterval = requestedInterval;
+    return true;
 }
 
 void Window::SetRelativeMouseMode(bool enabled)
@@ -189,6 +204,11 @@ int Window::DrawableWidth() const
 int Window::DrawableHeight() const
 {
     return _drawableHeight;
+}
+
+bool Window::VSyncEnabled() const
+{
+    return _swapInterval > 0;
 }
 
 bool Window::IsValid() const

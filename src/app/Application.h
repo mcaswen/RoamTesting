@@ -126,6 +126,9 @@ private:
     // 应用 GUI 面板参数并把错误统一输出到 stderr
     void ApplyTerrainPanelSettings();
 
+    // 应用不影响 terrain mesh 的窗口运行参数
+    void ApplyWindowPanelSettings();
+
     // benchmark 生命周期由主循环推进，避免 UI 直接修改渲染器状态
     void StartRuntimeBenchmark();
     void BeginRuntimeBenchmarkAlgorithm();

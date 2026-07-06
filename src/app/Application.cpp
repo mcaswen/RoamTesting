@@ -98,6 +98,7 @@ bool Application::Initialize()
     }
 
     _input.SetWindowSize(_window.Width(), _window.Height());
+    _terrainPanelState.VSyncEnabled = _window.VSyncEnabled();
 
     // GLAD 加载失败时不能继续创建任何 OpenGL 对象
     if (!LoadOpenGL())
@@ -284,6 +285,7 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
     debugData.WindowHeight = _window.Height();
     debugData.DrawableWidth = drawableWidth;
     debugData.DrawableHeight = drawableHeight;
+    debugData.VSyncEnabled = _terrainPanelState.VSyncEnabled;
     debugData.CameraPosition = cameraPosition;
     debugData.CameraYawDegrees = _camera.YawDegrees();
     debugData.CameraPitchDegrees = _camera.PitchDegrees();
@@ -329,9 +331,16 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
 
     RecordRuntimeBenchmarkSample(frameTiming, terrainStats, cameraPosition);
 
+    const bool previousVSyncEnabled = _terrainPanelState.VSyncEnabled;
     if (_guiLayer.DrawDebugOverlay(debugData, _terrainPanelState))
     {
         ApplyTerrainPanelSettings();
+    }
+
+    if (previousVSyncEnabled != _terrainPanelState.VSyncEnabled)
+    {
+        // VSync 改变只更新窗口 swap interval，不触发 mesh 或算法重建
+        ApplyWindowPanelSettings();
     }
 
     if (_terrainPanelState.StartBenchmarkRequested)
@@ -361,6 +370,14 @@ void Application::ApplyTerrainPanelSettings()
     if (!_terrainRenderer.ApplySettings(_terrainSettings, &settingsError))
     {
         std::cerr << settingsError << '\n';
+    }
+}
+
+void Application::ApplyWindowPanelSettings()
+{
+    if (!_window.SetVSyncEnabled(_terrainPanelState.VSyncEnabled))
+    {
+        _terrainPanelState.VSyncEnabled = _window.VSyncEnabled();
     }
 }
 

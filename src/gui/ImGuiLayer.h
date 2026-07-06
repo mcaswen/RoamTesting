@@ -21,6 +21,9 @@ struct DebugOverlayData
     int WindowHeight{0};
     int DrawableWidth{0};
     int DrawableHeight{0};
+
+    // VSync 状态属于运行时展示指标，帮助解释 Frame ms 是否被刷新率钳住
+    bool VSyncEnabled{false};
     glm::vec3 CameraPosition{0.0F};
     float CameraYawDegrees{0.0F};
     float CameraPitchDegrees{0.0F};
@@ -83,6 +86,9 @@ struct TerrainPanelState
     float TerrainSize{30.0F};
     float HeightScale{4.0F};
     bool Wireframe{false};
+
+    // VSync 只影响 swap interval，不进入 TerrainRenderSettings
+    bool VSyncEnabled{false};
     int DebugColorMode{0};
     float DebugOverlayStrength{0.85F};
     bool UseTerrainLod{true};

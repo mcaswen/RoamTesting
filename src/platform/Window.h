@@ -28,6 +28,9 @@ public:
     void ProcessEvent(const SDL_Event& event);
     void SwapBuffers() const;
 
+    // 运行时切换 swap interval，用于在 benchmark 中解除帧率限制
+    bool SetVSyncEnabled(bool enabled);
+
     /// <summary>
     /// 切换相对鼠标模式，按住右键观察时使用
     /// </summary>
@@ -41,6 +44,9 @@ public:
     [[nodiscard]] int Height() const;
     [[nodiscard]] int DrawableWidth() const;
     [[nodiscard]] int DrawableHeight() const;
+
+    // 返回最近一次成功设置的 swap interval 状态
+    [[nodiscard]] bool VSyncEnabled() const;
     [[nodiscard]] bool IsValid() const;
 
 private:
@@ -51,6 +57,7 @@ private:
     int _height{0};
     int _drawableWidth{0};
     int _drawableHeight{0};
+    int _swapInterval{-1};
     bool _relativeMouseMode{false};
 };
 } // 命名空间 ParallelRoam::Platform

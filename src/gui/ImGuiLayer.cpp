@@ -269,6 +269,7 @@ void DrawCompactPerformanceMetrics(const DebugOverlayData& data)
     // 简略模式保留判断卡顿和规模变化最常用的指标
     DrawMetricFloat("FPS", data.FramesPerSecond, "%.1f");
     DrawMetricFloat("Frame ms", data.FrameTimeMilliseconds, "%.2f");
+    DrawMetricRow("VSync", data.VSyncEnabled ? "开启" : "关闭");
     DrawMetricRow("模式", TerrainModeName(data.UseTerrainLod, data.TerrainLodAlgorithm));
     DrawMetricSize("三角形数", data.TriangleCount);
     DrawMetricSize("节点数", data.RoamNodeCount);
@@ -475,6 +476,8 @@ bool ImGuiLayer::DrawDebugOverlay(const DebugOverlayData& data, TerrainPanelStat
         // 按钮只写请求位，Application 下一帧统一启动状态机
         terrainState.StartBenchmarkRequested = true;
     }
+    // VSync 只影响 swap interval，不应该触发 terrain renderer 重建
+    ImGui::Checkbox("垂直同步限帧", &terrainState.VSyncEnabled);
     if (data.BenchmarkRunning)
     {
         ImGui::EndDisabled();
