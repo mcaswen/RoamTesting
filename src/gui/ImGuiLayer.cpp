@@ -21,6 +21,7 @@ constexpr float PanelMaxWidth = 390.0F;
 // DrawDebugOverlay 通过返回 changed 通知 Application 应用新设置
 // 这样 UI 控件和渲染/算法边界保持单向数据流
 constexpr float MetricValueOffset = 132.0F;
+constexpr float PerformanceOverlayWidth = 360.0F;
 
 void ApplyEditorStyle()
 {
@@ -245,6 +246,124 @@ void DrawBenchmarkStatusOverlay(const DebugOverlayData& data)
     ImGui::ProgressBar(std::clamp(data.BenchmarkProgress, 0.0F, 1.0F), ImVec2{-1.0F, 8.0F}, "");
     ImGui::End();
 }
+
+void DrawPerformanceModeToggle(bool& detailedMode)
+{
+    ImGui::TextUnformatted("性能");
+    ImGui::SameLine();
+    // 模式切换只影响 overlay 展示密度，不改变 renderer 参数
+    // 因此它不参与 DrawDebugOverlay 的 changed 返回值
+    if (ImGui::RadioButton("简略", !detailedMode))
+    {
+        detailedMode = false;
+    }
+    ImGui::SameLine();
+    if (ImGui::RadioButton("详细", detailedMode))
+    {
+        detailedMode = true;
+    }
+}
+
+void DrawCompactPerformanceMetrics(const DebugOverlayData& data)
+{
+    // 简略模式保留判断卡顿和规模变化最常用的指标
+    DrawMetricFloat("FPS", data.FramesPerSecond, "%.1f");
+    DrawMetricFloat("Frame ms", data.FrameTimeMilliseconds, "%.2f");
+    DrawMetricRow("模式", TerrainModeName(data.UseTerrainLod, data.TerrainLodAlgorithm));
+    DrawMetricSize("三角形数", data.TriangleCount);
+    DrawMetricSize("节点数", data.RoamNodeCount);
+    DrawMetricFloat("ROAM ms", data.RoamUpdateMilliseconds, "%.2f");
+    DrawMetricSize("CPU Worker", data.RoamCpuWorkerCount);
+    DrawMetricFloat("CPU 占用", data.RoamCpuUtilizationPercent, "%.1f%%");
+}
+
+void DrawDetailedPerformanceMetrics(const DebugOverlayData& data)
+{
+    char cameraBuffer[96]{};
+    // 详细模式把相机和 drawable 信息放到同一个性能面板
+    std::snprintf(
+        cameraBuffer,
+        sizeof(cameraBuffer),
+        "%.1f, %.1f, %.1f",
+        static_cast<double>(data.CameraPosition.x),
+        static_cast<double>(data.CameraPosition.y),
+        static_cast<double>(data.CameraPosition.z));
+
+    DrawSectionHeader("运行");
+    DrawMetricInt("Draw Call", data.DrawCallCount);
+    DrawMetricInt("窗口宽度", data.WindowWidth);
+    DrawMetricInt("窗口高度", data.WindowHeight);
+    DrawMetricInt("Drawable W", data.DrawableWidth);
+    DrawMetricInt("Drawable H", data.DrawableHeight);
+    DrawMetricRow("相机位置", cameraBuffer);
+    DrawMetricFloat("Yaw", data.CameraYawDegrees, "%.1f");
+    DrawMetricFloat("Pitch", data.CameraPitchDegrees, "%.1f");
+
+    DrawSectionHeader("地形");
+    DrawMetricInt("高度图宽", data.HeightMapWidth);
+    DrawMetricInt("高度图高", data.HeightMapHeight);
+    DrawMetricSize("顶点数", data.VertexCount);
+    DrawMetricSize("三角形数", data.TriangleCount);
+    DrawMetricRow("模式", TerrainModeName(data.UseTerrainLod, data.TerrainLodAlgorithm));
+
+    DrawSectionHeader("ROAM");
+    DrawMetricSize("原始三角", data.RoamOriginalTriangleCount);
+    DrawMetricSize("细分三角", data.RoamSubdividedTriangleCount);
+    DrawMetricSize("重建三角", data.RoamRebuiltTriangleCount);
+    DrawMetricSize("活跃 Split", data.RoamActiveSplitCount);
+    DrawMetricSize("本帧 Split", data.RoamSplitCount);
+    DrawMetricSize("强制 Split", data.RoamForcedSplitCount);
+    DrawMetricSize("Merge 数", data.RoamMergeCount);
+    DrawMetricSize("约束传播", data.RoamConstraintPassCount);
+    DrawMetricSize("队列峰值", data.RoamCandidatePeakCount);
+    DrawMetricSize("预算拒绝", data.RoamRejectedSplitCount);
+    DrawMetricSize("Merge 拒绝", data.RoamRejectedMergeCount);
+    DrawMetricSize("T-junction", data.RoamTjunctionCount);
+    DrawMetricSize("邻接错误", data.RoamInvalidNeighborCount);
+    DrawMetricSize("拓扑错误", data.RoamInvalidTopologyCount);
+    DrawMetricFloat("Split ms", data.RoamSplitMilliseconds, "%.2f");
+    DrawMetricFloat("Merge ms", data.RoamMergeMilliseconds, "%.2f");
+    DrawMetricFloat("Emit ms", data.RoamEmitMilliseconds, "%.2f");
+    DrawMetricFloat("Validate ms", data.RoamValidateMilliseconds, "%.2f");
+    DrawMetricInt("实际深度", data.RoamMaxDepthReached);
+}
+
+void DrawPerformanceOverlay(const DebugOverlayData& data, bool& detailedMode)
+{
+    constexpr ImGuiWindowFlags OverlayFlags =
+        ImGuiWindowFlags_NoTitleBar |
+        ImGuiWindowFlags_NoResize |
+        ImGuiWindowFlags_NoMove |
+        ImGuiWindowFlags_NoCollapse |
+        ImGuiWindowFlags_NoSavedSettings;
+
+    // 性能 overlay 放在左上角，避免和右侧交互面板抢空间
+    const ImGuiIO& io = ImGui::GetIO();
+    const float maxOverlayHeight = std::max(180.0F, io.DisplaySize.y - 32.0F);
+    ImGui::SetNextWindowPos(ImVec2{16.0F, 16.0F}, ImGuiCond_Always);
+    ImGui::SetNextWindowSizeConstraints(
+        ImVec2{PerformanceOverlayWidth, 0.0F},
+        ImVec2{PerformanceOverlayWidth, maxOverlayHeight});
+    ImGui::SetNextWindowBgAlpha(0.88F);
+    ImGui::Begin("Performance Overlay", nullptr, OverlayFlags);
+
+    DrawPerformanceModeToggle(detailedMode);
+    ImGui::Separator();
+    DrawCompactPerformanceMetrics(data);
+
+    if (detailedMode)
+    {
+        // 详细模式继续展开 ROAM 拓扑和 pass 级耗时
+        DrawDetailedPerformanceMetrics(data);
+        if (!data.LastBenchmarkOutputPath.empty())
+        {
+            DrawSectionHeader("Benchmark");
+            ImGui::TextWrapped("%s", data.LastBenchmarkOutputPath.c_str());
+        }
+    }
+
+    ImGui::End();
+}
 } // 匿名命名空间
 
 bool ImGuiLayer::Initialize(SDL_Window* window, SDL_GLContext glContext, const char* glslVersion)
@@ -316,6 +435,7 @@ bool ImGuiLayer::DrawDebugOverlay(const DebugOverlayData& data, TerrainPanelStat
     bool changed = false;
     const ImGuiIO& io = ImGui::GetIO();
     DrawBenchmarkStatusOverlay(data);
+    DrawPerformanceOverlay(data, _performanceOverlayDetailed);
 
     // 面板宽度跟随窗口
     // 同时限制最小和最大值
@@ -342,26 +462,8 @@ bool ImGuiLayer::DrawDebugOverlay(const DebugOverlayData& data, TerrainPanelStat
     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4{0.92F, 0.96F, 0.94F, 1.0F});
     ImGui::TextUnformatted("Parallel ROAM");
     ImGui::PopStyleColor();
-    ImGui::TextDisabled("地形基线与运行诊断");
-
-    DrawSectionHeader("运行状态");
-    DrawMetricFloat("FPS", data.FramesPerSecond, "%.1f");
-    DrawMetricFloat("Frame ms", data.FrameTimeMilliseconds, "%.2f");
-    DrawMetricInt("Draw Call", data.DrawCallCount);
-    DrawMetricInt("窗口宽度", data.WindowWidth);
-    DrawMetricInt("窗口高度", data.WindowHeight);
-
-    char cameraBuffer[96]{};
-    std::snprintf(
-        cameraBuffer,
-        sizeof(cameraBuffer),
-        "%.1f, %.1f, %.1f",
-        static_cast<double>(data.CameraPosition.x),
-        static_cast<double>(data.CameraPosition.y),
-        static_cast<double>(data.CameraPosition.z));
-    DrawMetricRow("相机位置", cameraBuffer);
-    DrawMetricFloat("Yaw", data.CameraYawDegrees, "%.1f");
-    DrawMetricFloat("Pitch", data.CameraPitchDegrees, "%.1f");
+    // 右侧面板只保留会改变运行状态的交互控件
+    ImGui::TextDisabled("地形与算法交互控制");
 
     DrawSectionHeader("性能测试");
     if (data.BenchmarkRunning)
@@ -377,23 +479,14 @@ bool ImGuiLayer::DrawDebugOverlay(const DebugOverlayData& data, TerrainPanelStat
     {
         ImGui::EndDisabled();
     }
-    if (!data.LastBenchmarkOutputPath.empty())
-    {
-        ImGui::TextDisabled("上次输出");
-        ImGui::TextWrapped("%s", data.LastBenchmarkOutputPath.c_str());
-    }
 
     DrawSectionHeader("地形");
-    DrawMetricInt("高度图宽", data.HeightMapWidth);
-    DrawMetricInt("高度图高", data.HeightMapHeight);
-    DrawMetricSize("顶点数", data.VertexCount);
-    DrawMetricSize("三角形数", data.TriangleCount);
-    DrawMetricRow("模式", TerrainModeName(data.UseTerrainLod, data.TerrainLodAlgorithm));
 
     const bool lockControls = data.BenchmarkRunning;
     if (lockControls)
     {
         // 测试期间锁定参数，确保同一轮内两种算法输入一致
+        // 性能 overlay 仍可切换简略/详细，方便观察测试过程
         ImGui::BeginDisabled();
     }
 
@@ -417,29 +510,6 @@ bool ImGuiLayer::DrawDebugOverlay(const DebugOverlayData& data, TerrainPanelStat
     changed |= ImGui::SliderFloat("高度缩放", &terrainState.HeightScale, 0.0F, 12.0F, "%.2f");
 
     DrawSectionHeader("ROAM");
-    DrawMetricSize("节点数", data.RoamNodeCount);
-    DrawMetricSize("原始三角", data.RoamOriginalTriangleCount);
-    DrawMetricSize("细分三角", data.RoamSubdividedTriangleCount);
-    DrawMetricSize("重建三角", data.RoamRebuiltTriangleCount);
-    DrawMetricSize("活跃 Split", data.RoamActiveSplitCount);
-    DrawMetricSize("本帧 Split", data.RoamSplitCount);
-    DrawMetricSize("强制 Split", data.RoamForcedSplitCount);
-    DrawMetricSize("Merge 数", data.RoamMergeCount);
-    DrawMetricSize("约束传播", data.RoamConstraintPassCount);
-    DrawMetricSize("队列峰值", data.RoamCandidatePeakCount);
-    DrawMetricSize("预算拒绝", data.RoamRejectedSplitCount);
-    DrawMetricSize("Merge 拒绝", data.RoamRejectedMergeCount);
-    DrawMetricSize("T-junction", data.RoamTjunctionCount);
-    DrawMetricSize("邻接错误", data.RoamInvalidNeighborCount);
-    DrawMetricSize("拓扑错误", data.RoamInvalidTopologyCount);
-    DrawMetricSize("CPU Worker", data.RoamCpuWorkerCount);
-    DrawMetricFloat("CPU 占用", data.RoamCpuUtilizationPercent, "%.1f%%");
-    DrawMetricFloat("ROAM ms", data.RoamUpdateMilliseconds, "%.2f");
-    DrawMetricFloat("Split ms", data.RoamSplitMilliseconds, "%.2f");
-    DrawMetricFloat("Merge ms", data.RoamMergeMilliseconds, "%.2f");
-    DrawMetricFloat("Emit ms", data.RoamEmitMilliseconds, "%.2f");
-    DrawMetricFloat("Validate ms", data.RoamValidateMilliseconds, "%.2f");
-    DrawMetricInt("实际深度", data.RoamMaxDepthReached);
     changed |= ImGui::Checkbox("局部约束", &terrainState.RoamEnableLocalConstraints);
     changed |= ImGui::Checkbox("拓扑验证", &terrainState.RoamEnableTopologyValidation);
     changed |= ImGui::SliderInt("最大深度", &terrainState.RoamMaxDepth, 1, 16);

@@ -139,5 +139,8 @@ public:
 private:
     // 防止未初始化或重复 Shutdown 时调用 backend 清理接口
     bool _initialized{false};
+
+    // 性能 overlay 的详细模式属于 GUI 展示偏好，不触发 renderer 设置更新
+    bool _performanceOverlayDetailed{false};
 };
 } // 命名空间 ParallelRoam::Gui
