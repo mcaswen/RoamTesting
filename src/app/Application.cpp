@@ -6,6 +6,7 @@
 #include <SDL.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <exception>
@@ -18,6 +19,13 @@ namespace ParallelRoam::App
 {
 namespace
 {
+const std::array<std::filesystem::path, 2> HeightMapPaths{
+    // 资源表顺序必须和 ImGui 高度图下拉框保持一致
+    std::filesystem::path{"assets/heightmaps/Hm_Terrain_Test_129.pgm"},
+    // Peking 513 用于更大输入规模下观察 ROAM 行为
+    std::filesystem::path{"assets/heightmaps/Hm_Terrain_Peking_513.png"},
+};
+
 // SDL 返回的是平台相关函数指针，GLAD 需要统一包装成 loader 回调
 GLADapiproc LoadOpenGLProc(const char* name)
 {
@@ -99,6 +107,7 @@ bool Application::Initialize()
 
     _input.SetWindowSize(_window.Width(), _window.Height());
     _terrainPanelState.VSyncEnabled = _window.VSyncEnabled();
+    _terrainPanelState.HeightMapIndex = 0;
 
     // GLAD 加载失败时不能继续创建任何 OpenGL 对象
     if (!LoadOpenGL())
@@ -112,7 +121,7 @@ bool Application::Initialize()
     // 渲染器加载 Height Map、地表纹理和内置 shader
     std::string rendererError;
     if (!_terrainRenderer.Initialize(
-            std::filesystem::path{"assets/heightmaps/Hm_Terrain_Test_129.pgm"},
+            HeightMapPaths[static_cast<std::size_t>(_terrainPanelState.HeightMapIndex)],
             std::filesystem::path{"assets/textures/Tex_Terrain_Debug_Diffuse.ppm"},
             _terrainSettings,
             &rendererError))
@@ -332,6 +341,7 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
     RecordRuntimeBenchmarkSample(frameTiming, terrainStats, cameraPosition);
 
     const bool previousVSyncEnabled = _terrainPanelState.VSyncEnabled;
+    const int previousHeightMapIndex = _terrainPanelState.HeightMapIndex;
     if (_guiLayer.DrawDebugOverlay(debugData, _terrainPanelState))
     {
         ApplyTerrainPanelSettings();
@@ -341,6 +351,11 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
     {
         // VSync 改变只更新窗口 swap interval，不触发 mesh 或算法重建
         ApplyWindowPanelSettings();
+    }
+
+    if (previousHeightMapIndex != _terrainPanelState.HeightMapIndex)
+    {
+        ApplyHeightMapSelection();
     }
 
     if (_terrainPanelState.StartBenchmarkRequested)
@@ -378,6 +393,35 @@ void Application::ApplyWindowPanelSettings()
     if (!_window.SetVSyncEnabled(_terrainPanelState.VSyncEnabled))
     {
         _terrainPanelState.VSyncEnabled = _window.VSyncEnabled();
+    }
+}
+
+void Application::ApplyHeightMapSelection()
+{
+    // UI index 先钳制到资源表范围，防止未来增删选项时越界
+    const int selectedIndex = std::clamp(
+        _terrainPanelState.HeightMapIndex,
+        0,
+        static_cast<int>(HeightMapPaths.size()) - 1);
+    _terrainPanelState.HeightMapIndex = selectedIndex;
+    const std::filesystem::path& heightMapPath = HeightMapPaths[static_cast<std::size_t>(selectedIndex)];
+
+    std::string heightMapError;
+    if (!_terrainRenderer.LoadHeightMap(heightMapPath, &heightMapError))
+    {
+        std::cerr << heightMapError << '\n';
+        // 加载失败时把 UI 回滚到 renderer 当前实际持有的高度图
+        const auto currentPath = _terrainRenderer.HeightMapPath();
+        const auto match = std::find_if(
+            HeightMapPaths.begin(),
+            HeightMapPaths.end(),
+            [&currentPath](const std::filesystem::path& optionPath) {
+                return optionPath == currentPath;
+            });
+        if (match != HeightMapPaths.end())
+        {
+            _terrainPanelState.HeightMapIndex = static_cast<int>(std::distance(HeightMapPaths.begin(), match));
+        }
     }
 }
 

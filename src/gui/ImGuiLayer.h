@@ -89,6 +89,7 @@ struct TerrainPanelState
 
     // VSync 只影响 swap interval，不进入 TerrainRenderSettings
     bool VSyncEnabled{false};
+    int HeightMapIndex{0};
     int DebugColorMode{0};
     float DebugOverlayStrength{0.85F};
     bool UseTerrainLod{true};

@@ -211,6 +211,23 @@ bool TerrainRenderer::ApplySettings(const TerrainRenderSettings& settings, std::
     return RebuildMesh(errorMessage);
 }
 
+bool TerrainRenderer::LoadHeightMap(const std::filesystem::path& heightMapPath, std::string* errorMessage)
+{
+    Terrain::HeightMap nextHeightMap;
+    if (!nextHeightMap.LoadFromFile(heightMapPath, errorMessage))
+    {
+        return false;
+    }
+
+    // 高度图变化会让所有 ROAM 持久拓扑里的误差缓存失效
+    _heightMap = std::move(nextHeightMap);
+    _heightMapPath = heightMapPath;
+    // 算法节点里的 error、height 采样和 debug color 都依赖旧高度图
+    ResetTerrainLodAlgorithm();
+    // RebuildMesh 会基于当前相机位置立即生成可见 mesh
+    return RebuildMesh(errorMessage);
+}
+
 bool TerrainRenderer::UpdateForCamera(const glm::vec3& cameraPosition, std::string* errorMessage)
 {
     _lastCameraPosition = cameraPosition;

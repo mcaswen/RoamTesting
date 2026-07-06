@@ -493,6 +493,15 @@ bool ImGuiLayer::DrawDebugOverlay(const DebugOverlayData& data, TerrainPanelStat
         ImGui::BeginDisabled();
     }
 
+    const char* heightMapItems[] = {"测试地形 129", "Peking 513"};
+    // 下拉框 index 是 Application 高度图资源表的稳定键
+    int heightMapIndex = std::clamp(terrainState.HeightMapIndex, 0, 1);
+    if (ImGui::Combo("高度图", &heightMapIndex, heightMapItems, 2))
+    {
+        // 高度图切换由 Application 处理，不进入 terrain settings changed
+        // 这样换图不会被误判为普通参数微调
+        terrainState.HeightMapIndex = heightMapIndex;
+    }
     changed |= ImGui::Checkbox("线框模式", &terrainState.Wireframe);
     int terrainModeIndex = TerrainModeIndex(terrainState.UseTerrainLod, terrainState.TerrainLodAlgorithm);
     const char* terrainModeItems[] = {"规则网格", "Classic CPU ROAM", "Data-Oriented CPU ROAM"};

@@ -158,6 +158,7 @@ public:
         std::string* errorMessage);
 
     bool ApplySettings(const TerrainRenderSettings& settings, std::string* errorMessage);
+    bool LoadHeightMap(const std::filesystem::path& heightMapPath, std::string* errorMessage);
     bool UpdateForCamera(const glm::vec3& cameraPosition, std::string* errorMessage);
 
     // benchmark 可绕过普通相机位移缓存，要求下一帧重新构建 mesh

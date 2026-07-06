@@ -129,6 +129,9 @@ private:
     // 应用不影响 terrain mesh 的窗口运行参数
     void ApplyWindowPanelSettings();
 
+    // 根据 UI 选择加载不同 HeightMap，并重置 terrain LOD 状态
+    void ApplyHeightMapSelection();
+
     // benchmark 生命周期由主循环推进，避免 UI 直接修改渲染器状态
     void StartRuntimeBenchmark();
     void BeginRuntimeBenchmarkAlgorithm();
