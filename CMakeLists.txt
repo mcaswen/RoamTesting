@@ -56,6 +56,7 @@ if(PARALLEL_ROAM_BUILD_APP)
                 src/algorithms/data_oriented_roam/DataOrientedRoamMeshEmit.cpp
                 src/algorithms/data_oriented_roam/DataOrientedRoamScoring.cpp
                 src/algorithms/data_oriented_roam/DataOrientedRoamState.cpp
+                src/algorithms/data_oriented_roam/DataOrientedRoamThreadPool.cpp
                 src/algorithms/data_oriented_roam/DataOrientedRoamTopology.cpp
                 src/algorithms/data_oriented_roam/DataOrientedRoamValidation.cpp
                 src/benchmark/TerrainLodBenchmark.cpp

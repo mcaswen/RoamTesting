@@ -1,20 +1,51 @@
 #include "algorithms/data_oriented_roam/DataOrientedRoamMeshBuilder.h"
 
 #include "algorithms/data_oriented_roam/DataOrientedRoamState.h"
+#include "algorithms/data_oriented_roam/DataOrientedRoamThreadPool.h"
 
 #include <algorithm>
 #include <chrono>
+#include <utility>
 
 namespace ParallelRoam::Algorithms::DataOrientedRoam
 {
 DataOrientedRoamMeshBuilder::DataOrientedRoamMeshBuilder()
     : _state(std::make_unique<DataOrientedRoamState>())
+    , _threadPool(std::make_unique<DataOrientedRoamThreadPool>())
 {
+    _state->ThreadPool = _threadPool.get();
 }
 
 DataOrientedRoamMeshBuilder::~DataOrientedRoamMeshBuilder() = default;
-DataOrientedRoamMeshBuilder::DataOrientedRoamMeshBuilder(DataOrientedRoamMeshBuilder&&) noexcept = default;
-DataOrientedRoamMeshBuilder& DataOrientedRoamMeshBuilder::operator=(DataOrientedRoamMeshBuilder&&) noexcept = default;
+
+DataOrientedRoamMeshBuilder::DataOrientedRoamMeshBuilder(DataOrientedRoamMeshBuilder&& other) noexcept
+    : _state(std::move(other._state))
+    , _threadPool(std::move(other._threadPool))
+{
+    if (_state != nullptr)
+    {
+        // state 只借用线程池指针，builder move 后必须重新绑定
+        _state->ThreadPool = _threadPool.get();
+    }
+}
+
+DataOrientedRoamMeshBuilder& DataOrientedRoamMeshBuilder::operator=(DataOrientedRoamMeshBuilder&& other) noexcept
+{
+    if (this == &other)
+    {
+        return *this;
+    }
+
+    _state = std::move(other._state);
+    _threadPool = std::move(other._threadPool);
+    if (_state != nullptr)
+    {
+        // 移动赋值会替换 owner，旧裸指针不能继续留在 state 中
+        _state->ThreadPool = _threadPool.get();
+    }
+
+    return *this;
+}
 
 Terrain::TerrainMeshData DataOrientedRoamMeshBuilder::Build(
     const Terrain::HeightMap& heightMap,

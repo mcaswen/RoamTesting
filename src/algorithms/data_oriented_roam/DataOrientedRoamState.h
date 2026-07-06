@@ -10,6 +10,8 @@
 
 namespace ParallelRoam::Algorithms::DataOrientedRoam
 {
+class DataOrientedRoamThreadPool;
+
 using DataOrientedRoamNodeIndex = std::uint32_t;
 constexpr DataOrientedRoamNodeIndex InvalidDataOrientedRoamNodeIndex =
     std::numeric_limits<DataOrientedRoamNodeIndex>::max();
@@ -199,6 +201,8 @@ struct DataOrientedRoamState
     int TopologyMaxDepth{0};
     // BuildSequence 为当前帧拓扑变化打时间戳
     std::uint64_t BuildSequence{0};
+    // ThreadPool 由 builder 持有，state 只在单次 Build 中借用调度入口
+    DataOrientedRoamThreadPool* ThreadPool{nullptr};
 
     [[nodiscard]] bool IsValidNode(DataOrientedRoamNodeIndex node) const;
     [[nodiscard]] bool IsLeaf(DataOrientedRoamNodeIndex node) const;

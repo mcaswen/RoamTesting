@@ -1,3 +1,4 @@
+#include "algorithms/data_oriented_roam/DataOrientedRoamParallel.h"
 #include "algorithms/data_oriented_roam/DataOrientedRoamState.h"
 
 #include <algorithm>
@@ -713,47 +714,37 @@ std::vector<CommittedSplit> CommitInteriorSplitChunks(
 
     std::vector<TopologyCommitCounters> localCounters(workerCount);
     std::vector<std::vector<CommittedSplit>> localCommittedSplits(workerCount);
-    std::vector<std::thread> workers;
-    workers.reserve(workerCount);
 
-    for (std::size_t workerIndex = 0U; workerIndex < workerCount; ++workerIndex)
-    {
-        workers.emplace_back([&state, &chunks, &localCounters, &localCommittedSplits, workerIndex, workerCount]() {
-            // 每个 chunk 只会被一个 worker 访问
-            for (std::size_t chunkIndex = workerIndex; chunkIndex < chunks.size(); chunkIndex += workerCount)
+    RunDataOrientedRoamWorkers(state, workerCount, [&](std::size_t workerIndex) {
+        // 每个 chunk 只会被一个 worker 访问
+        for (std::size_t chunkIndex = workerIndex; chunkIndex < chunks.size(); chunkIndex += workerCount)
+        {
+            for (const DataOrientedRoamSplitCandidate& candidate : chunks[chunkIndex])
             {
-                for (const DataOrientedRoamSplitCandidate& candidate : chunks[chunkIndex])
+                const DataOrientedRoamNodeIndex node = candidate.Node;
+                // 同 chunk 前序提交后需要重新确认 cached chunk ownership
+                const DataOrientedRoamChunkId chunkId = SafeInteriorSplitChunkId(state, node);
+                if (chunkId != chunkIndex)
                 {
-                    const DataOrientedRoamNodeIndex node = candidate.Node;
-                    // 同 chunk 前序提交后需要重新确认 cached chunk ownership
-                    const DataOrientedRoamChunkId chunkId = SafeInteriorSplitChunkId(state, node);
-                    if (chunkId != chunkIndex)
-                    {
-                        // 同 chunk 前序提交可能让候选不再安全
-                        continue;
-                    }
+                    // 同 chunk 前序提交可能让候选不再安全
+                    continue;
+                }
 
-                    const DataOrientedRoamNodeIndex baseNeighborBeforeSplit = state.Nodes[node].BaseNeighbor;
-                    // 并发 split 只允许不分配新 node 的安全候选
-                    if (SplitNode(
-                            state,
-                            node,
-                            DataOrientedRoamSplitReason::Requested,
-                            InvalidDataOrientedRoamNodeIndex,
-                            &localCounters[workerIndex]))
-                    {
-                        // child 会在主线程重新入队，保持级联细分
-                        localCommittedSplits[workerIndex].push_back(CommittedSplit{node, baseNeighborBeforeSplit});
-                    }
+                const DataOrientedRoamNodeIndex baseNeighborBeforeSplit = state.Nodes[node].BaseNeighbor;
+                // 并发 split 只允许不分配新 node 的安全候选
+                if (SplitNode(
+                        state,
+                        node,
+                        DataOrientedRoamSplitReason::Requested,
+                        InvalidDataOrientedRoamNodeIndex,
+                        &localCounters[workerIndex]))
+                {
+                    // child 会在主线程重新入队，保持级联细分
+                    localCommittedSplits[workerIndex].push_back(CommittedSplit{node, baseNeighborBeforeSplit});
                 }
             }
-        });
-    }
-
-    for (std::thread& worker : workers)
-    {
-        worker.join();
-    }
+        }
+    });
 
     std::size_t totalCommittedCount = 0U;
     for (const TopologyCommitCounters& counters : localCounters)
@@ -789,36 +780,26 @@ void CommitInteriorMergeChunks(
     }
 
     std::vector<TopologyCommitCounters> localCounters(workerCount);
-    std::vector<std::thread> workers;
-    workers.reserve(workerCount);
 
-    for (std::size_t workerIndex = 0U; workerIndex < workerCount; ++workerIndex)
-    {
-        workers.emplace_back([&state, &chunks, &localCounters, workerIndex, workerCount]() {
-            // chunk ownership 保证不同 worker 不写同一组 neighbor
-            for (std::size_t chunkIndex = workerIndex; chunkIndex < chunks.size(); chunkIndex += workerCount)
+    RunDataOrientedRoamWorkers(state, workerCount, [&](std::size_t workerIndex) {
+        // chunk ownership 保证不同 worker 不写同一组 neighbor
+        for (std::size_t chunkIndex = workerIndex; chunkIndex < chunks.size(); chunkIndex += workerCount)
+        {
+            for (const DataOrientedRoamMergeCandidate& candidate : chunks[chunkIndex])
             {
-                for (const DataOrientedRoamMergeCandidate& candidate : chunks[chunkIndex])
+                const DataOrientedRoamNodeIndex node = candidate.Node;
+                const DataOrientedRoamChunkId chunkId = SafeInteriorMergeChunkId(state, node, true);
+                if (chunkId != chunkIndex)
                 {
-                    const DataOrientedRoamNodeIndex node = candidate.Node;
-                    const DataOrientedRoamChunkId chunkId = SafeInteriorMergeChunkId(state, node, true);
-                    if (chunkId != chunkIndex)
-                    {
-                        // 前序 merge 可能已经改变 diamond 结构
-                        continue;
-                    }
-
-                    // 真正提交前仍复用原 diamond merge 逻辑
-                    MergeNodeOrDiamond(state, node, &localCounters[workerIndex]);
+                    // 前序 merge 可能已经改变 diamond 结构
+                    continue;
                 }
-            }
-        });
-    }
 
-    for (std::thread& worker : workers)
-    {
-        worker.join();
-    }
+                // 真正提交前仍复用原 diamond merge 逻辑
+                MergeNodeOrDiamond(state, node, &localCounters[workerIndex]);
+            }
+        }
+    });
 
     std::size_t totalCommittedCount = 0U;
     for (const TopologyCommitCounters& counters : localCounters)

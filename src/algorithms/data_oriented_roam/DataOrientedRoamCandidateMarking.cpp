@@ -1,3 +1,4 @@
+#include "algorithms/data_oriented_roam/DataOrientedRoamParallel.h"
 #include "algorithms/data_oriented_roam/DataOrientedRoamState.h"
 
 #include <algorithm>
@@ -11,7 +12,7 @@ namespace ParallelRoam::Algorithms::DataOrientedRoam
 namespace
 {
 constexpr std::size_t MaxAutoWorkerCount = 8;
-// 小任务保持串行  避免 thread 启动成本盖过扫描收益
+// 小任务保持串行  避免并行调度成本盖过扫描收益
 constexpr std::size_t MinParallelWorkItemCount = 256;
 
 std::size_t ResolveTopologyWorkerCount(const DataOrientedRoamState& state, std::size_t workItemCount)
@@ -99,29 +100,19 @@ void CollectActiveLeafNodes(DataOrientedRoamState& state, std::vector<DataOrient
         return;
     }
 
+    const std::size_t chunkSize = (nodeCount + workerCount - 1U) / workerCount;
     std::vector<std::vector<DataOrientedRoamNodeIndex>> localLeaves(workerCount);
     // localLeaves 避免多个 worker 同时 push 同一个 vector
-    std::vector<std::thread> workers;
-    workers.reserve(workerCount);
-    const std::size_t chunkSize = (nodeCount + workerCount - 1U) / workerCount;
-    for (std::size_t workerIndex = 0U; workerIndex < workerCount; ++workerIndex)
-    {
+    RunDataOrientedRoamWorkers(state, workerCount, [&](std::size_t workerIndex) {
         const std::size_t begin = workerIndex * chunkSize;
         const std::size_t end = std::min(begin + chunkSize, nodeCount);
         if (begin >= end)
         {
-            break;
+            return;
         }
 
-        workers.emplace_back([&collectRange, &localLeaves, workerIndex, begin, end]() {
-            collectRange(begin, end, localLeaves[workerIndex]);
-        });
-    }
-
-    for (std::thread& worker : workers)
-    {
-        worker.join();
-    }
+        collectRange(begin, end, localLeaves[workerIndex]);
+    });
 
     std::size_t totalLeafCount = 0U;
     for (const std::vector<DataOrientedRoamNodeIndex>& localBuffer : localLeaves)
@@ -236,34 +227,24 @@ void CollectSplitCandidates(DataOrientedRoamState& state, std::vector<DataOrient
 
     if (workerCount <= 1U)
     {
-        // 小批量 leaf 不拆线程  减少帧间抖动
+        // 小批量 leaf 不走并行调度  减少帧间抖动
         markRange(0U, activeLeaves.size(), candidates);
     }
     else
     {
+        const std::size_t chunkSize = (activeLeaves.size() + workerCount - 1U) / workerCount;
         std::vector<std::vector<DataOrientedRoamSplitCandidate>> localCandidates(workerCount);
         // 每个 worker 的候选列表独立增长  不需要锁
-        std::vector<std::thread> workers;
-        workers.reserve(workerCount);
-        const std::size_t chunkSize = (activeLeaves.size() + workerCount - 1U) / workerCount;
-        for (std::size_t workerIndex = 0U; workerIndex < workerCount; ++workerIndex)
-        {
+        RunDataOrientedRoamWorkers(state, workerCount, [&](std::size_t workerIndex) {
             const std::size_t begin = workerIndex * chunkSize;
             const std::size_t end = std::min(begin + chunkSize, activeLeaves.size());
             if (begin >= end)
             {
-                break;
+                return;
             }
 
-            workers.emplace_back([&markRange, &localCandidates, workerIndex, begin, end]() {
-                markRange(begin, end, localCandidates[workerIndex]);
-            });
-        }
-
-        for (std::thread& worker : workers)
-        {
-            worker.join();
-        }
+            markRange(begin, end, localCandidates[workerIndex]);
+        });
 
         std::size_t totalCandidateCount = 0U;
         for (const std::vector<DataOrientedRoamSplitCandidate>& localBuffer : localCandidates)
@@ -331,29 +312,19 @@ void CollectMergeCandidates(DataOrientedRoamState& state, std::vector<DataOrient
     }
     else
     {
+        const std::size_t chunkSize = (nodeCount + workerCount - 1U) / workerCount;
         std::vector<std::vector<DataOrientedRoamMergeCandidate>> localCandidates(workerCount);
         // merge candidate 同样使用 thread-local buffer
-        std::vector<std::thread> workers;
-        workers.reserve(workerCount);
-        const std::size_t chunkSize = (nodeCount + workerCount - 1U) / workerCount;
-        for (std::size_t workerIndex = 0U; workerIndex < workerCount; ++workerIndex)
-        {
+        RunDataOrientedRoamWorkers(state, workerCount, [&](std::size_t workerIndex) {
             const std::size_t begin = workerIndex * chunkSize;
             const std::size_t end = std::min(begin + chunkSize, nodeCount);
             if (begin >= end)
             {
-                break;
+                return;
             }
 
-            workers.emplace_back([&markRange, &localCandidates, workerIndex, begin, end]() {
-                markRange(begin, end, localCandidates[workerIndex]);
-            });
-        }
-
-        for (std::thread& worker : workers)
-        {
-            worker.join();
-        }
+            markRange(begin, end, localCandidates[workerIndex]);
+        });
 
         std::size_t totalCandidateCount = 0U;
         for (const std::vector<DataOrientedRoamMergeCandidate>& localBuffer : localCandidates)

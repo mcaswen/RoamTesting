@@ -1,3 +1,4 @@
+#include "algorithms/data_oriented_roam/DataOrientedRoamParallel.h"
 #include "algorithms/data_oriented_roam/DataOrientedRoamState.h"
 
 #include <algorithm>
@@ -12,7 +13,7 @@ namespace
 {
 // 自动模式沿用其他 DOD pass 的保守线程上限
 constexpr std::size_t MaxAutoEmitWorkerCount = 8;
-// 小 mesh 保持串行输出，避免 thread 启动成本超过顶点写入收益
+// 小 mesh 保持串行输出，避免并行调度成本超过顶点写入收益
 constexpr std::size_t MinParallelEmitLeafCount = 256;
 
 std::size_t ResolveEmitWorkerCount(const DataOrientedRoamState& state, std::size_t leafCount)
@@ -133,27 +134,17 @@ void EmitLeafTriangles(
         return;
     }
 
-    std::vector<std::thread> workers;
-    workers.reserve(workerCount);
     // leaf 快照的顺序就是输出 triangleIndex，分段不会改变索引稳定性
     const std::size_t chunkSize = (leafCount + workerCount - 1U) / workerCount;
-    for (std::size_t workerIndex = 0U; workerIndex < workerCount; ++workerIndex)
-    {
+    RunDataOrientedRoamWorkers(state, workerCount, [&](std::size_t workerIndex) {
         const std::size_t begin = workerIndex * chunkSize;
         const std::size_t end = std::min(begin + chunkSize, leafCount);
         if (begin >= end)
         {
-            break;
+            return;
         }
 
-        workers.emplace_back([&state, &meshData, &leafNodes, begin, end]() {
-            EmitLeafRange(state, meshData, leafNodes, begin, end);
-        });
-    }
-
-    for (std::thread& worker : workers)
-    {
-        worker.join();
-    }
+        EmitLeafRange(state, meshData, leafNodes, begin, end);
+    });
 }
 } // 命名空间 ParallelRoam::Algorithms::DataOrientedRoam

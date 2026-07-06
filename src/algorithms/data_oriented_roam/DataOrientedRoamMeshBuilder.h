@@ -11,6 +11,7 @@
 namespace ParallelRoam::Algorithms::DataOrientedRoam
 {
 struct DataOrientedRoamState;
+class DataOrientedRoamThreadPool;
 
 /// <summary>
 /// 使用 UV 空间表达一个 ROAM 三角形域，避免节点池重复保存世界空间顶点
@@ -132,5 +133,6 @@ public:
 
 private:
     std::unique_ptr<DataOrientedRoamState> _state;
+    std::unique_ptr<DataOrientedRoamThreadPool> _threadPool;
 };
 } // 命名空间 ParallelRoam::Algorithms::DataOrientedRoam

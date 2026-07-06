@@ -1,3 +1,4 @@
+#include "algorithms/data_oriented_roam/DataOrientedRoamParallel.h"
 #include "algorithms/data_oriented_roam/DataOrientedRoamState.h"
 
 #include <algorithm>
@@ -22,7 +23,7 @@ std::size_t ResolveWorkerCount(const DataOrientedRoamState& state, std::size_t w
 
     if (state.Settings.ErrorEvaluationWorkerCount == 1U || workItemCount < MinParallelLeafCount)
     {
-        // 小批量 leaf 的 thread 创建成本通常高于并行收益
+        // 小批量 leaf 的并行调度成本通常高于收益
         return 1U;
     }
 
@@ -101,32 +102,21 @@ void EvaluateScreenErrors(DataOrientedRoamState& state, const std::vector<DataOr
         return;
     }
 
-    std::vector<std::thread> workers;
-    // 每个 worker 只处理一个连续 chunk
-    workers.reserve(workerCount);
     // 连续 leaf index 分段能减少调度元数据
     const std::size_t chunkSize = (leafNodes.size() + workerCount - 1U) / workerCount;
-    for (std::size_t workerIndex = 0U; workerIndex < workerCount; ++workerIndex)
-    {
+    RunDataOrientedRoamWorkers(state, workerCount, [&](std::size_t workerIndex) {
         const std::size_t begin = workerIndex * chunkSize;
         const std::size_t end = std::min(begin + chunkSize, leafNodes.size());
         if (begin >= end)
         {
-            break;
+            return;
         }
 
         // lambda 只捕获稳定快照和 range 边界
-        workers.emplace_back([&state, &leafNodes, begin, end]() {
-            EvaluateRange(state, leafNodes, begin, end);
-        });
-    }
+        EvaluateRange(state, leafNodes, begin, end);
+    });
 
-    for (std::thread& worker : workers)
-    {
-        worker.join();
-    }
-
-    // join 完成后 split queue 才能读取全部缓存分数
+    // 整批任务完成后 split queue 才能读取全部缓存分数
     state.Stats.ErrorEvaluationParallelMilliseconds = ElapsedMilliseconds(start, std::chrono::steady_clock::now());
 }
 } // 命名空间 ParallelRoam::Algorithms::DataOrientedRoam
