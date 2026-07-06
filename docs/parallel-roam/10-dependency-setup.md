@@ -1,19 +1,45 @@
 # Dependency Setup
 
-本文档记录 Parallel ROAM 的第三方依赖策略。目标是 Win/mac 都能配置，并且默认 CMake 不偷偷联网。
+本文档记录 Parallel ROAM 的第三方依赖策略。当前目标是：源码仓库签出后，在目标机已经具备 C++20 编译器、系统 SDK 和显卡驱动的前提下，不依赖联网下载第三方库即可配置和编译。
+
+项目已经内置：
+
+- 运行/编译依赖源码：`third_party/`
+- Windows portable CMake：`tools/cmake/bin/cmake.exe`
+- OpenGL loader 预生成源码：`third_party/glad/`
+
+编译器、Windows SDK、macOS Command Line Tools、Linux OpenGL/Mesa 开发包和显卡驱动不适合随仓库分发，仍由目标机器提供。
 
 ## 当前依赖
 
-| 依赖 | 用途 | 推荐来源 | FetchContent fallback | 备注 |
+| 依赖 | 用途 | 默认来源 | 备用来源 | 备注 |
 |---|---|---|---|---|
-| SDL2 | 窗口、输入、OpenGL context | vcpkg / system package | 支持 | 项目当前使用 SDL2，不切 SDL3 |
-| OpenGL | 渲染 API | 系统 SDK | 不需要 | macOS 自带 OpenGL 版本可能不足 4.3 |
-| GLM | 数学库 | vcpkg / system package | 支持 | header-only |
-| GLAD | OpenGL function loader | 本地预生成源码 / vcpkg | 不再默认生成 | 已提交 OpenGL core 4.3 loader |
-| stb | Height Map / image loading | vcpkg / system headers | 支持 | header-only |
-| Dear ImGui | GUI/debug panels | vcpkg | 支持 | FetchContent 构建 SDL2 + OpenGL3 backend |
+| CMake | 配置和生成构建系统 | Windows 使用 `tools/cmake`，其他平台使用系统 CMake | Windows 可运行 `scripts/setup_portable_cmake.bat` 刷新 | 版本 pin 到 3.30.5 |
+| SDL2 | 窗口、输入、OpenGL context | 系统包优先，缺失时使用 `third_party/SDL2` | vcpkg / FetchContent | 项目当前使用 SDL2，不切 SDL3 |
+| OpenGL | 渲染 API | 系统 SDK / 驱动 | 无 | macOS 自带 OpenGL 版本可能不足 4.3 |
+| GLM | 数学库 | 系统包优先，缺失时使用 `third_party/glm` | vcpkg / FetchContent | header-only |
+| GLAD | OpenGL function loader | `third_party/glad` | vcpkg / FetchContent 生成 | 已提交 OpenGL core 4.3 loader |
+| stb | Height Map / image loading | `third_party/stb` | system headers / FetchContent | header-only |
+| Dear ImGui | GUI/debug panels | `third_party/imgui` | vcpkg / FetchContent | 本地构建 SDL2 + OpenGL3 backend |
 
-## 推荐路径：vcpkg
+## 默认路径：项目内依赖
+
+普通 preset 默认不会主动联网。CMake 会先尝试系统包，再使用项目内的 `third_party` 源码兜底：
+
+```sh
+cmake --preset debug
+cmake --build --preset debug
+```
+
+Windows CMD 可直接运行：
+
+```bat
+scripts\run_debug_fetch.bat --smoke-test
+```
+
+虽然脚本名保留了 `fetch`，但在 `third_party` 依赖齐全时不会下载 SDL2、GLM、stb 或 Dear ImGui；只有本地和系统依赖都缺失时，`PARALLEL_ROAM_FETCH_MISSING_DEPS=ON` 才会触发 FetchContent 兜底。
+
+## 可选路径：vcpkg
 
 仓库提供 `vcpkg.json` manifest：
 
@@ -43,25 +69,21 @@ cmake --build --preset debug-vcpkg
 
 ## Windows 无系统 CMake 时
 
-如果目标 Windows 机器没有安装 CMake，`.bat` 构建脚本会自动下载 portable CMake 到项目目录：
+仓库已经内置 Windows x86_64 portable CMake：
 
 ```text
 tools\cmake\bin\cmake.exe
 ```
 
-也可以手动提前在项目根目录运行：
+`.bat` 构建脚本会优先使用这份项目内 CMake；如果它不存在，才会尝试系统 `PATH` 里的 `cmake`，两者都不可用时再自动调用下载脚本。
+
+需要刷新 CMake 时，可以在项目根目录运行：
 
 ```bat
 scripts\setup_portable_cmake.bat
 ```
 
-该脚本会下载 CMake Windows x86_64 zip，并解压到同一路径：
-
-```text
-tools\cmake\bin\cmake.exe
-```
-
-后续 `.bat` 构建脚本会优先使用这个项目内 CMake；如果不存在，会先尝试系统 `PATH` 里的 `cmake`；两者都不可用时才自动下载。也可以手动下载 CMake zip，把内容解压成同样的目录结构。
+该脚本会下载 CMake Windows x86_64 zip，并恢复同样的目录结构。
 
 ## 备用路径：FetchContent
 
@@ -119,6 +141,7 @@ scripts\run_relwithdebinfo_fetch.bat --smoke-test
 当前 pin 的版本：
 
 ```text
+CMake    3.30.5 windows-x86_64
 SDL2      release-2.32.10
 GLM       1.0.3
 GLAD      v2.0.8
@@ -135,13 +158,15 @@ GLAD 已经使用官方生成器生成 OpenGL core 4.3 loader，并放在 `third
 ```text
 default debug:
 - OpenGL linked
-- SDL2 linked
+- SDL2 linked through CMake config on this machine
 - GLAD linked from `third_party/glad`
-- GLM / stb / Dear ImGui not linked unless installed locally
+- GLM linked from `third_party/glm`
+- stb linked from `third_party/stb`
+- Dear ImGui linked from `third_party/imgui`
 
 debug-fetch:
 - OpenGL linked
-- SDL2 linked
+- SDL2 linked through CMake config on this machine
 - GLM linked
 - GLAD linked from `third_party/glad`
 - stb linked
@@ -152,7 +177,8 @@ debug-fetch:
 
 ## 平台注意事项
 
-- Windows：推荐 vcpkg manifest，避免手动配置 include/lib path。
+- Windows：仓库已内置 portable CMake 和第三方源码，但仍需要 MSVC/clang 等 C++20 编译器、Windows SDK 和可用的 OpenGL 驱动。
 - macOS：系统 OpenGL 可能无法满足 OpenGL 4.3 Compute Shader；GPU ROAM-like 阶段需要运行时检查 OpenGL version。
+- Linux：仍需要系统提供 C++20 编译器、CMake、OpenGL/Mesa 开发包和图形驱动。
 - GLAD：当前仓库已包含 OpenGL core 4.3 loader；若后续改 OpenGL 版本或 extension 集合，需要重新生成。
 - SDL3：官方最新稳定版本已经是 SDL3，但本项目当前选择 SDL2，原因是参考项目、ImGui backend 和现有代码计划都以 SDL2 为主。

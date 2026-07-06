@@ -1,15 +1,17 @@
 # Portable CMake
 
-Windows CMD scripts will first look for CMake here:
+This directory vendors the Windows x86_64 CMake package used by the CMD build scripts:
 
 ```text
 tools/cmake/bin/cmake.exe
 ```
 
-If neither this portable copy nor a system `cmake` is available, the `.bat` build scripts automatically call:
+The `.bat` scripts use this executable before checking `PATH`, so a Windows target machine does not need a separate CMake install.
+
+If this copy is missing or needs to be refreshed, run:
 
 ```bat
 scripts\setup_portable_cmake.bat
 ```
 
-The downloaded CMake files are intentionally ignored by Git.
+That helper downloads the pinned CMake zip again and restores the same directory layout.

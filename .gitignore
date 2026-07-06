@@ -82,6 +82,14 @@ third_party/*
 !third_party/.gitkeep
 !third_party/glad/
 !third_party/glad/**
-tools/cmake/*
-!tools/cmake/README.md
+!third_party/SDL2/
+!third_party/SDL2/**
+!third_party/glm/
+!third_party/glm/**
+!third_party/imgui/
+!third_party/imgui/**
+!third_party/stb/
+!third_party/stb/**
+!tools/cmake/
+!tools/cmake/**
 tools/downloads/

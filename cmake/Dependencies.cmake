@@ -63,6 +63,31 @@ function(parallel_roam_ensure_sdl2)
         return()
     endif()
 
+    set(PARALLEL_ROAM_LOCAL_SDL2_DIR "${PROJECT_SOURCE_DIR}/third_party/SDL2")
+    if(EXISTS "${PARALLEL_ROAM_LOCAL_SDL2_DIR}/CMakeLists.txt")
+        set(SDL_SHARED OFF CACHE BOOL "Build SDL2 as a shared library." FORCE)
+        set(SDL_STATIC ON CACHE BOOL "Build SDL2 as a static library." FORCE)
+        set(SDL_TEST OFF CACHE BOOL "Build SDL2 tests." FORCE)
+        add_subdirectory("${PARALLEL_ROAM_LOCAL_SDL2_DIR}" "${CMAKE_BINARY_DIR}/third_party/SDL2" EXCLUDE_FROM_ALL)
+
+        if(TARGET SDL2::SDL2-static OR TARGET SDL2-static)
+            parallel_roam_make_interface_alias(parallel_roam_sdl2 ParallelROAM::SDL2)
+
+            if(TARGET SDL2::SDL2main)
+                target_link_libraries(parallel_roam_sdl2 INTERFACE SDL2::SDL2main)
+            endif()
+
+            if(TARGET SDL2::SDL2-static)
+                target_link_libraries(parallel_roam_sdl2 INTERFACE SDL2::SDL2-static)
+            else()
+                target_link_libraries(parallel_roam_sdl2 INTERFACE SDL2-static)
+            endif()
+
+            message(STATUS "SDL2 local third_party source found and linked.")
+            return()
+        endif()
+    endif()
+
     if(PARALLEL_ROAM_FETCH_MISSING_DEPS)
         set(SDL_SHARED OFF CACHE BOOL "Build SDL2 as a shared library." FORCE)
         set(SDL_STATIC ON CACHE BOOL "Build SDL2 as a static library." FORCE)
@@ -109,6 +134,20 @@ function(parallel_roam_ensure_glm)
         target_link_libraries(parallel_roam_glm INTERFACE glm::glm)
         message(STATUS "GLM found and linked.")
         return()
+    endif()
+
+    set(PARALLEL_ROAM_LOCAL_GLM_DIR "${PROJECT_SOURCE_DIR}/third_party/glm")
+    if(EXISTS "${PARALLEL_ROAM_LOCAL_GLM_DIR}/CMakeLists.txt")
+        set(GLM_BUILD_LIBRARY OFF CACHE BOOL "Do not build GLM library target." FORCE)
+        set(GLM_BUILD_TESTS OFF CACHE BOOL "Do not build GLM tests." FORCE)
+        add_subdirectory("${PARALLEL_ROAM_LOCAL_GLM_DIR}" "${CMAKE_BINARY_DIR}/third_party/glm" EXCLUDE_FROM_ALL)
+
+        if(TARGET glm::glm)
+            parallel_roam_make_interface_alias(parallel_roam_glm ParallelROAM::GLM)
+            target_link_libraries(parallel_roam_glm INTERFACE glm::glm)
+            message(STATUS "GLM local third_party source found and linked.")
+            return()
+        endif()
     endif()
 
     if(PARALLEL_ROAM_FETCH_MISSING_DEPS)
@@ -211,6 +250,14 @@ function(parallel_roam_ensure_stb)
         return()
     endif()
 
+    set(PARALLEL_ROAM_LOCAL_STB_DIR "${PROJECT_SOURCE_DIR}/third_party/stb")
+    if(EXISTS "${PARALLEL_ROAM_LOCAL_STB_DIR}/stb_image.h")
+        parallel_roam_make_interface_alias(parallel_roam_stb ParallelROAM::STB)
+        target_include_directories(parallel_roam_stb INTERFACE "${PARALLEL_ROAM_LOCAL_STB_DIR}")
+        message(STATUS "stb local third_party headers found and linked.")
+        return()
+    endif()
+
     find_path(PARALLEL_ROAM_STB_INCLUDE_DIR NAMES stb_image.h)
 
     if(PARALLEL_ROAM_STB_INCLUDE_DIR)
@@ -240,6 +287,43 @@ endfunction()
 
 function(parallel_roam_ensure_imgui)
     if(TARGET ParallelROAM::ImGui OR NOT PARALLEL_ROAM_WITH_IMGUI)
+        return()
+    endif()
+
+    set(PARALLEL_ROAM_LOCAL_IMGUI_DIR "${PROJECT_SOURCE_DIR}/third_party/imgui")
+    if(EXISTS "${PARALLEL_ROAM_LOCAL_IMGUI_DIR}/imgui.cpp")
+        parallel_roam_ensure_sdl2()
+        parallel_roam_ensure_opengl()
+
+        add_library(
+            parallel_roam_imgui_impl STATIC
+            ${PARALLEL_ROAM_LOCAL_IMGUI_DIR}/imgui.cpp
+            ${PARALLEL_ROAM_LOCAL_IMGUI_DIR}/imgui_demo.cpp
+            ${PARALLEL_ROAM_LOCAL_IMGUI_DIR}/imgui_draw.cpp
+            ${PARALLEL_ROAM_LOCAL_IMGUI_DIR}/imgui_tables.cpp
+            ${PARALLEL_ROAM_LOCAL_IMGUI_DIR}/imgui_widgets.cpp
+            ${PARALLEL_ROAM_LOCAL_IMGUI_DIR}/backends/imgui_impl_sdl2.cpp
+            ${PARALLEL_ROAM_LOCAL_IMGUI_DIR}/backends/imgui_impl_opengl3.cpp
+        )
+
+        target_include_directories(
+            parallel_roam_imgui_impl
+            PUBLIC
+                ${PARALLEL_ROAM_LOCAL_IMGUI_DIR}
+                ${PARALLEL_ROAM_LOCAL_IMGUI_DIR}/backends
+        )
+
+        if(TARGET ParallelROAM::SDL2)
+            target_link_libraries(parallel_roam_imgui_impl PUBLIC ParallelROAM::SDL2)
+        endif()
+
+        if(TARGET ParallelROAM::OpenGL)
+            target_link_libraries(parallel_roam_imgui_impl PUBLIC ParallelROAM::OpenGL)
+        endif()
+
+        parallel_roam_make_interface_alias(parallel_roam_imgui ParallelROAM::ImGui)
+        target_link_libraries(parallel_roam_imgui INTERFACE parallel_roam_imgui_impl)
+        message(STATUS "Dear ImGui local third_party source found and linked.")
         return()
     endif()
 
