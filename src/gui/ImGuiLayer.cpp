@@ -524,7 +524,7 @@ bool ImGuiLayer::DrawDebugOverlay(const DebugOverlayData& data, TerrainPanelStat
     DrawSectionHeader("ROAM");
     changed |= ImGui::Checkbox("局部约束", &terrainState.RoamEnableLocalConstraints);
     changed |= ImGui::Checkbox("拓扑验证", &terrainState.RoamEnableTopologyValidation);
-    changed |= ImGui::SliderInt("最大深度", &terrainState.RoamMaxDepth, 1, 16);
+    changed |= ImGui::SliderInt("最大深度", &terrainState.RoamMaxDepth, 1, 20);
     // 预算调节用于快速确认卡顿来自 split 数量还是拓扑验证
     changed |= ImGui::SliderInt("Split 预算", &terrainState.RoamSplitBudget, 256, 32768);
     changed |= ImGui::SliderFloat("Split 阈值", &terrainState.RoamSplitThreshold, 0.005F, 1.0F, "%.3f");
