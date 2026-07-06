@@ -52,7 +52,7 @@ cmake --build --preset debug-fetch
 
 ## 快捷构建脚本
 
-仓库提供 `scripts/` 下的快捷脚本，脚本会自动执行 configure、build 和 run。macOS / Linux 使用 `.sh`，Windows PowerShell 使用 `.ps1`。
+仓库提供 `scripts/` 下的快捷脚本，脚本会自动执行 configure、build 和 run。macOS / Linux 使用 `.sh`，Windows 可使用 PowerShell `.ps1` 或 CMD `.bat`。
 
 ```sh
 ./scripts/run_debug_fetch.sh
@@ -68,6 +68,13 @@ powershell -ExecutionPolicy Bypass -File scripts/run_release_fetch.ps1
 powershell -ExecutionPolicy Bypass -File scripts/run_smoke_test_fetch.ps1
 ```
 
+```bat
+scripts\run_debug_fetch.bat
+scripts\run_relwithdebinfo_fetch.bat
+scripts\run_release_fetch.bat
+scripts\run_smoke_test_fetch.bat
+```
+
 脚本选择建议：
 
 | 脚本 | CMake preset | 用途 |
@@ -77,10 +84,14 @@ powershell -ExecutionPolicy Bypass -File scripts/run_smoke_test_fetch.ps1
 | `run_release_fetch` | `release-fetch` | 接近发布配置的最高优化运行 |
 | `run_smoke_test_fetch` | `debug-fetch` | 快速验证窗口、OpenGL、资源加载的最小闭环 |
 
-`.sh` 和 `.ps1` 脚本都会把额外命令行参数透传给 `ParallelROAM`。例如：
+`.sh`、`.ps1` 和 `.bat` 脚本都会把额外命令行参数透传给 `ParallelROAM`。例如：
 
 ```sh
 ./scripts/run_relwithdebinfo_fetch.sh --smoke-test
+```
+
+```bat
+scripts\run_relwithdebinfo_fetch.bat --smoke-test
 ```
 
 当前 pin 的版本：
