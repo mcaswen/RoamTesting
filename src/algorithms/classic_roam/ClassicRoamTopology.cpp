@@ -66,8 +66,8 @@ void ClassicRoamMeshBuilder::RefineNode(ClassicRoamNode* node)
 
 void ClassicRoamMeshBuilder::RefineWithSplitQueue(ClassicRoamNode* rootA, ClassicRoamNode* rootB)
 {
-    // priority queue 把 split budget 用在最高 screen error 的 leaf 上
-    // 避免递归遍历时某条局部路径抢占整帧预算
+    // priority queue 先处理最高 screen error 的 leaf
+    // 避免递归遍历顺序影响最终细分分布
     struct SplitCandidate
     {
         float Score{0.0F};
@@ -153,13 +153,6 @@ void ClassicRoamMeshBuilder::RefineWithSplitQueue(ClassicRoamNode* rootA, Classi
             // score 在弹出时重算
             // 约束传播产生的新拓扑可能让旧候选过期
             continue;
-        }
-
-        if (_settings.SplitBudget > 0U && _stats.SplitCount >= _settings.SplitBudget)
-        {
-            // 预算耗尽时停止本次 build，下一次相机移动后继续按队列重建
-            ++_stats.RejectedSplitCount;
-            break;
         }
 
         ClassicRoamNode* baseNeighborBeforeSplit = node->BaseNeighbor;

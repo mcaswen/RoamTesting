@@ -101,9 +101,6 @@ struct TerrainPanelState
     float RoamMergeThreshold{0.02F};
     float RoamDistanceScale{24.0F};
 
-    // SplitBudget 控制单次 ROAM build 的最大 split 数
-    int RoamSplitBudget{8192};
-
     // 局部约束是 ROAM 消除裂缝的默认路径
     bool RoamEnableLocalConstraints{true};
 

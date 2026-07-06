@@ -160,7 +160,6 @@ BenchmarkScenario MakeScenario(BenchmarkProfile profile)
     scenario.Settings.SplitThreshold = 0.04F;
     scenario.Settings.MergeThreshold = 0.02F;
     scenario.Settings.DistanceScale = 24.0F;
-    scenario.Settings.SplitBudget = 8192;
     scenario.Settings.EnableLocalConstraints = true;
 
     if (profile == BenchmarkProfile::Smoke)

@@ -351,17 +351,14 @@ DataOrientedRoamNodeIndex AddNode(
 void ReserveNodePool(DataOrientedRoamState& state)
 {
     // 预分配降低扩容概率，但正确性不能依赖地址稳定
-    std::size_t targetCapacity = 2U + state.Settings.SplitBudget * 2U;
+    // MaxDepth 现在是节点池容量估算的主要上界
+    std::size_t targetCapacity = LargeDepthReserveFallback;
     if (state.Settings.MaxDepth <= ExactReserveMaxDepth)
     {
         // 完整 bintree 容量给出当前 maxDepth 的理论上界
-        targetCapacity = std::max(targetCapacity, ExactBintreeNodeCapacity(state.Settings.MaxDepth));
+        targetCapacity = ExactBintreeNodeCapacity(state.Settings.MaxDepth);
     }
-    else
-    {
-        // split budget 给不出深度很大时的完整上界
-        targetCapacity = std::max(targetCapacity, LargeDepthReserveFallback);
-    }
+    // 超过精确移位范围时使用固定 fallback，避免一次性巨大预分配
 
     if (state.Nodes.capacity() < targetCapacity)
     {

@@ -57,7 +57,6 @@ struct TerrainLodSettings
     float SplitThreshold{0.04F};
     float MergeThreshold{0.02F};
     float DistanceScale{24.0F};
-    std::size_t SplitBudget{8192};
     bool EnableLocalConstraints{true};
     bool EnableTopologyValidation{false};
 };

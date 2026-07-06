@@ -96,7 +96,7 @@ Terrain::TerrainMeshData DataOrientedRoamMeshBuilder::Build(
     const auto mergeEnd = std::chrono::steady_clock::now();
 
     const auto splitStart = std::chrono::steady_clock::now();
-    // split pass 再按当前相机重新分配预算
+    // split pass 再按当前相机重新分配细节
     RefineWithSplitQueue(state);
     const auto splitEnd = std::chrono::steady_clock::now();
 

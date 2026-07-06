@@ -120,7 +120,6 @@ bool NeedsMeshRebuild(const TerrainRenderSettings& previous, const TerrainRender
            previous.RoamSplitThreshold != next.RoamSplitThreshold ||
            previous.RoamMergeThreshold != next.RoamMergeThreshold ||
            previous.RoamDistanceScale != next.RoamDistanceScale ||
-           previous.RoamSplitBudget != next.RoamSplitBudget ||
            previous.RoamEnableLocalConstraints != next.RoamEnableLocalConstraints ||
            previous.RoamEnableTopologyValidation != next.RoamEnableTopologyValidation;
 }
@@ -476,7 +475,6 @@ bool TerrainRenderer::RebuildTerrainLod(const glm::vec3& cameraPosition, std::st
     lodSettings.SplitThreshold = _settings.RoamSplitThreshold;
     lodSettings.MergeThreshold = _settings.RoamMergeThreshold;
     lodSettings.DistanceScale = _settings.RoamDistanceScale;
-    lodSettings.SplitBudget = _settings.RoamSplitBudget;
     lodSettings.EnableLocalConstraints = _settings.RoamEnableLocalConstraints;
     lodSettings.EnableTopologyValidation = _settings.RoamEnableTopologyValidation;
 

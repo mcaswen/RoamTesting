@@ -317,7 +317,7 @@ void DrawDetailedPerformanceMetrics(const DebugOverlayData& data)
     DrawMetricSize("Merge 数", data.RoamMergeCount);
     DrawMetricSize("约束传播", data.RoamConstraintPassCount);
     DrawMetricSize("队列峰值", data.RoamCandidatePeakCount);
-    DrawMetricSize("预算拒绝", data.RoamRejectedSplitCount);
+    DrawMetricSize("Split 拒绝", data.RoamRejectedSplitCount);
     DrawMetricSize("Merge 拒绝", data.RoamRejectedMergeCount);
     DrawMetricSize("T-junction", data.RoamTjunctionCount);
     DrawMetricSize("邻接错误", data.RoamInvalidNeighborCount);
@@ -525,8 +525,6 @@ bool ImGuiLayer::DrawDebugOverlay(const DebugOverlayData& data, TerrainPanelStat
     changed |= ImGui::Checkbox("局部约束", &terrainState.RoamEnableLocalConstraints);
     changed |= ImGui::Checkbox("拓扑验证", &terrainState.RoamEnableTopologyValidation);
     changed |= ImGui::SliderInt("最大深度", &terrainState.RoamMaxDepth, 1, 20);
-    // 预算调节用于快速确认卡顿来自 split 数量还是拓扑验证
-    changed |= ImGui::SliderInt("Split 预算", &terrainState.RoamSplitBudget, 256, 32768);
     changed |= ImGui::SliderFloat("Split 阈值", &terrainState.RoamSplitThreshold, 0.005F, 1.0F, "%.3f");
     changed |= ImGui::SliderFloat("Merge 阈值", &terrainState.RoamMergeThreshold, 0.001F, 1.0F, "%.3f");
     changed |= ImGui::SliderFloat("距离权重", &terrainState.RoamDistanceScale, 1.0F, 80.0F, "%.1f");

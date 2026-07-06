@@ -169,12 +169,12 @@ assets/textures/Tex_Terrain_Debug_Diffuse.ppm
 - Classic ROAM rebuild 已加入相机位移阈值缓存，避免静止或微小移动时每帧重建和上传 mesh；
 - 默认交互路径已移除全局 T-junction repair，不再依赖 `O(L^2)` repair pass 修裂缝；
 - 已新增局部 baseNeighbor 约束，split 前会追踪到互为 base 的合法 diamond；
-- 已新增 priority queue split candidate 策略和 split budget，避免纯递归一次展开过多节点；
+- 已新增 priority queue split candidate 策略，避免纯递归遍历顺序影响细分分布；
 - 已新增拓扑验证开关，开启后可统计 T-junction、邻接错误和 validate 耗时；
 - 已将 Classic ROAM builder 改为持久化拓扑，不再每次 build 都清空整棵树；
 - 已新增严格 diamond merge，只有 sibling leaf 和互为 base 的 diamond 满足条件时才回收；
 - merge 会恢复 parent 的 left/right neighbor，并保持 base neighbor 互指；
-- 右侧 ImGui 面板已加入 Classic ROAM 开关、局部约束开关、拓扑验证开关、节点数、split/merge 统计、实际深度、最大深度、split/merge 阈值、split budget、候选队列峰值、merge 拒绝和阶段耗时；
+- 右侧 ImGui 面板已加入 Classic ROAM 开关、局部约束开关、拓扑验证开关、节点数、split/merge 统计、实际深度、最大深度、split/merge 阈值、候选队列峰值、merge 拒绝和阶段耗时；
 - 当前覆盖 2A、2B、2C，并已推进 2F、2G、2H、2I、2J、2K、2L 的基础实现；
 - 阶段 2 尚未完全封版，后续重点是更完整的 debug draw、固定测试入口和报告用可视化。
 
@@ -209,7 +209,7 @@ assets/textures/Tex_Terrain_Debug_Diffuse.ppm
 - 预计算或缓存 geometric variance，避免每帧重复高成本采样；
 - 使用 screen-space error 计算当前 split priority；
 - 使用 max heap 管理 split candidate；
-- 每帧按预算执行 split，避免单帧无限递归造成卡顿；
+- 使用最大深度和 split / merge 阈值限制细分规模；
 - 记录 split queue size、实际 split 次数和 forced split 次数。
 
 2J：完整 diamond merge

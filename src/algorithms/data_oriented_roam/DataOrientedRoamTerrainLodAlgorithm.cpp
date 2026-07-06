@@ -108,7 +108,6 @@ DataOrientedRoamSettings DataOrientedRoamTerrainLodAlgorithm::ToDataOrientedSett
     dataSettings.SplitThreshold = settings.SplitThreshold;
     dataSettings.MergeThreshold = settings.MergeThreshold;
     dataSettings.DistanceScale = settings.DistanceScale;
-    dataSettings.SplitBudget = settings.SplitBudget;
     // worker 数保持 DOD 内部策略  避免扩大统一参数面
     dataSettings.ErrorEvaluationWorkerCount = 0U;
     dataSettings.EnableLocalConstraints = settings.EnableLocalConstraints;

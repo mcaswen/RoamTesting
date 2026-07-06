@@ -88,7 +88,6 @@ ClassicRoamSettings ClassicRoamTerrainLodAlgorithm::ToClassicSettings(const Terr
     classicSettings.SplitThreshold = settings.SplitThreshold;
     classicSettings.MergeThreshold = settings.MergeThreshold;
     classicSettings.DistanceScale = settings.DistanceScale;
-    classicSettings.SplitBudget = settings.SplitBudget;
     classicSettings.EnableLocalConstraints = settings.EnableLocalConstraints;
     classicSettings.EnableTopologyValidation = settings.EnableTopologyValidation;
     return classicSettings;

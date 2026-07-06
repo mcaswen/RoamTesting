@@ -55,8 +55,6 @@ struct TerrainRenderSettings
     float RoamMergeThreshold{0.02F};
     float RoamDistanceScale{24.0F};
 
-    std::size_t RoamSplitBudget{8192};
-
     // 局部约束只做 baseNeighbor forced split，不执行全局 repair
     bool RoamEnableLocalConstraints{true};
 
@@ -113,7 +111,7 @@ struct TerrainRenderStats
     // CandidatePeakCount 用于观察 priority queue 是否过度膨胀
     std::size_t RoamCandidatePeakCount{0};
 
-    // RejectedSplitCount 通常表示 split budget 或 max depth 达到上限
+    // RejectedSplitCount 表示约束传播或过期候选导致的 split 失败
     std::size_t RoamRejectedSplitCount{0};
     std::size_t RoamRejectedMergeCount{0};
 

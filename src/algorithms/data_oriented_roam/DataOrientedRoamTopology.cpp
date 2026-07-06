@@ -592,7 +592,7 @@ std::vector<std::vector<DataOrientedRoamSplitCandidate>> BuildInteriorSplitChunk
     DataOrientedRoamState& state,
     const std::vector<DataOrientedRoamSplitCandidate>& candidates)
 {
-    // 先按原 priority queue 口径排序，再截取可并发提交的安全候选
+    // 先按原 priority queue 口径排序，再筛选可并发提交的安全候选
     std::vector<DataOrientedRoamSplitCandidate> sortedCandidates = candidates;
     std::sort(
         sortedCandidates.begin(),
@@ -609,21 +609,8 @@ std::vector<std::vector<DataOrientedRoamSplitCandidate>> BuildInteriorSplitChunk
     std::vector<std::vector<DataOrientedRoamSplitCandidate>> chunks(
         static_cast<std::size_t>(
             DataOrientedRoamTopologyChunkGridSize * DataOrientedRoamTopologyChunkGridSize));
-    // 并发 batch 不能绕过 split budget
-    // 串行回退仍会继续处理未进入 batch 的候选
-    const std::size_t remainingBudget = state.Settings.SplitBudget == 0U ?
-        std::numeric_limits<std::size_t>::max() :
-        state.Settings.SplitBudget - std::min(state.Settings.SplitBudget, state.Stats.SplitCount);
-    std::size_t selectedCount = 0U;
-
     for (const DataOrientedRoamSplitCandidate& candidate : sortedCandidates)
     {
-        if (selectedCount >= remainingBudget)
-        {
-            // budget 后面的候选交给后续帧或串行逻辑自然处理
-            break;
-        }
-
         const DataOrientedRoamChunkId chunkId = SafeInteriorSplitChunkId(state, candidate.Node);
         if (chunkId == InvalidDataOrientedRoamChunkId)
         {
@@ -635,7 +622,6 @@ std::vector<std::vector<DataOrientedRoamSplitCandidate>> BuildInteriorSplitChunk
         // chunk 下标即并发任务的 ownership
         chunks[chunkId].push_back(candidate);
         ++state.Stats.InteriorSplitCandidateCount;
-        ++selectedCount;
     }
 
     return chunks;
@@ -649,7 +635,7 @@ std::vector<std::vector<DataOrientedRoamMergeCandidate>> BuildInteriorMergeChunk
         static_cast<std::size_t>(
             DataOrientedRoamTopologyChunkGridSize * DataOrientedRoamTopologyChunkGridSize));
 
-    // merge 不受 split budget 限制，所有安全 interior 候选都可先分桶
+    // merge 不受 split 队列影响，所有安全 interior 候选都可先分桶
     for (const DataOrientedRoamMergeCandidate& candidate : candidates)
     {
         // merge candidate 已按 score 排好序，chunk 内保留这个顺序
@@ -815,7 +801,7 @@ void CommitInteriorMergeChunks(
 
 void RefineWithSplitQueue(DataOrientedRoamState& state)
 {
-    // split pass 用优先队列控制预算分配
+    // split pass 用优先队列控制高误差 leaf 的处理顺序
     // 高 screen error leaf 会先获得本帧 split 机会
     state.Stats.TopologyChunkCount = static_cast<std::size_t>(
         DataOrientedRoamTopologyChunkGridSize * DataOrientedRoamTopologyChunkGridSize);
@@ -922,16 +908,10 @@ void RefineWithSplitQueue(DataOrientedRoamState& state)
             continue;
         }
 
-        if (state.Settings.SplitBudget > 0U && state.Stats.SplitCount >= state.Settings.SplitBudget)
-        {
-            ++state.Stats.RejectedSplitCount;
-            break;
-        }
-
         const DataOrientedRoamNodeIndex baseNeighborBeforeSplit = state.Nodes[node].BaseNeighbor;
         if (!SplitNode(state, node, DataOrientedRoamSplitReason::Requested, InvalidDataOrientedRoamNodeIndex))
         {
-            // 失败通常来自 budget、maxDepth 或 forced split 传播
+            // 失败通常来自 maxDepth 或 forced split 传播
             ++state.Stats.RejectedSplitCount;
             continue;
         }

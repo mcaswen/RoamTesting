@@ -41,9 +41,6 @@ struct ClassicRoamSettings
     // 距离权重越大，远处也会更积极细分
     float DistanceScale{24.0F};
 
-    // SplitBudget 限制单次 build 的 split 次数，避免交互路径一次展开过多节点
-    std::size_t SplitBudget{8192};
-
     // 开启后会基于 baseNeighbor 执行局部 diamond forced split
     bool EnableLocalConstraints{true};
 
@@ -92,7 +89,7 @@ struct ClassicRoamStats
     // CandidatePeakCount 记录 split queue 峰值，观察候选队列压力
     std::size_t CandidatePeakCount{0};
 
-    // RejectedSplitCount 表示因预算或深度上限被拒绝的 split
+    // RejectedSplitCount 表示约束传播或过期候选导致的 split 失败
     std::size_t RejectedSplitCount{0};
 
     // RejectedMergeCount 表示 diamond 条件不满足而拒绝 merge

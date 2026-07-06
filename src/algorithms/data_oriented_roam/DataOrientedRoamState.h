@@ -252,7 +252,7 @@ void AccumulateLeafStats(
     const Terrain::TerrainMeshData& meshData,
     const std::vector<DataOrientedRoamNodeIndex>& leafNodes);
 
-// RefineWithSplitQueue 是 split pass，受 SplitBudget 限制
+// RefineWithSplitQueue 是按 screen error 排序的 split pass
 void RefineWithSplitQueue(DataOrientedRoamState& state);
 
 // MergeWithDiamondQueue 是 merge pass，先于 split pass 运行
