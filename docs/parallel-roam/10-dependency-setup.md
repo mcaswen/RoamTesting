@@ -41,6 +41,22 @@ cmake --build --preset debug-vcpkg
 
 需要提前设置 `VCPKG_ROOT`，并保证 `VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake` 存在。
 
+## Windows 无系统 CMake 时
+
+如果目标 Windows 机器没有安装 CMake，可以使用项目内 portable CMake 路径。先在项目根目录运行：
+
+```bat
+scripts\setup_portable_cmake.bat
+```
+
+该脚本会下载 CMake Windows x86_64 zip，并解压到：
+
+```text
+tools\cmake\bin\cmake.exe
+```
+
+后续 `.bat` 构建脚本会优先使用这个项目内 CMake；如果不存在，才使用系统 `PATH` 里的 `cmake`。也可以手动下载 CMake zip，把内容解压成同样的目录结构。
+
 ## 备用路径：FetchContent
 
 FetchContent 不作为默认路径，必须显式启用：

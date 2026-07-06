@@ -82,3 +82,6 @@ third_party/*
 !third_party/.gitkeep
 !third_party/glad/
 !third_party/glad/**
+tools/cmake/*
+!tools/cmake/README.md
+tools/downloads/

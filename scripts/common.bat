@@ -20,15 +20,25 @@ goto :collect_args
 
 set "SCRIPT_DIR=%~dp0"
 for %%I in ("%SCRIPT_DIR%..") do set "PROJECT_ROOT=%%~fI"
+set "CMAKE_EXE=%PROJECT_ROOT%\tools\cmake\bin\cmake.exe"
+if not exist "%CMAKE_EXE%" set "CMAKE_EXE=cmake"
 
 pushd "%PROJECT_ROOT%" || exit /b 1
 
 echo [ParallelROAM] configure: %PRESET%
-cmake --preset "%PRESET%"
+echo [ParallelROAM] cmake: %CMAKE_EXE%
+"%CMAKE_EXE%" --version >nul 2>nul
+if errorlevel 1 (
+    echo [ParallelROAM] CMake not found.
+    echo [ParallelROAM] Install CMake or run scripts\setup_portable_cmake.bat on Windows.
+    goto :fail
+)
+
+"%CMAKE_EXE%" --preset "%PRESET%"
 if errorlevel 1 goto :fail
 
 echo [ParallelROAM] build: %PRESET%
-cmake --build --preset "%PRESET%" --parallel
+"%CMAKE_EXE%" --build --preset "%PRESET%" --parallel
 if errorlevel 1 goto :fail
 
 set "EXE=%PROJECT_ROOT%\build\%PRESET%\bin\ParallelROAM.exe"
