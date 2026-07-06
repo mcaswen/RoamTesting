@@ -159,6 +159,12 @@ public:
 
     bool ApplySettings(const TerrainRenderSettings& settings, std::string* errorMessage);
     bool UpdateForCamera(const glm::vec3& cameraPosition, std::string* errorMessage);
+
+    // benchmark 可绕过普通相机位移缓存，要求下一帧重新构建 mesh
+    void RequestMeshRebuild();
+
+    // 切换 benchmark 算法时清掉持久 ROAM 拓扑和上一帧统计
+    void ResetTerrainLodAlgorithm();
     void Shutdown();
     void Render(const RenderContext& context);
 

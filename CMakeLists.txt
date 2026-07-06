@@ -41,6 +41,7 @@ if(PARALLEL_ROAM_BUILD_APP)
                 src/app/Application.cpp
                 src/app/CameraController.cpp
                 src/app/InputState.cpp
+                src/app/RuntimeBenchmark.cpp
                 src/algorithms/classic_roam/ClassicRoamTerrainLodAlgorithm.cpp
                 src/algorithms/classic_roam/ClassicRoamMeshBuilder.cpp
                 src/algorithms/classic_roam/ClassicRoamMeshEmit.cpp

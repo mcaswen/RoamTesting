@@ -218,6 +218,33 @@ void DrawDebugColorLegend()
 
     ImGui::NewLine();
 }
+
+void DrawBenchmarkStatusOverlay(const DebugOverlayData& data)
+{
+    if (!data.BenchmarkRunning)
+    {
+        return;
+    }
+
+    const ImGuiIO& io = ImGui::GetIO();
+    // 顶部居中提示不参与输入，避免干扰 benchmark 过程中的鼠标状态
+    constexpr float OverlayWidth = 460.0F;
+    constexpr float OverlayHeight = 70.0F;
+    ImGui::SetNextWindowPos(ImVec2{io.DisplaySize.x * 0.5F, 22.0F}, ImGuiCond_Always, ImVec2{0.5F, 0.0F});
+    ImGui::SetNextWindowSize(ImVec2{OverlayWidth, OverlayHeight}, ImGuiCond_Always);
+    ImGui::SetNextWindowBgAlpha(0.88F);
+
+    constexpr ImGuiWindowFlags OverlayFlags =
+        ImGuiWindowFlags_NoDecoration |
+        ImGuiWindowFlags_NoMove |
+        ImGuiWindowFlags_NoSavedSettings |
+        ImGuiWindowFlags_NoInputs;
+
+    ImGui::Begin("Runtime Benchmark Status", nullptr, OverlayFlags);
+    ImGui::Text("正在应用%s算法进行性能测试", data.BenchmarkAlgorithmName.c_str());
+    ImGui::ProgressBar(std::clamp(data.BenchmarkProgress, 0.0F, 1.0F), ImVec2{-1.0F, 8.0F}, "");
+    ImGui::End();
+}
 } // 匿名命名空间
 
 bool ImGuiLayer::Initialize(SDL_Window* window, SDL_GLContext glContext, const char* glslVersion)
@@ -288,6 +315,8 @@ bool ImGuiLayer::DrawDebugOverlay(const DebugOverlayData& data, TerrainPanelStat
 {
     bool changed = false;
     const ImGuiIO& io = ImGui::GetIO();
+    DrawBenchmarkStatusOverlay(data);
+
     // 面板宽度跟随窗口
     // 同时限制最小和最大值
     // 避免宽屏上占用过多 terrain 视野
@@ -334,12 +363,40 @@ bool ImGuiLayer::DrawDebugOverlay(const DebugOverlayData& data, TerrainPanelStat
     DrawMetricFloat("Yaw", data.CameraYawDegrees, "%.1f");
     DrawMetricFloat("Pitch", data.CameraPitchDegrees, "%.1f");
 
+    DrawSectionHeader("性能测试");
+    if (data.BenchmarkRunning)
+    {
+        ImGui::BeginDisabled();
+    }
+    if (ImGui::Button("开始 Benchmark", ImVec2{-1.0F, 0.0F}))
+    {
+        // 按钮只写请求位，Application 下一帧统一启动状态机
+        terrainState.StartBenchmarkRequested = true;
+    }
+    if (data.BenchmarkRunning)
+    {
+        ImGui::EndDisabled();
+    }
+    if (!data.LastBenchmarkOutputPath.empty())
+    {
+        ImGui::TextDisabled("上次输出");
+        ImGui::TextWrapped("%s", data.LastBenchmarkOutputPath.c_str());
+    }
+
     DrawSectionHeader("地形");
     DrawMetricInt("高度图宽", data.HeightMapWidth);
     DrawMetricInt("高度图高", data.HeightMapHeight);
     DrawMetricSize("顶点数", data.VertexCount);
     DrawMetricSize("三角形数", data.TriangleCount);
     DrawMetricRow("模式", TerrainModeName(data.UseTerrainLod, data.TerrainLodAlgorithm));
+
+    const bool lockControls = data.BenchmarkRunning;
+    if (lockControls)
+    {
+        // 测试期间锁定参数，确保同一轮内两种算法输入一致
+        ImGui::BeginDisabled();
+    }
+
     changed |= ImGui::Checkbox("线框模式", &terrainState.Wireframe);
     int terrainModeIndex = TerrainModeIndex(terrainState.UseTerrainLod, terrainState.TerrainLodAlgorithm);
     const char* terrainModeItems[] = {"规则网格", "Classic CPU ROAM", "Data-Oriented CPU ROAM"};
@@ -402,6 +459,10 @@ bool ImGuiLayer::DrawDebugOverlay(const DebugOverlayData& data, TerrainPanelStat
     changed |= ImGui::SliderFloat("环境光", &terrainState.AmbientStrength, 0.0F, 1.0F, "%.2f");
     changed |= ImGui::SliderFloat("漫反射", &terrainState.DiffuseStrength, 0.0F, 2.0F, "%.2f");
     changed |= ImGui::SliderFloat("高光", &terrainState.SpecularStrength, 0.0F, 1.0F, "%.2f");
+    if (lockControls)
+    {
+        ImGui::EndDisabled();
+    }
     ImGui::End();
 
     return changed;

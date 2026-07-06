@@ -6,6 +6,7 @@
 #include <glm/glm.hpp>
 
 #include <cstddef>
+#include <string>
 
 namespace ParallelRoam::Gui
 {
@@ -66,6 +67,12 @@ struct DebugOverlayData
     float RoamEmitMilliseconds{0.0F};
     float RoamValidateMilliseconds{0.0F};
     int RoamMaxDepthReached{0};
+
+    // 运行时 benchmark 状态用于绘制顶部提示和输出路径
+    bool BenchmarkRunning{false};
+    std::string BenchmarkAlgorithmName;
+    float BenchmarkProgress{0.0F};
+    std::string LastBenchmarkOutputPath;
 };
 
 /// <summary>
@@ -102,6 +109,9 @@ struct TerrainPanelState
     float AmbientStrength{0.28F};
     float DiffuseStrength{0.85F};
     float SpecularStrength{0.18F};
+
+    // UI 按钮只提交请求，Application 在下一帧开始可控相机路径
+    bool StartBenchmarkRequested{false};
 };
 
 /// <summary>

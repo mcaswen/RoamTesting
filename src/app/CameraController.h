@@ -15,6 +15,7 @@ public:
     CameraController();
 
     void Update(const InputState& input, float deltaSeconds);
+    void SetPose(const glm::vec3& position, float yawDegrees, float pitchDegrees);
 
     [[nodiscard]] glm::mat4 GetViewMatrix() const;
     [[nodiscard]] glm::vec3 Position() const;

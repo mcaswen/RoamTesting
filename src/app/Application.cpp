@@ -7,9 +7,12 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
+#include <exception>
 #include <filesystem>
 #include <iostream>
 #include <string>
+#include <utility>
 
 namespace ParallelRoam::App
 {
@@ -29,6 +32,30 @@ const char* ImGuiGlslVersion()
 #else
     return "#version 430";
 #endif
+}
+
+float SmoothStep(float value)
+{
+    // SmoothStep 让相机起停速度连续，避免 benchmark 首尾突变
+    const float t = std::clamp(value, 0.0F, 1.0F);
+    return t * t * (3.0F - 2.0F * t);
+}
+
+std::pair<float, float> ComputeYawPitchForLookAt(const glm::vec3& position, const glm::vec3& target)
+{
+    // 目标点与相机重合时返回默认姿态，避免 atan2/asin 输入退化
+    const glm::vec3 direction = target - position;
+    const float lengthSquared = glm::dot(direction, direction);
+    if (lengthSquared <= 0.000001F)
+    {
+        return {-90.0F, -18.0F};
+    }
+
+    const glm::vec3 normalizedDirection = glm::normalize(direction);
+    // CameraController 的 yaw 约定是 -90 度看向 -Z
+    const float yawDegrees = glm::degrees(std::atan2(normalizedDirection.z, normalizedDirection.x));
+    const float pitchDegrees = glm::degrees(std::asin(std::clamp(normalizedDirection.y, -1.0F, 1.0F)));
+    return {yawDegrees, pitchDegrees};
 }
 
 Render::TerrainRenderSettings ToRenderSettings(const Gui::TerrainPanelState& state)
@@ -128,11 +155,27 @@ int Application::Run(int maxFrameCount)
             break;
         }
 
-        // 只在右键按住时启用相对鼠标模式，避免普通 GUI 操作丢失光标
-        _window.SetRelativeMouseMode(_input.IsRightMouseDown());
-        _camera.Update(_input, frameTiming.ClampedDeltaSeconds);
+        if (_runtimeBenchmark.StartRequested && !_runtimeBenchmark.Active)
+        {
+            // UI 事件在 RenderFrame 里产生，下一轮主循环再启动测试更稳定
+            _runtimeBenchmark.StartRequested = false;
+            StartRuntimeBenchmark();
+        }
+
+        // benchmark 接管相机时不捕获鼠标，避免测试中途被用户输入污染
+        _window.SetRelativeMouseMode(!_runtimeBenchmark.Active && _input.IsRightMouseDown());
+        if (_runtimeBenchmark.Active)
+        {
+            PrepareRuntimeBenchmarkFrame(frameTiming);
+        }
+        else
+        {
+            _camera.Update(_input, frameTiming.ClampedDeltaSeconds);
+        }
+
         RenderFrame(frameTiming);
         _window.SwapBuffers();
+        CompleteRuntimeBenchmarkFrame();
 
         // smoke test 通过固定帧数退出，便于自动验证窗口和 GL context
         ++frameCount;
@@ -275,16 +318,27 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
     debugData.RoamEmitMilliseconds = terrainStats.RoamEmitMilliseconds;
     debugData.RoamValidateMilliseconds = terrainStats.RoamValidateMilliseconds;
     debugData.RoamMaxDepthReached = terrainStats.RoamMaxDepthReached;
+    // benchmark 状态走 DebugOverlayData，GUI 不直接读取 Application 成员
+    debugData.BenchmarkRunning = _runtimeBenchmark.Active;
+    debugData.BenchmarkAlgorithmName = CurrentRuntimeBenchmarkAlgorithmName();
+    debugData.BenchmarkProgress = RuntimeBenchmarkProgress();
+    if (!_runtimeBenchmark.LastMarkdownPath.empty())
+    {
+        debugData.LastBenchmarkOutputPath = _runtimeBenchmark.LastMarkdownPath.string();
+    }
+
+    RecordRuntimeBenchmarkSample(frameTiming, terrainStats, cameraPosition);
 
     if (_guiLayer.DrawDebugOverlay(debugData, _terrainPanelState))
     {
-        _terrainSettings = ToRenderSettings(_terrainPanelState);
+        ApplyTerrainPanelSettings();
+    }
 
-        std::string settingsError;
-        if (!_terrainRenderer.ApplySettings(_terrainSettings, &settingsError))
-        {
-            std::cerr << settingsError << '\n';
-        }
+    if (_terrainPanelState.StartBenchmarkRequested)
+    {
+        // 按钮请求被消费后立刻清零，避免下一帧重复启动
+        _runtimeBenchmark.StartRequested = true;
+        _terrainPanelState.StartBenchmarkRequested = false;
     }
 
     Render::RenderContext renderContext{};
@@ -297,5 +351,204 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
     // terrain renderer 消费相机矩阵和 UI 参数，不直接处理输入事件
     _terrainRenderer.Render(renderContext);
     _guiLayer.EndFrame();
+}
+
+void Application::ApplyTerrainPanelSettings()
+{
+    _terrainSettings = ToRenderSettings(_terrainPanelState);
+
+    std::string settingsError;
+    if (!_terrainRenderer.ApplySettings(_terrainSettings, &settingsError))
+    {
+        std::cerr << settingsError << '\n';
+    }
+}
+
+void Application::StartRuntimeBenchmark()
+{
+    // 每轮 benchmark 都重新生成结果，保留上一次输出路径供 UI 展示
+    _runtimeBenchmark.Active = true;
+    _runtimeBenchmark.HasPreparedFirstFrame = false;
+    _runtimeBenchmark.AlgorithmIndex = 0;
+    _runtimeBenchmark.ElapsedSeconds = 0.0F;
+    _runtimeBenchmark.Results.clear();
+    _runtimeBenchmark.AlgorithmSequence = {
+        // 当前已实现并能通过 renderer 输出 CPU mesh 的算法
+        Algorithms::TerrainLodAlgorithmId::ClassicCpuRoam,
+        Algorithms::TerrainLodAlgorithmId::DataOrientedCpuRoam,
+    };
+    _runtimeBenchmark.PreviousTerrainPanelState = _terrainPanelState;
+    _runtimeBenchmark.PreviousTerrainPanelState.StartBenchmarkRequested = false;
+    _runtimeBenchmark.PreviousCameraPose = CameraPose{
+        _camera.Position(),
+        _camera.YawDegrees(),
+        _camera.PitchDegrees(),
+    };
+
+    BeginRuntimeBenchmarkAlgorithm();
+}
+
+void Application::BeginRuntimeBenchmarkAlgorithm()
+{
+    if (_runtimeBenchmark.AlgorithmIndex >= _runtimeBenchmark.AlgorithmSequence.size())
+    {
+        FinishRuntimeBenchmark();
+        return;
+    }
+
+    const Algorithms::TerrainLodAlgorithmId algorithmId =
+        _runtimeBenchmark.AlgorithmSequence[_runtimeBenchmark.AlgorithmIndex];
+
+    RuntimeBenchmarkAlgorithmResult result{};
+    result.AlgorithmId = algorithmId;
+    result.AlgorithmName = RuntimeBenchmarkAlgorithmDisplayName(algorithmId);
+    result.Samples.reserve(720);
+    _runtimeBenchmark.Results.push_back(std::move(result));
+
+    const float halfTerrainSize = _terrainPanelState.TerrainSize * 0.5F;
+    const float cameraHeight = std::max(3.0F, _terrainPanelState.HeightScale * 1.5F);
+    // Z+ 边中点到中心的路径便于和固定朝向一起解释
+    _runtimeBenchmark.StartPosition = glm::vec3{0.0F, cameraHeight, halfTerrainSize};
+    _runtimeBenchmark.EndPosition = glm::vec3{0.0F, cameraHeight, 0.0F};
+    const auto [yawDegrees, pitchDegrees] =
+        ComputeYawPitchForLookAt(_runtimeBenchmark.StartPosition, glm::vec3{0.0F, 0.0F, 0.0F});
+    _runtimeBenchmark.YawDegrees = yawDegrees;
+    _runtimeBenchmark.PitchDegrees = pitchDegrees;
+    _runtimeBenchmark.ElapsedSeconds = 0.0F;
+    _runtimeBenchmark.HasPreparedFirstFrame = false;
+
+    _terrainPanelState.UseTerrainLod = true;
+    _terrainPanelState.TerrainLodAlgorithm = algorithmId;
+    _terrainPanelState.StartBenchmarkRequested = false;
+    // ApplySettings 先切换算法，再 reset 可保证下一帧从干净拓扑开始
+    ApplyTerrainPanelSettings();
+    _terrainRenderer.ResetTerrainLodAlgorithm();
+    _terrainRenderer.RequestMeshRebuild();
+    _camera.SetPose(_runtimeBenchmark.StartPosition, _runtimeBenchmark.YawDegrees, _runtimeBenchmark.PitchDegrees);
+}
+
+void Application::PrepareRuntimeBenchmarkFrame(const FrameTiming& frameTiming)
+{
+    if (!_runtimeBenchmark.Active)
+    {
+        return;
+    }
+
+    if (_runtimeBenchmark.HasPreparedFirstFrame)
+    {
+        // 第一帧已在 t=0 采样，后续帧再推进时间
+        const float deltaSeconds = std::max(frameTiming.RawDeltaSeconds, 0.0F);
+        _runtimeBenchmark.ElapsedSeconds =
+            std::min(_runtimeBenchmark.ElapsedSeconds + deltaSeconds, _runtimeBenchmark.DurationSeconds);
+    }
+    else
+    {
+        _runtimeBenchmark.HasPreparedFirstFrame = true;
+    }
+
+    const float t = _runtimeBenchmark.ElapsedSeconds / _runtimeBenchmark.DurationSeconds;
+    // 只平滑位置，不旋转相机，保证每个算法看到同一条视点路径
+    const glm::vec3 cameraPosition =
+        glm::mix(_runtimeBenchmark.StartPosition, _runtimeBenchmark.EndPosition, SmoothStep(t));
+    _camera.SetPose(cameraPosition, _runtimeBenchmark.YawDegrees, _runtimeBenchmark.PitchDegrees);
+    _terrainRenderer.RequestMeshRebuild();
+}
+
+void Application::CompleteRuntimeBenchmarkFrame()
+{
+    if (!_runtimeBenchmark.Active || _runtimeBenchmark.ElapsedSeconds < _runtimeBenchmark.DurationSeconds)
+    {
+        return;
+    }
+
+    ++_runtimeBenchmark.AlgorithmIndex;
+    if (_runtimeBenchmark.AlgorithmIndex < _runtimeBenchmark.AlgorithmSequence.size())
+    {
+        // 当前算法跑满 10 秒后立即切到下一个算法
+        BeginRuntimeBenchmarkAlgorithm();
+        return;
+    }
+
+    FinishRuntimeBenchmark();
+}
+
+void Application::RecordRuntimeBenchmarkSample(
+    const FrameTiming& frameTiming,
+    const Render::TerrainRenderStats& terrainStats,
+    const glm::vec3& cameraPosition)
+{
+    if (!_runtimeBenchmark.Active || _runtimeBenchmark.Results.empty())
+    {
+        return;
+    }
+
+    RuntimeBenchmarkSample sample{};
+    sample.TimeSeconds = _runtimeBenchmark.ElapsedSeconds;
+    sample.CameraPosition = cameraPosition;
+    // RawDeltaSeconds 是真实帧耗时，ClampedDeltaSeconds 只适合模拟
+    sample.FrameMilliseconds = frameTiming.RawDeltaSeconds * 1000.0F;
+    sample.Stats = terrainStats;
+    _runtimeBenchmark.Results.back().Samples.push_back(sample);
+}
+
+void Application::FinishRuntimeBenchmark()
+{
+    try
+    {
+        const RuntimeBenchmarkReportPaths paths = WriteRuntimeBenchmarkReport(_runtimeBenchmark.Results);
+        // 输出路径留在状态里，下一帧 UI 可以继续展示给用户
+        _runtimeBenchmark.LastMarkdownPath = paths.MarkdownPath;
+        _runtimeBenchmark.LastCsvPath = paths.CsvPath;
+        std::cout << "Runtime benchmark report: " << paths.MarkdownPath << '\n';
+        std::cout << "Runtime benchmark csv: " << paths.CsvPath << '\n';
+    }
+    catch (const std::exception& exception)
+    {
+        std::cerr << exception.what() << '\n';
+    }
+
+    const Gui::TerrainPanelState previousTerrainPanelState = _runtimeBenchmark.PreviousTerrainPanelState;
+    const CameraPose previousCameraPose = _runtimeBenchmark.PreviousCameraPose;
+    // 先退出 Active，再恢复 UI 状态，避免 DrawDebugOverlay 继续锁定控件
+    _runtimeBenchmark.Active = false;
+    _runtimeBenchmark.HasPreparedFirstFrame = false;
+    _runtimeBenchmark.ElapsedSeconds = 0.0F;
+
+    _terrainPanelState = previousTerrainPanelState;
+    _terrainPanelState.StartBenchmarkRequested = false;
+    _camera.SetPose(previousCameraPose.Position, previousCameraPose.YawDegrees, previousCameraPose.PitchDegrees);
+    // 恢复设置后强制重建一次，防止画面停留在 benchmark 的算法 mesh
+    ApplyTerrainPanelSettings();
+    _terrainRenderer.ResetTerrainLodAlgorithm();
+    _terrainRenderer.RequestMeshRebuild();
+}
+
+std::string Application::CurrentRuntimeBenchmarkAlgorithmName() const
+{
+    if (!_runtimeBenchmark.Active || _runtimeBenchmark.AlgorithmIndex >= _runtimeBenchmark.AlgorithmSequence.size())
+    {
+        return {};
+    }
+
+    return RuntimeBenchmarkAlgorithmDisplayName(_runtimeBenchmark.AlgorithmSequence[_runtimeBenchmark.AlgorithmIndex]);
+}
+
+float Application::RuntimeBenchmarkProgress() const
+{
+    if (!_runtimeBenchmark.Active || _runtimeBenchmark.AlgorithmSequence.empty())
+    {
+        // 非运行状态下 UI 进度条保持空值
+        return 0.0F;
+    }
+
+    // 进度按算法数量归一化，顶部条展示整轮 benchmark 进度
+    const float localProgress = std::clamp(
+        _runtimeBenchmark.ElapsedSeconds / _runtimeBenchmark.DurationSeconds,
+        0.0F,
+        1.0F);
+    const float completedAlgorithms = static_cast<float>(_runtimeBenchmark.AlgorithmIndex);
+    // AlgorithmSequence 非空已在函数入口确认
+    const float algorithmCount = static_cast<float>(_runtimeBenchmark.AlgorithmSequence.size());
+    return (completedAlgorithms + localProgress) / algorithmCount;
 }
 } // 命名空间 ParallelRoam::App

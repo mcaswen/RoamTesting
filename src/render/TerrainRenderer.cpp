@@ -243,6 +243,19 @@ bool TerrainRenderer::UpdateForCamera(const glm::vec3& cameraPosition, std::stri
     return RebuildMesh(errorMessage);
 }
 
+void TerrainRenderer::RequestMeshRebuild()
+{
+    _meshDirty = true;
+}
+
+void TerrainRenderer::ResetTerrainLodAlgorithm()
+{
+    _terrainLodAlgorithm.reset();
+    _terrainLodStats = {};
+    _hasRoamBuildCameraPosition = false;
+    _meshDirty = true;
+}
+
 void TerrainRenderer::Shutdown()
 {
     // OpenGL 资源允许重复 Shutdown

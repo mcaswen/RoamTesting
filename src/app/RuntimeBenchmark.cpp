@@ -1,0 +1,259 @@
+#include "app/RuntimeBenchmark.h"
+
+#include <algorithm>
+#include <chrono>
+#include <cstddef>
+#include <ctime>
+#include <filesystem>
+#include <fstream>
+#include <iomanip>
+#include <sstream>
+#include <stdexcept>
+
+namespace ParallelRoam::App
+{
+namespace
+{
+struct RuntimeBenchmarkSummary
+{
+    // 汇总表只保留横向比较最常用的核心指标
+    std::size_t SampleCount{0};
+
+    // Frame ms 代表整帧体验，包含算法外的渲染和 UI 成本
+    float AverageFrameMilliseconds{0.0F};
+    float MaxFrameMilliseconds{0.0F};
+
+    // ROAM ms 代表算法层自报的 terrain LOD 更新成本
+    float AverageRoamMilliseconds{0.0F};
+    float MaxRoamMilliseconds{0.0F};
+
+    // 三角形数量是画面复杂度和 GPU 提交压力的共同代理
+    double AverageTriangles{0.0};
+    std::size_t MaxTriangles{0};
+
+    // 节点数量体现拓扑状态规模，和三角形数量不总是线性对应
+    double AverageNodes{0.0};
+    std::size_t MaxNodes{0};
+
+    // CPU 百分比按单核 100% 口径，适合观察并行扩展
+    float AverageCpuUtilizationPercent{0.0F};
+    float MaxCpuUtilizationPercent{0.0F};
+
+    // Worker 数记录算法本帧实际使用的 CPU 并行宽度
+    std::size_t MaxCpuWorkerCount{0};
+
+    // 最大深度用于确认两种算法是否遵守同一 LOD 上限
+    int MaxDepthReached{0};
+
+    // 拓扑问题合并输出，汇总表不用展开三类错误
+    std::size_t MaxInvalidTopologyCount{0};
+};
+
+std::tm ToLocalTime(std::time_t timestamp)
+{
+    // localtime_r/localtime_s 避免使用带静态存储的 localtime
+    std::tm localTime{};
+#if defined(_WIN32)
+    localtime_s(&localTime, &timestamp);
+#else
+    localtime_r(&timestamp, &localTime);
+#endif
+    return localTime;
+}
+
+std::string MakeReportTimestamp()
+{
+    // 时间戳放进文件名，连续多次点击 benchmark 不会覆盖旧结果
+    const auto now = std::chrono::system_clock::now();
+    const std::time_t timestamp = std::chrono::system_clock::to_time_t(now);
+    const std::tm localTime = ToLocalTime(timestamp);
+
+    std::ostringstream stream;
+    stream << std::put_time(&localTime, "%Y%m%d-%H%M%S");
+    return stream.str();
+}
+
+RuntimeBenchmarkSummary SummarizeRuntimeBenchmark(const RuntimeBenchmarkAlgorithmResult& result)
+{
+    RuntimeBenchmarkSummary summary{};
+    summary.SampleCount = result.Samples.size();
+    if (summary.SampleCount == 0U)
+    {
+        // 空结果仍输出一行，方便发现某个算法没有采到样本
+        return summary;
+    }
+
+    // 累加使用 double，避免长时间采样后平均值被 float 精度吞掉
+    double totalFrameMilliseconds = 0.0;
+    double totalRoamMilliseconds = 0.0;
+    double totalTriangles = 0.0;
+    double totalNodes = 0.0;
+    double totalCpuUtilization = 0.0;
+
+    for (const RuntimeBenchmarkSample& sample : result.Samples)
+    {
+        const Render::TerrainRenderStats& stats = sample.Stats;
+        // 三类拓扑问题合并成表格中的一个核心风险指标
+        const std::size_t invalidTopologyCount =
+            stats.RoamTjunctionCount + stats.RoamInvalidNeighborCount + stats.RoamInvalidTopologyCount;
+
+        // 平均值用于整体对比，最大值用于定位尖峰卡顿
+        totalFrameMilliseconds += sample.FrameMilliseconds;
+        totalRoamMilliseconds += stats.RoamUpdateMilliseconds;
+        totalTriangles += static_cast<double>(stats.TriangleCount);
+        totalNodes += static_cast<double>(stats.RoamNodeCount);
+        totalCpuUtilization += stats.RoamCpuUtilizationPercent;
+
+        summary.MaxFrameMilliseconds = std::max(summary.MaxFrameMilliseconds, sample.FrameMilliseconds);
+        summary.MaxRoamMilliseconds = std::max(summary.MaxRoamMilliseconds, stats.RoamUpdateMilliseconds);
+        summary.MaxTriangles = std::max(summary.MaxTriangles, stats.TriangleCount);
+        summary.MaxNodes = std::max(summary.MaxNodes, stats.RoamNodeCount);
+        // CPU 占用和 worker 数一起观察并行路径是否真正生效
+        summary.MaxCpuUtilizationPercent =
+            std::max(summary.MaxCpuUtilizationPercent, stats.RoamCpuUtilizationPercent);
+        summary.MaxCpuWorkerCount = std::max(summary.MaxCpuWorkerCount, stats.RoamCpuWorkerCount);
+        summary.MaxDepthReached = std::max(summary.MaxDepthReached, stats.RoamMaxDepthReached);
+        summary.MaxInvalidTopologyCount = std::max(summary.MaxInvalidTopologyCount, invalidTopologyCount);
+    }
+
+    const double sampleCount = static_cast<double>(summary.SampleCount);
+    summary.AverageFrameMilliseconds = static_cast<float>(totalFrameMilliseconds / sampleCount);
+    summary.AverageRoamMilliseconds = static_cast<float>(totalRoamMilliseconds / sampleCount);
+    summary.AverageTriangles = totalTriangles / sampleCount;
+    summary.AverageNodes = totalNodes / sampleCount;
+    summary.AverageCpuUtilizationPercent = static_cast<float>(totalCpuUtilization / sampleCount);
+    return summary;
+}
+
+void WriteDetailedCsv(
+    const std::filesystem::path& csvPath,
+    const std::vector<RuntimeBenchmarkAlgorithmResult>& results)
+{
+    // CSV 保存逐帧明细，后续可直接导入表格或脚本做曲线
+    std::ofstream csv{csvPath};
+    if (!csv)
+    {
+        throw std::runtime_error{"Failed to create runtime benchmark CSV: " + csvPath.string()};
+    }
+
+    csv << "algorithm,timeSeconds,cameraX,cameraY,cameraZ,frameMilliseconds,triangles,nodes,"
+        << "activeSplits,splits,forcedSplits,merges,candidatePeak,tjunctions,invalidNeighbors,"
+        << "invalidTopology,cpuWorkers,cpuUtilizationPercent,roamMilliseconds,splitMilliseconds,"
+        << "mergeMilliseconds,emitMilliseconds,validateMilliseconds,maxDepth\n";
+
+    csv << std::fixed << std::setprecision(3);
+    for (const RuntimeBenchmarkAlgorithmResult& result : results)
+    {
+        // 算法名逐行写入，便于把多个算法拼在同一个 CSV 中筛选
+        for (const RuntimeBenchmarkSample& sample : result.Samples)
+        {
+            const Render::TerrainRenderStats& stats = sample.Stats;
+            csv << result.AlgorithmName << ','
+                << sample.TimeSeconds << ','
+                << sample.CameraPosition.x << ','
+                << sample.CameraPosition.y << ','
+                << sample.CameraPosition.z << ','
+                << sample.FrameMilliseconds << ','
+                << stats.TriangleCount << ','
+                << stats.RoamNodeCount << ','
+                << stats.RoamActiveSplitCount << ','
+                << stats.RoamSplitCount << ','
+                << stats.RoamForcedSplitCount << ','
+                << stats.RoamMergeCount << ','
+                << stats.RoamCandidatePeakCount << ','
+                << stats.RoamTjunctionCount << ','
+                << stats.RoamInvalidNeighborCount << ','
+                << stats.RoamInvalidTopologyCount << ','
+                << stats.RoamCpuWorkerCount << ','
+                << stats.RoamCpuUtilizationPercent << ','
+                << stats.RoamUpdateMilliseconds << ','
+                << stats.RoamSplitMilliseconds << ','
+                << stats.RoamMergeMilliseconds << ','
+                << stats.RoamEmitMilliseconds << ','
+                << stats.RoamValidateMilliseconds << ','
+                << stats.RoamMaxDepthReached << '\n';
+        }
+    }
+}
+
+void WriteSummaryMarkdown(
+    const std::filesystem::path& markdownPath,
+    const std::filesystem::path& csvPath,
+    const std::vector<RuntimeBenchmarkAlgorithmResult>& results)
+{
+    // Markdown 是面向人看的主输出，字段数量控制在一屏内
+    std::ofstream markdown{markdownPath};
+    if (!markdown)
+    {
+        throw std::runtime_error{"Failed to create runtime benchmark table: " + markdownPath.string()};
+    }
+
+    markdown << "# Runtime Benchmark\n\n";
+    markdown << "- Camera path: edge midpoint to terrain center\n";
+    markdown << "- Duration per algorithm: 10 seconds\n";
+    markdown << "- Detailed CSV: `" << csvPath.filename().string() << "`\n\n";
+    markdown << "| Algorithm | Samples | Avg Frame ms | Max Frame ms | Avg ROAM ms | Max ROAM ms | "
+             << "Avg Triangles | Max Triangles | Avg Nodes | Max Nodes | Avg CPU % | Max CPU % | "
+             << "Max Workers | Max Depth | Max Topology Issues |\n";
+    markdown << "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n";
+    markdown << std::fixed << std::setprecision(2);
+
+    for (const RuntimeBenchmarkAlgorithmResult& result : results)
+    {
+        // 每个算法一行，和 UI 顺序保持一致
+        const RuntimeBenchmarkSummary summary = SummarizeRuntimeBenchmark(result);
+        markdown << "| " << result.AlgorithmName
+                 << " | " << summary.SampleCount
+                 << " | " << summary.AverageFrameMilliseconds
+                 << " | " << summary.MaxFrameMilliseconds
+                 << " | " << summary.AverageRoamMilliseconds
+                 << " | " << summary.MaxRoamMilliseconds
+                 << " | " << summary.AverageTriangles
+                 << " | " << summary.MaxTriangles
+                 << " | " << summary.AverageNodes
+                 << " | " << summary.MaxNodes
+                 << " | " << summary.AverageCpuUtilizationPercent
+                 << " | " << summary.MaxCpuUtilizationPercent
+                 << " | " << summary.MaxCpuWorkerCount
+                 << " | " << summary.MaxDepthReached
+                 << " | " << summary.MaxInvalidTopologyCount
+                 << " |\n";
+    }
+}
+} // namespace
+
+std::string RuntimeBenchmarkAlgorithmDisplayName(Algorithms::TerrainLodAlgorithmId algorithmId)
+{
+    switch (algorithmId)
+    {
+    case Algorithms::TerrainLodAlgorithmId::ClassicCpuRoam:
+        return "Classic CPU ROAM";
+    case Algorithms::TerrainLodAlgorithmId::DataOrientedCpuRoam:
+        return "Data-Oriented CPU ROAM";
+    case Algorithms::TerrainLodAlgorithmId::GpuRoamLike:
+        return "GPU ROAM";
+    }
+
+    return "Unknown ROAM";
+}
+
+RuntimeBenchmarkReportPaths WriteRuntimeBenchmarkReport(
+    const std::vector<RuntimeBenchmarkAlgorithmResult>& results)
+{
+    // benchmark-output 已被 gitignore 忽略，生成报告不会污染提交
+    const std::filesystem::path outputDirectory{"benchmark-output"};
+    std::filesystem::create_directories(outputDirectory);
+
+    const std::string timestamp = MakeReportTimestamp();
+    RuntimeBenchmarkReportPaths paths{};
+    // 同一时间戳绑定 Markdown 和 CSV，用户可以互相追溯
+    paths.MarkdownPath = outputDirectory / ("runtime-benchmark-" + timestamp + ".md");
+    paths.CsvPath = outputDirectory / ("runtime-benchmark-" + timestamp + ".csv");
+
+    // 先写 CSV 再写 Markdown，汇总表可以引用已确定的明细文件名
+    WriteDetailedCsv(paths.CsvPath, results);
+    WriteSummaryMarkdown(paths.MarkdownPath, paths.CsvPath, results);
+    // 返回两个路径，让 Application 同时输出日志和刷新 UI
+    return paths;
+}
+} // namespace ParallelRoam::App

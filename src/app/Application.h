@@ -2,11 +2,15 @@
 
 #include "app/CameraController.h"
 #include "app/InputState.h"
+#include "app/RuntimeBenchmark.h"
 #include "gui/ImGuiLayer.h"
 #include "platform/Window.h"
 #include "render/TerrainRenderer.h"
 
 #include <chrono>
+#include <filesystem>
+#include <string>
+#include <vector>
 
 namespace ParallelRoam::App
 {
@@ -44,6 +48,69 @@ private:
         float ClampedDeltaSeconds{0.0F};
     };
 
+    /// <summary>
+    /// benchmark 前后恢复用户相机姿态所需的最小快照
+    /// </summary>
+    struct CameraPose
+    {
+        // 只保存自由飞行相机恢复需要的公开状态
+        glm::vec3 Position{0.0F};
+        float YawDegrees{0.0F};
+        float PitchDegrees{0.0F};
+    };
+
+    /// <summary>
+    /// 运行时 benchmark 状态机，顺序驱动已实现的 ROAM 算法
+    /// </summary>
+    struct RuntimeBenchmarkState
+    {
+        // Active 为 true 时主循环由 benchmark 控制相机
+        bool Active{false};
+
+        // StartRequested 由 UI 设置，下一帧主循环再真正启动
+        bool StartRequested{false};
+
+        // 第一帧必须采样 t=0，不能先累加 delta
+        bool HasPreparedFirstFrame{false};
+
+        // 算法顺序固定，输出表格才能横向对齐
+        std::vector<Algorithms::TerrainLodAlgorithmId> AlgorithmSequence;
+
+        // Results 在整轮结束后一次性写成 Markdown 和 CSV
+        std::vector<RuntimeBenchmarkAlgorithmResult> Results;
+
+        // AlgorithmIndex 指向当前正在跑的算法
+        std::size_t AlgorithmIndex{0};
+
+        // ElapsedSeconds 是当前算法内的路径时间
+        float ElapsedSeconds{0.0F};
+
+        // DurationSeconds 统一为 10 秒，和 UI 文案保持一致
+        float DurationSeconds{10.0F};
+
+        // StartPosition 是地形边中点上方的相机位置
+        glm::vec3 StartPosition{0.0F};
+
+        // EndPosition 是地形中心上方的相机位置
+        glm::vec3 EndPosition{0.0F};
+
+        // 朝向在单次路径内保持固定，避免中心点附近方向退化
+        float YawDegrees{-90.0F};
+        float PitchDegrees{-18.0F};
+
+        // benchmark 结束后恢复用户原本的面板参数
+        Gui::TerrainPanelState PreviousTerrainPanelState;
+
+        // benchmark 结束后恢复用户原本的观察视角
+        CameraPose PreviousCameraPose;
+
+        // LastMarkdownPath 用于 UI 告知用户最新表格位置
+        std::filesystem::path LastMarkdownPath;
+
+        // LastCsvPath 目前只输出到日志，后续可在 UI 增加入口
+        std::filesystem::path LastCsvPath;
+    };
+
     // GLAD 必须在 SDL OpenGL context 创建后加载函数指针
     [[nodiscard]] bool LoadOpenGL() const;
 
@@ -56,6 +123,23 @@ private:
     // 渲染 height map terrain 和调试面板
     void RenderFrame(const FrameTiming& frameTiming);
 
+    // 应用 GUI 面板参数并把错误统一输出到 stderr
+    void ApplyTerrainPanelSettings();
+
+    // benchmark 生命周期由主循环推进，避免 UI 直接修改渲染器状态
+    void StartRuntimeBenchmark();
+    void BeginRuntimeBenchmarkAlgorithm();
+    void PrepareRuntimeBenchmarkFrame(const FrameTiming& frameTiming);
+    void CompleteRuntimeBenchmarkFrame();
+    void RecordRuntimeBenchmarkSample(
+        const FrameTiming& frameTiming,
+        const Render::TerrainRenderStats& terrainStats,
+        const glm::vec3& cameraPosition);
+    void FinishRuntimeBenchmark();
+
+    [[nodiscard]] std::string CurrentRuntimeBenchmarkAlgorithmName() const;
+    [[nodiscard]] float RuntimeBenchmarkProgress() const;
+
     // 子系统按生命周期依赖顺序声明，析构和 Shutdown 更容易保持一致
     Platform::Window _window;
     InputState _input;
@@ -64,6 +148,7 @@ private:
     Gui::ImGuiLayer _guiLayer;
     Render::TerrainRenderSettings _terrainSettings;
     Gui::TerrainPanelState _terrainPanelState;
+    RuntimeBenchmarkState _runtimeBenchmark;
     std::chrono::steady_clock::time_point _lastFrameTime{};
     bool _initialized{false};
     float _framesPerSecond{0.0F};

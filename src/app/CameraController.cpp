@@ -75,6 +75,16 @@ void CameraController::Update(const InputState& input, float deltaSeconds)
     _position += movement * speed * deltaSeconds;
 }
 
+void CameraController::SetPose(const glm::vec3& position, float yawDegrees, float pitchDegrees)
+{
+    // benchmark 和恢复流程需要一次性写入位置与朝向
+    _position = position;
+    _yawDegrees = yawDegrees;
+    // 外部输入同样经过 pitch clamp，保持和鼠标控制一致的约束
+    _pitchDegrees = std::clamp(pitchDegrees, -89.0F, 89.0F);
+    UpdateBasis();
+}
+
 glm::mat4 CameraController::GetViewMatrix() const
 {
     return glm::lookAt(_position, _position + _front, _up);
