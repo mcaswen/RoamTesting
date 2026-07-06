@@ -490,7 +490,7 @@ Level E：GPU split-only 或 split/merge topology update
 - GPU mesh emit 的顶点布局按 `TerrainMeshVertex` 的 13 个 float 槽位写入，避免 std430 `vec3` padding 与 C++ layout 不一致；
 - `TerrainRenderer` 已支持 `TerrainLodRenderMode::GpuBuffers`，可在 `CpuMesh` 为空时绑定算法输出的 GPU vertex / index buffer 绘制；
 - benchmark 校验已识别 GPU-only packet，不再要求 GPU 路径提供 CPU mesh；
-- 当前 GPU topology commit 仍在 CPU DOD 路径，GPU 负责 compaction、error evaluation、candidate marking 和 mesh emit。
+- 当前 GPU 路径以 CPU DOD 拓扑为安全 baseline，并额外接入 GPU split-only 实验层，GPU 负责 compaction、error evaluation、candidate marking、split-only expansion 和 mesh emit。
 
 4G：GPU Indirect Draw
 
@@ -527,6 +527,16 @@ Level E：GPU split-only 或 split/merge topology update
 - 不支持 merge 时必须在 UI / benchmark 中明确标注能力边界；
 - validator 在固定 smoke 场景中无 T-junction 和 invalid neighbor；
 - 若出现约束无法收敛，必须记录失败案例和回退策略。
+
+当前实现记录：
+
+- 已新增 `GpuRoamSplitOnlyTopology` 独立 pass 文件，将 GPU 拓扑扩展逻辑从 adapter 中拆出；
+- GPU node buffer 会按当前 DOD 节点数加 active leaf 的一层子节点容量预留，split-only pass 通过 `allocatedNodeCount` atomic counter 分配 child record；
+- split-only pass 支持两类保守提交：外边界 base edge 单 triangle split，以及互为 base neighbor 且同 chunk 的 diamond pair split；
+- split-only pass 暂不回收节点、不执行 merge，也不把 GPU 生成的拓扑写回 CPU DOD state；
+- mesh emit 不再依赖 CPU 传入的 active leaf 数，而是读取 GPU counter 中重新 compaction 后的最终 active leaf count；
+- 当前本机 OpenGL 4.1 仍无法执行该 compute path，只验证了构建、smoke 和 benchmark skip 语义；
+- 后续需要在支持 OpenGL 4.3 的环境下补 GPU readback validator，确认 split-only 后 T-junction 和 neighbor 约束是否满足。
 
 4I：GPU Split / Merge Topology Update（可选冲刺）
 

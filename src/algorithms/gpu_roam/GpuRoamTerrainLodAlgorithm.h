@@ -37,6 +37,9 @@ private:
         std::size_t& uploadBytes,
         float& gpuComputeMilliseconds,
         std::size_t& readbackBytes,
+        std::size_t& gpuActiveLeafCount,
+        std::size_t& gpuNodeCount,
+        std::size_t& gpuSplitOnlyCommitCount,
         std::string* errorMessage);
 
     DataOrientedRoam::DataOrientedRoamMeshBuilder _cpuTopologyBuilder;
@@ -55,6 +58,7 @@ private:
     std::uint32_t _errorEvaluationProgramId{0};
     std::uint32_t _candidateMarkingProgramId{0};
     std::uint32_t _meshEmitProgramId{0};
+    std::uint32_t _splitOnlyTopologyProgramId{0};
     std::uint32_t _timerQueryId{0};
 };
 

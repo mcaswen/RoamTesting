@@ -2,6 +2,7 @@
 
 #include "algorithms/TerrainLodProfiling.h"
 #include "algorithms/gpu_roam/GpuRoamBufferSchema.h"
+#include "algorithms/gpu_roam/GpuRoamSplitOnlyTopology.h"
 #include "platform/OpenGlCapabilities.h"
 
 #include <glad/gl.h>
@@ -319,6 +320,16 @@ layout(std430, binding = 1) readonly buffer ActiveLeafBuffer
     uint activeLeafIndices[];
 };
 
+layout(std430, binding = 3) readonly buffer CounterBuffer
+{
+    uint activeLeafCount;
+    uint splitCandidateCount;
+    uint mergeCandidateCount;
+    uint reservedCounter;
+    uint splitOnlyCommitCount;
+    uint allocatedNodeCount;
+};
+
 layout(std430, binding = 6) buffer MeshVertexBuffer
 {
     float meshVertices[];
@@ -336,7 +347,7 @@ layout(std430, binding = 8) buffer IndirectDrawBuffer
 
 layout(binding = 0) uniform sampler2D uHeightMap;
 
-uniform uint uActiveLeafCount;
+uniform uint uActiveLeafLimit;
 uniform uint uMaxDepth;
 uniform uint uBuildSequenceLow;
 uniform uint uBuildSequenceHigh;
@@ -451,14 +462,14 @@ void main()
     uint leafSlot = gl_GlobalInvocationID.x;
     if (leafSlot == 0u)
     {
-        drawCommand[0] = uActiveLeafCount * 3u;
+        drawCommand[0] = activeLeafCount * 3u;
         drawCommand[1] = 1u;
         drawCommand[2] = 0u;
         drawCommand[3] = 0u;
         drawCommand[4] = 0u;
     }
 
-    if (leafSlot >= uActiveLeafCount)
+    if (leafSlot >= activeLeafCount || leafSlot >= uActiveLeafLimit)
     {
         return;
     }
@@ -498,6 +509,8 @@ struct GpuRoamCounters
     std::uint32_t SplitCandidateCount{0};
     std::uint32_t MergeCandidateCount{0};
     std::uint32_t Reserved{0};
+    std::uint32_t SplitOnlyCommitCount{0};
+    std::uint32_t AllocatedNodeCount{0};
 };
 
 struct GpuRoamDrawElementsIndirectCommand
@@ -525,10 +538,10 @@ std::string BuildGpuStatusMessage(bool usesIndirectDraw)
 {
     if (usesIndirectDraw)
     {
-        return "GPU ROAM-like: CPU DOD topology, GPU compaction/error/candidate/mesh emit and indirect draw";
+        return "GPU ROAM-like: CPU DOD baseline, GPU split-only topology, mesh emit and indirect draw";
     }
 
-    return "GPU ROAM-like: CPU DOD topology, GPU compaction/error/candidate/mesh emit and GPU buffer draw";
+    return "GPU ROAM-like: CPU DOD baseline, GPU split-only topology, mesh emit and GPU buffer draw";
 }
 
 std::string ReadShaderLog(GLuint shaderId)
@@ -764,6 +777,40 @@ bool UploadBuffer(
     return true;
 }
 
+bool UploadBufferWithCapacity(
+    GLenum target,
+    std::uint32_t& bufferId,
+    const void* data,
+    std::size_t dataByteCount,
+    std::size_t capacityByteCount,
+    std::string* errorMessage)
+{
+    if (bufferId == 0U)
+    {
+        GLuint nextBufferId = 0U;
+        glGenBuffers(1, &nextBufferId);
+        bufferId = nextBufferId;
+    }
+
+    if (bufferId == 0U || dataByteCount > capacityByteCount)
+    {
+        if (errorMessage != nullptr)
+        {
+            *errorMessage = "GPU ROAM-like buffer allocation failed";
+        }
+        return false;
+    }
+
+    glBindBuffer(target, bufferId);
+    glBufferData(target, static_cast<GLsizeiptr>(capacityByteCount), nullptr, GL_DYNAMIC_DRAW);
+    if (data != nullptr && dataByteCount > 0U)
+    {
+        glBufferSubData(target, 0, static_cast<GLsizeiptr>(dataByteCount), data);
+    }
+    glBindBuffer(target, 0);
+    return true;
+}
+
 bool UploadHeightMapTexture(
     const Terrain::HeightMap& heightMap,
     std::uint32_t& textureId,
@@ -883,13 +930,15 @@ bool GpuRoamTerrainLodAlgorithm::BuildRenderData(
         ToDataOrientedSettings(input.Settings));
 
     const GpuRoamBufferSnapshot snapshot = BuildGpuRoamBufferSnapshot(_cpuTopologyBuilder.State());
+    const std::size_t gpuNodeCapacity = snapshot.Nodes.size() + snapshot.ActiveLeafIndices.size() * 2U;
     std::size_t uploadBytes = 0U;
     const auto uploadStart = Clock::now();
-    if (!UploadBuffer(
+    if (!UploadBufferWithCapacity(
             GL_SHADER_STORAGE_BUFFER,
             _nodeBufferId,
             snapshot.Nodes.data(),
             snapshot.NodeBufferBytes(),
+            gpuNodeCapacity * sizeof(GpuRoamNodeRecord),
             errorMessage))
     {
         return false;
@@ -900,7 +949,7 @@ bool GpuRoamTerrainLodAlgorithm::BuildRenderData(
             GL_SHADER_STORAGE_BUFFER,
             _activeLeafBufferId,
             nullptr,
-            snapshot.Nodes.size() * sizeof(std::uint32_t),
+            gpuNodeCapacity * sizeof(std::uint32_t),
             errorMessage))
     {
         return false;
@@ -914,7 +963,19 @@ bool GpuRoamTerrainLodAlgorithm::BuildRenderData(
 
     float gpuComputeMilliseconds = 0.0F;
     std::size_t readbackBytes = 0U;
-    if (!RunGpuComputePipeline(snapshot, input, uploadBytes, gpuComputeMilliseconds, readbackBytes, errorMessage))
+    std::size_t gpuActiveLeafCount = snapshot.ActiveLeafIndices.size();
+    std::size_t gpuNodeCount = snapshot.Nodes.size();
+    std::size_t gpuSplitOnlyCommitCount = 0U;
+    if (!RunGpuComputePipeline(
+            snapshot,
+            input,
+            uploadBytes,
+            gpuComputeMilliseconds,
+            readbackBytes,
+            gpuActiveLeafCount,
+            gpuNodeCount,
+            gpuSplitOnlyCommitCount,
+            errorMessage))
     {
         return false;
     }
@@ -927,6 +988,12 @@ bool GpuRoamTerrainLodAlgorithm::BuildRenderData(
     _stats.CpuUploadMilliseconds =
         std::chrono::duration<float, std::milli>(uploadEnd - uploadStart).count();
     _stats.CpuUtilizationPercent = ComputeCpuUtilizationPercent(cpuSampleStart, cpuSampleEnd);
+    if (gpuSplitOnlyCommitCount > 0U)
+    {
+        _stats.ActiveTriangleCount = gpuActiveLeafCount;
+        _stats.ActiveNodeCount = std::max(_stats.ActiveNodeCount, gpuNodeCount);
+        _stats.SplitCount += gpuSplitOnlyCommitCount;
+    }
 
     const Platform::OpenGlGpuCapabilities gpuCapabilities = Platform::QueryOpenGlGpuCapabilities();
     const bool usesIndirectDraw = gpuCapabilities.SupportsIndirectDraw && _indirectDrawBufferId != 0U;
@@ -938,9 +1005,9 @@ bool GpuRoamTerrainLodAlgorithm::BuildRenderData(
     outPacket.GpuIndexBufferId = _gpuIndexBufferId;
     outPacket.ActiveLeafBufferId = _activeLeafBufferId;
     outPacket.IndirectDrawBufferId = usesIndirectDraw ? _indirectDrawBufferId : 0U;
-    outPacket.ActiveLeafCount = snapshot.ActiveLeafIndices.size();
+    outPacket.ActiveLeafCount = gpuActiveLeafCount;
     outPacket.ActiveTriangleCount = _stats.ActiveTriangleCount;
-    outPacket.IndexCount = snapshot.ActiveLeafIndices.size() * 3U;
+    outPacket.IndexCount = gpuActiveLeafCount * 3U;
     return outPacket.ActiveTriangleCount > 0U &&
            outPacket.IndexCount > 0U &&
            outPacket.GpuVertexBufferId != 0U &&
@@ -954,6 +1021,9 @@ bool GpuRoamTerrainLodAlgorithm::RunGpuComputePipeline(
     std::size_t& uploadBytes,
     float& gpuComputeMilliseconds,
     std::size_t& readbackBytes,
+    std::size_t& gpuActiveLeafCount,
+    std::size_t& gpuNodeCount,
+    std::size_t& gpuSplitOnlyCommitCount,
     std::string* errorMessage)
 {
     if (!EnsureComputeProgram(
@@ -982,12 +1052,14 @@ bool GpuRoamTerrainLodAlgorithm::RunGpuComputePipeline(
 
     const std::size_t nodeCount = snapshot.Nodes.size();
     const std::size_t activeLeafCount = snapshot.ActiveLeafIndices.size();
+    const std::size_t nodeCapacity = nodeCount + activeLeafCount * 2U;
+    const std::size_t activeLeafCapacity = std::max<std::size_t>(activeLeafCount * 2U, activeLeafCount);
     const std::size_t screenErrorBytes = activeLeafCount * sizeof(float);
-    const std::size_t candidateBufferBytes = std::max<std::size_t>(nodeCount, 1U) * sizeof(std::uint32_t);
+    const std::size_t candidateBufferBytes = std::max<std::size_t>(nodeCapacity, 1U) * sizeof(std::uint32_t);
     const std::size_t vertexBufferBytes =
-        activeLeafCount * 3U * sizeof(Terrain::TerrainMeshVertex);
+        activeLeafCapacity * 3U * sizeof(Terrain::TerrainMeshVertex);
     const std::size_t indexBufferBytes =
-        activeLeafCount * 3U * sizeof(std::uint32_t);
+        activeLeafCapacity * 3U * sizeof(std::uint32_t);
     const GpuRoamDrawElementsIndirectCommand emptyIndirectCommand{};
 
     if (!UploadBuffer(GL_SHADER_STORAGE_BUFFER, _screenErrorBufferId, nullptr, screenErrorBytes, errorMessage) ||
@@ -1005,7 +1077,8 @@ bool GpuRoamTerrainLodAlgorithm::RunGpuComputePipeline(
         return false;
     }
 
-    const GpuRoamCounters zeroCounters{};
+    GpuRoamCounters zeroCounters{};
+    zeroCounters.AllocatedNodeCount = static_cast<std::uint32_t>(nodeCount);
     if (!UploadBuffer(GL_SHADER_STORAGE_BUFFER, _counterBufferId, &zeroCounters, sizeof(zeroCounters), errorMessage))
     {
         return false;
@@ -1063,15 +1136,43 @@ bool GpuRoamTerrainLodAlgorithm::RunGpuComputePipeline(
     glDispatchCompute(WorkGroupCount(std::max(nodeCount, activeLeafCount)), 1U, 1U);
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 
+    GpuRoamSplitOnlyTopologyPassInput splitOnlyInput{};
+    splitOnlyInput.NodeBufferId = _nodeBufferId;
+    splitOnlyInput.SplitCandidateBufferId = _splitCandidateBufferId;
+    splitOnlyInput.CounterBufferId = _counterBufferId;
+    splitOnlyInput.CandidateDispatchCount = activeLeafCount;
+    splitOnlyInput.NodeCapacity = nodeCapacity;
+    splitOnlyInput.MaxDepth = input.Settings.MaxDepth;
+    splitOnlyInput.BuildSequence = snapshot.BuildSequence;
+    if (!RunGpuRoamSplitOnlyTopologyPass(_splitOnlyTopologyProgramId, splitOnlyInput, errorMessage))
+    {
+        return false;
+    }
+
+    const std::uint32_t zeroActiveLeafCount = 0U;
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, _counterBufferId);
+    glBufferSubData(
+        GL_SHADER_STORAGE_BUFFER,
+        offsetof(GpuRoamCounters, ActiveLeafCount),
+        static_cast<GLsizeiptr>(sizeof(zeroActiveLeafCount)),
+        &zeroActiveLeafCount);
+    uploadBytes += sizeof(zeroActiveLeafCount);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+    glUseProgram(_activeLeafCompactionProgramId);
+    SetProgramUInt(_activeLeafCompactionProgramId, "uNodeCount", static_cast<std::uint32_t>(nodeCapacity));
+    glDispatchCompute(WorkGroupCount(nodeCapacity), 1U, 1U);
+    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+
     glUseProgram(_meshEmitProgramId);
     SetProgramInt(_meshEmitProgramId, "uHeightMap", 0);
-    SetProgramUInt(_meshEmitProgramId, "uActiveLeafCount", static_cast<std::uint32_t>(activeLeafCount));
+    SetProgramUInt(_meshEmitProgramId, "uActiveLeafLimit", static_cast<std::uint32_t>(activeLeafCapacity));
     SetProgramUInt(_meshEmitProgramId, "uMaxDepth", static_cast<std::uint32_t>(std::max(input.Settings.MaxDepth, 0)));
     SetProgramUInt(_meshEmitProgramId, "uBuildSequenceLow", Low32(snapshot.BuildSequence));
     SetProgramUInt(_meshEmitProgramId, "uBuildSequenceHigh", High32(snapshot.BuildSequence));
     SetProgramFloat(_meshEmitProgramId, "uTerrainSize", input.Settings.TerrainSize);
     SetProgramFloat(_meshEmitProgramId, "uHeightScale", input.Settings.HeightScale);
-    glDispatchCompute(WorkGroupCount(activeLeafCount), 1U, 1U);
+    glDispatchCompute(WorkGroupCount(activeLeafCapacity), 1U, 1U);
     glMemoryBarrier(
         GL_SHADER_STORAGE_BARRIER_BIT |
         GL_VERTEX_ATTRIB_ARRAY_BARRIER_BIT |
@@ -1115,13 +1216,19 @@ bool GpuRoamTerrainLodAlgorithm::RunGpuComputePipeline(
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
     glBindTexture(GL_TEXTURE_2D, 0);
 
-    if (counters.ActiveLeafCount != activeLeafCount)
+    gpuActiveLeafCount = counters.ActiveLeafCount;
+    gpuNodeCount = std::min<std::size_t>(counters.AllocatedNodeCount, nodeCapacity);
+    gpuSplitOnlyCommitCount = counters.SplitOnlyCommitCount;
+
+    if (counters.ActiveLeafCount < activeLeafCount ||
+        counters.ActiveLeafCount > activeLeafCapacity)
     {
         if (errorMessage != nullptr)
         {
             std::ostringstream stream;
-            stream << "GPU ROAM-like active leaf compaction mismatch: gpu="
-                   << counters.ActiveLeafCount << " cpu=" << activeLeafCount;
+            stream << "GPU ROAM-like active leaf compaction mismatch after split-only topology: gpu="
+                   << counters.ActiveLeafCount << " expected range=[" << activeLeafCount
+                   << ", " << activeLeafCapacity << "]";
             *errorMessage = stream.str();
         }
         return false;
@@ -1199,11 +1306,12 @@ void GpuRoamTerrainLodAlgorithm::DestroyGpuResources()
         }
     }
 
-    const std::array<std::uint32_t*, 4U> programIds{
+    const std::array<std::uint32_t*, 5U> programIds{
         &_activeLeafCompactionProgramId,
         &_errorEvaluationProgramId,
         &_candidateMarkingProgramId,
         &_meshEmitProgramId,
+        &_splitOnlyTopologyProgramId,
     };
     if (glad_glDeleteProgram != nullptr)
     {
