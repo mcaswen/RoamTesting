@@ -36,6 +36,7 @@ struct GpuRoamBufferSnapshot
 {
     std::vector<GpuRoamNodeRecord> Nodes;
     std::vector<std::uint32_t> ActiveLeafIndices;
+    std::uint64_t BuildSequence{0};
     int MaxDepth{0};
     int MaxDepthReached{0};
 

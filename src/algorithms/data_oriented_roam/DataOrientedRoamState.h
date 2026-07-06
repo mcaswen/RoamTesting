@@ -249,7 +249,6 @@ void CollectActiveSplitPaths(DataOrientedRoamState& state);
 // AccumulateLeafStats 聚合当前帧 active leaf 的 debug 分类
 void AccumulateLeafStats(
     DataOrientedRoamState& state,
-    const Terrain::TerrainMeshData& meshData,
     const std::vector<DataOrientedRoamNodeIndex>& leafNodes);
 
 // RefineWithSplitQueue 是按 screen error 排序的 split pass

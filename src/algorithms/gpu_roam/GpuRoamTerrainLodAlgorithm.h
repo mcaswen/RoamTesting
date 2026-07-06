@@ -11,7 +11,7 @@ namespace ParallelRoam::Algorithms::GpuRoam
 struct GpuRoamBufferSnapshot;
 
 /// <summary>
-/// GPU ROAM-like 的阶段 4A 适配器，先稳定统一接口和能力门禁
+/// GPU ROAM-like 适配器，负责能力门禁、GPU buffer 输出和统一统计
 /// </summary>
 class GpuRoamTerrainLodAlgorithm final : public ITerrainLodAlgorithm
 {
@@ -31,7 +31,7 @@ public:
 
 private:
     void DestroyGpuResources();
-    [[nodiscard]] bool RunGpuShadowPasses(
+    [[nodiscard]] bool RunGpuComputePipeline(
         const GpuRoamBufferSnapshot& snapshot,
         const TerrainLodBuildInput& input,
         std::size_t& uploadBytes,
@@ -48,9 +48,13 @@ private:
     std::uint32_t _counterBufferId{0};
     std::uint32_t _splitCandidateBufferId{0};
     std::uint32_t _mergeCandidateBufferId{0};
+    std::uint32_t _gpuVertexBufferId{0};
+    std::uint32_t _gpuIndexBufferId{0};
+    std::uint32_t _indirectDrawBufferId{0};
     std::uint32_t _activeLeafCompactionProgramId{0};
     std::uint32_t _errorEvaluationProgramId{0};
     std::uint32_t _candidateMarkingProgramId{0};
+    std::uint32_t _meshEmitProgramId{0};
     std::uint32_t _timerQueryId{0};
 };
 

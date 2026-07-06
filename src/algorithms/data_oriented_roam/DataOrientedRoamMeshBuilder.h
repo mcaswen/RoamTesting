@@ -128,10 +128,25 @@ public:
         const glm::vec3& cameraPosition,
         const DataOrientedRoamSettings& settings);
 
+    void UpdateTopology(
+        const Terrain::HeightMap& heightMap,
+        float terrainSize,
+        float heightScale,
+        const glm::vec3& cameraPosition,
+        const DataOrientedRoamSettings& settings);
+
     [[nodiscard]] const DataOrientedRoamStats& Stats() const;
     [[nodiscard]] const DataOrientedRoamState& State() const;
 
 private:
+    [[nodiscard]] Terrain::TerrainMeshData BuildInternal(
+        const Terrain::HeightMap& heightMap,
+        float terrainSize,
+        float heightScale,
+        const glm::vec3& cameraPosition,
+        const DataOrientedRoamSettings& settings,
+        bool emitCpuMesh);
+
     std::unique_ptr<DataOrientedRoamState> _state;
     std::unique_ptr<DataOrientedRoamThreadPool> _threadPool;
 };

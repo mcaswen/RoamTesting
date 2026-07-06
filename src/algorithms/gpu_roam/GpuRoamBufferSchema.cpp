@@ -32,6 +32,7 @@ GpuRoamBufferSnapshot BuildGpuRoamBufferSnapshot(
     const DataOrientedRoam::DataOrientedRoamState& state)
 {
     GpuRoamBufferSnapshot snapshot{};
+    snapshot.BuildSequence = state.BuildSequence;
     snapshot.MaxDepth = state.Settings.MaxDepth;
     snapshot.MaxDepthReached = state.Stats.MaxDepthReached;
 

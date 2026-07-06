@@ -275,6 +275,13 @@ void TerrainRenderer::ResetTerrainLodAlgorithm()
     _terrainLodAlgorithm.reset();
     _terrainLodStats = {};
     _terrainLodStatusMessage.clear();
+    _gpuVertexBufferId = 0;
+    _gpuIndexBufferId = 0;
+    _gpuIndirectDrawBufferId = 0;
+    _drawVertexCount = 0U;
+    _drawIndexCount = 0U;
+    _drawTriangleCount = 0U;
+    _renderMode = Algorithms::TerrainLodRenderMode::CpuMesh;
     _hasRoamBuildCameraPosition = false;
     _meshDirty = true;
 }
@@ -312,13 +319,20 @@ void TerrainRenderer::Shutdown()
         _vertexArrayId = 0;
     }
 
+    _gpuVertexBufferId = 0;
+    _gpuIndexBufferId = 0;
+    _gpuIndirectDrawBufferId = 0;
+    _drawVertexCount = 0U;
+    _drawIndexCount = 0U;
+    _drawTriangleCount = 0U;
+    _renderMode = Algorithms::TerrainLodRenderMode::CpuMesh;
     _shader.Destroy();
     _initialized = false;
 }
 
 void TerrainRenderer::Render(const RenderContext& context)
 {
-    if (!_initialized || _meshData.Indices.empty())
+    if (!_initialized || !HasDrawableTerrain())
     {
         return;
     }
@@ -355,11 +369,20 @@ void TerrainRenderer::Render(const RenderContext& context)
         glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
     }
 
-    glDrawElements(
-        GL_TRIANGLES,
-        static_cast<GLsizei>(_meshData.Indices.size()),
-        GL_UNSIGNED_INT,
-        nullptr);
+    if (_renderMode == Algorithms::TerrainLodRenderMode::GpuIndirect)
+    {
+        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, _gpuIndirectDrawBufferId);
+        glDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT, nullptr);
+        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
+    }
+    else
+    {
+        glDrawElements(
+            GL_TRIANGLES,
+            static_cast<GLsizei>(_drawIndexCount),
+            GL_UNSIGNED_INT,
+            nullptr);
+    }
 
     if (_settings.Wireframe)
     {
@@ -380,9 +403,9 @@ TerrainRenderStats TerrainRenderer::Stats() const
     stats.HeightMapPath = _heightMapPath;
     stats.HeightMapWidth = _heightMap.Width();
     stats.HeightMapHeight = _heightMap.Height();
-    stats.VertexCount = _meshData.Vertices.size();
-    stats.TriangleCount = _meshData.Indices.size() / 3U;
-    stats.DrawCallCount = _initialized ? 1 : 0;
+    stats.VertexCount = _drawVertexCount;
+    stats.TriangleCount = _drawTriangleCount;
+    stats.DrawCallCount = _initialized && HasDrawableTerrain() ? 1 : 0;
     stats.TerrainSize = _settings.TerrainSize;
     stats.HeightScale = _settings.HeightScale;
     stats.UseTerrainLod = _settings.UseTerrainLod;
@@ -517,7 +540,6 @@ bool TerrainRenderer::RebuildTerrainLod(const glm::vec3& cameraPosition, std::st
         return false;
     }
 
-    _meshData = std::move(renderPacket.CpuMesh);
     _terrainLodStats = _terrainLodAlgorithm->Stats();
     _terrainLodStatusMessage = renderPacket.StatusMessage;
     // camera rebuild 位置只在算法成功后更新
@@ -525,25 +547,43 @@ bool TerrainRenderer::RebuildTerrainLod(const glm::vec3& cameraPosition, std::st
     _lastRoamBuildCameraPosition = cameraPosition;
     _hasRoamBuildCameraPosition = true;
 
-    if (_meshData.Vertices.empty() || _meshData.Indices.empty())
+    if (renderPacket.Mode == Algorithms::TerrainLodRenderMode::CpuMesh)
     {
-        // 算法接口成功但没有 CPU mesh 仍然不能上传
-        // 当前 renderer 还没有 GPU-only packet 分支
-        if (errorMessage != nullptr)
+        _meshData = std::move(renderPacket.CpuMesh);
+        if (_meshData.Vertices.empty() || _meshData.Indices.empty())
         {
-            *errorMessage = "Terrain LOD mesh build failed";
+            // CPU mesh 路径必须提供完整顶点和索引
+            if (errorMessage != nullptr)
+            {
+                *errorMessage = "Terrain LOD mesh build failed";
+            }
+            _terrainLodStatusMessage = "Terrain LOD mesh build failed";
+            return false;
         }
-        _terrainLodStatusMessage = "Terrain LOD mesh build failed";
+
+        if (!UploadMesh(errorMessage))
+        {
+            _meshDirty = true;
+            return false;
+        }
+
+        _meshDirty = false;
+        return true;
+    }
+
+    _meshData = {};
+    if (!BindGpuTerrainBuffers(renderPacket, errorMessage))
+    {
+        _meshDirty = true;
         return false;
     }
 
     _meshDirty = false;
-    return UploadMesh(errorMessage);
+    return true;
 }
 
 bool TerrainRenderer::UploadMesh(std::string* errorMessage)
 {
-    // buffer 对象只创建一次，后续 mesh 变化只更新数据内容
     if (_vertexArrayId == 0)
     {
         glGenVertexArrays(1, &_vertexArrayId);
@@ -585,6 +625,39 @@ bool TerrainRenderer::UploadMesh(std::string* errorMessage)
         static_cast<GLsizeiptr>(_meshData.Indices.size() * sizeof(std::uint32_t)),
         _meshData.Indices.data(),
         bufferUsage);
+
+    _renderMode = Algorithms::TerrainLodRenderMode::CpuMesh;
+    _gpuVertexBufferId = 0;
+    _gpuIndexBufferId = 0;
+    _gpuIndirectDrawBufferId = 0;
+    _drawVertexCount = _meshData.Vertices.size();
+    _drawIndexCount = _meshData.Indices.size();
+    _drawTriangleCount = _meshData.Indices.size() / 3U;
+    return ConfigureTerrainVertexArray(_vertexBufferId, _indexBufferId, errorMessage);
+}
+
+bool TerrainRenderer::ConfigureTerrainVertexArray(
+    unsigned int vertexBufferId,
+    unsigned int indexBufferId,
+    std::string* errorMessage)
+{
+    if (_vertexArrayId == 0)
+    {
+        glGenVertexArrays(1, &_vertexArrayId);
+    }
+
+    if (_vertexArrayId == 0 || vertexBufferId == 0 || indexBufferId == 0)
+    {
+        if (errorMessage != nullptr)
+        {
+            *errorMessage = "OpenGL vertex array binding failed";
+        }
+        return false;
+    }
+
+    glBindVertexArray(_vertexArrayId);
+    glBindBuffer(GL_ARRAY_BUFFER, vertexBufferId);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, indexBufferId);
 
     glEnableVertexAttribArray(0);
     // attribute layout 必须和 TerrainMeshVertex 以及 shader location 保持一致
@@ -647,6 +720,69 @@ bool TerrainRenderer::UploadMesh(std::string* errorMessage)
     // GL_ELEMENT_ARRAY_BUFFER 绑定记录在 VAO 中
     // 因此这里只解绑 ARRAY_BUFFER
     return true;
+}
+
+bool TerrainRenderer::BindGpuTerrainBuffers(
+    const Algorithms::TerrainLodRenderPacket& renderPacket,
+    std::string* errorMessage)
+{
+    if ((renderPacket.Mode != Algorithms::TerrainLodRenderMode::GpuBuffers &&
+         renderPacket.Mode != Algorithms::TerrainLodRenderMode::GpuIndirect) ||
+        renderPacket.GpuVertexBufferId == 0U ||
+        renderPacket.GpuIndexBufferId == 0U ||
+        renderPacket.IndexCount == 0U ||
+        renderPacket.ActiveTriangleCount == 0U)
+    {
+        if (errorMessage != nullptr)
+        {
+            *errorMessage = "Terrain LOD GPU buffer packet is incomplete";
+        }
+        _terrainLodStatusMessage = "Terrain LOD GPU buffer packet is incomplete";
+        return false;
+    }
+
+    if (renderPacket.Mode == Algorithms::TerrainLodRenderMode::GpuIndirect &&
+        renderPacket.IndirectDrawBufferId == 0U)
+    {
+        if (errorMessage != nullptr)
+        {
+            *errorMessage = "Terrain LOD indirect draw packet is incomplete";
+        }
+        _terrainLodStatusMessage = "Terrain LOD indirect draw packet is incomplete";
+        return false;
+    }
+
+    _renderMode = renderPacket.Mode;
+    _gpuVertexBufferId = renderPacket.GpuVertexBufferId;
+    _gpuIndexBufferId = renderPacket.GpuIndexBufferId;
+    _gpuIndirectDrawBufferId = renderPacket.IndirectDrawBufferId;
+    _drawVertexCount = renderPacket.ActiveTriangleCount * 3U;
+    _drawIndexCount = renderPacket.IndexCount;
+    _drawTriangleCount = renderPacket.ActiveTriangleCount;
+    return ConfigureTerrainVertexArray(_gpuVertexBufferId, _gpuIndexBufferId, errorMessage);
+}
+
+bool TerrainRenderer::HasDrawableTerrain() const
+{
+    if (_renderMode == Algorithms::TerrainLodRenderMode::CpuMesh)
+    {
+        return _drawIndexCount > 0U && _vertexBufferId != 0 && _indexBufferId != 0;
+    }
+
+    if (_renderMode == Algorithms::TerrainLodRenderMode::GpuBuffers)
+    {
+        return _drawIndexCount > 0U && _gpuVertexBufferId != 0 && _gpuIndexBufferId != 0;
+    }
+
+    if (_renderMode == Algorithms::TerrainLodRenderMode::GpuIndirect)
+    {
+        return _drawIndexCount > 0U &&
+               _gpuVertexBufferId != 0 &&
+               _gpuIndexBufferId != 0 &&
+               _gpuIndirectDrawBufferId != 0;
+    }
+
+    return false;
 }
 
 bool TerrainRenderer::LoadTexture(const std::filesystem::path& texturePath, std::string* errorMessage)

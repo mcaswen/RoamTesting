@@ -399,7 +399,7 @@ Level E：GPU split-only 或 split/merge topology update
 - DOD builder 已提供只读 `State()` 快照入口，GPU 模块读取快照但不修改 DOD 拓扑；
 - GPU ROAM-like 在 OpenGL 4.3 可用时会先运行 DOD CPU topology，随后上传 node SSBO、active leaf SSBO 和 R32F height map texture；
 - `TerrainLodRenderPacket` 已补充 GPU node buffer、height map texture、active leaf count 和 status message 字段；
-- 当前 4B 仍使用 CPU mesh fallback，UI 会显示 “CPU DOD topology + GPU staging”，不把它静默标成完整 GPU 渲染；
+- 4B 阶段最初使用 CPU mesh fallback 验证 GPU staging，后续 4F 已将 GPU 路径推进到 GPU buffer / indirect draw 输出；
 - 本机 macOS OpenGL 4.1 环境无法执行 SSBO 上传路径，只验证了 build、smoke 和无窗口 benchmark 的 GPU skip 语义。
 
 4C：GPU Error Evaluation
@@ -483,6 +483,15 @@ Level E：GPU split-only 或 split/merge topology update
 - CPU mesh build 和 CPU-GPU mesh upload 在 GPU 路径中接近 0 或只剩 fallback/debug 成本；
 - renderer 对 `CpuMesh` 为空但 GPU buffer 有效的 packet 不再报错。
 
+当前实现记录：
+
+- 已新增 DOD topology-only 更新入口，GPU ROAM-like 复用 DOD 拓扑提交但不再生成 CPU mesh；
+- 已新增 GPU mesh emit compute shader，根据 GPU active leaf buffer 写出 terrain vertex buffer、index buffer 和 draw command；
+- GPU mesh emit 的顶点布局按 `TerrainMeshVertex` 的 13 个 float 槽位写入，避免 std430 `vec3` padding 与 C++ layout 不一致；
+- `TerrainRenderer` 已支持 `TerrainLodRenderMode::GpuBuffers`，可在 `CpuMesh` 为空时绑定算法输出的 GPU vertex / index buffer 绘制；
+- benchmark 校验已识别 GPU-only packet，不再要求 GPU 路径提供 CPU mesh；
+- 当前 GPU topology commit 仍在 CPU DOD 路径，GPU 负责 compaction、error evaluation、candidate marking 和 mesh emit。
+
 4G：GPU Indirect Draw
 
 - 在 GPU 端生成 indirect draw command；
@@ -496,6 +505,13 @@ Level E：GPU split-only 或 split/merge topology update
 - CPU readback 只保留统计所需最小数据；
 - `RenderMilliseconds` 与 `GpuComputeMilliseconds` 分开记录；
 - GPU unavailable 或 indirect draw unsupported 时可回退 `GpuBuffers`。
+
+当前实现记录：
+
+- GPU mesh emit pass 会在 GPU 端写出 `DrawElementsIndirect` command；
+- `TerrainRenderer` 已支持 `TerrainLodRenderMode::GpuIndirect`，GPU 支持 indirect draw 时走 `glDrawElementsIndirect`，否则回退 `GpuBuffers`；
+- CPU 不回读完整 vertex / index buffer，packet 的 index count 仅由 active leaf count 推导用于统计和防御检查；
+- 本机 macOS OpenGL 4.1 仍无法执行 compute/SSBO 路径，已通过 build、smoke test 和无窗口 benchmark 的 GPU skip 语义验证。
 
 4H：GPU Split-Only Topology Update（冲刺）
 

@@ -54,6 +54,27 @@ Terrain::TerrainMeshData DataOrientedRoamMeshBuilder::Build(
     const glm::vec3& cameraPosition,
     const DataOrientedRoamSettings& settings)
 {
+    return BuildInternal(heightMap, terrainSize, heightScale, cameraPosition, settings, true);
+}
+
+void DataOrientedRoamMeshBuilder::UpdateTopology(
+    const Terrain::HeightMap& heightMap,
+    float terrainSize,
+    float heightScale,
+    const glm::vec3& cameraPosition,
+    const DataOrientedRoamSettings& settings)
+{
+    (void)BuildInternal(heightMap, terrainSize, heightScale, cameraPosition, settings, false);
+}
+
+Terrain::TerrainMeshData DataOrientedRoamMeshBuilder::BuildInternal(
+    const Terrain::HeightMap& heightMap,
+    float terrainSize,
+    float heightScale,
+    const glm::vec3& cameraPosition,
+    const DataOrientedRoamSettings& settings,
+    bool emitCpuMesh)
+{
     DataOrientedRoamState& state = *_state;
     const auto updateStart = std::chrono::steady_clock::now();
     ++state.BuildSequence;
@@ -111,15 +132,18 @@ Terrain::TerrainMeshData DataOrientedRoamMeshBuilder::Build(
     const auto emitStart = std::chrono::steady_clock::now();
     // 最终 leaf 快照在拓扑稳定后收集，emit 和统计复用同一份视图
     CollectLeafNodes(state, state.FinalActiveLeaves);
-    // emit 计时包含最终快照收集，保持和旧路径的 mesh build 口径一致
-    EmitLeafTriangles(state, meshData, state.FinalActiveLeaves);
+    if (emitCpuMesh)
+    {
+        // emit 计时包含最终快照收集，保持和旧路径的 mesh build 口径一致
+        EmitLeafTriangles(state, meshData, state.FinalActiveLeaves);
+    }
     const auto emitEnd = std::chrono::steady_clock::now();
 
-    // stats 聚合放在 emit 后，确保 active triangle 数来自实际输出
-    AccumulateLeafStats(state, meshData, state.FinalActiveLeaves);
+    // GPU 路径不生成 CPU mesh，active triangle 数必须来自 leaf 快照
+    AccumulateLeafStats(state, state.FinalActiveLeaves);
     state.Stats.MergeMilliseconds = ElapsedMilliseconds(mergeStart, mergeEnd);
     state.Stats.SplitMilliseconds = ElapsedMilliseconds(splitStart, splitEnd);
-    state.Stats.EmitMilliseconds = ElapsedMilliseconds(emitStart, emitEnd);
+    state.Stats.EmitMilliseconds = emitCpuMesh ? ElapsedMilliseconds(emitStart, emitEnd) : 0.0F;
     state.Stats.UpdateMilliseconds = ElapsedMilliseconds(updateStart, std::chrono::steady_clock::now());
 
     CollectActiveSplitPaths(state);

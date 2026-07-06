@@ -196,7 +196,15 @@ private:
     // Terrain LOD 路径会随相机位置动态更新
     bool RebuildTerrainLod(const glm::vec3& cameraPosition, std::string* errorMessage);
     bool UploadMesh(std::string* errorMessage);
+    bool ConfigureTerrainVertexArray(
+        unsigned int vertexBufferId,
+        unsigned int indexBufferId,
+        std::string* errorMessage);
+    bool BindGpuTerrainBuffers(
+        const Algorithms::TerrainLodRenderPacket& renderPacket,
+        std::string* errorMessage);
     bool LoadTexture(const std::filesystem::path& texturePath, std::string* errorMessage);
+    [[nodiscard]] bool HasDrawableTerrain() const;
 
     Shader _shader;
     Terrain::HeightMap _heightMap;
@@ -213,6 +221,13 @@ private:
     unsigned int _vertexBufferId{0};
     unsigned int _indexBufferId{0};
     unsigned int _textureId{0};
+    unsigned int _gpuVertexBufferId{0};
+    unsigned int _gpuIndexBufferId{0};
+    unsigned int _gpuIndirectDrawBufferId{0};
+    Algorithms::TerrainLodRenderMode _renderMode{Algorithms::TerrainLodRenderMode::CpuMesh};
+    std::size_t _drawVertexCount{0};
+    std::size_t _drawIndexCount{0};
+    std::size_t _drawTriangleCount{0};
     bool _initialized{false};
     bool _meshDirty{true};
     bool _hasRoamBuildCameraPosition{false};

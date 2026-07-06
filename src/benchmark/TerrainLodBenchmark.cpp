@@ -261,7 +261,23 @@ bool ValidateFrame(
         (renderPacket.CpuMesh.Vertices.empty() || renderPacket.CpuMesh.Indices.empty()))
     {
         // 当前 Classic 和 DOD 都必须输出 CPU mesh
-        // 后续 GPU 路径可通过 RenderMode 放宽这个条件
+        return false;
+    }
+
+    if (renderPacket.Mode == Algorithms::TerrainLodRenderMode::GpuBuffers &&
+        (renderPacket.GpuVertexBufferId == 0U ||
+         renderPacket.GpuIndexBufferId == 0U ||
+         renderPacket.IndexCount == 0U))
+    {
+        return false;
+    }
+
+    if (renderPacket.Mode == Algorithms::TerrainLodRenderMode::GpuIndirect &&
+        (renderPacket.GpuVertexBufferId == 0U ||
+         renderPacket.GpuIndexBufferId == 0U ||
+         renderPacket.IndirectDrawBufferId == 0U ||
+         renderPacket.IndexCount == 0U))
+    {
         return false;
     }
 
@@ -366,7 +382,9 @@ BenchmarkAlgorithmRun RunAlgorithm(
         frame.CameraPosition = camera.Position;
         frame.HeightMapWidth = heightMap.Width();
         frame.HeightMapHeight = heightMap.Height();
-        frame.VertexCount = renderPacket.CpuMesh.Vertices.size();
+        frame.VertexCount = renderPacket.Mode == Algorithms::TerrainLodRenderMode::CpuMesh ?
+            renderPacket.CpuMesh.Vertices.size() :
+            renderPacket.ActiveTriangleCount * 3U;
         frame.IndexCount = renderPacket.IndexCount;
         frame.TriangleCount = stats.ActiveTriangleCount;
         frame.Stats = stats;

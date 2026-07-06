@@ -449,14 +449,13 @@ void CollectActiveSplitPaths(DataOrientedRoamState& state)
 
 void AccumulateLeafStats(
     DataOrientedRoamState& state,
-    const Terrain::TerrainMeshData& meshData,
     const std::vector<DataOrientedRoamNodeIndex>& leafNodes)
 {
     state.Stats.NodeCount = state.Nodes.size();
     state.Stats.ReservedNodeCapacity = state.Nodes.capacity();
     state.Stats.NodeStorageBytes = state.Nodes.storage_bytes();
     state.Stats.NodeStorageArrayCount = state.Nodes.array_count();
-    state.Stats.ActiveTriangleCount = meshData.Indices.size() / 3U;
+    state.Stats.ActiveTriangleCount = leafNodes.size();
 
     state.Stats.MaxDepthReached = 0;
     // leafNodes 来自最终快照，避免统计环节再递归扫描 active topology
