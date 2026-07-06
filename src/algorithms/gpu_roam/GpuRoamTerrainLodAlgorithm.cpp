@@ -5,10 +5,14 @@
 #include "platform/OpenGlCapabilities.h"
 
 #include <glad/gl.h>
+#include <glm/glm.hpp>
 
+#include <array>
 #include <algorithm>
 #include <chrono>
 #include <cstddef>
+#include <sstream>
+#include <string_view>
 #include <vector>
 
 namespace ParallelRoam::Algorithms::GpuRoam
@@ -16,10 +20,408 @@ namespace ParallelRoam::Algorithms::GpuRoam
 namespace
 {
 using Clock = std::chrono::steady_clock;
+constexpr GLuint InvalidProgramId = 0U;
+constexpr GLuint LocalWorkGroupSize = 128U;
+constexpr std::size_t GpuRoamDebugSampleCount = 8U;
+
+constexpr const char* ActiveLeafCompactionComputeSource = R"(
+#version 430 core
+layout(local_size_x = 128) in;
+
+struct NodeRecord
+{
+    vec4 domainAAndB;
+    vec4 domainCAndErrors;
+    uvec4 topology0;
+    uvec4 topology1;
+    uvec4 pathAndCreatedBuild;
+    uvec4 activatedAndSplitBuild;
+    uvec4 mergeBuildAndDepth;
+};
+
+layout(std430, binding = 0) readonly buffer NodeBuffer
+{
+    NodeRecord nodes[];
+};
+
+layout(std430, binding = 1) writeonly buffer ActiveLeafBuffer
+{
+    uint activeLeafIndices[];
+};
+
+layout(std430, binding = 3) buffer CounterBuffer
+{
+    uint activeLeafCount;
+    uint splitCandidateCount;
+    uint mergeCandidateCount;
+    uint reservedCounter;
+};
+
+uniform uint uNodeCount;
+
+void main()
+{
+    uint nodeIndex = gl_GlobalInvocationID.x;
+    if (nodeIndex >= uNodeCount)
+    {
+        return;
+    }
+
+    const uint activeLeafFlag = 1u << 2u;
+    uint flags = nodes[nodeIndex].topology1.w;
+    if ((flags & activeLeafFlag) == 0u)
+    {
+        return;
+    }
+
+    uint outputIndex = atomicAdd(activeLeafCount, 1u);
+    activeLeafIndices[outputIndex] = nodeIndex;
+}
+)";
+
+constexpr const char* ErrorEvaluationComputeSource = R"(
+#version 430 core
+layout(local_size_x = 128) in;
+
+struct NodeRecord
+{
+    vec4 domainAAndB;
+    vec4 domainCAndErrors;
+    uvec4 topology0;
+    uvec4 topology1;
+    uvec4 pathAndCreatedBuild;
+    uvec4 activatedAndSplitBuild;
+    uvec4 mergeBuildAndDepth;
+};
+
+layout(std430, binding = 0) readonly buffer NodeBuffer
+{
+    NodeRecord nodes[];
+};
+
+layout(std430, binding = 1) readonly buffer ActiveLeafBuffer
+{
+    uint activeLeafIndices[];
+};
+
+layout(std430, binding = 2) writeonly buffer ScreenErrorBuffer
+{
+    float screenErrors[];
+};
+
+layout(binding = 0) uniform sampler2D uHeightMap;
+
+uniform uint uActiveLeafCount;
+uniform float uTerrainSize;
+uniform float uHeightScale;
+uniform float uDistanceScale;
+uniform vec3 uCameraPosition;
+
+float sampleHeight(vec2 uv)
+{
+    return texture(uHeightMap, clamp(uv, vec2(0.0), vec2(1.0))).r;
+}
+
+vec3 domainToWorld(vec2 uv)
+{
+    return vec3(
+        (uv.x - 0.5) * uTerrainSize,
+        sampleHeight(uv) * uHeightScale,
+        (uv.y - 0.5) * uTerrainSize);
+}
+
+float scoreNode(uint nodeIndex)
+{
+    NodeRecord node = nodes[nodeIndex];
+    vec2 aUv = node.domainAAndB.xy;
+    vec2 bUv = node.domainAAndB.zw;
+    vec2 cUv = node.domainCAndErrors.xy;
+
+    vec3 a = domainToWorld(aUv);
+    vec3 b = domainToWorld(bUv);
+    vec3 c = domainToWorld(cUv);
+    vec3 center = (a + b + c) / 3.0;
+    float distanceToCamera = max(length(center - uCameraPosition), 0.05);
+    float worldError = node.domainCAndErrors.z * uHeightScale;
+    float longestEdgeLength = max(max(length(a - b), length(b - c)), length(c - a));
+    float heightErrorScore = worldError * uDistanceScale / distanceToCamera;
+    float edgeLengthScore = longestEdgeLength * 0.20 / distanceToCamera;
+    return max(heightErrorScore, edgeLengthScore);
+}
+
+void main()
+{
+    uint leafSlot = gl_GlobalInvocationID.x;
+    if (leafSlot >= uActiveLeafCount)
+    {
+        return;
+    }
+
+    uint nodeIndex = activeLeafIndices[leafSlot];
+    screenErrors[leafSlot] = scoreNode(nodeIndex);
+}
+)";
+
+constexpr const char* CandidateMarkingComputeSource = R"(
+#version 430 core
+layout(local_size_x = 128) in;
+
+struct NodeRecord
+{
+    vec4 domainAAndB;
+    vec4 domainCAndErrors;
+    uvec4 topology0;
+    uvec4 topology1;
+    uvec4 pathAndCreatedBuild;
+    uvec4 activatedAndSplitBuild;
+    uvec4 mergeBuildAndDepth;
+};
+
+layout(std430, binding = 0) readonly buffer NodeBuffer
+{
+    NodeRecord nodes[];
+};
+
+layout(std430, binding = 1) readonly buffer ActiveLeafBuffer
+{
+    uint activeLeafIndices[];
+};
+
+layout(std430, binding = 2) readonly buffer ScreenErrorBuffer
+{
+    float screenErrors[];
+};
+
+layout(std430, binding = 3) buffer CounterBuffer
+{
+    uint activeLeafCount;
+    uint splitCandidateCount;
+    uint mergeCandidateCount;
+    uint reservedCounter;
+};
+
+layout(std430, binding = 4) writeonly buffer SplitCandidateBuffer
+{
+    uint splitCandidates[];
+};
+
+layout(std430, binding = 5) writeonly buffer MergeCandidateBuffer
+{
+    uint mergeCandidates[];
+};
+
+layout(binding = 0) uniform sampler2D uHeightMap;
+
+uniform uint uNodeCount;
+uniform uint uActiveLeafLimit;
+uniform uint uMaxDepth;
+uniform float uTerrainSize;
+uniform float uHeightScale;
+uniform float uDistanceScale;
+uniform float uSplitThreshold;
+uniform float uMergeThreshold;
+uniform vec3 uCameraPosition;
+
+float sampleHeight(vec2 uv)
+{
+    return texture(uHeightMap, clamp(uv, vec2(0.0), vec2(1.0))).r;
+}
+
+vec3 domainToWorld(vec2 uv)
+{
+    return vec3(
+        (uv.x - 0.5) * uTerrainSize,
+        sampleHeight(uv) * uHeightScale,
+        (uv.y - 0.5) * uTerrainSize);
+}
+
+float scoreNode(uint nodeIndex)
+{
+    NodeRecord node = nodes[nodeIndex];
+    vec2 aUv = node.domainAAndB.xy;
+    vec2 bUv = node.domainAAndB.zw;
+    vec2 cUv = node.domainCAndErrors.xy;
+
+    vec3 a = domainToWorld(aUv);
+    vec3 b = domainToWorld(bUv);
+    vec3 c = domainToWorld(cUv);
+    vec3 center = (a + b + c) / 3.0;
+    float distanceToCamera = max(length(center - uCameraPosition), 0.05);
+    float worldError = node.domainCAndErrors.z * uHeightScale;
+    float longestEdgeLength = max(max(length(a - b), length(b - c)), length(c - a));
+    float heightErrorScore = worldError * uDistanceScale / distanceToCamera;
+    float edgeLengthScore = longestEdgeLength * 0.20 / distanceToCamera;
+    return max(heightErrorScore, edgeLengthScore);
+}
+
+void main()
+{
+    uint index = gl_GlobalInvocationID.x;
+
+    if (index < uActiveLeafLimit)
+    {
+        uint nodeIndex = activeLeafIndices[index];
+        uint depth = nodes[nodeIndex].mergeBuildAndDepth.z;
+        float screenError = screenErrors[index];
+        if (depth < uMaxDepth && screenError >= uSplitThreshold)
+        {
+            uint outputIndex = atomicAdd(splitCandidateCount, 1u);
+            splitCandidates[outputIndex] = nodeIndex;
+        }
+    }
+
+    if (index >= uNodeCount)
+    {
+        return;
+    }
+
+    const uint splitFlag = 1u << 0u;
+    uint flags = nodes[index].topology1.w;
+    if ((flags & splitFlag) == 0u)
+    {
+        return;
+    }
+
+    float mergeScore = scoreNode(index);
+    if (mergeScore <= uMergeThreshold)
+    {
+        uint outputIndex = atomicAdd(mergeCandidateCount, 1u);
+        mergeCandidates[outputIndex] = index;
+    }
+}
+)";
+
+struct GpuRoamCounters
+{
+    std::uint32_t ActiveLeafCount{0};
+    std::uint32_t SplitCandidateCount{0};
+    std::uint32_t MergeCandidateCount{0};
+    std::uint32_t Reserved{0};
+};
 
 std::string BuildStagingStatusMessage()
 {
-    return "GPU ROAM-like 4B staging: CPU DOD topology and CPU mesh fallback are active, GPU node buffers are uploaded, compute/render are not active yet";
+    return "GPU ROAM-like 4C-4E staging: CPU DOD topology and CPU mesh fallback are active, GPU compaction/error/candidate shadow passes are running";
+}
+
+std::string ReadShaderLog(GLuint shaderId)
+{
+    GLint logLength = 0;
+    glGetShaderiv(shaderId, GL_INFO_LOG_LENGTH, &logLength);
+    if (logLength <= 1)
+    {
+        return {};
+    }
+
+    std::string log(static_cast<std::size_t>(logLength), '\0');
+    GLsizei written = 0;
+    glGetShaderInfoLog(shaderId, logLength, &written, log.data());
+    log.resize(static_cast<std::size_t>(std::max(written, 0)));
+    return log;
+}
+
+std::string ReadProgramLog(GLuint programId)
+{
+    GLint logLength = 0;
+    glGetProgramiv(programId, GL_INFO_LOG_LENGTH, &logLength);
+    if (logLength <= 1)
+    {
+        return {};
+    }
+
+    std::string log(static_cast<std::size_t>(logLength), '\0');
+    GLsizei written = 0;
+    glGetProgramInfoLog(programId, logLength, &written, log.data());
+    log.resize(static_cast<std::size_t>(std::max(written, 0)));
+    return log;
+}
+
+bool EnsureComputeProgram(
+    std::uint32_t& programId,
+    const char* source,
+    std::string_view label,
+    std::string* errorMessage)
+{
+    if (programId != InvalidProgramId)
+    {
+        return true;
+    }
+
+    const GLuint shaderId = glCreateShader(GL_COMPUTE_SHADER);
+    const GLchar* shaderSource = source;
+    glShaderSource(shaderId, 1, &shaderSource, nullptr);
+    glCompileShader(shaderId);
+
+    GLint shaderCompiled = GL_FALSE;
+    glGetShaderiv(shaderId, GL_COMPILE_STATUS, &shaderCompiled);
+    if (shaderCompiled != GL_TRUE)
+    {
+        if (errorMessage != nullptr)
+        {
+            *errorMessage = "GPU ROAM-like compute shader compile failed (" +
+                            std::string{label} + "):\n" + ReadShaderLog(shaderId);
+        }
+        glDeleteShader(shaderId);
+        return false;
+    }
+
+    const GLuint nextProgramId = glCreateProgram();
+    glAttachShader(nextProgramId, shaderId);
+    glLinkProgram(nextProgramId);
+    glDeleteShader(shaderId);
+
+    GLint programLinked = GL_FALSE;
+    glGetProgramiv(nextProgramId, GL_LINK_STATUS, &programLinked);
+    if (programLinked != GL_TRUE)
+    {
+        if (errorMessage != nullptr)
+        {
+            *errorMessage = "GPU ROAM-like compute program link failed (" +
+                            std::string{label} + "):\n" + ReadProgramLog(nextProgramId);
+        }
+        glDeleteProgram(nextProgramId);
+        return false;
+    }
+
+    programId = nextProgramId;
+    return true;
+}
+
+GLuint WorkGroupCount(std::size_t itemCount)
+{
+    if (itemCount == 0U)
+    {
+        return 1U;
+    }
+
+    return static_cast<GLuint>((itemCount + LocalWorkGroupSize - 1U) / LocalWorkGroupSize);
+}
+
+void SetProgramUInt(GLuint programId, const char* name, std::uint32_t value)
+{
+    const GLint location = glGetUniformLocation(programId, name);
+    if (location >= 0)
+    {
+        glUniform1ui(location, value);
+    }
+}
+
+void SetProgramFloat(GLuint programId, const char* name, float value)
+{
+    const GLint location = glGetUniformLocation(programId, name);
+    if (location >= 0)
+    {
+        glUniform1f(location, value);
+    }
+}
+
+void SetProgramVec3(GLuint programId, const char* name, const glm::vec3& value)
+{
+    const GLint location = glGetUniformLocation(programId, name);
+    if (location >= 0)
+    {
+        glUniform3f(location, value.x, value.y, value.z);
+    }
 }
 
 float ErrorEvaluationMilliseconds(const DataOrientedRoam::DataOrientedRoamStats& stats)
@@ -262,23 +664,31 @@ bool GpuRoamTerrainLodAlgorithm::BuildRenderData(
     if (!UploadBuffer(
             GL_SHADER_STORAGE_BUFFER,
             _activeLeafBufferId,
-            snapshot.ActiveLeafIndices.data(),
-            snapshot.ActiveLeafBufferBytes(),
+            nullptr,
+            snapshot.Nodes.size() * sizeof(std::uint32_t),
             errorMessage))
     {
         return false;
     }
-    uploadBytes += snapshot.ActiveLeafBufferBytes();
 
     if (!UploadHeightMapTexture(*input.HeightMap, _heightMapTextureId, uploadBytes, errorMessage))
     {
         return false;
     }
     const auto uploadEnd = Clock::now();
+
+    float gpuComputeMilliseconds = 0.0F;
+    std::size_t readbackBytes = 0U;
+    if (!RunGpuShadowPasses(snapshot, input, uploadBytes, gpuComputeMilliseconds, readbackBytes, errorMessage))
+    {
+        return false;
+    }
     const TerrainLodCpuSample cpuSampleEnd = CaptureTerrainLodCpuSample();
 
     _stats = ToTerrainLodStats(_cpuTopologyBuilder.Stats());
     _stats.CpuGpuUploadBytes = uploadBytes;
+    _stats.CpuGpuReadbackBytes = readbackBytes;
+    _stats.GpuComputeMilliseconds = gpuComputeMilliseconds;
     _stats.CpuUploadMilliseconds =
         std::chrono::duration<float, std::milli>(uploadEnd - uploadStart).count();
     _stats.CpuUtilizationPercent = ComputeCpuUtilizationPercent(cpuSampleStart, cpuSampleEnd);
@@ -291,6 +701,148 @@ bool GpuRoamTerrainLodAlgorithm::BuildRenderData(
     outPacket.ActiveTriangleCount = _stats.ActiveTriangleCount;
     outPacket.IndexCount = outPacket.CpuMesh.Indices.size();
     return !outPacket.CpuMesh.Vertices.empty() && !outPacket.CpuMesh.Indices.empty();
+}
+
+bool GpuRoamTerrainLodAlgorithm::RunGpuShadowPasses(
+    const GpuRoamBufferSnapshot& snapshot,
+    const TerrainLodBuildInput& input,
+    std::size_t& uploadBytes,
+    float& gpuComputeMilliseconds,
+    std::size_t& readbackBytes,
+    std::string* errorMessage)
+{
+    if (!EnsureComputeProgram(
+            _activeLeafCompactionProgramId,
+            ActiveLeafCompactionComputeSource,
+            "active leaf compaction",
+            errorMessage) ||
+        !EnsureComputeProgram(
+            _errorEvaluationProgramId,
+            ErrorEvaluationComputeSource,
+            "error evaluation",
+            errorMessage) ||
+        !EnsureComputeProgram(
+            _candidateMarkingProgramId,
+            CandidateMarkingComputeSource,
+            "candidate marking",
+            errorMessage))
+    {
+        return false;
+    }
+
+    const std::size_t nodeCount = snapshot.Nodes.size();
+    const std::size_t activeLeafCount = snapshot.ActiveLeafIndices.size();
+    const std::size_t screenErrorBytes = activeLeafCount * sizeof(float);
+    const std::size_t candidateBufferBytes = std::max<std::size_t>(nodeCount, 1U) * sizeof(std::uint32_t);
+
+    if (!UploadBuffer(GL_SHADER_STORAGE_BUFFER, _screenErrorBufferId, nullptr, screenErrorBytes, errorMessage) ||
+        !UploadBuffer(GL_SHADER_STORAGE_BUFFER, _splitCandidateBufferId, nullptr, candidateBufferBytes, errorMessage) ||
+        !UploadBuffer(GL_SHADER_STORAGE_BUFFER, _mergeCandidateBufferId, nullptr, candidateBufferBytes, errorMessage))
+    {
+        return false;
+    }
+
+    const GpuRoamCounters zeroCounters{};
+    if (!UploadBuffer(GL_SHADER_STORAGE_BUFFER, _counterBufferId, &zeroCounters, sizeof(zeroCounters), errorMessage))
+    {
+        return false;
+    }
+    uploadBytes += sizeof(zeroCounters);
+
+    if (_timerQueryId == 0U)
+    {
+        GLuint queryId = 0U;
+        glGenQueries(1, &queryId);
+        _timerQueryId = queryId;
+    }
+
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, _nodeBufferId);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, _activeLeafBufferId);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, _screenErrorBufferId);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, _counterBufferId);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, _splitCandidateBufferId);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, _mergeCandidateBufferId);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, _heightMapTextureId);
+
+    glBeginQuery(GL_TIME_ELAPSED, _timerQueryId);
+
+    glUseProgram(_activeLeafCompactionProgramId);
+    SetProgramUInt(_activeLeafCompactionProgramId, "uNodeCount", static_cast<std::uint32_t>(nodeCount));
+    glDispatchCompute(WorkGroupCount(nodeCount), 1U, 1U);
+    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+
+    glUseProgram(_errorEvaluationProgramId);
+    SetProgramUInt(_errorEvaluationProgramId, "uActiveLeafCount", static_cast<std::uint32_t>(activeLeafCount));
+    SetProgramFloat(_errorEvaluationProgramId, "uTerrainSize", input.Settings.TerrainSize);
+    SetProgramFloat(_errorEvaluationProgramId, "uHeightScale", input.Settings.HeightScale);
+    SetProgramFloat(_errorEvaluationProgramId, "uDistanceScale", input.Settings.DistanceScale);
+    SetProgramVec3(_errorEvaluationProgramId, "uCameraPosition", input.CameraPosition);
+    glDispatchCompute(WorkGroupCount(activeLeafCount), 1U, 1U);
+    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+
+    glUseProgram(_candidateMarkingProgramId);
+    SetProgramUInt(_candidateMarkingProgramId, "uNodeCount", static_cast<std::uint32_t>(nodeCount));
+    SetProgramUInt(_candidateMarkingProgramId, "uActiveLeafLimit", static_cast<std::uint32_t>(activeLeafCount));
+    SetProgramUInt(_candidateMarkingProgramId, "uMaxDepth", static_cast<std::uint32_t>(std::max(input.Settings.MaxDepth, 0)));
+    SetProgramFloat(_candidateMarkingProgramId, "uTerrainSize", input.Settings.TerrainSize);
+    SetProgramFloat(_candidateMarkingProgramId, "uHeightScale", input.Settings.HeightScale);
+    SetProgramFloat(_candidateMarkingProgramId, "uDistanceScale", input.Settings.DistanceScale);
+    SetProgramFloat(_candidateMarkingProgramId, "uSplitThreshold", input.Settings.SplitThreshold);
+    SetProgramFloat(_candidateMarkingProgramId, "uMergeThreshold", std::min(input.Settings.MergeThreshold, input.Settings.SplitThreshold));
+    SetProgramVec3(_candidateMarkingProgramId, "uCameraPosition", input.CameraPosition);
+    glDispatchCompute(WorkGroupCount(std::max(nodeCount, activeLeafCount)), 1U, 1U);
+    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_BUFFER_UPDATE_BARRIER_BIT);
+
+    glEndQuery(GL_TIME_ELAPSED);
+
+    GLuint64 elapsedNanoseconds = 0U;
+    glGetQueryObjectui64v(_timerQueryId, GL_QUERY_RESULT, &elapsedNanoseconds);
+    gpuComputeMilliseconds = static_cast<float>(static_cast<double>(elapsedNanoseconds) / 1'000'000.0);
+
+    GpuRoamCounters counters{};
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, _counterBufferId);
+    glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, static_cast<GLsizeiptr>(sizeof(counters)), &counters);
+    readbackBytes += sizeof(counters);
+
+    const std::size_t sampleCount = std::min(activeLeafCount, GpuRoamDebugSampleCount);
+    if (sampleCount > 0U)
+    {
+        std::array<std::uint32_t, GpuRoamDebugSampleCount> leafSamples{};
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, _activeLeafBufferId);
+        glGetBufferSubData(
+            GL_SHADER_STORAGE_BUFFER,
+            0,
+            static_cast<GLsizeiptr>(sampleCount * sizeof(std::uint32_t)),
+            leafSamples.data());
+        readbackBytes += sampleCount * sizeof(std::uint32_t);
+
+        std::array<float, GpuRoamDebugSampleCount> errorSamples{};
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, _screenErrorBufferId);
+        glGetBufferSubData(
+            GL_SHADER_STORAGE_BUFFER,
+            0,
+            static_cast<GLsizeiptr>(sampleCount * sizeof(float)),
+            errorSamples.data());
+        readbackBytes += sampleCount * sizeof(float);
+    }
+
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    if (counters.ActiveLeafCount != activeLeafCount)
+    {
+        if (errorMessage != nullptr)
+        {
+            std::ostringstream stream;
+            stream << "GPU ROAM-like active leaf compaction mismatch: gpu="
+                   << counters.ActiveLeafCount << " cpu=" << activeLeafCount;
+            *errorMessage = stream.str();
+        }
+        return false;
+    }
+
+    return true;
 }
 
 const TerrainLodStats& GpuRoamTerrainLodAlgorithm::Stats() const
@@ -338,6 +890,49 @@ void GpuRoamTerrainLodAlgorithm::DestroyGpuResources()
         const GLuint textureId = _heightMapTextureId;
         glDeleteTextures(1, &textureId);
         _heightMapTextureId = 0U;
+    }
+
+    const std::array<std::uint32_t*, 4U> bufferIds{
+        &_screenErrorBufferId,
+        &_counterBufferId,
+        &_splitCandidateBufferId,
+        &_mergeCandidateBufferId,
+    };
+    if (glad_glDeleteBuffers != nullptr)
+    {
+        for (std::uint32_t* bufferId : bufferIds)
+        {
+            if (*bufferId != 0U)
+            {
+                const GLuint glBufferId = *bufferId;
+                glDeleteBuffers(1, &glBufferId);
+                *bufferId = 0U;
+            }
+        }
+    }
+
+    const std::array<std::uint32_t*, 3U> programIds{
+        &_activeLeafCompactionProgramId,
+        &_errorEvaluationProgramId,
+        &_candidateMarkingProgramId,
+    };
+    if (glad_glDeleteProgram != nullptr)
+    {
+        for (std::uint32_t* programId : programIds)
+        {
+            if (*programId != 0U)
+            {
+                glDeleteProgram(*programId);
+                *programId = 0U;
+            }
+        }
+    }
+
+    if (_timerQueryId != 0U && glad_glDeleteQueries != nullptr)
+    {
+        const GLuint queryId = _timerQueryId;
+        glDeleteQueries(1, &queryId);
+        _timerQueryId = 0U;
     }
 }
 } // namespace ParallelRoam::Algorithms::GpuRoam

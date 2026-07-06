@@ -417,6 +417,14 @@ Level E：GPU split-only 或 split/merge topology update
 - GPU 不可用时该阶段保持 skip，不破坏 CPU benchmark；
 - 文档记录浮点误差、采样方式和 OpenGL 版本要求。
 
+当前实现记录：
+
+- 已新增 GPU error evaluation compute shader，读取 R32F height map texture、node SSBO 和 GPU compact 后的 active leaf buffer；
+- shader 侧按 DOD `ComputeScreenErrorScore` 的同一公式计算 height error score 与 projected edge score，并写入 screen error SSBO；
+- GPU compute pass 已用 OpenGL timer query 包住，结果写入 `GpuComputeMilliseconds`；
+- 默认只 readback 少量 active leaf 和 error 样本，避免全量 screen error 回读污染性能口径；
+- 当前 error evaluation 是 shadow pass，尚未反向驱动 CPU topology commit。
+
 4D：GPU Candidate Marking 与候选压缩
 
 - Compute shader 根据 `screenError`、split / merge 阈值、depth 和 active 状态写 split / merge flag；
@@ -432,6 +440,13 @@ Level E：GPU split-only 或 split/merge topology update
 - topology commit 后 active triangle count 与 Classic / DOD 对齐；
 - benchmark 可展示 CPU collect / mark 时间下降，或说明瓶颈转移到 readback / topology commit。
 
+当前实现记录：
+
+- 已新增 GPU candidate marking compute shader，基于 GPU screen error 生成 split candidate buffer；
+- merge candidate 目前作为 shadow 预筛选，扫描 split node 并按 merge threshold 标记候选，不参与真正拓扑提交；
+- split / merge candidate count 通过小 counter buffer readback，用于后续和 DOD candidate marking 对齐；
+- 当前 CPU topology commit 仍完全由 DOD builder 负责，GPU candidate list 还不改变三角形结果。
+
 4E：GPU Active Leaf Compaction
 
 - GPU 遍历 node buffer，压缩 active leaf index；
@@ -445,6 +460,13 @@ Level E：GPU split-only 或 split/merge topology update
 - `CpuCollectMilliseconds` 相比 DOD 路径下降或被明确替换为 GPU compute；
 - readback 口径清楚，只读计数时不影响主要性能结论；
 - debug 模式可选择全量 readback 以定位错误，但 benchmark 默认关闭。
+
+当前实现记录：
+
+- 已新增 GPU active leaf compaction compute shader，从 node flag 扫描 active leaf 并写入 active leaf SSBO；
+- CPU 上传的 DOD active leaf list 已改为 GPU 端重新压缩，CPU 只保留 expected active leaf count 做校验；
+- compaction 后 readback counter，并与 DOD `FinalActiveLeaves` 数量对齐，不一致时直接失败；
+- 本机 macOS OpenGL 4.1 无法执行该 compute path，只验证了构建和 GPU skip 语义。
 
 4F：GPU Mesh Emit 与 `GpuBuffers` 渲染分支
 
