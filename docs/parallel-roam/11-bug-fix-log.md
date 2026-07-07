@@ -174,7 +174,7 @@
 - Debug 过程：先回顾此前性能问题的定位方式：BUG-009 依赖临时 benchmark 判断 Debug 构建下 Classic 全局 repair 过慢，BUG-012 依赖 CLI smoke CSV 判断 DOD topology pass 的额外回退。这些手段能解决局部问题，但都不是用户在应用内一键复现的标准流程。随后检查现有 UI 和 Application 主循环，确认 `ImGuiLayer` 只有参数面板和即时统计，`Application::Run` 只支持自由飞行相机，`TerrainRenderer` 没有外部强制重建和重置算法持久拓扑的入口。由此确认问题不是单个算法统计字段缺失，而是缺少贯穿 UI、相机、renderer 和报告输出的运行时 benchmark 流程
 - 解决方案：新增运行时 benchmark 流程：UI 面板加入“开始 Benchmark”按钮；Application 保存用户当前面板状态和相机姿态后，依次运行 `Classic CPU ROAM` 与 `Data-Oriented CPU ROAM`；每个算法都从地形 `Z+` 边中点上方出发，朝向地形中心，在 10 秒内用 smoothstep 平滑移动到中心上方；测试期间锁定 UI 参数，并在画面中心上方显示 `正在应用xxx算法进行性能测试`。为保证每个采样点都代表真实算法输出，`TerrainRenderer` 增加 `RequestMeshRebuild` 和 `ResetTerrainLodAlgorithm`，benchmark 帧会绕过普通相机位移缓存并在切换算法时清空持久拓扑。新增 `RuntimeBenchmark` 模块把逐帧样本写入 `benchmark-output/runtime-benchmark-*.csv`，并输出 Markdown 汇总表，统计样本数、平均/最大帧耗时、平均/最大 ROAM 耗时、平均/最大三角形数、平均/最大节点数、平均/最大 CPU 占用、最大 worker 数、最大深度和最大拓扑问题数
 - 验证：`cmake --build --preset debug-fetch` 通过；`./scripts/run_smoke_test_fetch.sh` 通过，窗口 smoke 能正常创建 OpenGL context 并退出；`git diff --check` 通过；源码注释检查确认无中文句号和阶段标签；注释覆盖率为 `15.01%`，连续注释最大 3 行。运行时完整 20 秒流程需要在交互窗口中点击“开始 Benchmark”人工触发，输出目录为 `benchmark-output/`
-- 后续：GPU ROAM 真正接入 renderer 后，需要把算法序列扩展为 Classic、DOD、GPU 三者，并在表格中继续保留同一路径和同一汇总口径。后续还应增加可选的自动触发参数，例如 `--runtime-benchmark`，让 CI 或录屏脚本不依赖人工点击；如果要做正式性能报告，应优先使用 `RelWithDebInfo` 或 `Release` 构建，并把构建类型、地形尺寸、高度图、阈值和最大深度写入报告头部
+- 后续：Classic、DOD、GPU 三算法序列和 `--runtime-benchmark` 自动入口已在 BUG-016 完成；正式性能报告仍应补充构建类型和 VSync 状态，避免 FPS 或 frame ms 被运行环境误读
 
 ### BUG-014：运行时 benchmark 报告缺少关键配置并混淆最大深度口径
 
@@ -186,7 +186,53 @@
 - Debug 过程：先检查最新输出 `benchmark-output/runtime-benchmark-20260706-150156.md` 和对应 CSV，确认旧报告最大三角形来自逐帧 `stats.TriangleCount`，即 OpenGL 实际提交 index 数除以 3；再检查 `Application::RecordRuntimeBenchmarkSample`、`TerrainRenderer::Stats()` 和 `RuntimeBenchmark.cpp`，确认采样时并没有丢帧后重算三角形，而是报告缺少配置上下文。三角形数与用户手动观察 UI 不一致的主要解释是运行时 benchmark 只统计固定 10 秒路径上的样本，手动飞行到其他位置或 benchmark 完成后恢复原相机时，UI 可能显示更高的当前帧三角形数
 - 解决方案：扩展 `TerrainRenderStats`，加入 `HeightMapPath`、`RoamMaxDepthSetting`、`RoamSplitThreshold`、`RoamMergeThreshold` 和 `RoamDistanceScale`，并继续记录 `TerrainSize`、`HeightScale` 和实际达到深度。运行时 benchmark CSV 在时间序列前写入高度图路径、宽高、地形尺寸、高度缩放、最大深度设置、阈值和距离权重；Markdown 顶部新增本轮配置块，汇总表把 `Max Depth` 拆成 `Config Max Depth` 和 `Reached Max Depth`。左上角详细性能面板也补充“设置深度”，和“实际深度”并排展示
 - 验证：`cmake --build --preset debug-fetch` 通过；`./scripts/run_smoke_test_fetch.sh` 通过；`git diff --check` 通过。新报告生成后应能在 Markdown 顶部看到高度图路径、地形尺寸、高度缩放、最大深度设置、距离权重和阈值，并在汇总表中同时看到设置深度与实际达到深度
-- 后续：后续若增加自动 `--runtime-benchmark` 或 GPU benchmark，应继续复用同一套配置字段；正式性能报告建议额外写入构建类型和 VSync 状态，避免 FPS 或 frame ms 被运行环境误读
+- 后续：自动 `--runtime-benchmark` 和 GPU benchmark 已在 BUG-016 复用这套配置字段；正式性能报告仍建议额外写入构建类型和 VSync 状态
+
+### BUG-015：GPU ROAM-like 偶发生成跨场景长三角形
+
+- 状态：`Fixed`
+- 严重级别：`高`
+- 发生阶段：阶段 4 GPU split-only topology、active leaf compaction 和 indirect draw 联调
+- 现象：GPU ROAM-like 在相机移动或多次重建后偶发出现从地形表面伸向远处的巨大细长三角形；普通 LOD 接缝问题只会在相邻层级边界形成裂缝或 T-junction，因此该现象不是单纯接缝错误
+- 定位：node SSBO 只上传有效节点前缀，预留容量尾部由 `glBufferData` 创建且内容未定义；split 后的 compaction 却扫描整个 `nodeCapacity`，随机尾部标志可能命中 `ActiveLeaf`。此外 split pass 原先先增加 `allocatedNodeCount` 再锁定父节点，并发提交失败时会留下已计数但未写入的 node slot。mesh emit 随后把这些未定义 domain UV 转成世界坐标，最终由 indirect draw 画成长三角形
+- 解决方案：active leaf compaction 改为以 GPU `allocatedNodeCount` 为有效上界，并排除已 split 节点；split-only pass 改为先原子锁定父节点再分配 child，失败时恢复父节点 flag；mesh emit 将 draw count 钳制到输出容量，并对 node index、leaf flag 和 `[0,1]` domain UV 做防御校验，异常 leaf 输出退化三角形而不是越界几何
+- 验证：`relwithdebinfo-fetch` 构建通过；新增 `--gpu-smoke-test`，在 NVIDIA RTX 5090 / OpenGL 4.3 上连续强制执行 32 帧 GPU topology、compaction、emit 和 indirect draw，compute shader 编译与运行通过并返回退出码 0；普通 `--smoke-test` 继续用于 CPU 路径回归
+- 后续：GPU split-only 仍是实验层，尚未把 GPU 拓扑写回 CPU DOD state；后续应增加 GPU active leaf 全量 readback validator，检查 domain、parent/child 和 diamond 约束，而不是只依赖可视化发现异常
+
+### BUG-016：运行时 benchmark 只有 GPU 字段但不执行 GPU 算法
+
+- 状态：`Fixed`
+- 严重级别：`高`
+- 发生阶段：阶段 4 GPU compute、mesh emit 和 indirect draw 已接入 renderer 后
+- 现象：runtime CSV 和 Markdown 已包含 GPU compute、上传和回读字段，算法名称也支持 `GPU ROAM-like`，但 UI“开始 Benchmark”的算法序列仍只有 Classic 和 Data-Oriented；无窗口 CLI 没有 OpenGL context，只能把 GPU 标为 skip，因此项目无法生成真实 GPU 横向性能数据
+- 定位：缺口位于 `Application::StartRuntimeBenchmark` 的固定算法序列，而不是报告聚合层；报告已经能处理 GPU 统计，但没有带 active OpenGL context 的状态机把 GPU 算法送入同一相机路径
+- 解决方案：runtime benchmark 在 OpenGL 初始化后查询 GPU capability，支持时按 Classic、Data-Oriented、GPU 顺序执行，不支持时把 skip 原因写入报告；新增 `--runtime-benchmark` 自动入口，完成后写出 Markdown / CSV 并退出；算法重建失败时中止采样并返回非零，避免把旧 mesh 统计记为 GPU 成绩
+- 验证：在 NVIDIA GeForce RTX 5090 D / OpenGL 4.3 上完整运行约 30 秒，报告包含三行算法结果；GPU 路径采集 2453 个样本，`gpuComputeMilliseconds` 平均约 0.0952 ms、最大约 1.848 ms，上传/回读字节非零，进程退出码为 0
+- 后续：当前 GPU ROAM-like 仍包含 CPU DOD topology baseline，报告已注明 `GPU ms` 只代表 compute passes；后续 GPU topology 完全持久化后，应把 CPU baseline 时间和纯 GPU topology 时间进一步拆列
+
+### BUG-017：GPU ROAM-like 被每帧资源上传、buffer 重分配和同步读回拖慢
+
+- 状态：`Fixed`
+- 严重级别：`高`
+- 发生阶段：阶段 4 GPU ROAM-like runtime benchmark 性能分析期间
+- 现象：同一条 runtime benchmark 路径下，GPU ROAM-like 的 GPU compute 时间很低，但整体 LOD 和 frame time 仍慢于 Data-Oriented CPU ROAM。旧报告只能看到 `gpuComputeMilliseconds`、CPU-GPU upload bytes 和 readback bytes，无法判断慢在 snapshot 打包、buffer 分配、dispatch CPU wall time、timer query 等待还是 counter readback 等待。用户观察到 GPU 版“算得快但整体慢”，需要先去掉明显的 CPU-GPU 交界开销，再补齐分项计时。
+- 定位：`GpuRoamMeshBuilder` 每帧都会把 DOD 拓扑快照上传到 node SSBO，并且用 `glBufferData` 重新分配 active leaf、screen error、candidate、vertex、index 和 indirect draw buffer；height map texture 也在每次 build 中重新组装 float 数组并调用 `glTexImage2D`。此外旧路径在 `glEndQuery` 后立刻调用 `glGetQueryObjectui64v(..., GL_QUERY_RESULT, ...)`，随后用 `glGetBufferSubData` 读回 counter 和 debug sample，这会把 CPU 卡在 GPU 完成本帧 compute 之后。`TerrainRenderer::UploadMesh` 的 CPU mesh VBO/IBO 也使用每次 `glBufferData` 的方式，导致 DOD / Classic upload 统计混有额外重分配成本。
+- Debug 过程：先对最新 runtime CSV 做分项汇总，发现 GPU compute 平均只有约 `0.19ms`，但 GPU 路径 `lodTotalMilliseconds - cpuUpdateMilliseconds - cpuUploadMilliseconds - gpuComputeMilliseconds` 的未归因时间明显高于 DOD。随后检查 `GpuRoamTerrainLodAlgorithm::BuildRenderData` 和 `GpuRoamMeshBuilder::RunGpuComputePipeline`，确认当前 GPU 版仍先跑 CPU DOD topology，再上传 GPU snapshot；代码里还存在每帧 `glTexImage2D`、多处 `glBufferData`、立即 timer query result 和立即 `glGetBufferSubData`。这说明瓶颈不是 shader 计算，而是资源生命周期和同步策略。
+- 解决方案：GPU height map texture 改为按 `HeightMap::SourcePath()`、宽和高缓存，只在首次使用或切换高度图后上传；GPU SSBO、GPU vertex / index buffer 和 indirect draw buffer 增加容量缓存，只有容量不足时才 `glBufferData`，容量足够时只更新必要前缀或直接复用；CPU mesh VBO / IBO 同样改为容量复用和 `glBufferSubData` 更新；GPU timer query 和 counter readback 改为 4 slot ring buffer，当前帧提交后只标记 pending，后续 slot 轮转时再读取旧 query 和 counter，避免每帧在 `GL_QUERY_RESULT` 上强制同步；取消每帧 active leaf / screen error debug sample 立即读回，保留延迟 counter 作为拓扑计数防御校验；`BuildGpuRoamBufferSnapshot` 中 active leaf 标记从 `std::unordered_set` 改为按 node index 直接寻址的 `std::vector<std::uint8_t>`，避免每帧为几万 leaf 做哈希插入和查询；新增 `GpuSnapshotBuildMilliseconds`、`GpuBufferAllocationMilliseconds`、`GpuDispatchWallMilliseconds`、`GpuQueryWaitMilliseconds` 和 `GpuReadbackWaitMilliseconds`，并接入 `TerrainLodStats`、`TerrainRenderStats`、ImGui 详细性能面板、runtime CSV 和 Markdown 汇总表。
+- 验证：`cmake --build --preset relwithdebinfo-fetch --parallel` 通过；`./build/relwithdebinfo-fetch/bin/ParallelROAM.exe --benchmark --algorithm all --profile smoke` 通过，Classic 和 DOD 仍保持 smoke 场景拓扑正确，GPU 在无窗口上下文中按预期 skip；`./build/relwithdebinfo-fetch/bin/ParallelROAM.exe --gpu-smoke-test` 在 NVIDIA GeForce RTX 5090 D / OpenGL 4.3 上通过，能创建窗口、编译/运行 GPU compute、执行 GPU topology / compaction / mesh emit / indirect draw 并正常退出。追加 active leaf 标记数组优化后，`cmake --build --preset relwithdebinfo-fetch --parallel` 再次通过。完整 runtime benchmark 需要用户明确触发后再生成新报告，本条不把未完成的 runtime 数据写成验证结论。
+- 后续：GPU 路径仍保留 CPU DOD topology baseline 和每帧 node snapshot 上传，若要进一步超过 DOD，需要让 GPU 持久持有拓扑状态或引入 dirty range / persistent mapped buffer；延迟 readback 后，报告中的 GPU compute 时间代表最近完成 slot 的结果，适合性能趋势观察，但如果要逐帧严格对齐 GPU 计时和当前帧 topology 结果，需要在 CSV 中加入 readback slot frame id。
+
+### BUG-018：Windows 上 CPU 利用率统计被 `std::clock()` 低报
+
+- 状态：`Fixed`
+- 严重级别：`中`
+- 发生阶段：阶段 4 runtime benchmark 跨平台性能分析期间
+- 现象：同一套 DOD 多线程路径在 macOS 测试时 CPU 利用率最高可到约 `320%`，但 Windows RTX 5090 D 环境下 Classic、DOD 和 GPU 路径的 `CpuUtilizationPercent` 长时间都接近 `100%`。这与 DOD 代码中 `ErrorEvaluationWorkerCount`、`CollectWorkerCount`、`CandidateMarkWorkerCount`、`EmitWorkerCount` 和 `TopologyCommitWorkerCount` 都能达到 8 的事实不一致，容易误判为 Windows 上 DOD 没有真正并行。
+- 定位：`src/algorithms/TerrainLodProfiling.h` 使用 `std::clock()` 捕获 build 前后的 CPU 时间，并用 CPU time / wall time 计算单核 100% 口径的利用率。macOS / POSIX 环境下该值表现得更接近进程累计 CPU 时间，因此多线程可以超过 100%；但 Windows / MSVC 下 `std::clock()` 不能可靠表示进程所有线程累计 CPU 时间，结果经常接近 wall time，导致多线程 CPU 利用率被压在约 100%。问题不在 DOD thread pool 或 worker 分发，而在 profiling 采样 API 的跨平台语义不一致。
+- Debug 过程：先检查最新 runtime CSV，发现 DOD `cpuWorkers=8`、`AvgCpuUpdateMs=5.061ms`，明显快于 Classic 的 `12.095ms`，说明 DOD 并行和 SoA 优化确实生效；但 `AvgCpuPercent=100.72%` 与 macOS 上的 320% 现象冲突。随后检查 `CaptureTerrainLodCpuSample()` 和 `ComputeCpuUtilizationPercent()`，确认采样源是 `std::clock()`。结合 Windows/MSVC 对 `std::clock()` 的实现差异，确认这是统计口径 bug，而不是算法只能利用一个核心。
+- 解决方案：将 `TerrainLodCpuSample` 中的 `std::clock_t ProcessCpuTime` 改为毫秒单位的 `ProcessCpuMilliseconds`。Windows 路径使用 `GetProcessTimes(GetCurrentProcess(), ...)` 读取 process kernel + user time，并按 FILETIME 的 100ns tick 转成毫秒；macOS / Linux 路径使用 `getrusage(RUSAGE_SELF)` 读取 `ru_utime + ru_stime`。`ComputeCpuUtilizationPercent()` 保持原有公式不变，仍按“一个逻辑核心满载等于 100%，多线程可超过 100%”输出。
+- 验证：`cmake --build --preset relwithdebinfo-fetch --parallel` 通过。未自动运行新的 runtime benchmark；修复效果需要用户下次手动运行 benchmark 后，从 CSV / Markdown 中观察 DOD 的 `Avg CPU %` 是否能在 Windows 上超过 100%。
+- 后续：如果后续需要更细的 CPU profiling，可进一步拆分每个 pass 的 CPU 利用率，或记录 thread pool active task 时间；当前修复只保证跨平台总进程 CPU 时间口径一致。
 
 ## 模板
 

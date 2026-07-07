@@ -511,7 +511,9 @@ Level E：GPU split-only 或 split/merge topology update
 - GPU mesh emit pass 会在 GPU 端写出 `DrawElementsIndirect` command；
 - `TerrainRenderer` 已支持 `TerrainLodRenderMode::GpuIndirect`，GPU 支持 indirect draw 时走 `glDrawElementsIndirect`，否则回退 `GpuBuffers`；
 - CPU 不回读完整 vertex / index buffer，packet 的 index count 仅由 active leaf count 推导用于统计和防御检查；
-- 本机 macOS OpenGL 4.1 仍无法执行 compute/SSBO 路径，已通过 build、smoke test 和无窗口 benchmark 的 GPU skip 语义验证。
+- 运行时 benchmark 已按 Classic、Data-Oriented、GPU 顺序执行同一条相机路径，报告记录 GPU device、compute 时间、上传/回读字节和 capability skip 原因；
+- 新增 `--runtime-benchmark` 自动入口，三种算法完成后写出 Markdown / CSV 并退出，任一算法重建失败时返回非零；
+- macOS OpenGL 4.1 环境仍按 capability gate 跳过 GPU；Windows RTX 5090 / OpenGL 4.3 已完成三算法 runtime benchmark 实机验证。
 
 4H：GPU Split-Only Topology Update（冲刺）
 

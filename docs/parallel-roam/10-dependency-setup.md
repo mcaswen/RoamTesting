@@ -138,6 +138,20 @@ scripts\run_smoke_test_fetch.bat
 scripts\run_relwithdebinfo_fetch.bat --smoke-test
 ```
 
+支持 OpenGL 4.3 Compute Shader 的机器还可以运行 GPU 专用 smoke test。该入口会连续强制重建 32 帧，覆盖 GPU split-only topology、active leaf compaction、mesh emit 和 indirect draw：
+
+```bat
+scripts\run_relwithdebinfo_fetch.bat --gpu-smoke-test
+```
+
+运行完整的 Classic、Data-Oriented、GPU 三算法 runtime benchmark：
+
+```bat
+scripts\run_relwithdebinfo_fetch.bat --runtime-benchmark
+```
+
+该命令会为每种可用算法运行同一条 10 秒相机路径，生成 `benchmark-output/runtime-benchmark-*.md` 和对应逐帧 CSV 后自动退出。GPU capability 不满足时，报告会保留 CPU 结果并写明 GPU skip 原因。
+
 当前 pin 的版本：
 
 ```text

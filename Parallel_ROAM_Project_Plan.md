@@ -16,7 +16,7 @@
 | [03-implementation-strategies.md](docs/parallel-roam/03-implementation-strategies.md) | Classic CPU、Data-Oriented CPU、GPU ROAM-like 三个实现方案 | 进入算法实现阶段时 |
 | [04-milestones.md](docs/parallel-roam/04-milestones.md) | 阶段 0 到阶段 5 的任务和验收标准 | 每周规划和进度检查时 |
 | [05-experiments-and-benchmarks.md](docs/parallel-roam/05-experiments-and-benchmarks.md) | 实验假设、Debug View、Benchmark 方法、指标和数据记录 | 开始性能测试与写报告前 |
-| [06-risks-and-delivery.md](docs/parallel-roam/06-risks-and-delivery.md) | 风险降级、最终演示流程、报告结构、完成定义 | 中后期控范围和准备展示时 |
+| [06-risks-and-delivery.md](docs/parallel-roam/06-risks-and-delivery.md) | 风险降级、最终演示流程、课程提交清单、评分标准、报告结构、完成定义 | 中后期控范围和准备展示时 |
 | [07-reference-projects.md](docs/parallel-roam/07-reference-projects.md) | GitHub 参考项目、SDL2 迁移参考点、许可风险 | 做 SDL2 / OpenGL 工程迁移和算法对照时 |
 | [08-engine-framework.md](docs/parallel-roam/08-engine-framework.md) | 多算法切换、GUI、渲染、性能分析的底层框架 | 开始铺代码架构前 |
 | [09-development-guidelines.md](docs/parallel-roam/09-development-guidelines.md) | 目录、命名、注释、Git、个人流程和 AI 使用规范 | 提交文件前 |
