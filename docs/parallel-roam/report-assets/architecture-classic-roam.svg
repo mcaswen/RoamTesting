@@ -24,15 +24,15 @@
 
   <rect x="300" y="62" width="500" height="86" rx="8" class="adapter"/>
   <text x="550" y="91" text-anchor="middle" class="section">ClassicRoamTerrainLodAlgorithm</text>
-  <text x="550" y="116" text-anchor="middle" class="code">BuildRenderData()  /  Stats()  /  Reset()</text>
+  <text x="550" y="116" text-anchor="middle" class="code">BuildRenderData() 适配统一接口并维护统计</text>
   <text x="550" y="137" text-anchor="middle" class="caption">负责 ITerrainLodAlgorithm 适配和 TerrainLodStats 字段转换</text>
   <path d="M550 148 L550 184" class="line"/>
 
   <rect x="275" y="184" width="550" height="110" rx="8" class="builder"/>
   <text x="550" y="214" text-anchor="middle" class="section">ClassicRoamMeshBuilder</text>
-  <text x="550" y="238" text-anchor="middle" class="code">Build(heightMap, terrainSize, heightScale,</text>
-  <text x="550" y="259" text-anchor="middle" class="code">cameraPosition, settings)</text>
-  <text x="550" y="281" text-anchor="middle" class="code">Stats(): ClassicRoamStats</text>
+  <text x="550" y="238" text-anchor="middle" class="code">Build() 根据相机与阈值更新 active leaf</text>
+  <text x="550" y="259" text-anchor="middle" class="code">保持持久 bintree 拓扑并输出 CPU mesh</text>
+  <text x="550" y="281" text-anchor="middle" class="code">Stats() 暴露 split / merge / emit 耗时</text>
 
   <path d="M420 294 L260 340" class="line"/>
   <path d="M550 294 L550 340" class="line"/>
@@ -58,34 +58,34 @@
   <text x="895" y="496" text-anchor="middle" class="code">ClassicRoamStats</text>
   <text x="895" y="520" text-anchor="middle" class="small">Split / Merge / Emit / Validate 毫秒桶</text>
   <text x="895" y="543" text-anchor="middle" class="small">NodeCount / ActiveTriangleCount / CrackRisk</text>
-  <text x="895" y="566" text-anchor="middle" class="code">ToTerrainLodStats()</text>
+  <text x="895" y="566" text-anchor="middle" class="code">ToTerrainLodStats() 映射统一统计字段</text>
 
   <rect x="395" y="340" width="310" height="64" rx="8" class="pass"/>
   <text x="550" y="366" text-anchor="middle" class="code">状态与叶节点收集</text>
-  <text x="550" y="388" text-anchor="middle" class="small">ResetTopology() / CollectLeafNodes()</text>
+  <text x="550" y="388" text-anchor="middle" class="small">重建根 diamond，并收集当前 active leaf</text>
   <path d="M550 404 L550 428" class="line"/>
 
   <rect x="395" y="428" width="310" height="64" rx="8" class="pass"/>
   <text x="550" y="454" text-anchor="middle" class="code">误差评分 pass</text>
-  <text x="550" y="473" text-anchor="middle" class="small">ComputeScreenErrorScore()</text>
-  <text x="550" y="489" text-anchor="middle" class="small">ShouldSplit()</text>
+  <text x="550" y="473" text-anchor="middle" class="small">ComputeScreenErrorScore() 计算相机相关误差</text>
+  <text x="550" y="489" text-anchor="middle" class="small">ShouldSplit() 用阈值筛选 split 候选</text>
   <path d="M550 492 L550 516" class="line"/>
 
   <rect x="395" y="516" width="310" height="86" rx="8" class="pass"/>
   <text x="550" y="543" text-anchor="middle" class="code">Split / Merge 拓扑 pass</text>
-  <text x="550" y="564" text-anchor="middle" class="small">MergeWithDiamondQueue()</text>
-  <text x="550" y="583" text-anchor="middle" class="small">RefineWithSplitQueue() / SplitNode()</text>
-  <text x="550" y="599" text-anchor="middle" class="small">LinkSplitNeighbors()</text>
+  <text x="550" y="564" text-anchor="middle" class="small">先按 diamond 条件处理 merge 回收</text>
+  <text x="550" y="583" text-anchor="middle" class="small">再按误差队列执行 split 提交</text>
+  <text x="550" y="599" text-anchor="middle" class="small">同步邻接关系，降低 T-junction 风险</text>
   <path d="M550 602 L550 626" class="line"/>
 
   <rect x="395" y="626" width="310" height="64" rx="8" class="pass"/>
   <text x="550" y="652" text-anchor="middle" class="code">拓扑验证 pass</text>
-  <text x="550" y="674" text-anchor="middle" class="small">ValidateTopology()</text>
+  <text x="550" y="674" text-anchor="middle" class="small">ValidateTopology() 统计邻接与拓扑异常</text>
   <path d="M550 690 L550 714" class="line"/>
 
   <rect x="395" y="714" width="310" height="64" rx="8" class="pass"/>
   <text x="550" y="740" text-anchor="middle" class="code">CPU mesh emit pass</text>
-  <text x="550" y="762" text-anchor="middle" class="small">EmitLeafTriangles() 写 CPU vertex / index</text>
+  <text x="550" y="762" text-anchor="middle" class="small">EmitLeafTriangles() 采样高度并写 CPU mesh</text>
 
   <path d="M365 515 L395 515" class="dash"/>
   <path d="M735 515 L705 515" class="dash"/>

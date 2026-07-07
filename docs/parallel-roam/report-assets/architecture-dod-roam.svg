@@ -25,14 +25,14 @@
 
   <rect x="250" y="60" width="600" height="86" rx="8" class="adapter"/>
   <text x="550" y="90" text-anchor="middle" class="section">DataOrientedRoamTerrainLodAlgorithm</text>
-  <text x="550" y="115" text-anchor="middle" class="code">BuildRenderData()  /  Stats()  /  Reset()</text>
+  <text x="550" y="115" text-anchor="middle" class="code">BuildRenderData() 接入统一接口并复用 builder 状态</text>
   <text x="550" y="136" text-anchor="middle" class="caption">算法接口适配层，持有 DataOrientedRoamMeshBuilder _builder</text>
   <path d="M550 146 L550 178" class="line"/>
 
   <rect x="235" y="178" width="630" height="122" rx="8" class="builder"/>
   <text x="550" y="208" text-anchor="middle" class="section">DataOrientedRoamMeshBuilder</text>
-  <text x="550" y="233" text-anchor="middle" class="code">Build(...)  /  UpdateTopology(...)  /  State()</text>
-  <text x="550" y="256" text-anchor="middle" class="code">BuildInternal(..., emitCpuMesh)</text>
+  <text x="550" y="233" text-anchor="middle" class="code">Build() 输出 CPU mesh；UpdateTopology() 仅更新拓扑</text>
+  <text x="550" y="256" text-anchor="middle" class="code">BuildInternal() 用 emitCpuMesh 切换输出路径</text>
   <text x="550" y="279" text-anchor="middle" class="caption">用 _state 交换 pass 数据；用 _threadPool 支撑 error / mark / emit 并行</text>
 
   <path d="M430 300 L245 340" class="line"/>
@@ -57,43 +57,43 @@
 
   <rect x="400" y="340" width="300" height="64" rx="8" class="pass"/>
   <text x="550" y="366" text-anchor="middle" class="code">状态初始化与叶节点收集</text>
-  <text x="550" y="388" text-anchor="middle" class="small">ResetTopology() / CollectLeafNodes()</text>
+  <text x="550" y="388" text-anchor="middle" class="small">初始化 SoA node pool，并收集 active leaf</text>
   <path d="M550 404 L550 424" class="line"/>
 
   <rect x="400" y="424" width="300" height="64" rx="8" class="pass"/>
   <text x="550" y="450" text-anchor="middle" class="code">并行误差评估 pass</text>
-  <text x="550" y="472" text-anchor="middle" class="small">EvaluateScreenErrors()</text>
+  <text x="550" y="472" text-anchor="middle" class="small">EvaluateScreenErrors() 批量写入 ScreenErrors</text>
   <path d="M550 488 L550 508" class="line"/>
 
   <rect x="400" y="508" width="300" height="74" rx="8" class="pass"/>
   <text x="550" y="535" text-anchor="middle" class="code">候选标记 pass</text>
-  <text x="550" y="558" text-anchor="middle" class="small">CollectSplitCandidates()</text>
-  <text x="550" y="577" text-anchor="middle" class="small">CollectMergeCandidates()</text>
+  <text x="550" y="558" text-anchor="middle" class="small">CollectSplitCandidates() 生成 split 队列</text>
+  <text x="550" y="577" text-anchor="middle" class="small">CollectMergeCandidates() 生成 merge 队列</text>
   <path d="M550 582 L550 604" class="line"/>
 
   <rect x="400" y="604" width="300" height="84" rx="8" class="pass"/>
   <text x="550" y="631" text-anchor="middle" class="code">Split / Merge 拓扑提交</text>
-  <text x="550" y="654" text-anchor="middle" class="small">MergeWithDiamondQueue()</text>
-  <text x="550" y="675" text-anchor="middle" class="small">RefineWithSplitQueue()</text>
+  <text x="550" y="654" text-anchor="middle" class="small">Merge 阶段按 diamond 约束回收节点</text>
+  <text x="550" y="675" text-anchor="middle" class="small">Split 阶段按 chunk 提交可并行候选</text>
   <path d="M550 688 L550 710" class="line"/>
 
   <rect x="400" y="710" width="300" height="64" rx="8" class="pass"/>
   <text x="550" y="736" text-anchor="middle" class="code">CPU mesh emit pass</text>
-  <text x="550" y="758" text-anchor="middle" class="small">EmitLeafTriangles()</text>
+  <text x="550" y="758" text-anchor="middle" class="small">EmitLeafTriangles() 并行输出 CPU mesh</text>
 
   <rect x="730" y="340" width="330" height="365" rx="8" class="thread"/>
   <text x="895" y="370" text-anchor="middle" class="section">并行调度与验证</text>
   <text x="895" y="399" text-anchor="middle" class="code">DataOrientedRoamThreadPool</text>
-  <text x="895" y="423" text-anchor="middle" class="small">EnsureWorkerCount()</text>
-  <text x="895" y="446" text-anchor="middle" class="small">ParallelFor(begin, end, fn)</text>
+  <text x="895" y="423" text-anchor="middle" class="small">EnsureWorkerCount() 固定 worker 数后复用线程</text>
+  <text x="895" y="446" text-anchor="middle" class="small">ParallelFor 分发 error / mark / emit 批处理</text>
   <line x1="760" y1="470" x2="1030" y2="470" stroke="#bfdbfe"/>
   <text x="895" y="497" text-anchor="middle" class="code">拓扑验证 pass</text>
-  <text x="895" y="521" text-anchor="middle" class="small">ValidateTopology()</text>
+  <text x="895" y="521" text-anchor="middle" class="small">ValidateTopology() 只统计异常，不主动修复</text>
   <text x="895" y="544" text-anchor="middle" class="small">只在 EnableTopologyValidation 开启时运行</text>
   <line x1="760" y1="568" x2="1030" y2="568" stroke="#bfdbfe"/>
   <text x="895" y="595" text-anchor="middle" class="code">误差评分函数</text>
-  <text x="895" y="619" text-anchor="middle" class="small">ComputeScreenErrorScore()</text>
-  <text x="895" y="642" text-anchor="middle" class="small">被 error / candidate pass 复用</text>
+  <text x="895" y="619" text-anchor="middle" class="small">ComputeScreenErrorScore() 供多个 pass 复用</text>
+  <text x="895" y="642" text-anchor="middle" class="small">统一 screen error 与队列排序口径</text>
   <line x1="760" y1="666" x2="1030" y2="666" stroke="#bfdbfe"/>
   <text x="895" y="693" text-anchor="middle" class="caption">Topology commit 使用 chunk 统计区分 interior / boundary 候选</text>
 
@@ -103,5 +103,5 @@
 
   <rect x="235" y="808" width="630" height="42" rx="8" class="output"/>
   <text x="550" y="829" text-anchor="middle" class="code">emitCpuMesh=true: TerrainMeshData / CpuMesh</text>
-  <text x="550" y="846" text-anchor="middle" class="caption">emitCpuMesh=false: State() 留给 GPU 路径构建 GpuRoamBufferSnapshot</text>
+  <text x="550" y="846" text-anchor="middle" class="caption">emitCpuMesh=false 时只保留 State()，供 GPU 路径构建快照</text>
 </svg>

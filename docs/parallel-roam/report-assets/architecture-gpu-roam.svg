@@ -27,7 +27,7 @@
 
   <rect x="235" y="60" width="630" height="86" rx="8" class="adapter"/>
   <text x="550" y="90" text-anchor="middle" class="section">GpuRoamTerrainLodAlgorithm</text>
-  <text x="550" y="115" text-anchor="middle" class="code">BuildRenderData()  /  GpuRoamLikeUnavailableReason()</text>
+  <text x="550" y="115" text-anchor="middle" class="code">BuildRenderData() 负责能力门禁和混合管线调度</text>
   <text x="550" y="136" text-anchor="middle" class="caption">ITerrainLodAlgorithm 适配层；同时持有 CPU 拓扑 builder 与 GPU mesh builder</text>
 
   <rect x="55" y="178" width="470" height="656" rx="10" class="laneBg"/>
@@ -40,7 +40,7 @@
 
   <rect x="95" y="225" width="390" height="86" rx="8" class="cpu"/>
   <text x="290" y="251" text-anchor="middle" class="code">DataOrientedRoamMeshBuilder</text>
-  <text x="290" y="274" text-anchor="middle" class="code">_cpuTopologyBuilder.UpdateTopology()</text>
+  <text x="290" y="274" text-anchor="middle" class="code">_cpuTopologyBuilder.UpdateTopology() 只更新 DOD 拓扑</text>
   <text x="290" y="298" text-anchor="middle" class="caption">沿用 DOD CPU 的 crack-free split / merge 语义</text>
   <path d="M290 311 L290 340" class="line"/>
 
@@ -51,7 +51,7 @@
   <path d="M290 426 L290 455" class="line"/>
 
   <rect x="95" y="455" width="390" height="96" rx="8" class="schema"/>
-  <text x="290" y="484" text-anchor="middle" class="code">BuildGpuRoamBufferSnapshot()</text>
+  <text x="290" y="484" text-anchor="middle" class="code">BuildGpuRoamBufferSnapshot() 打包 SoA 状态</text>
   <text x="290" y="509" text-anchor="middle" class="code">GpuRoamBufferSnapshot</text>
   <text x="290" y="532" text-anchor="middle" class="small">Nodes: vector&lt;GpuRoamNodeRecord&gt;</text>
   <text x="290" y="548" text-anchor="middle" class="caption">ActiveLeafIndices / BuildSequence / MaxDepthReached</text>
@@ -64,8 +64,8 @@
 
   <rect x="615" y="225" width="390" height="94" rx="8" class="gpu"/>
   <text x="810" y="254" text-anchor="middle" class="code">GpuRoamMeshBuilder _gpuMeshBuilder</text>
-  <text x="810" y="279" text-anchor="middle" class="small">Build(snapshot, input, outPacket, stats)</text>
-  <text x="810" y="301" text-anchor="middle" class="small">UploadSnapshot() / RunGpuComputePipeline()</text>
+  <text x="810" y="279" text-anchor="middle" class="small">Build() 接收快照并填充 GPU 渲染包</text>
+  <text x="810" y="301" text-anchor="middle" class="small">UploadSnapshot() 上传快照，compute 生成 draw buffer</text>
   <path d="M810 319 L810 348" class="line"/>
 
   <rect x="615" y="348" width="390" height="92" rx="8" class="sync"/>
@@ -75,33 +75,33 @@
   <path d="M810 440 L810 470" class="line"/>
 
   <rect x="615" y="470" width="390" height="54" rx="8" class="gpu"/>
-  <text x="810" y="492" text-anchor="middle" class="code">RunGpuRoamActiveLeafCompactionPass()</text>
-  <text x="810" y="512" text-anchor="middle" class="caption">活跃叶节点压缩 pass</text>
+  <text x="810" y="492" text-anchor="middle" class="code">Active leaf compaction pass</text>
+  <text x="810" y="512" text-anchor="middle" class="caption">扫描节点并压缩 active leaf 列表</text>
   <path d="M810 524 L810 544" class="line"/>
 
   <rect x="615" y="544" width="390" height="54" rx="8" class="gpu"/>
-  <text x="810" y="566" text-anchor="middle" class="code">RunGpuRoamErrorEvaluationPass()</text>
-  <text x="810" y="586" text-anchor="middle" class="caption">GPU screen error pass</text>
+  <text x="810" y="566" text-anchor="middle" class="code">Screen error evaluation pass</text>
+  <text x="810" y="586" text-anchor="middle" class="caption">并行计算叶节点 screen error</text>
   <path d="M810 598 L810 618" class="line"/>
 
   <rect x="615" y="618" width="390" height="54" rx="8" class="gpu"/>
-  <text x="810" y="640" text-anchor="middle" class="code">RunGpuRoamCandidateMarkingPass()</text>
-  <text x="810" y="660" text-anchor="middle" class="caption">GPU candidate marking pass</text>
+  <text x="810" y="640" text-anchor="middle" class="code">Candidate marking pass</text>
+  <text x="810" y="660" text-anchor="middle" class="caption">标记 split / merge 候选并写计数器</text>
   <path d="M810 672 L810 692" class="line"/>
 
   <rect x="615" y="692" width="390" height="54" rx="8" class="gpu"/>
-  <text x="810" y="714" text-anchor="middle" class="code">RunGpuRoamSplitOnlyTopologyPass()</text>
-  <text x="810" y="734" text-anchor="middle" class="caption">GPU split-only topology pass</text>
+  <text x="810" y="714" text-anchor="middle" class="code">Split-only topology pass</text>
+  <text x="810" y="734" text-anchor="middle" class="caption">实验性提交 GPU split 候选</text>
   <path d="M810 746 L810 766" class="line"/>
 
   <rect x="615" y="766" width="390" height="54" rx="8" class="gpu"/>
-  <text x="810" y="788" text-anchor="middle" class="code">RunGpuRoamMeshEmitPass()</text>
-  <text x="810" y="808" text-anchor="middle" class="caption">GPU mesh emit pass 写 vertex / index / indirect draw</text>
+  <text x="810" y="788" text-anchor="middle" class="code">GPU mesh emit pass</text>
+  <text x="810" y="808" text-anchor="middle" class="caption">写 vertex / index / indirect draw buffer</text>
 
   <path d="M810 820 L810 858" class="line"/>
   <rect x="255" y="850" width="590" height="44" rx="8" class="output"/>
   <text x="550" y="869" text-anchor="middle" class="code">TerrainLodRenderPacket::Mode = GpuIndirect / GpuBuffers</text>
-  <text x="550" y="887" text-anchor="middle" class="code">TerrainRenderer::BindGpuTerrainBuffers()</text>
+  <text x="550" y="887" text-anchor="middle" class="code">交给 TerrainRenderer 绑定 GPU buffers 并绘制</text>
 
   <path d="M615 394 L485 634" class="dash"/>
   <text x="548" y="630" text-anchor="middle" class="caption">schema 决定 SSBO 端字段解释</text>

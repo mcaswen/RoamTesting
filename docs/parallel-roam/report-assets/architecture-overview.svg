@@ -33,7 +33,7 @@
 
   <rect x="55" y="150" width="990" height="162" rx="8" class="app"/>
   <text x="550" y="178" text-anchor="middle" class="section">App::Application</text>
-  <text x="550" y="201" text-anchor="middle" class="code">Initialize()  /  Run()  /  RenderFrame()</text>
+  <text x="550" y="201" text-anchor="middle" class="code">Run() 驱动主循环；RenderFrame() 汇总单帧渲染</text>
 
   <rect x="85" y="222" width="172" height="58" rx="7" class="data"/>
   <text x="171" y="246" text-anchor="middle" class="code">Platform::Window</text>
@@ -59,8 +59,8 @@
 
   <rect x="325" y="340" width="450" height="160" rx="8" class="render"/>
   <text x="550" y="368" text-anchor="middle" class="section">Render::TerrainRenderer</text>
-  <text x="550" y="392" text-anchor="middle" class="code">UpdateForCamera()  /  RebuildTerrainLod()</text>
-  <text x="550" y="415" text-anchor="middle" class="code">UploadMesh()  /  BindGpuTerrainBuffers()  /  Render()</text>
+  <text x="550" y="392" text-anchor="middle" class="code">UpdateForCamera() 根据相机触发 LOD 重建</text>
+  <text x="550" y="415" text-anchor="middle" class="code">CPU mesh 上传或 GPU buffer 绑定后提交 draw</text>
   <text x="550" y="440" text-anchor="middle" class="small">持有 _terrainLodAlgorithm 并把算法输出转成 GL draw 资源</text>
 
   <rect x="350" y="456" width="185" height="30" rx="6" class="data"/>
@@ -77,7 +77,7 @@
 
   <rect x="810" y="360" width="235" height="118" rx="8" class="bench"/>
   <text x="927" y="387" text-anchor="middle" class="section">Benchmark 输出</text>
-  <text x="927" y="413" text-anchor="middle" class="tinycode">WriteRuntimeBenchmarkReport()</text>
+  <text x="927" y="413" text-anchor="middle" class="tinycode">写出 Markdown / CSV 基准报告</text>
   <text x="927" y="436" text-anchor="middle" class="code">RuntimeBenchmarkSample</text>
   <text x="927" y="459" text-anchor="middle" class="tinycode">RuntimeBenchmarkAlgorithmResult</text>
   <path d="M775 420 L810 420" class="dash"/>
@@ -85,8 +85,8 @@
   <path d="M550 500 L550 530" class="line"/>
   <rect x="285" y="530" width="530" height="112" rx="8" class="algo"/>
   <text x="550" y="558" text-anchor="middle" class="section">Algorithms::ITerrainLodAlgorithm</text>
-  <text x="550" y="583" text-anchor="middle" class="code">BuildRenderData(TerrainLodBuildInput, TerrainLodRenderPacket)</text>
-  <text x="550" y="606" text-anchor="middle" class="code">Stats(): TerrainLodStats  /  Capabilities()</text>
+  <text x="550" y="583" text-anchor="middle" class="code">BuildRenderData() 用统一输入生成渲染包</text>
+  <text x="550" y="606" text-anchor="middle" class="code">Stats() 汇总指标；Capabilities() 声明输出路径</text>
   <text x="550" y="628" text-anchor="middle" class="small">统一 Classic / Data-Oriented / GPU 的输入、输出与统计字段</text>
 
   <path d="M550 642 L550 668" class="line"/>
