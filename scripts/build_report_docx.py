@@ -4,6 +4,7 @@ import html
 import re
 import zipfile
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from typing import Iterable
 
@@ -23,6 +24,7 @@ NS_REL = "http://schemas.openxmlformats.org/package/2006/relationships"
 EMU_PER_INCH = 914400
 CM_PER_INCH = 2.54
 MAX_IMAGE_WIDTH_EMU = int(15.2 / CM_PER_INCH * EMU_PER_INCH)
+GENERATED_DATE = date.today()
 
 
 @dataclass
@@ -191,7 +193,7 @@ def extract_svg_size(path: Path) -> tuple[int, int]:
 
 
 def resolve_image_path(md_path: Path, image_path: str) -> Path:
-    cleaned = image_path.replace("/", "\\")
+    cleaned = image_path.replace("\\", "/")
     candidate = (md_path.parent / cleaned).resolve()
     if candidate.exists():
         return candidate
@@ -342,6 +344,7 @@ def build_body_from_markdown(md_path: Path) -> tuple[list[str], list[ImageRel]]:
 
 def document_xml(body_xml: Iterable[str]) -> str:
     body = "\n".join(body_xml)
+    generated_date_text = f"生成日期：{GENERATED_DATE.year} 年 {GENERATED_DATE.month} 月 {GENERATED_DATE.day} 日"
     return f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:w="{NS_W}" xmlns:r="{NS_R}" xmlns:wp="{NS_WP}" xmlns:a="{NS_A}" xmlns:pic="{NS_PIC}" xmlns:m="{NS_M}">
   <w:body>
@@ -359,7 +362,7 @@ def document_xml(body_xml: Iterable[str]) -> str:
     </w:p>
     <w:p>
       <w:pPr><w:jc w:val="center"/><w:spacing w:before="240"/></w:pPr>
-      {w_run('生成日期：2026 年 7 月 7 日')}
+      {w_run(generated_date_text)}
     </w:p>
     {page_break()}
     {field_toc()}
@@ -522,13 +525,14 @@ def content_types_xml(images: list[ImageRel]) -> str:
 
 
 def core_xml() -> str:
-    return """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+    generated_timestamp = f"{GENERATED_DATE.isoformat()}T00:00:00Z"
+    return f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:dcmitype="http://purl.org/dc/dcmitype/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
   <dc:title>基于现代 CPU / GPU 的 ROAM 地形 LOD 算法实现与性能分析报告</dc:title>
   <dc:creator>Codex</dc:creator>
   <cp:lastModifiedBy>Codex</cp:lastModifiedBy>
-  <dcterms:created xsi:type="dcterms:W3CDTF">2026-07-07T00:00:00Z</dcterms:created>
-  <dcterms:modified xsi:type="dcterms:W3CDTF">2026-07-07T00:00:00Z</dcterms:modified>
+  <dcterms:created xsi:type="dcterms:W3CDTF">{generated_timestamp}</dcterms:created>
+  <dcterms:modified xsi:type="dcterms:W3CDTF">{generated_timestamp}</dcterms:modified>
 </cp:coreProperties>"""
 
 
