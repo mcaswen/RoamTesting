@@ -6,6 +6,20 @@
 
 namespace ParallelRoam::Algorithms::ClassicRoam
 {
+namespace
+{
+constexpr float MinimumCameraDistance = 0.05F;
+constexpr float MinimumDistanceScale = 0.01F;
+constexpr float ProjectedEdgeWeight = 0.20F;
+
+float ComputeDistanceWeight(float distance, float distanceScale)
+{
+    const float safeDistanceScale = std::max(distanceScale, MinimumDistanceScale);
+    const float normalizedDistance = safeDistanceScale / distance;
+    return normalizedDistance * normalizedDistance;
+}
+} // namespace
+
 bool ClassicRoamMeshBuilder::ShouldSplit(const ClassicRoamNode& node) const
 {
     // 最大深度限制优先于误差判断，避免相机贴近时无限细分
@@ -139,17 +153,19 @@ float ClassicRoamMeshBuilder::ComputeScreenErrorScore(const ClassicRoamNode& nod
     const glm::vec3 c = DomainToWorld(node.Domain.C);
     // 使用三角形中心估算视距，足够支撑当前 LOD 展示
     const glm::vec3 center = (a + b + c) / 3.0F;
-    const float distance = std::max(glm::length(center - _cameraPosition), 0.05F);
+    const float distance = std::max(glm::length(center - _cameraPosition), MinimumCameraDistance);
     const float worldError = node.GeometricError * _heightScale;
     const float longestEdgeLength = std::max({
         glm::length(a - b),
         glm::length(b - c),
         glm::length(c - a),
     });
-    constexpr float ProjectedEdgeWeight = 0.20F;
-    const float heightErrorScore = worldError * _settings.DistanceScale / distance;
+    const float distanceScale = std::max(_settings.DistanceScale, MinimumDistanceScale);
+    // 平方距离权重拉开近远差异，避免只把全图细分数量整体抬高
+    const float distanceWeight = ComputeDistanceWeight(distance, distanceScale);
+    const float heightErrorScore = worldError * distanceWeight;
     // edge length 项让近处平坦区域也继续细分出足够网格密度
-    const float edgeLengthScore = longestEdgeLength * ProjectedEdgeWeight / distance;
+    const float edgeLengthScore = longestEdgeLength * ProjectedEdgeWeight / distanceScale * distanceWeight;
 
     // 高度误差负责地形起伏，边长项保证近处平缓地形也会继续细分
     // 两者取最大值，避免平地近处被过早 merge

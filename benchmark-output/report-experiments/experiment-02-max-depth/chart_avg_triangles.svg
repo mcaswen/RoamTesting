@@ -1,60 +1,61 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="620" viewBox="0 0 1080 620">
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="640" viewBox="0 0 1080 640">
 <rect width="100%" height="100%" fill="white"/>
-<text x="540.0" y="32.0" font-size="22" text-anchor="middle" fill="#222">Average generated triangles</text>
-<text x="22.0" y="287.0" font-size="14" text-anchor="middle" fill="#222" transform="rotate(-90.0 22.0 287.0)">Triangles</text>
-<line x1="86" y1="502.0" x2="1046" y2="502.0" stroke="#E5E5E5"/>
-<text x="76.0" y="506.0" font-size="12" text-anchor="end" fill="#222">0.00</text>
-<line x1="86" y1="416.0" x2="1046" y2="416.0" stroke="#E5E5E5"/>
-<text x="76.0" y="420.0" font-size="12" text-anchor="end" fill="#222">7424.41</text>
-<line x1="86" y1="330.0" x2="1046" y2="330.0" stroke="#E5E5E5"/>
-<text x="76.0" y="334.0" font-size="12" text-anchor="end" fill="#222">14848.81</text>
-<line x1="86" y1="244.0" x2="1046" y2="244.0" stroke="#E5E5E5"/>
-<text x="76.0" y="248.0" font-size="12" text-anchor="end" fill="#222">22273.22</text>
-<line x1="86" y1="158.0" x2="1046" y2="158.0" stroke="#E5E5E5"/>
-<text x="76.0" y="162.0" font-size="12" text-anchor="end" fill="#222">29697.63</text>
-<line x1="86" y1="72.0" x2="1046" y2="72.0" stroke="#E5E5E5"/>
-<text x="76.0" y="76.0" font-size="12" text-anchor="end" fill="#222">37122.04</text>
-<line x1="86" y1="72" x2="86" y2="502" stroke="#333"/>
-<line x1="86" y1="502" x2="1046" y2="502" stroke="#333"/>
-<rect x="127.0" y="408.0" width="34.0" height="94.0" fill="#4C78A8" rx="2"/>
-<text x="144.0" y="403.0" font-size="10" text-anchor="middle" fill="#222">8116.32</text>
-<rect x="165.0" y="408.0" width="34.0" height="94.0" fill="#F58518" rx="2"/>
-<text x="182.0" y="403.0" font-size="10" text-anchor="middle" fill="#222">8117.30</text>
-<rect x="203.0" y="408.0" width="34.0" height="94.0" fill="#54A24B" rx="2"/>
-<text x="220.0" y="403.0" font-size="10" text-anchor="middle" fill="#222">8116.34</text>
-<text x="182.0" y="536.0" font-size="12" text-anchor="middle" fill="#222" transform="rotate(-25.0 182.0 536.0)">depth 12</text>
-<rect x="319.0" y="199.7" width="34.0" height="302.3" fill="#4C78A8" rx="2"/>
-<text x="336.0" y="194.7" font-size="10" text-anchor="middle" fill="#222">26100.29</text>
-<rect x="357.0" y="199.6" width="34.0" height="302.4" fill="#F58518" rx="2"/>
-<text x="374.0" y="194.6" font-size="10" text-anchor="middle" fill="#222">26102.11</text>
-<rect x="395.0" y="199.5" width="34.0" height="302.5" fill="#54A24B" rx="2"/>
-<text x="412.0" y="194.5" font-size="10" text-anchor="middle" fill="#222">26112.72</text>
-<text x="374.0" y="536.0" font-size="12" text-anchor="middle" fill="#222" transform="rotate(-25.0 374.0 536.0)">depth 14</text>
-<rect x="511.0" y="141.1" width="34.0" height="360.9" fill="#4C78A8" rx="2"/>
-<text x="528.0" y="136.1" font-size="10" text-anchor="middle" fill="#222">31156.50</text>
-<rect x="549.0" y="137.6" width="34.0" height="364.4" fill="#F58518" rx="2"/>
-<text x="566.0" y="132.6" font-size="10" text-anchor="middle" fill="#222">31459.35</text>
-<rect x="587.0" y="139.5" width="34.0" height="362.5" fill="#54A24B" rx="2"/>
-<text x="604.0" y="134.5" font-size="10" text-anchor="middle" fill="#222">31296.06</text>
-<text x="566.0" y="536.0" font-size="12" text-anchor="middle" fill="#222" transform="rotate(-25.0 566.0 536.0)">depth 16</text>
-<rect x="703.0" y="139.3" width="34.0" height="362.7" fill="#4C78A8" rx="2"/>
-<text x="720.0" y="134.3" font-size="10" text-anchor="middle" fill="#222">31315.49</text>
-<rect x="741.0" y="137.7" width="34.0" height="364.3" fill="#F58518" rx="2"/>
-<text x="758.0" y="132.7" font-size="10" text-anchor="middle" fill="#222">31446.86</text>
-<rect x="779.0" y="138.5" width="34.0" height="363.5" fill="#54A24B" rx="2"/>
-<text x="796.0" y="133.5" font-size="10" text-anchor="middle" fill="#222">31378.00</text>
-<text x="758.0" y="536.0" font-size="12" text-anchor="middle" fill="#222" transform="rotate(-25.0 758.0 536.0)">depth 18</text>
-<rect x="895.0" y="138.6" width="34.0" height="363.4" fill="#4C78A8" rx="2"/>
-<text x="912.0" y="133.6" font-size="10" text-anchor="middle" fill="#222">31375.89</text>
-<rect x="933.0" y="137.8" width="34.0" height="364.2" fill="#F58518" rx="2"/>
-<text x="950.0" y="132.8" font-size="10" text-anchor="middle" fill="#222">31441.04</text>
-<rect x="971.0" y="138.6" width="34.0" height="363.4" fill="#54A24B" rx="2"/>
-<text x="988.0" y="133.6" font-size="10" text-anchor="middle" fill="#222">31374.72</text>
-<text x="950.0" y="536.0" font-size="12" text-anchor="middle" fill="#222" transform="rotate(-25.0 950.0 536.0)">depth 20</text>
-<rect x="86" y="574" width="14" height="14" fill="#4C78A8" rx="2"/>
-<text x="106.0" y="586.0" font-size="12" text-anchor="start" fill="#222">Classic CPU ROAM</text>
-<rect x="336" y="574" width="14" height="14" fill="#F58518" rx="2"/>
-<text x="356.0" y="586.0" font-size="12" text-anchor="start" fill="#222">Data-Oriented CPU ROAM</text>
-<rect x="586" y="574" width="14" height="14" fill="#54A24B" rx="2"/>
-<text x="606.0" y="586.0" font-size="12" text-anchor="start" fill="#222">GPU ROAM-like</text>
+<style>text{font-family:Arial,"Microsoft YaHei",sans-serif;fill:#222}.small{font-size:12px}.axis{stroke:#333;stroke-width:1}.grid{stroke:#E5E5E5;stroke-width:1}</style>
+<text x="540.0" y="34" font-size="22" text-anchor="middle">平均生成三角形数对比</text>
+<line class="grid" x1="92" y1="510.0" x2="1040" y2="510.0"/>
+<text class="small" x="82" y="514.0" text-anchor="end">0.00</text>
+<line class="grid" x1="92" y1="423.6" x2="1040" y2="423.6"/>
+<text class="small" x="82" y="427.6" text-anchor="end">12000.00</text>
+<line class="grid" x1="92" y1="337.2" x2="1040" y2="337.2"/>
+<text class="small" x="82" y="341.2" text-anchor="end">24000.00</text>
+<line class="grid" x1="92" y1="250.8" x2="1040" y2="250.8"/>
+<text class="small" x="82" y="254.8" text-anchor="end">36000.00</text>
+<line class="grid" x1="92" y1="164.4" x2="1040" y2="164.4"/>
+<text class="small" x="82" y="168.4" text-anchor="end">48000.00</text>
+<line class="grid" x1="92" y1="78.0" x2="1040" y2="78.0"/>
+<text class="small" x="82" y="82.0" text-anchor="end">60000.00</text>
+<line class="axis" x1="92" y1="78" x2="92" y2="510"/>
+<line class="axis" x1="92" y1="510" x2="1040" y2="510"/>
+<text x="24" y="294.0" font-size="14" text-anchor="middle" transform="rotate(-90 24 294.0)">三角形数</text>
+<rect x="123.8" y="451.6" width="35.7" height="58.4" fill="#4C78A8" rx="2"/>
+<text class="small" x="141.7" y="445.6" text-anchor="middle">8116</text>
+<rect x="165.8" y="451.6" width="35.7" height="58.4" fill="#F58518" rx="2"/>
+<text class="small" x="183.7" y="445.6" text-anchor="middle">8117</text>
+<rect x="207.8" y="451.6" width="35.7" height="58.4" fill="#54A24B" rx="2"/>
+<text class="small" x="225.7" y="445.6" text-anchor="middle">8116</text>
+<text class="small" x="186.8" y="546" text-anchor="middle">最大深度 12</text>
+<rect x="313.4" y="322.1" width="35.7" height="187.9" fill="#4C78A8" rx="2"/>
+<text class="small" x="331.2" y="316.1" text-anchor="middle">26100</text>
+<rect x="355.4" y="322.1" width="35.7" height="187.9" fill="#F58518" rx="2"/>
+<text class="small" x="373.2" y="316.1" text-anchor="middle">26102</text>
+<rect x="397.4" y="322.0" width="35.7" height="188.0" fill="#54A24B" rx="2"/>
+<text class="small" x="415.2" y="316.0" text-anchor="middle">26113</text>
+<text class="small" x="376.4" y="546" text-anchor="middle">最大深度 14</text>
+<rect x="503.0" y="285.7" width="35.7" height="224.3" fill="#4C78A8" rx="2"/>
+<text class="small" x="520.9" y="279.7" text-anchor="middle">31156</text>
+<rect x="545.0" y="283.5" width="35.7" height="226.5" fill="#F58518" rx="2"/>
+<text class="small" x="562.9" y="277.5" text-anchor="middle">31459</text>
+<rect x="587.0" y="284.7" width="35.7" height="225.3" fill="#54A24B" rx="2"/>
+<text class="small" x="604.9" y="278.7" text-anchor="middle">31296</text>
+<text class="small" x="566.0" y="546" text-anchor="middle">最大深度 16</text>
+<rect x="692.6" y="284.5" width="35.7" height="225.5" fill="#4C78A8" rx="2"/>
+<text class="small" x="710.5" y="278.5" text-anchor="middle">31315</text>
+<rect x="734.6" y="283.6" width="35.7" height="226.4" fill="#F58518" rx="2"/>
+<text class="small" x="752.5" y="277.6" text-anchor="middle">31447</text>
+<rect x="776.6" y="284.1" width="35.7" height="225.9" fill="#54A24B" rx="2"/>
+<text class="small" x="794.5" y="278.1" text-anchor="middle">31378</text>
+<text class="small" x="755.6" y="546" text-anchor="middle">最大深度 18</text>
+<rect x="882.2" y="284.1" width="35.7" height="225.9" fill="#4C78A8" rx="2"/>
+<text class="small" x="900.0" y="278.1" text-anchor="middle">31376</text>
+<rect x="924.2" y="283.6" width="35.7" height="226.4" fill="#F58518" rx="2"/>
+<text class="small" x="942.0" y="277.6" text-anchor="middle">31441</text>
+<rect x="966.2" y="284.1" width="35.7" height="225.9" fill="#54A24B" rx="2"/>
+<text class="small" x="984.0" y="278.1" text-anchor="middle">31375</text>
+<text class="small" x="945.2" y="546" text-anchor="middle">最大深度 20</text>
+<rect x="92" y="580" width="14" height="14" fill="#4C78A8" rx="2"/>
+<text class="small" x="112" y="592" text-anchor="start">经典 CPU ROAM</text>
+<rect x="408" y="580" width="14" height="14" fill="#F58518" rx="2"/>
+<text class="small" x="428" y="592" text-anchor="start">DOD CPU ROAM</text>
+<rect x="724" y="580" width="14" height="14" fill="#54A24B" rx="2"/>
+<text class="small" x="744" y="592" text-anchor="start">GPU 类 ROAM</text>
 </svg>

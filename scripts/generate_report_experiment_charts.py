@@ -15,10 +15,17 @@ COLORS = {
     "CPU update": "#4C78A8",
     "CPU upload": "#F58518",
     "GPU snapshot": "#B279A2",
+    "GPU alloc": "#FF9DA6",
     "GPU dispatch": "#E45756",
+    "GPU query wait": "#BAB0AC",
     "GPU compute": "#54A24B",
     "GPU readback": "#72B7B2",
     "Other LOD": "#9D755D",
+    "Split": "#4C78A8",
+    "Merge": "#F58518",
+    "Emit": "#54A24B",
+    "Validate": "#E45756",
+    "Other stage": "#9D755D",
     "Avg": "#4C78A8",
     "P50": "#F58518",
     "P90": "#54A24B",
@@ -31,6 +38,21 @@ ALGORITHM_LABELS = {
     "GPU ROAM-like": "GPU 类 ROAM",
 }
 
+CASE_LABELS = {
+    "baseline": "默认参数",
+    "depth 12": "最大深度 12",
+    "depth 14": "最大深度 14",
+    "depth 16": "最大深度 16",
+    "depth 18": "最大深度 18",
+    "depth 20": "最大深度 20",
+    "distance 20": "距离权重 20",
+    "distance 40": "距离权重 40",
+    "distance 60": "距离权重 60",
+    "distance 80": "距离权重 80",
+    "Test129": "Test129 高度图",
+    "Peking513": "Peking513 高度图",
+}
+
 COMPONENT_LABELS = {
     "Snapshot": "快照构建",
     "Buffer alloc": "缓冲区分配",
@@ -41,9 +63,16 @@ COMPONENT_LABELS = {
     "CPU update": "CPU 更新",
     "CPU upload": "CPU 上传",
     "GPU snapshot": "GPU 快照",
+    "GPU alloc": "GPU 分配",
     "GPU dispatch": "GPU 调度",
+    "GPU query wait": "GPU 查询等待",
     "GPU readback": "GPU 读回",
     "Other LOD": "其他 LOD",
+    "Split": "分裂",
+    "Merge": "合并",
+    "Emit": "网格输出",
+    "Validate": "拓扑验证",
+    "Other stage": "其他阶段",
     "LOD total": "LOD 总耗时",
     "ms / 10k triangles": "每万三角形耗时",
     "Avg": "平均值",
@@ -88,7 +117,7 @@ def esc(value: object) -> str:
 
 
 def display_label(value: str) -> str:
-    return ALGORITHM_LABELS.get(value, COMPONENT_LABELS.get(value, value))
+    return ALGORITHM_LABELS.get(value, CASE_LABELS.get(value, COMPONENT_LABELS.get(value, value)))
 
 
 def mean(values: list[float]) -> float:
@@ -145,6 +174,10 @@ def stats_for(rows: list[dict[str, object]]) -> dict[str, float]:
     dispatch = [float(row["gpuDispatchWallMilliseconds"]) for row in rows]
     query = [float(row["gpuQueryWaitMilliseconds"]) for row in rows]
     readback = [float(row["gpuReadbackWaitMilliseconds"]) for row in rows]
+    split = [float(row["splitMilliseconds"]) for row in rows]
+    merge = [float(row["mergeMilliseconds"]) for row in rows]
+    emit = [float(row["emitMilliseconds"]) for row in rows]
+    validate = [float(row["validateMilliseconds"]) for row in rows]
     cpu_percent = [float(row["cpuUtilizationPercent"]) for row in rows]
     depth_reached = [float(row["maxDepthReached"]) for row in rows]
 
@@ -160,7 +193,14 @@ def stats_for(rows: list[dict[str, object]]) -> dict[str, float]:
         "gpuComputeMs": mean(gpu_compute),
         "gpuReadbackMs": mean(readback),
     }
+    stage_components = {
+        "splitMs": mean(split),
+        "mergeMs": mean(merge),
+        "emitMs": mean(emit),
+        "validateMs": mean(validate),
+    }
     known = sum(components.values())
+    stage_known = sum(stage_components.values())
     return {
         "samples": float(len(rows)),
         "avgFrameMs": mean(frame),
@@ -177,7 +217,9 @@ def stats_for(rows: list[dict[str, object]]) -> dict[str, float]:
         "maxDepthReached": max(depth_reached) if depth_reached else 0.0,
         "lodMsPer10kTriangles": (avg_lod / avg_triangles * 10000.0) if avg_triangles else 0.0,
         "otherLodMs": max(avg_lod - known, 0.0),
+        "otherStageMs": max(avg_lod - stage_known, 0.0),
         **components,
+        **stage_components,
     }
 
 
@@ -437,6 +479,11 @@ def write_analysis_csv(folder: Path, rows: list[dict[str, object]]) -> dict[tupl
         "gpuComputeMs",
         "gpuReadbackMs",
         "otherLodMs",
+        "splitMs",
+        "mergeMs",
+        "emitMs",
+        "validateMs",
+        "otherStageMs",
     ]
     for key, group in sorted(by_case_alg.items()):
         stats[key] = stats_for(group)
@@ -450,6 +497,76 @@ def write_analysis_csv(folder: Path, rows: list[dict[str, object]]) -> dict[tupl
 
 def stats_by_algorithm(stats: dict[tuple[str, str], dict[str, float]], case: str) -> dict[str, dict[str, float]]:
     return {algorithm: values for (case_name, algorithm), values in stats.items() if case_name == case}
+
+
+def cases_for_folder(folder_name: str) -> list[str]:
+    if folder_name == "experiment-01-baseline":
+        return ["baseline"]
+    if folder_name == "experiment-02-max-depth":
+        return [f"depth {depth}" for depth in [12, 14, 16, 18, 20]]
+    if folder_name == "experiment-03-distance-scale":
+        return [f"distance {distance}" for distance in [20, 40, 60, 80]]
+    if folder_name == "experiment-04-heightmap":
+        return ["Test129", "Peking513"]
+    return ["baseline"]
+
+
+def generate_common_charts(folder: Path, stats: dict[tuple[str, str], dict[str, float]]) -> None:
+    algorithms = ["Classic CPU ROAM", "Data-Oriented CPU ROAM", "GPU ROAM-like"]
+    cases = cases_for_folder(folder.name)
+    cases = [case for case in cases if all((case, algorithm) in stats for algorithm in algorithms)]
+
+    bar_chart(
+        folder / "chart_avg_lod_ms.svg",
+        "平均 LOD 耗时对比",
+        cases,
+        [(a, [stats[(case, a)]["avgLodMs"] for case in cases], COLORS[a]) for a in algorithms],
+        "平均 LOD 耗时（毫秒）",
+    )
+    bar_chart(
+        folder / "chart_avg_frame_ms.svg",
+        "平均帧耗时对比",
+        cases,
+        [(a, [stats[(case, a)]["avgFrameMs"] for case in cases], COLORS[a]) for a in algorithms],
+        "平均帧耗时（毫秒）",
+    )
+    bar_chart(
+        folder / "chart_avg_triangles.svg",
+        "平均生成三角形数对比",
+        cases,
+        [(a, [stats[(case, a)]["avgTriangles"] for case in cases], COLORS[a]) for a in algorithms],
+        "三角形数",
+        "{:.0f}",
+    )
+    bar_chart(
+        folder / "chart_avg_cpu_percent.svg",
+        "平均进程 CPU 利用率对比",
+        cases,
+        [(a, [stats[(case, a)]["avgCpuPercent"] for case in cases], COLORS[a]) for a in algorithms],
+        "CPU 利用率（%）",
+    )
+
+    gpu_cases = [case for case in cases if (case, "GPU ROAM-like") in stats]
+    if gpu_cases:
+        components = [
+            ("GPU snapshot", [stats[(case, "GPU ROAM-like")]["gpuSnapshotMs"] for case in gpu_cases], COLORS["GPU snapshot"]),
+            ("GPU alloc", [stats[(case, "GPU ROAM-like")]["gpuAllocMs"] for case in gpu_cases], COLORS["GPU alloc"]),
+            ("GPU dispatch", [stats[(case, "GPU ROAM-like")]["gpuDispatchMs"] for case in gpu_cases], COLORS["GPU dispatch"]),
+            ("GPU query wait", [stats[(case, "GPU ROAM-like")]["gpuQueryWaitMs"] for case in gpu_cases], COLORS["GPU query wait"]),
+            ("GPU readback", [stats[(case, "GPU ROAM-like")]["gpuReadbackMs"] for case in gpu_cases], COLORS["GPU readback"]),
+            ("GPU compute", [stats[(case, "GPU ROAM-like")]["gpuComputeMs"] for case in gpu_cases], COLORS["GPU compute"]),
+        ]
+        stacked_bar_chart(folder / "chart_gpu_breakdown_ms.svg", "GPU 类 ROAM 分项平均耗时", gpu_cases, components, "毫秒")
+
+
+def roam_stage_components(data: dict[str, dict[str, float]], algorithms: list[str]) -> list[tuple[str, list[float], str]]:
+    return [
+        ("Split", [data[a]["splitMs"] for a in algorithms], COLORS["Split"]),
+        ("Merge", [data[a]["mergeMs"] for a in algorithms], COLORS["Merge"]),
+        ("Emit", [data[a]["emitMs"] for a in algorithms], COLORS["Emit"]),
+        ("Validate", [data[a]["validateMs"] for a in algorithms], COLORS["Validate"]),
+        ("Other stage", [data[a]["otherStageMs"] for a in algorithms], COLORS["Other stage"]),
+    ]
 
 
 def generate_experiment_01(folder: Path, stats: dict[tuple[str, str], dict[str, float]]) -> None:
@@ -480,6 +597,13 @@ def generate_experiment_01(folder: Path, stats: dict[tuple[str, str], dict[str, 
         ("Other LOD", [data[a]["otherLodMs"] for a in algorithms], COLORS["Other LOD"]),
     ]
     stacked_bar_chart(folder / "chart_exp01_lod_composition.svg", "实验1：LOD 时间组成", algorithms, components, "毫秒")
+    stacked_bar_chart(
+        folder / "chart_exp01_roam_stage_composition.svg",
+        "实验1：ROAM 阶段耗时组成",
+        algorithms,
+        roam_stage_components(data, algorithms),
+        "毫秒",
+    )
 
 
 def generate_experiment_02(folder: Path, stats: dict[tuple[str, str], dict[str, float]]) -> None:
@@ -608,6 +732,14 @@ def generate_experiment_05(folder: Path, stats: dict[tuple[str, str], dict[str, 
         ("Other LOD", gpu["otherLodMs"], COLORS["Other LOD"]),
     ]
     donut_chart(folder / "chart_exp05_gpu_pipeline_share.svg", "实验5：GPU 类 ROAM 的 LOD 时间占比", donut_values)
+    stage_values = [
+        ("Split", gpu["splitMs"], COLORS["Split"]),
+        ("Merge", gpu["mergeMs"], COLORS["Merge"]),
+        ("Emit", gpu["emitMs"], COLORS["Emit"]),
+        ("Validate", gpu["validateMs"], COLORS["Validate"]),
+        ("Other stage", gpu["otherStageMs"], COLORS["Other stage"]),
+    ]
+    donut_chart(folder / "chart_exp05_roam_stage_share.svg", "实验5：GPU 类 ROAM 的 ROAM 阶段占比", stage_values)
 
     gpu_rows = [row for row in rows if row["algorithm"] == "GPU ROAM-like"]
     step = max(1, len(gpu_rows) // 260)
@@ -624,6 +756,17 @@ def generate_experiment_05(folder: Path, stats: dict[tuple[str, str], dict[str, 
         ],
         "毫秒",
     )
+    xy_line_chart(
+        folder / "chart_exp05_roam_stage_timing_over_time.svg",
+        "实验5：GPU 类 ROAM 阶段耗时变化",
+        [
+            ("Split", [(float(row["timeSeconds"]), float(row["splitMilliseconds"])) for row in sampled], COLORS["Split"]),
+            ("Merge", [(float(row["timeSeconds"]), float(row["mergeMilliseconds"])) for row in sampled], COLORS["Merge"]),
+            ("Emit", [(float(row["timeSeconds"]), float(row["emitMilliseconds"])) for row in sampled], COLORS["Emit"]),
+            ("Validate", [(float(row["timeSeconds"]), float(row["validateMilliseconds"])) for row in sampled], COLORS["Validate"]),
+        ],
+        "毫秒",
+    )
 
 
 def main() -> None:
@@ -634,6 +777,7 @@ def main() -> None:
         if not rows:
             continue
         stats = write_analysis_csv(folder, rows)
+        generate_common_charts(folder, stats)
         if folder.name == "experiment-01-baseline":
             generate_experiment_01(folder, stats)
         elif folder.name == "experiment-02-max-depth":

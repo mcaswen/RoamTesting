@@ -56,6 +56,7 @@ struct TerrainLodSettings
     int MaxDepth{14};
     float SplitThreshold{0.04F};
     float MergeThreshold{0.02F};
+    // 距离权重作为细节中性距离，近处会更细，远处会更快变粗
     float DistanceScale{24.0F};
     bool EnableLocalConstraints{true};
     bool EnableTopologyValidation{false};

@@ -6,6 +6,20 @@
 
 namespace ParallelRoam::Algorithms::DataOrientedRoam
 {
+namespace
+{
+constexpr float MinimumCameraDistance = 0.05F;
+constexpr float MinimumDistanceScale = 0.01F;
+constexpr float ProjectedEdgeWeight = 0.20F;
+
+float ComputeDistanceWeight(float distance, float distanceScale)
+{
+    const float safeDistanceScale = std::max(distanceScale, MinimumDistanceScale);
+    const float normalizedDistance = safeDistanceScale / distance;
+    return normalizedDistance * normalizedDistance;
+}
+} // namespace
+
 bool ShouldSplitWithScore(
     const DataOrientedRoamState& state,
     DataOrientedRoamNodeConstRef node,
@@ -142,7 +156,7 @@ float ComputeScreenErrorScore(const DataOrientedRoamState& state, DataOrientedRo
     const glm::vec3 c = DomainToWorld(state, node.Domain.C);
     const glm::vec3 center = (a + b + c) / 3.0F;
     // distance 下限避免相机贴近三角形中心时分数爆炸
-    const float distance = std::max(glm::length(center - state.CameraPosition), 0.05F);
+    const float distance = std::max(glm::length(center - state.CameraPosition), MinimumCameraDistance);
     const float worldError = node.GeometricError * state.HeightScale;
     // longestEdgeLength 让近处平坦区域也能继续细分
     const float longestEdgeLength = std::max({
@@ -150,9 +164,11 @@ float ComputeScreenErrorScore(const DataOrientedRoamState& state, DataOrientedRo
         glm::length(b - c),
         glm::length(c - a),
     });
-    constexpr float ProjectedEdgeWeight = 0.20F;
-    const float heightErrorScore = worldError * state.Settings.DistanceScale / distance;
-    const float edgeLengthScore = longestEdgeLength * ProjectedEdgeWeight / distance;
+    const float distanceScale = std::max(state.Settings.DistanceScale, MinimumDistanceScale);
+    // 平方距离权重拉开近远差异，避免只把全图细分数量整体抬高
+    const float distanceWeight = ComputeDistanceWeight(distance, distanceScale);
+    const float heightErrorScore = worldError * distanceWeight;
+    const float edgeLengthScore = longestEdgeLength * ProjectedEdgeWeight / distanceScale * distanceWeight;
     // 两项取最大值，避免高频地形和近处平地互相掩盖
     return std::max(heightErrorScore, edgeLengthScore);
 }

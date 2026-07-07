@@ -70,6 +70,9 @@ uniform float uSplitThreshold;
 uniform float uMergeThreshold;
 uniform vec3 uCameraPosition;
 
+const float minimumDistanceScale = 0.01;
+const float projectedEdgeWeight = 0.20;
+
 float sampleHeight(vec2 uv)
 {
     return texture(uHeightMap, clamp(uv, vec2(0.0), vec2(1.0))).r;
@@ -81,6 +84,13 @@ vec3 domainToWorld(vec2 uv)
         (uv.x - 0.5) * uTerrainSize,
         sampleHeight(uv) * uHeightScale,
         (uv.y - 0.5) * uTerrainSize);
+}
+
+float distanceWeight(float distanceToCamera)
+{
+    float safeDistanceScale = max(uDistanceScale, minimumDistanceScale);
+    float normalizedDistance = safeDistanceScale / distanceToCamera;
+    return normalizedDistance * normalizedDistance;
 }
 
 float scoreNode(uint nodeIndex)
@@ -97,8 +107,10 @@ float scoreNode(uint nodeIndex)
     float distanceToCamera = max(length(center - uCameraPosition), 0.05);
     float worldError = node.domainCAndErrors.z * uHeightScale;
     float longestEdgeLength = max(max(length(a - b), length(b - c)), length(c - a));
-    float heightErrorScore = worldError * uDistanceScale / distanceToCamera;
-    float edgeLengthScore = longestEdgeLength * 0.20 / distanceToCamera;
+    float distanceScale = max(uDistanceScale, minimumDistanceScale);
+    float weight = distanceWeight(distanceToCamera);
+    float heightErrorScore = worldError * weight;
+    float edgeLengthScore = longestEdgeLength * projectedEdgeWeight / distanceScale * weight;
     return max(heightErrorScore, edgeLengthScore);
 }
 

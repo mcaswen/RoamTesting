@@ -38,7 +38,7 @@ struct ClassicRoamSettings
     // 简化 screen-space error 低于该阈值时允许 merge
     float MergeThreshold{0.02F};
 
-    // 距离权重越大，远处也会更积极细分
+    // 距离权重作为细节中性距离，近处会更细，远处会更快变粗
     float DistanceScale{24.0F};
 
     // 开启后会基于 baseNeighbor 执行局部 diamond forced split
