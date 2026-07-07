@@ -46,9 +46,8 @@ uniform float uHeightScale;
 uniform float uDistanceScale;
 uniform vec3 uCameraPosition;
 
+const float minimumDistanceScale = 0.01;
 const float projectedEdgeWeight = 0.20;
-const float defaultDistanceScale = 24.0;
-const float nearDistanceRadiusMultiplier = 2.0;
 
 float sampleHeight(vec2 uv)
 {
@@ -63,11 +62,11 @@ vec3 domainToWorld(vec2 uv)
         (uv.y - 0.5) * uTerrainSize);
 }
 
-float nearDistanceBoost(float distanceToCamera)
+float distanceWeight(float distanceToCamera)
 {
-    float safeDistanceScale = max(uDistanceScale, 0.0);
-    float nearDistanceWeight = safeDistanceScale * nearDistanceRadiusMultiplier / distanceToCamera;
-    return max(1.0, sqrt(max(nearDistanceWeight, 0.0)));
+    float safeDistanceScale = max(uDistanceScale, minimumDistanceScale);
+    float normalizedDistance = safeDistanceScale / distanceToCamera;
+    return normalizedDistance * normalizedDistance;
 }
 
 float scoreNode(uint nodeIndex)
@@ -84,11 +83,10 @@ float scoreNode(uint nodeIndex)
     float distanceToCamera = max(length(center - uCameraPosition), 0.05);
     float worldError = node.domainCAndErrors.z * uHeightScale;
     float longestEdgeLength = max(max(length(a - b), length(b - c)), length(c - a));
-    float distanceScale = max(uDistanceScale, 0.0);
-    float nearBoost = nearDistanceBoost(distanceToCamera);
-    float heightErrorScore = worldError * distanceScale / distanceToCamera * nearBoost;
-    float edgeLengthScore =
-        longestEdgeLength * projectedEdgeWeight * (distanceScale / defaultDistanceScale) / distanceToCamera * nearBoost;
+    float distanceScale = max(uDistanceScale, minimumDistanceScale);
+    float weight = distanceWeight(distanceToCamera);
+    float heightErrorScore = worldError * weight;
+    float edgeLengthScore = longestEdgeLength * projectedEdgeWeight / distanceScale * weight;
     return max(heightErrorScore, edgeLengthScore);
 }
 

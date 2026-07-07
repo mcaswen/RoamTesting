@@ -9,15 +9,14 @@ namespace ParallelRoam::Algorithms::DataOrientedRoam
 namespace
 {
 constexpr float MinimumCameraDistance = 0.05F;
+constexpr float MinimumDistanceScale = 0.01F;
 constexpr float ProjectedEdgeWeight = 0.20F;
-constexpr float DefaultDistanceScale = 24.0F;
-constexpr float NearDistanceRadiusMultiplier = 2.0F;
 
-float ComputeNearDistanceBoost(float distance, float distanceScale)
+float ComputeDistanceWeight(float distance, float distanceScale)
 {
-    const float safeDistanceScale = std::max(distanceScale, 0.0F);
-    const float nearDistanceWeight = (safeDistanceScale * NearDistanceRadiusMultiplier) / distance;
-    return std::max(1.0F, std::sqrt(nearDistanceWeight));
+    const float safeDistanceScale = std::max(distanceScale, MinimumDistanceScale);
+    const float normalizedDistance = safeDistanceScale / distance;
+    return normalizedDistance * normalizedDistance;
 }
 } // namespace
 
@@ -165,12 +164,11 @@ float ComputeScreenErrorScore(const DataOrientedRoamState& state, DataOrientedRo
         glm::length(b - c),
         glm::length(c - a),
     });
-    const float distanceScale = std::max(state.Settings.DistanceScale, 0.0F);
-    // 近场额外提升让相机距离变化能更明显地反映到细分层级上
-    const float nearDistanceBoost = ComputeNearDistanceBoost(distance, distanceScale);
-    const float heightErrorScore = worldError * distanceScale / distance * nearDistanceBoost;
-    const float edgeLengthScore =
-        longestEdgeLength * ProjectedEdgeWeight * (distanceScale / DefaultDistanceScale) / distance * nearDistanceBoost;
+    const float distanceScale = std::max(state.Settings.DistanceScale, MinimumDistanceScale);
+    // 平方距离权重拉开近远差异，避免只把全图细分数量整体抬高
+    const float distanceWeight = ComputeDistanceWeight(distance, distanceScale);
+    const float heightErrorScore = worldError * distanceWeight;
+    const float edgeLengthScore = longestEdgeLength * ProjectedEdgeWeight / distanceScale * distanceWeight;
     // 两项取最大值，避免高频地形和近处平地互相掩盖
     return std::max(heightErrorScore, edgeLengthScore);
 }
