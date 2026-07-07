@@ -19,6 +19,11 @@ COLORS = {
     "GPU compute": "#54A24B",
     "GPU readback": "#72B7B2",
     "Other LOD": "#9D755D",
+    "Split": "#4C78A8",
+    "Merge": "#F58518",
+    "Emit": "#54A24B",
+    "Validate": "#E45756",
+    "Other stage": "#9D755D",
     "Avg": "#4C78A8",
     "P50": "#F58518",
     "P90": "#54A24B",
@@ -44,6 +49,11 @@ COMPONENT_LABELS = {
     "GPU dispatch": "GPU 调度",
     "GPU readback": "GPU 读回",
     "Other LOD": "其他 LOD",
+    "Split": "分裂",
+    "Merge": "合并",
+    "Emit": "网格输出",
+    "Validate": "拓扑验证",
+    "Other stage": "其他阶段",
     "LOD total": "LOD 总耗时",
     "ms / 10k triangles": "每万三角形耗时",
     "Avg": "平均值",
@@ -145,6 +155,10 @@ def stats_for(rows: list[dict[str, object]]) -> dict[str, float]:
     dispatch = [float(row["gpuDispatchWallMilliseconds"]) for row in rows]
     query = [float(row["gpuQueryWaitMilliseconds"]) for row in rows]
     readback = [float(row["gpuReadbackWaitMilliseconds"]) for row in rows]
+    split = [float(row["splitMilliseconds"]) for row in rows]
+    merge = [float(row["mergeMilliseconds"]) for row in rows]
+    emit = [float(row["emitMilliseconds"]) for row in rows]
+    validate = [float(row["validateMilliseconds"]) for row in rows]
     cpu_percent = [float(row["cpuUtilizationPercent"]) for row in rows]
     depth_reached = [float(row["maxDepthReached"]) for row in rows]
 
@@ -160,7 +174,14 @@ def stats_for(rows: list[dict[str, object]]) -> dict[str, float]:
         "gpuComputeMs": mean(gpu_compute),
         "gpuReadbackMs": mean(readback),
     }
+    stage_components = {
+        "splitMs": mean(split),
+        "mergeMs": mean(merge),
+        "emitMs": mean(emit),
+        "validateMs": mean(validate),
+    }
     known = sum(components.values())
+    stage_known = sum(stage_components.values())
     return {
         "samples": float(len(rows)),
         "avgFrameMs": mean(frame),
@@ -177,7 +198,9 @@ def stats_for(rows: list[dict[str, object]]) -> dict[str, float]:
         "maxDepthReached": max(depth_reached) if depth_reached else 0.0,
         "lodMsPer10kTriangles": (avg_lod / avg_triangles * 10000.0) if avg_triangles else 0.0,
         "otherLodMs": max(avg_lod - known, 0.0),
+        "otherStageMs": max(avg_lod - stage_known, 0.0),
         **components,
+        **stage_components,
     }
 
 
@@ -437,6 +460,11 @@ def write_analysis_csv(folder: Path, rows: list[dict[str, object]]) -> dict[tupl
         "gpuComputeMs",
         "gpuReadbackMs",
         "otherLodMs",
+        "splitMs",
+        "mergeMs",
+        "emitMs",
+        "validateMs",
+        "otherStageMs",
     ]
     for key, group in sorted(by_case_alg.items()):
         stats[key] = stats_for(group)
@@ -450,6 +478,16 @@ def write_analysis_csv(folder: Path, rows: list[dict[str, object]]) -> dict[tupl
 
 def stats_by_algorithm(stats: dict[tuple[str, str], dict[str, float]], case: str) -> dict[str, dict[str, float]]:
     return {algorithm: values for (case_name, algorithm), values in stats.items() if case_name == case}
+
+
+def roam_stage_components(data: dict[str, dict[str, float]], algorithms: list[str]) -> list[tuple[str, list[float], str]]:
+    return [
+        ("Split", [data[a]["splitMs"] for a in algorithms], COLORS["Split"]),
+        ("Merge", [data[a]["mergeMs"] for a in algorithms], COLORS["Merge"]),
+        ("Emit", [data[a]["emitMs"] for a in algorithms], COLORS["Emit"]),
+        ("Validate", [data[a]["validateMs"] for a in algorithms], COLORS["Validate"]),
+        ("Other stage", [data[a]["otherStageMs"] for a in algorithms], COLORS["Other stage"]),
+    ]
 
 
 def generate_experiment_01(folder: Path, stats: dict[tuple[str, str], dict[str, float]]) -> None:
@@ -480,6 +518,13 @@ def generate_experiment_01(folder: Path, stats: dict[tuple[str, str], dict[str, 
         ("Other LOD", [data[a]["otherLodMs"] for a in algorithms], COLORS["Other LOD"]),
     ]
     stacked_bar_chart(folder / "chart_exp01_lod_composition.svg", "实验1：LOD 时间组成", algorithms, components, "毫秒")
+    stacked_bar_chart(
+        folder / "chart_exp01_roam_stage_composition.svg",
+        "实验1：ROAM 阶段耗时组成",
+        algorithms,
+        roam_stage_components(data, algorithms),
+        "毫秒",
+    )
 
 
 def generate_experiment_02(folder: Path, stats: dict[tuple[str, str], dict[str, float]]) -> None:
@@ -608,6 +653,14 @@ def generate_experiment_05(folder: Path, stats: dict[tuple[str, str], dict[str, 
         ("Other LOD", gpu["otherLodMs"], COLORS["Other LOD"]),
     ]
     donut_chart(folder / "chart_exp05_gpu_pipeline_share.svg", "实验5：GPU 类 ROAM 的 LOD 时间占比", donut_values)
+    stage_values = [
+        ("Split", gpu["splitMs"], COLORS["Split"]),
+        ("Merge", gpu["mergeMs"], COLORS["Merge"]),
+        ("Emit", gpu["emitMs"], COLORS["Emit"]),
+        ("Validate", gpu["validateMs"], COLORS["Validate"]),
+        ("Other stage", gpu["otherStageMs"], COLORS["Other stage"]),
+    ]
+    donut_chart(folder / "chart_exp05_roam_stage_share.svg", "实验5：GPU 类 ROAM 的 ROAM 阶段占比", stage_values)
 
     gpu_rows = [row for row in rows if row["algorithm"] == "GPU ROAM-like"]
     step = max(1, len(gpu_rows) // 260)
@@ -621,6 +674,17 @@ def generate_experiment_05(folder: Path, stats: dict[tuple[str, str], dict[str, 
             ("GPU snapshot", [(float(row["timeSeconds"]), float(row["gpuSnapshotBuildMilliseconds"])) for row in sampled], COLORS["GPU snapshot"]),
             ("GPU compute", [(float(row["timeSeconds"]), float(row["gpuComputeMilliseconds"])) for row in sampled], COLORS["GPU compute"]),
             ("GPU readback", [(float(row["timeSeconds"]), float(row["gpuReadbackWaitMilliseconds"])) for row in sampled], COLORS["GPU readback"]),
+        ],
+        "毫秒",
+    )
+    xy_line_chart(
+        folder / "chart_exp05_roam_stage_timing_over_time.svg",
+        "实验5：GPU 类 ROAM 阶段耗时变化",
+        [
+            ("Split", [(float(row["timeSeconds"]), float(row["splitMilliseconds"])) for row in sampled], COLORS["Split"]),
+            ("Merge", [(float(row["timeSeconds"]), float(row["mergeMilliseconds"])) for row in sampled], COLORS["Merge"]),
+            ("Emit", [(float(row["timeSeconds"]), float(row["emitMilliseconds"])) for row in sampled], COLORS["Emit"]),
+            ("Validate", [(float(row["timeSeconds"]), float(row["validateMilliseconds"])) for row in sampled], COLORS["Validate"]),
         ],
         "毫秒",
     )

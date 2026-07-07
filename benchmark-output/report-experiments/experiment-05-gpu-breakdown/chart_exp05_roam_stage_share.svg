@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="620" viewBox="0 0 900 620">
+<rect width="100%" height="100%" fill="white"/>
+<style>text{font-family:Arial,"Microsoft YaHei",sans-serif;fill:#222}.small{font-size:12px}.axis{stroke:#333;stroke-width:1}.grid{stroke:#E5E5E5;stroke-width:1}</style>
+<text x="450.0" y="34" font-size="22" text-anchor="middle">实验5：GPU 类 ROAM 的 ROAM 阶段占比</text>
+<path d="M330.0,130.0 A190,190 0 0 1 487.8,214.2 L417.2,261.5 A105,105 0 0 0 330.0,215.0 Z" fill="#4C78A8"/>
+<text class="small" x="432.6" y="127.7" text-anchor="middle">15.6%</text>
+<path d="M487.8,214.2 A190,190 0 0 1 519.2,302.3 L434.5,310.2 A105,105 0 0 0 417.2,261.5 Z" fill="#F58518"/>
+<text class="small" x="535.4" y="246.9" text-anchor="middle">7.9%</text>
+<path d="M519.2,302.3 A190,190 0 0 1 519.2,302.3 L434.5,310.2 A105,105 0 0 0 434.5,310.2 Z" fill="#54A24B"/>
+<path d="M519.2,302.3 A190,190 0 0 1 519.2,302.3 L434.5,310.2 A105,105 0 0 0 434.5,310.2 Z" fill="#E45756"/>
+<path d="M519.2,302.3 A190,190 0 1 1 330.0,130.0 L330.0,215.0 A105,105 0 1 0 434.5,310.2 Z" fill="#9D755D"/>
+<text class="small" x="183.2" y="481.2" text-anchor="middle">76.5%</text>
+<text x="330" y="316" font-size="18" text-anchor="middle">LOD 总耗时</text>
+<text x="330" y="344" font-size="18" text-anchor="middle">13.43 ms</text>
+<rect x="610" y="136" width="16" height="16" fill="#4C78A8" rx="2"/>
+<text class="small" x="636" y="150" text-anchor="start">分裂: 2.09 ms / 15.6%</text>
+<rect x="610" y="178" width="16" height="16" fill="#F58518" rx="2"/>
+<text class="small" x="636" y="192" text-anchor="start">合并: 1.06 ms / 7.9%</text>
+<rect x="610" y="220" width="16" height="16" fill="#54A24B" rx="2"/>
+<text class="small" x="636" y="234" text-anchor="start">网格输出: 0.00 ms / 0.0%</text>
+<rect x="610" y="262" width="16" height="16" fill="#E45756" rx="2"/>
+<text class="small" x="636" y="276" text-anchor="start">拓扑验证: 0.00 ms / 0.0%</text>
+<rect x="610" y="304" width="16" height="16" fill="#9D755D" rx="2"/>
+<text class="small" x="636" y="318" text-anchor="start">其他阶段: 10.27 ms / 76.5%</text>
+</svg>
