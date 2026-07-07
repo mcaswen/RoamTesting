@@ -21,12 +21,27 @@ int main(int argc, char** argv)
     // full app 路径支持无窗口/短窗口入口
     // 参数分流必须早于 Application 初始化
     int maxFrameCount = -1;
+    bool fixedFrameSmokeTest = false;
+    bool gpuSmokeTest = false;
+    bool automaticRuntimeBenchmark = false;
     for (int index = 1; index < argc; ++index)
     {
         // smoke test 用固定帧数退出，避免自动化验证卡在窗口循环里
         if (std::string_view{argv[index]} == "--smoke-test")
         {
+            fixedFrameSmokeTest = true;
             maxFrameCount = 3;
+        }
+
+        if (std::string_view{argv[index]} == "--gpu-smoke-test")
+        {
+            gpuSmokeTest = true;
+            maxFrameCount = 32;
+        }
+
+        if (std::string_view{argv[index]} == "--runtime-benchmark")
+        {
+            automaticRuntimeBenchmark = true;
         }
 
         // ROAM 探针不启动窗口，用于快速确认算法层 LOD 是否随相机变化
@@ -46,7 +61,22 @@ int main(int argc, char** argv)
         }
     }
 
+    if (automaticRuntimeBenchmark && (fixedFrameSmokeTest || gpuSmokeTest))
+    {
+        std::cerr << "--runtime-benchmark cannot be combined with a smoke-test option.\n";
+        return 2;
+    }
+
     ParallelRoam::App::Application application;
+    if (gpuSmokeTest)
+    {
+        application.EnableGpuSmokeTest();
+    }
+    if (automaticRuntimeBenchmark)
+    {
+        application.EnableAutomaticRuntimeBenchmark();
+    }
+
     if (!application.Initialize())
     {
         return 1;

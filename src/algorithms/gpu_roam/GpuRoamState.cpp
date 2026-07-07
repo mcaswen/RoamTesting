@@ -15,11 +15,10 @@ GpuRoamState::~GpuRoamState()
 
 void GpuRoamState::Reset()
 {
-    const std::array<std::uint32_t*, 8U> bufferIds{
+    const std::array<std::uint32_t*, 7U> bufferIds{
         &NodeBufferId,
         &ActiveLeafBufferId,
         &ScreenErrorBufferId,
-        &CounterBufferId,
         &SplitCandidateBufferId,
         &MergeCandidateBufferId,
         &GpuVertexBufferId,
@@ -43,7 +42,18 @@ void GpuRoamState::Reset()
             glDeleteBuffers(1, &glBufferId);
             IndirectDrawBufferId = 0U;
         }
+
+        for (GpuRoamTimingReadbackSlot& slot : TimingReadbackSlots)
+        {
+            if (slot.CounterBufferId != 0U)
+            {
+                const GLuint glBufferId = slot.CounterBufferId;
+                glDeleteBuffers(1, &glBufferId);
+                slot.CounterBufferId = 0U;
+            }
+        }
     }
+    CounterBufferId = 0U;
 
     if (HeightMapTextureId != 0U && glad_glDeleteTextures != nullptr)
     {
@@ -71,11 +81,38 @@ void GpuRoamState::Reset()
         }
     }
 
-    if (TimerQueryId != 0U && glad_glDeleteQueries != nullptr)
+    if (glad_glDeleteQueries != nullptr)
     {
-        const GLuint queryId = TimerQueryId;
-        glDeleteQueries(1, &queryId);
-        TimerQueryId = 0U;
+        for (GpuRoamTimingReadbackSlot& slot : TimingReadbackSlots)
+        {
+            if (slot.TimerQueryId != 0U)
+            {
+                const GLuint queryId = slot.TimerQueryId;
+                glDeleteQueries(1, &queryId);
+                slot.TimerQueryId = 0U;
+            }
+        }
+    }
+
+    NodeBufferCapacityBytes = 0U;
+    ActiveLeafBufferCapacityBytes = 0U;
+    ScreenErrorBufferCapacityBytes = 0U;
+    SplitCandidateBufferCapacityBytes = 0U;
+    MergeCandidateBufferCapacityBytes = 0U;
+    GpuVertexBufferCapacityBytes = 0U;
+    GpuIndexBufferCapacityBytes = 0U;
+    IndirectDrawBufferCapacityBytes = 0U;
+    CachedHeightMapPath.clear();
+    CachedHeightMapWidth = 0;
+    CachedHeightMapHeight = 0;
+    HeightMapTextureUploaded = false;
+    TimingReadbackCursor = 0U;
+    LastCompletedCounters = {};
+    LastCompletedGpuComputeMilliseconds = 0.0F;
+    HasCompletedTimingReadback = false;
+    for (GpuRoamTimingReadbackSlot& slot : TimingReadbackSlots)
+    {
+        slot = {};
     }
 }
 } // namespace ParallelRoam::Algorithms::GpuRoam

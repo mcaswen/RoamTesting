@@ -26,6 +26,8 @@ public:
     Application(const Application&) = delete;
     Application& operator=(const Application&) = delete;
 
+    void EnableGpuSmokeTest();
+    void EnableAutomaticRuntimeBenchmark();
     bool Initialize();
 
     /// <summary>
@@ -73,8 +75,14 @@ private:
         // 第一帧必须采样 t=0，不能先累加 delta
         bool HasPreparedFirstFrame{false};
 
+        bool Failed{false};
+        std::string FailureMessage;
+
         // 算法顺序固定，输出表格才能横向对齐
         std::vector<Algorithms::TerrainLodAlgorithmId> AlgorithmSequence;
+
+        // Notes 记录 GPU 设备信息或 capability skip 原因
+        std::vector<std::string> Notes;
 
         // Results 在整轮结束后一次性写成 Markdown 和 CSV
         std::vector<RuntimeBenchmarkAlgorithmResult> Results;
@@ -158,6 +166,11 @@ private:
     std::string _lastMeshUpdateError;
     std::chrono::steady_clock::time_point _lastFrameTime{};
     bool _initialized{false};
+    bool _gpuSmokeTestEnabled{false};
+    bool _gpuSmokeTestFailed{false};
+    bool _automaticRuntimeBenchmarkEnabled{false};
+    bool _automaticRuntimeBenchmarkCompleted{false};
+    bool _automaticRuntimeBenchmarkFailed{false};
     float _framesPerSecond{0.0F};
     float _frameTimeMilliseconds{0.0F};
 };

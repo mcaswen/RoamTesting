@@ -8,6 +8,7 @@
 #include <stb_image.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cstddef>
 #include <iostream>
 #include <memory>
@@ -275,6 +276,8 @@ void TerrainRenderer::ResetTerrainLodAlgorithm()
     _terrainLodAlgorithm.reset();
     _terrainLodStats = {};
     _terrainLodStatusMessage.clear();
+    _terrainLodTotalMilliseconds = 0.0F;
+    _terrainLodCpuUploadMilliseconds = 0.0F;
     _gpuVertexBufferId = 0;
     _gpuIndexBufferId = 0;
     _gpuIndirectDrawBufferId = 0;
@@ -306,12 +309,14 @@ void TerrainRenderer::Shutdown()
         glDeleteBuffers(1, &_indexBufferId);
         _indexBufferId = 0;
     }
+    _indexBufferCapacityBytes = 0U;
 
     if (_vertexBufferId != 0)
     {
         glDeleteBuffers(1, &_vertexBufferId);
         _vertexBufferId = 0;
     }
+    _vertexBufferCapacityBytes = 0U;
 
     if (_vertexArrayId != 0)
     {
@@ -433,12 +438,19 @@ TerrainRenderStats TerrainRenderer::Stats() const
     stats.RoamInvalidTopologyCount = _terrainLodStats.InvalidTopologyCount;
     stats.RoamCpuWorkerCount = _terrainLodStats.CpuWorkerCount;
     stats.RoamCpuUtilizationPercent = _terrainLodStats.CpuUtilizationPercent;
+    stats.RoamTotalMilliseconds = _terrainLodTotalMilliseconds;
     stats.RoamUpdateMilliseconds = _terrainLodStats.CpuUpdateMilliseconds;
+    stats.RoamCpuUploadMilliseconds = _terrainLodCpuUploadMilliseconds;
     stats.RoamSplitMilliseconds = _terrainLodStats.SplitMilliseconds;
     stats.RoamMergeMilliseconds = _terrainLodStats.MergeMilliseconds;
     stats.RoamEmitMilliseconds = _terrainLodStats.EmitMilliseconds;
     stats.RoamValidateMilliseconds = _terrainLodStats.ValidateMilliseconds;
     stats.RoamGpuComputeMilliseconds = _terrainLodStats.GpuComputeMilliseconds;
+    stats.RoamGpuSnapshotBuildMilliseconds = _terrainLodStats.GpuSnapshotBuildMilliseconds;
+    stats.RoamGpuBufferAllocationMilliseconds = _terrainLodStats.GpuBufferAllocationMilliseconds;
+    stats.RoamGpuDispatchWallMilliseconds = _terrainLodStats.GpuDispatchWallMilliseconds;
+    stats.RoamGpuQueryWaitMilliseconds = _terrainLodStats.GpuQueryWaitMilliseconds;
+    stats.RoamGpuReadbackWaitMilliseconds = _terrainLodStats.GpuReadbackWaitMilliseconds;
     stats.RoamRenderMilliseconds = _terrainLodStats.RenderMilliseconds;
     stats.RoamCpuGpuUploadBytes = _terrainLodStats.CpuGpuUploadBytes;
     stats.RoamCpuGpuReadbackBytes = _terrainLodStats.CpuGpuReadbackBytes;
@@ -474,6 +486,8 @@ bool TerrainRenderer::RebuildRegularGrid(std::string* errorMessage)
     _meshData = Terrain::TerrainMeshBuilder::Build(_heightMap, _settings.TerrainSize, _settings.HeightScale);
     _terrainLodStats = {};
     _terrainLodStatusMessage.clear();
+    _terrainLodTotalMilliseconds = 0.0F;
+    _terrainLodCpuUploadMilliseconds = 0.0F;
     // 从 ROAM 切回规则网格时清空持久拓扑
     // 再切回 ROAM 会从当前设置重新建立 root diamond
     _terrainLodAlgorithm.reset();
@@ -493,6 +507,10 @@ bool TerrainRenderer::RebuildRegularGrid(std::string* errorMessage)
 
 bool TerrainRenderer::RebuildTerrainLod(const glm::vec3& cameraPosition, std::string* errorMessage)
 {
+    const auto rebuildStart = std::chrono::steady_clock::now();
+    _terrainLodTotalMilliseconds = 0.0F;
+    _terrainLodCpuUploadMilliseconds = 0.0F;
+
     if (_terrainLodAlgorithm == nullptr || _terrainLodAlgorithm->Info().Id != _settings.TerrainLodAlgorithm)
     {
         // renderer 只持有统一接口
@@ -541,6 +559,7 @@ bool TerrainRenderer::RebuildTerrainLod(const glm::vec3& cameraPosition, std::st
     }
 
     _terrainLodStats = _terrainLodAlgorithm->Stats();
+    _terrainLodCpuUploadMilliseconds = _terrainLodStats.CpuUploadMilliseconds;
     _terrainLodStatusMessage = renderPacket.StatusMessage;
     // camera rebuild 位置只在算法成功后更新
     // 失败时下一帧仍会尝试基于旧 mesh 状态重建
@@ -561,13 +580,18 @@ bool TerrainRenderer::RebuildTerrainLod(const glm::vec3& cameraPosition, std::st
             return false;
         }
 
+        const auto uploadStart = std::chrono::steady_clock::now();
         if (!UploadMesh(errorMessage))
         {
             _meshDirty = true;
             return false;
         }
+        _terrainLodCpuUploadMilliseconds =
+            std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - uploadStart).count();
 
         _meshDirty = false;
+        _terrainLodTotalMilliseconds =
+            std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - rebuildStart).count();
         return true;
     }
 
@@ -579,6 +603,8 @@ bool TerrainRenderer::RebuildTerrainLod(const glm::vec3& cameraPosition, std::st
     }
 
     _meshDirty = false;
+    _terrainLodTotalMilliseconds =
+        std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - rebuildStart).count();
     return true;
 }
 
@@ -613,18 +639,30 @@ bool TerrainRenderer::UploadMesh(std::string* errorMessage)
     // LOD mesh 会随相机更新
     // 规则网格只在参数变化时更新
     const GLenum bufferUsage = _settings.UseTerrainLod ? GL_DYNAMIC_DRAW : GL_STATIC_DRAW;
-    glBufferData(
+    const std::size_t vertexBufferBytes = _meshData.Vertices.size() * sizeof(Terrain::TerrainMeshVertex);
+    if (_vertexBufferCapacityBytes < vertexBufferBytes)
+    {
+        glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(vertexBufferBytes), nullptr, bufferUsage);
+        _vertexBufferCapacityBytes = vertexBufferBytes;
+    }
+    glBufferSubData(
         GL_ARRAY_BUFFER,
-        static_cast<GLsizeiptr>(_meshData.Vertices.size() * sizeof(Terrain::TerrainMeshVertex)),
-        _meshData.Vertices.data(),
-        bufferUsage);
+        0,
+        static_cast<GLsizeiptr>(vertexBufferBytes),
+        _meshData.Vertices.data());
 
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, _indexBufferId);
-    glBufferData(
+    const std::size_t indexBufferBytes = _meshData.Indices.size() * sizeof(std::uint32_t);
+    if (_indexBufferCapacityBytes < indexBufferBytes)
+    {
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, static_cast<GLsizeiptr>(indexBufferBytes), nullptr, bufferUsage);
+        _indexBufferCapacityBytes = indexBufferBytes;
+    }
+    glBufferSubData(
         GL_ELEMENT_ARRAY_BUFFER,
-        static_cast<GLsizeiptr>(_meshData.Indices.size() * sizeof(std::uint32_t)),
-        _meshData.Indices.data(),
-        bufferUsage);
+        0,
+        static_cast<GLsizeiptr>(indexBufferBytes),
+        _meshData.Indices.data());
 
     _renderMode = Algorithms::TerrainLodRenderMode::CpuMesh;
     _gpuVertexBufferId = 0;

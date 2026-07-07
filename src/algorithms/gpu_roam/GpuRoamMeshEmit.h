@@ -20,6 +20,7 @@ struct GpuRoamMeshEmitPassInput
     std::uint32_t IndirectDrawBufferId{0};
     std::uint32_t HeightMapTextureId{0};
     std::size_t ActiveLeafCapacity{0};
+    std::size_t NodeCapacity{0};
     int MaxDepth{0};
     std::uint64_t BuildSequence{0};
     float TerrainSize{0.0F};

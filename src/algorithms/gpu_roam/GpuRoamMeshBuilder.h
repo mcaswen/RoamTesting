@@ -32,6 +32,7 @@ private:
         std::size_t nodeCapacity,
         std::size_t& uploadBytes,
         float& cpuUploadMilliseconds,
+        float& bufferAllocationMilliseconds,
         std::string* errorMessage);
 
     [[nodiscard]] bool RunGpuComputePipeline(
@@ -40,6 +41,10 @@ private:
         std::size_t& uploadBytes,
         float& gpuComputeMilliseconds,
         std::size_t& readbackBytes,
+        float& bufferAllocationMilliseconds,
+        float& dispatchWallMilliseconds,
+        float& queryWaitMilliseconds,
+        float& readbackWaitMilliseconds,
         std::size_t& gpuActiveLeafCount,
         std::size_t& gpuNodeCount,
         std::size_t& gpuSplitOnlyCommitCount,

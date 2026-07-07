@@ -1,7 +1,6 @@
 #include "algorithms/gpu_roam/GpuRoamBufferSchema.h"
 
 #include <algorithm>
-#include <unordered_set>
 
 namespace ParallelRoam::Algorithms::GpuRoam
 {
@@ -40,13 +39,13 @@ GpuRoamBufferSnapshot BuildGpuRoamBufferSnapshot(
     snapshot.Nodes.resize(nodeCount);
     snapshot.ActiveLeafIndices.reserve(state.FinalActiveLeaves.size());
 
-    std::unordered_set<DataOrientedRoam::DataOrientedRoamNodeIndex> activeLeafSet;
-    activeLeafSet.reserve(state.FinalActiveLeaves.size());
+    std::vector<std::uint8_t> activeLeafFlags(nodeCount, 0U);
     for (DataOrientedRoam::DataOrientedRoamNodeIndex leaf : state.FinalActiveLeaves)
     {
-        if (leaf != DataOrientedRoam::InvalidDataOrientedRoamNodeIndex)
+        if (leaf != DataOrientedRoam::InvalidDataOrientedRoamNodeIndex &&
+            static_cast<std::size_t>(leaf) < nodeCount)
         {
-            activeLeafSet.insert(leaf);
+            activeLeafFlags[leaf] = 1U;
             snapshot.ActiveLeafIndices.push_back(static_cast<std::uint32_t>(leaf));
         }
     }
@@ -80,7 +79,7 @@ GpuRoamBufferSnapshot BuildGpuRoamBufferSnapshot(
         {
             flags |= GpuRoamNodeFlagActivatedByForcedSplit;
         }
-        if (activeLeafSet.find(node) != activeLeafSet.end())
+        if (activeLeafFlags[node] != 0U)
         {
             flags |= GpuRoamNodeFlagActiveLeaf;
         }

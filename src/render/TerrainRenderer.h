@@ -139,12 +139,19 @@ struct TerrainRenderStats
     float RoamCpuUtilizationPercent{0.0F};
 
     // 下列耗时用于拆分 CPU LOD 的成本来源
+    float RoamTotalMilliseconds{0.0F};
     float RoamUpdateMilliseconds{0.0F};
+    float RoamCpuUploadMilliseconds{0.0F};
     float RoamSplitMilliseconds{0.0F};
     float RoamMergeMilliseconds{0.0F};
     float RoamEmitMilliseconds{0.0F};
     float RoamValidateMilliseconds{0.0F};
     float RoamGpuComputeMilliseconds{0.0F};
+    float RoamGpuSnapshotBuildMilliseconds{0.0F};
+    float RoamGpuBufferAllocationMilliseconds{0.0F};
+    float RoamGpuDispatchWallMilliseconds{0.0F};
+    float RoamGpuQueryWaitMilliseconds{0.0F};
+    float RoamGpuReadbackWaitMilliseconds{0.0F};
     float RoamRenderMilliseconds{0.0F};
     std::size_t RoamCpuGpuUploadBytes{0};
     std::size_t RoamCpuGpuReadbackBytes{0};
@@ -212,6 +219,8 @@ private:
     std::unique_ptr<Algorithms::ITerrainLodAlgorithm> _terrainLodAlgorithm;
     Algorithms::TerrainLodStats _terrainLodStats;
     std::string _terrainLodStatusMessage;
+    float _terrainLodTotalMilliseconds{0.0F};
+    float _terrainLodCpuUploadMilliseconds{0.0F};
     TerrainRenderSettings _settings;
     std::filesystem::path _heightMapPath;
     std::filesystem::path _texturePath;
@@ -220,6 +229,8 @@ private:
     unsigned int _vertexArrayId{0};
     unsigned int _vertexBufferId{0};
     unsigned int _indexBufferId{0};
+    std::size_t _vertexBufferCapacityBytes{0};
+    std::size_t _indexBufferCapacityBytes{0};
     unsigned int _textureId{0};
     unsigned int _gpuVertexBufferId{0};
     unsigned int _gpuIndexBufferId{0};

@@ -1,5 +1,7 @@
 #include "app/Application.h"
 
+#include "platform/OpenGlCapabilities.h"
+
 #include <glad/gl.h>
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -49,6 +51,15 @@ float SmoothStep(float value)
     return t * t * (3.0F - 2.0F * t);
 }
 
+std::string BuildConfigurationName()
+{
+#if defined(PARALLEL_ROAM_BUILD_CONFIG)
+    return PARALLEL_ROAM_BUILD_CONFIG;
+#else
+    return "Unknown";
+#endif
+}
+
 std::pair<float, float> ComputeYawPitchForLookAt(const glm::vec3& position, const glm::vec3& target)
 {
     // 目标点与相机重合时返回默认姿态，避免 atan2/asin 输入退化
@@ -94,6 +105,18 @@ Render::TerrainRenderSettings ToRenderSettings(const Gui::TerrainPanelState& sta
 Application::~Application()
 {
     Shutdown();
+}
+
+void Application::EnableGpuSmokeTest()
+{
+    _gpuSmokeTestEnabled = true;
+    _terrainPanelState.UseTerrainLod = true;
+    _terrainPanelState.TerrainLodAlgorithm = Algorithms::TerrainLodAlgorithmId::GpuRoamLike;
+}
+
+void Application::EnableAutomaticRuntimeBenchmark()
+{
+    _automaticRuntimeBenchmarkEnabled = true;
 }
 
 bool Application::Initialize()
@@ -151,6 +174,11 @@ int Application::Run(int maxFrameCount)
     }
 
     int frameCount = 0;
+    if (_automaticRuntimeBenchmarkEnabled)
+    {
+        StartRuntimeBenchmark();
+    }
+
     while (!_input.IsQuitRequested())
     {
         const FrameTiming frameTiming = ComputeFrameTiming();
@@ -185,6 +213,10 @@ int Application::Run(int maxFrameCount)
         RenderFrame(frameTiming);
         _window.SwapBuffers();
         CompleteRuntimeBenchmarkFrame();
+        if (_automaticRuntimeBenchmarkEnabled && _automaticRuntimeBenchmarkCompleted)
+        {
+            break;
+        }
 
         // smoke test 通过固定帧数退出，便于自动验证窗口和 GL context
         ++frameCount;
@@ -194,8 +226,12 @@ int Application::Run(int maxFrameCount)
         }
     }
 
+    const bool automaticBenchmarkIncomplete =
+        _automaticRuntimeBenchmarkEnabled && !_automaticRuntimeBenchmarkCompleted;
+    const int exitCode =
+        (_gpuSmokeTestFailed || _automaticRuntimeBenchmarkFailed || automaticBenchmarkIncomplete) ? 1 : 0;
     Shutdown();
-    return 0;
+    return exitCode;
 }
 
 void Application::Shutdown()
@@ -279,9 +315,21 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
     _guiLayer.BeginFrame();
 
     const glm::vec3 cameraPosition = _camera.Position();
+    if (_gpuSmokeTestEnabled)
+    {
+        _terrainRenderer.RequestMeshRebuild();
+    }
+
     std::string meshUpdateError;
     if (!_terrainRenderer.UpdateForCamera(cameraPosition, &meshUpdateError))
     {
+        if (_runtimeBenchmark.Active && !_runtimeBenchmark.Failed)
+        {
+            _runtimeBenchmark.Failed = true;
+            _runtimeBenchmark.FailureMessage =
+                meshUpdateError.empty() ? "Terrain rebuild failed during runtime benchmark" : meshUpdateError;
+        }
+        _gpuSmokeTestFailed = _gpuSmokeTestEnabled;
         if (meshUpdateError != _lastMeshUpdateError)
         {
             std::cerr << meshUpdateError << '\n';
@@ -331,12 +379,19 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
     debugData.RoamInvalidTopologyCount = terrainStats.RoamInvalidTopologyCount;
     debugData.RoamCpuWorkerCount = terrainStats.RoamCpuWorkerCount;
     debugData.RoamCpuUtilizationPercent = terrainStats.RoamCpuUtilizationPercent;
+    debugData.RoamTotalMilliseconds = terrainStats.RoamTotalMilliseconds;
     debugData.RoamUpdateMilliseconds = terrainStats.RoamUpdateMilliseconds;
+    debugData.RoamCpuUploadMilliseconds = terrainStats.RoamCpuUploadMilliseconds;
     debugData.RoamSplitMilliseconds = terrainStats.RoamSplitMilliseconds;
     debugData.RoamMergeMilliseconds = terrainStats.RoamMergeMilliseconds;
     debugData.RoamEmitMilliseconds = terrainStats.RoamEmitMilliseconds;
     debugData.RoamValidateMilliseconds = terrainStats.RoamValidateMilliseconds;
     debugData.RoamGpuComputeMilliseconds = terrainStats.RoamGpuComputeMilliseconds;
+    debugData.RoamGpuSnapshotBuildMilliseconds = terrainStats.RoamGpuSnapshotBuildMilliseconds;
+    debugData.RoamGpuBufferAllocationMilliseconds = terrainStats.RoamGpuBufferAllocationMilliseconds;
+    debugData.RoamGpuDispatchWallMilliseconds = terrainStats.RoamGpuDispatchWallMilliseconds;
+    debugData.RoamGpuQueryWaitMilliseconds = terrainStats.RoamGpuQueryWaitMilliseconds;
+    debugData.RoamGpuReadbackWaitMilliseconds = terrainStats.RoamGpuReadbackWaitMilliseconds;
     debugData.RoamRenderMilliseconds = terrainStats.RoamRenderMilliseconds;
     debugData.RoamCpuGpuUploadBytes = terrainStats.RoamCpuGpuUploadBytes;
     debugData.RoamCpuGpuReadbackBytes = terrainStats.RoamCpuGpuReadbackBytes;
@@ -445,12 +500,31 @@ void Application::StartRuntimeBenchmark()
     _runtimeBenchmark.HasPreparedFirstFrame = false;
     _runtimeBenchmark.AlgorithmIndex = 0;
     _runtimeBenchmark.ElapsedSeconds = 0.0F;
+    _runtimeBenchmark.Failed = false;
+    _runtimeBenchmark.FailureMessage.clear();
     _runtimeBenchmark.Results.clear();
+    _runtimeBenchmark.Notes.clear();
+    _runtimeBenchmark.Notes.push_back("Build configuration: " + BuildConfigurationName());
     _runtimeBenchmark.AlgorithmSequence = {
-        // 当前已实现并能通过 renderer 输出 CPU mesh 的算法
         Algorithms::TerrainLodAlgorithmId::ClassicCpuRoam,
         Algorithms::TerrainLodAlgorithmId::DataOrientedCpuRoam,
     };
+    const Platform::OpenGlGpuCapabilities gpuCapabilities = Platform::QueryOpenGlGpuCapabilities();
+    if (gpuCapabilities.SupportsGpuRoamCompute())
+    {
+        _runtimeBenchmark.AlgorithmSequence.push_back(Algorithms::TerrainLodAlgorithmId::GpuRoamLike);
+        _runtimeBenchmark.Notes.push_back(
+            "GPU device: " + gpuCapabilities.RendererString + " (" + gpuCapabilities.VersionString + ")");
+        _runtimeBenchmark.Notes.push_back(
+            "GPU timing model: CPU DOD topology baseline plus GPU split-only, compaction, mesh emit and " +
+            std::string{gpuCapabilities.SupportsIndirectDraw ? "indirect draw" : "buffer draw"} +
+            "; GPU ms measures compute passes only");
+    }
+    else
+    {
+        _runtimeBenchmark.Notes.push_back(
+            "GPU ROAM-like skipped: " + gpuCapabilities.GpuRoamComputeUnavailableReason());
+    }
     _runtimeBenchmark.PreviousTerrainPanelState = _terrainPanelState;
     _runtimeBenchmark.PreviousTerrainPanelState.StartBenchmarkRequested = false;
     _runtimeBenchmark.PreviousCameraPose = CameraPose{
@@ -458,6 +532,12 @@ void Application::StartRuntimeBenchmark()
         _camera.YawDegrees(),
         _camera.PitchDegrees(),
     };
+    _terrainPanelState.VSyncEnabled = false;
+    ApplyWindowPanelSettings();
+    _runtimeBenchmark.Notes.push_back(
+        _terrainPanelState.VSyncEnabled ?
+            "VSync: enabled (disable request was not accepted)" :
+            "VSync: disabled during benchmark");
 
     BeginRuntimeBenchmarkAlgorithm();
 }
@@ -530,7 +610,18 @@ void Application::PrepareRuntimeBenchmarkFrame(const FrameTiming& frameTiming)
 
 void Application::CompleteRuntimeBenchmarkFrame()
 {
-    if (!_runtimeBenchmark.Active || _runtimeBenchmark.ElapsedSeconds < _runtimeBenchmark.DurationSeconds)
+    if (!_runtimeBenchmark.Active)
+    {
+        return;
+    }
+
+    if (_runtimeBenchmark.Failed)
+    {
+        FinishRuntimeBenchmark();
+        return;
+    }
+
+    if (_runtimeBenchmark.ElapsedSeconds < _runtimeBenchmark.DurationSeconds)
     {
         return;
     }
@@ -551,12 +642,14 @@ void Application::RecordRuntimeBenchmarkSample(
     const Render::TerrainRenderStats& terrainStats,
     const glm::vec3& cameraPosition)
 {
-    if (!_runtimeBenchmark.Active || _runtimeBenchmark.Results.empty())
+    if (!_runtimeBenchmark.Active || _runtimeBenchmark.Failed || _runtimeBenchmark.Results.empty())
     {
         return;
     }
 
     RuntimeBenchmarkSample sample{};
+    sample.BuildConfiguration = BuildConfigurationName();
+    sample.VSyncEnabled = _terrainPanelState.VSyncEnabled;
     sample.TimeSeconds = _runtimeBenchmark.ElapsedSeconds;
     sample.CameraPosition = cameraPosition;
     // RawDeltaSeconds 是真实帧耗时，ClampedDeltaSeconds 只适合模拟
@@ -567,18 +660,28 @@ void Application::RecordRuntimeBenchmarkSample(
 
 void Application::FinishRuntimeBenchmark()
 {
-    try
+    bool reportSucceeded = false;
+    if (_runtimeBenchmark.Failed)
     {
-        const RuntimeBenchmarkReportPaths paths = WriteRuntimeBenchmarkReport(_runtimeBenchmark.Results);
-        // 输出路径留在状态里，下一帧 UI 可以继续展示给用户
-        _runtimeBenchmark.LastMarkdownPath = paths.MarkdownPath;
-        _runtimeBenchmark.LastCsvPath = paths.CsvPath;
-        std::cout << "Runtime benchmark report: " << paths.MarkdownPath << '\n';
-        std::cout << "Runtime benchmark csv: " << paths.CsvPath << '\n';
+        std::cerr << "Runtime benchmark aborted: " << _runtimeBenchmark.FailureMessage << '\n';
     }
-    catch (const std::exception& exception)
+    else
     {
-        std::cerr << exception.what() << '\n';
+        try
+        {
+            const RuntimeBenchmarkReportPaths paths =
+                WriteRuntimeBenchmarkReport(_runtimeBenchmark.Results, _runtimeBenchmark.Notes);
+            // 输出路径留在状态里，下一帧 UI 可以继续展示给用户
+            _runtimeBenchmark.LastMarkdownPath = paths.MarkdownPath;
+            _runtimeBenchmark.LastCsvPath = paths.CsvPath;
+            std::cout << "Runtime benchmark report: " << paths.MarkdownPath << '\n';
+            std::cout << "Runtime benchmark csv: " << paths.CsvPath << '\n';
+            reportSucceeded = true;
+        }
+        catch (const std::exception& exception)
+        {
+            std::cerr << exception.what() << '\n';
+        }
     }
 
     const Gui::TerrainPanelState previousTerrainPanelState = _runtimeBenchmark.PreviousTerrainPanelState;
@@ -590,11 +693,18 @@ void Application::FinishRuntimeBenchmark()
 
     _terrainPanelState = previousTerrainPanelState;
     _terrainPanelState.StartBenchmarkRequested = false;
+    ApplyWindowPanelSettings();
     _camera.SetPose(previousCameraPose.Position, previousCameraPose.YawDegrees, previousCameraPose.PitchDegrees);
     // 恢复设置后强制重建一次，防止画面停留在 benchmark 的算法 mesh
     ApplyTerrainPanelSettings();
     _terrainRenderer.ResetTerrainLodAlgorithm();
     _terrainRenderer.RequestMeshRebuild();
+
+    if (_automaticRuntimeBenchmarkEnabled)
+    {
+        _automaticRuntimeBenchmarkCompleted = true;
+        _automaticRuntimeBenchmarkFailed = !reportSucceeded;
+    }
 }
 
 std::string Application::CurrentRuntimeBenchmarkAlgorithmName() const

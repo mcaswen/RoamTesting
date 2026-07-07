@@ -5,6 +5,7 @@
 #include "platform/OpenGlCapabilities.h"
 
 #include <algorithm>
+#include <chrono>
 
 namespace ParallelRoam::Algorithms::GpuRoam
 {
@@ -145,7 +146,10 @@ bool GpuRoamTerrainLodAlgorithm::BuildRenderData(
         ToDataOrientedSettings(input.Settings));
 
     _stats = ToTerrainLodStats(_cpuTopologyBuilder.Stats());
+    const auto snapshotStart = std::chrono::steady_clock::now();
     const GpuRoamBufferSnapshot snapshot = BuildGpuRoamBufferSnapshot(_cpuTopologyBuilder.State());
+    _stats.GpuSnapshotBuildMilliseconds =
+        std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - snapshotStart).count();
     if (!_gpuMeshBuilder.Build(snapshot, input, outPacket, _stats, errorMessage))
     {
         return false;

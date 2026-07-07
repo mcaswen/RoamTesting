@@ -23,11 +23,18 @@ struct RuntimeBenchmarkSummary
     float AverageFrameMilliseconds{0.0F};
     float MaxFrameMilliseconds{0.0F};
 
-    // ROAM ms 代表算法层自报的 terrain LOD 更新成本
-    float AverageRoamMilliseconds{0.0F};
-    float MaxRoamMilliseconds{0.0F};
+    // Total LOD 覆盖算法更新到 renderer 输出可绘制数据的完整边界
+    float AverageTotalLodMilliseconds{0.0F};
+    float MaxTotalLodMilliseconds{0.0F};
+    float AverageCpuUpdateMilliseconds{0.0F};
+    float AverageCpuUploadMilliseconds{0.0F};
     float AverageGpuComputeMilliseconds{0.0F};
     float MaxGpuComputeMilliseconds{0.0F};
+    float AverageGpuSnapshotBuildMilliseconds{0.0F};
+    float AverageGpuBufferAllocationMilliseconds{0.0F};
+    float AverageGpuDispatchWallMilliseconds{0.0F};
+    float AverageGpuQueryWaitMilliseconds{0.0F};
+    float AverageGpuReadbackWaitMilliseconds{0.0F};
 
     // 三角形数量是画面复杂度和 GPU 提交压力的共同代理
     double AverageTriangles{0.0};
@@ -106,8 +113,15 @@ RuntimeBenchmarkSummary SummarizeRuntimeBenchmark(const RuntimeBenchmarkAlgorith
 
     // 累加使用 double，避免长时间采样后平均值被 float 精度吞掉
     double totalFrameMilliseconds = 0.0;
-    double totalRoamMilliseconds = 0.0;
+    double totalLodMilliseconds = 0.0;
+    double totalCpuUpdateMilliseconds = 0.0;
+    double totalCpuUploadMilliseconds = 0.0;
     double totalGpuComputeMilliseconds = 0.0;
+    double totalGpuSnapshotBuildMilliseconds = 0.0;
+    double totalGpuBufferAllocationMilliseconds = 0.0;
+    double totalGpuDispatchWallMilliseconds = 0.0;
+    double totalGpuQueryWaitMilliseconds = 0.0;
+    double totalGpuReadbackWaitMilliseconds = 0.0;
     double totalTriangles = 0.0;
     double totalNodes = 0.0;
     double totalCpuUtilization = 0.0;
@@ -121,14 +135,22 @@ RuntimeBenchmarkSummary SummarizeRuntimeBenchmark(const RuntimeBenchmarkAlgorith
 
         // 平均值用于整体对比，最大值用于定位尖峰卡顿
         totalFrameMilliseconds += sample.FrameMilliseconds;
-        totalRoamMilliseconds += stats.RoamUpdateMilliseconds;
+        totalLodMilliseconds += stats.RoamTotalMilliseconds;
+        totalCpuUpdateMilliseconds += stats.RoamUpdateMilliseconds;
+        totalCpuUploadMilliseconds += stats.RoamCpuUploadMilliseconds;
         totalGpuComputeMilliseconds += stats.RoamGpuComputeMilliseconds;
+        totalGpuSnapshotBuildMilliseconds += stats.RoamGpuSnapshotBuildMilliseconds;
+        totalGpuBufferAllocationMilliseconds += stats.RoamGpuBufferAllocationMilliseconds;
+        totalGpuDispatchWallMilliseconds += stats.RoamGpuDispatchWallMilliseconds;
+        totalGpuQueryWaitMilliseconds += stats.RoamGpuQueryWaitMilliseconds;
+        totalGpuReadbackWaitMilliseconds += stats.RoamGpuReadbackWaitMilliseconds;
         totalTriangles += static_cast<double>(stats.TriangleCount);
         totalNodes += static_cast<double>(stats.RoamNodeCount);
         totalCpuUtilization += stats.RoamCpuUtilizationPercent;
 
         summary.MaxFrameMilliseconds = std::max(summary.MaxFrameMilliseconds, sample.FrameMilliseconds);
-        summary.MaxRoamMilliseconds = std::max(summary.MaxRoamMilliseconds, stats.RoamUpdateMilliseconds);
+        summary.MaxTotalLodMilliseconds =
+            std::max(summary.MaxTotalLodMilliseconds, stats.RoamTotalMilliseconds);
         summary.MaxGpuComputeMilliseconds =
             std::max(summary.MaxGpuComputeMilliseconds, stats.RoamGpuComputeMilliseconds);
         summary.MaxTriangles = std::max(summary.MaxTriangles, stats.TriangleCount);
@@ -146,8 +168,20 @@ RuntimeBenchmarkSummary SummarizeRuntimeBenchmark(const RuntimeBenchmarkAlgorith
 
     const double sampleCount = static_cast<double>(summary.SampleCount);
     summary.AverageFrameMilliseconds = static_cast<float>(totalFrameMilliseconds / sampleCount);
-    summary.AverageRoamMilliseconds = static_cast<float>(totalRoamMilliseconds / sampleCount);
+    summary.AverageTotalLodMilliseconds = static_cast<float>(totalLodMilliseconds / sampleCount);
+    summary.AverageCpuUpdateMilliseconds = static_cast<float>(totalCpuUpdateMilliseconds / sampleCount);
+    summary.AverageCpuUploadMilliseconds = static_cast<float>(totalCpuUploadMilliseconds / sampleCount);
     summary.AverageGpuComputeMilliseconds = static_cast<float>(totalGpuComputeMilliseconds / sampleCount);
+    summary.AverageGpuSnapshotBuildMilliseconds =
+        static_cast<float>(totalGpuSnapshotBuildMilliseconds / sampleCount);
+    summary.AverageGpuBufferAllocationMilliseconds =
+        static_cast<float>(totalGpuBufferAllocationMilliseconds / sampleCount);
+    summary.AverageGpuDispatchWallMilliseconds =
+        static_cast<float>(totalGpuDispatchWallMilliseconds / sampleCount);
+    summary.AverageGpuQueryWaitMilliseconds =
+        static_cast<float>(totalGpuQueryWaitMilliseconds / sampleCount);
+    summary.AverageGpuReadbackWaitMilliseconds =
+        static_cast<float>(totalGpuReadbackWaitMilliseconds / sampleCount);
     summary.AverageTriangles = totalTriangles / sampleCount;
     summary.AverageNodes = totalNodes / sampleCount;
     summary.AverageCpuUtilizationPercent = static_cast<float>(totalCpuUtilization / sampleCount);
@@ -166,12 +200,16 @@ void WriteDetailedCsv(
     }
 
     // 配置字段放在时间序列前，方便按高度图和参数筛选
-    csv << "algorithm,heightMapPath,heightMapWidth,heightMapHeight,terrainSize,heightScale,"
+    csv << "algorithm,buildConfiguration,vSyncEnabled,"
+        << "heightMapPath,heightMapWidth,heightMapHeight,terrainSize,heightScale,"
         << "maxDepthSetting,splitThreshold,mergeThreshold,distanceScale,"
         << "timeSeconds,cameraX,cameraY,cameraZ,frameMilliseconds,triangles,nodes,"
         << "activeSplits,splits,forcedSplits,merges,candidatePeak,tjunctions,invalidNeighbors,"
-        << "invalidTopology,cpuWorkers,cpuUtilizationPercent,gpuComputeMilliseconds,"
-        << "cpuGpuUploadBytes,cpuGpuReadbackBytes,roamMilliseconds,splitMilliseconds,"
+        << "invalidTopology,cpuWorkers,cpuUtilizationPercent,lodTotalMilliseconds,"
+        << "cpuUpdateMilliseconds,cpuUploadMilliseconds,gpuComputeMilliseconds,"
+        << "gpuSnapshotBuildMilliseconds,gpuBufferAllocationMilliseconds,"
+        << "gpuDispatchWallMilliseconds,gpuQueryWaitMilliseconds,gpuReadbackWaitMilliseconds,"
+        << "cpuGpuUploadBytes,cpuGpuReadbackBytes,splitMilliseconds,"
         << "mergeMilliseconds,emitMilliseconds,validateMilliseconds,maxDepthReached\n";
 
     csv << std::fixed << std::setprecision(3);
@@ -182,6 +220,8 @@ void WriteDetailedCsv(
         {
             const Render::TerrainRenderStats& stats = sample.Stats;
             csv << result.AlgorithmName << ','
+                << sample.BuildConfiguration << ','
+                << (sample.VSyncEnabled ? "true" : "false") << ','
                 << stats.HeightMapPath.generic_string() << ','
                 << stats.HeightMapWidth << ','
                 << stats.HeightMapHeight << ','
@@ -208,10 +248,17 @@ void WriteDetailedCsv(
                 << stats.RoamInvalidTopologyCount << ','
                 << stats.RoamCpuWorkerCount << ','
                 << stats.RoamCpuUtilizationPercent << ','
+                << stats.RoamTotalMilliseconds << ','
+                << stats.RoamUpdateMilliseconds << ','
+                << stats.RoamCpuUploadMilliseconds << ','
                 << stats.RoamGpuComputeMilliseconds << ','
+                << stats.RoamGpuSnapshotBuildMilliseconds << ','
+                << stats.RoamGpuBufferAllocationMilliseconds << ','
+                << stats.RoamGpuDispatchWallMilliseconds << ','
+                << stats.RoamGpuQueryWaitMilliseconds << ','
+                << stats.RoamGpuReadbackWaitMilliseconds << ','
                 << stats.RoamCpuGpuUploadBytes << ','
                 << stats.RoamCpuGpuReadbackBytes << ','
-                << stats.RoamUpdateMilliseconds << ','
                 << stats.RoamSplitMilliseconds << ','
                 << stats.RoamMergeMilliseconds << ','
                 << stats.RoamEmitMilliseconds << ','
@@ -224,7 +271,8 @@ void WriteDetailedCsv(
 void WriteSummaryMarkdown(
     const std::filesystem::path& markdownPath,
     const std::filesystem::path& csvPath,
-    const std::vector<RuntimeBenchmarkAlgorithmResult>& results)
+    const std::vector<RuntimeBenchmarkAlgorithmResult>& results,
+    const std::vector<std::string>& notes)
 {
     // Markdown 是面向人看的主输出，字段数量控制在一屏内
     std::ofstream markdown{markdownPath};
@@ -237,6 +285,15 @@ void WriteSummaryMarkdown(
     markdown << "- Camera path: edge midpoint to terrain center\n";
     markdown << "- Duration per algorithm: 10 seconds\n";
     markdown << "- Detailed CSV: `" << csvPath.filename().string() << "`\n\n";
+    for (const std::string& note : notes)
+    {
+        markdown << "- " << note << "\n";
+    }
+    if (!notes.empty())
+    {
+        markdown << '\n';
+    }
+
     if (const Render::TerrainRenderStats* stats = FindFirstSampleStats(results))
     {
         // 顶部配置块解释 UI 设置和实际达到深度的差异
@@ -249,11 +306,18 @@ void WriteSummaryMarkdown(
         markdown << "- Split/Merge thresholds: "
                  << stats->RoamSplitThreshold << " / " << stats->RoamMergeThreshold << "\n\n";
     }
-    markdown << "| Algorithm | Samples | Avg Frame ms | Max Frame ms | Avg ROAM ms | Max ROAM ms | "
-             << "Avg GPU ms | Max GPU ms | "
+    markdown << "| Algorithm | Samples | Avg Frame ms | Max Frame ms | Avg LOD ms | Max LOD ms | "
+             << "Avg CPU Update ms | Avg CPU Upload ms | Avg GPU ms | Max GPU ms | "
+             << "Avg GPU Snapshot ms | Avg GPU Alloc ms | Avg GPU Dispatch Wall ms | "
+             << "Avg GPU Query Wait ms | Avg GPU Readback Wait ms | "
              << "Avg Triangles | Max Triangles | Avg Nodes | Max Nodes | Avg CPU % | Max CPU % | "
              << "Max Workers | Max Upload B | Max Readback B | Config Max Depth | Reached Max Depth | Max Topology Issues |\n";
-    markdown << "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n";
+    markdown << "| ---";
+    for (int column = 0; column < 26; ++column)
+    {
+        markdown << " | ---:";
+    }
+    markdown << " |\n";
     markdown << std::fixed << std::setprecision(2);
 
     for (const RuntimeBenchmarkAlgorithmResult& result : results)
@@ -264,10 +328,17 @@ void WriteSummaryMarkdown(
                  << " | " << summary.SampleCount
                  << " | " << summary.AverageFrameMilliseconds
                  << " | " << summary.MaxFrameMilliseconds
-                 << " | " << summary.AverageRoamMilliseconds
-                 << " | " << summary.MaxRoamMilliseconds
+                 << " | " << summary.AverageTotalLodMilliseconds
+                 << " | " << summary.MaxTotalLodMilliseconds
+                 << " | " << summary.AverageCpuUpdateMilliseconds
+                 << " | " << summary.AverageCpuUploadMilliseconds
                  << " | " << summary.AverageGpuComputeMilliseconds
                  << " | " << summary.MaxGpuComputeMilliseconds
+                 << " | " << summary.AverageGpuSnapshotBuildMilliseconds
+                 << " | " << summary.AverageGpuBufferAllocationMilliseconds
+                 << " | " << summary.AverageGpuDispatchWallMilliseconds
+                 << " | " << summary.AverageGpuQueryWaitMilliseconds
+                 << " | " << summary.AverageGpuReadbackWaitMilliseconds
                  << " | " << summary.AverageTriangles
                  << " | " << summary.MaxTriangles
                  << " | " << summary.AverageNodes
@@ -301,7 +372,8 @@ std::string RuntimeBenchmarkAlgorithmDisplayName(Algorithms::TerrainLodAlgorithm
 }
 
 RuntimeBenchmarkReportPaths WriteRuntimeBenchmarkReport(
-    const std::vector<RuntimeBenchmarkAlgorithmResult>& results)
+    const std::vector<RuntimeBenchmarkAlgorithmResult>& results,
+    const std::vector<std::string>& notes)
 {
     // benchmark-output 已被 gitignore 忽略，生成报告不会污染提交
     const std::filesystem::path outputDirectory{"benchmark-output"};
@@ -315,7 +387,7 @@ RuntimeBenchmarkReportPaths WriteRuntimeBenchmarkReport(
 
     // 先写 CSV 再写 Markdown，汇总表可以引用已确定的明细文件名
     WriteDetailedCsv(paths.CsvPath, results);
-    WriteSummaryMarkdown(paths.MarkdownPath, paths.CsvPath, results);
+    WriteSummaryMarkdown(paths.MarkdownPath, paths.CsvPath, results, notes);
     // 返回两个路径，让 Application 同时输出日志和刷新 UI
     return paths;
 }

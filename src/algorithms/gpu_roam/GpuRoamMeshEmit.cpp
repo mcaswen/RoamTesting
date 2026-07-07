@@ -63,6 +63,7 @@ layout(std430, binding = 8) buffer IndirectDrawBuffer
 layout(binding = 0) uniform sampler2D uHeightMap;
 
 uniform uint uActiveLeafLimit;
+uniform uint uNodeCapacity;
 uniform uint uMaxDepth;
 uniform uint uBuildSequenceLow;
 uniform uint uBuildSequenceHigh;
@@ -172,26 +173,66 @@ void writeVertex(uint vertexIndex, vec2 uv, vec3 debugColor, float debugHighligh
     meshVertices[offset + 12u] = debugHighlight;
 }
 
+void writeDegenerateLeaf(uint leafSlot)
+{
+    uint vertexBase = leafSlot * 3u;
+    writeVertex(vertexBase + 0u, vec2(0.0), vec3(1.0, 0.0, 1.0), 1.0);
+    writeVertex(vertexBase + 1u, vec2(0.0), vec3(1.0, 0.0, 1.0), 1.0);
+    writeVertex(vertexBase + 2u, vec2(0.0), vec3(1.0, 0.0, 1.0), 1.0);
+    meshIndices[vertexBase + 0u] = vertexBase;
+    meshIndices[vertexBase + 1u] = vertexBase;
+    meshIndices[vertexBase + 2u] = vertexBase;
+}
+
+bool isValidDomain(vec2 uv)
+{
+    return !any(isnan(uv)) &&
+        !any(isinf(uv)) &&
+        all(greaterThanEqual(uv, vec2(0.0))) &&
+        all(lessThanEqual(uv, vec2(1.0)));
+}
+
 void main()
 {
     uint leafSlot = gl_GlobalInvocationID.x;
+    uint emitLeafCount = min(activeLeafCount, uActiveLeafLimit);
     if (leafSlot == 0u)
     {
-        drawCommand[0] = activeLeafCount * 3u;
+        drawCommand[0] = emitLeafCount * 3u;
         drawCommand[1] = 1u;
         drawCommand[2] = 0u;
         drawCommand[3] = 0u;
         drawCommand[4] = 0u;
     }
 
-    if (leafSlot >= activeLeafCount || leafSlot >= uActiveLeafLimit)
+    if (leafSlot >= emitLeafCount)
     {
         return;
     }
 
     uint nodeIndex = activeLeafIndices[leafSlot];
+    uint readableNodeCount = min(allocatedNodeCount, uNodeCapacity);
+    if (nodeIndex >= readableNodeCount)
+    {
+        writeDegenerateLeaf(leafSlot);
+        return;
+    }
+
     NodeRecord node = nodes[nodeIndex];
+    const uint splitFlag = 1u << 0u;
+    const uint activeLeafFlag = 1u << 2u;
+    uint flags = node.topology1.w;
     vec2 uvs[3] = vec2[3](node.domainAAndB.xy, node.domainAAndB.zw, node.domainCAndErrors.xy);
+    if ((flags & activeLeafFlag) == 0u ||
+        (flags & splitFlag) != 0u ||
+        !isValidDomain(uvs[0]) ||
+        !isValidDomain(uvs[1]) ||
+        !isValidDomain(uvs[2]))
+    {
+        writeDegenerateLeaf(leafSlot);
+        return;
+    }
+
     vec3 debugColor = leafDebugColor(node);
     float debugHighlight = leafDebugHighlight(node);
 
@@ -239,6 +280,7 @@ void RunGpuRoamMeshEmitPass(const GpuRoamMeshEmitPassInput& input)
     glUseProgram(input.ProgramId);
     SetGpuRoamProgramInt(input.ProgramId, "uHeightMap", 0);
     SetGpuRoamProgramUInt(input.ProgramId, "uActiveLeafLimit", static_cast<std::uint32_t>(input.ActiveLeafCapacity));
+    SetGpuRoamProgramUInt(input.ProgramId, "uNodeCapacity", static_cast<std::uint32_t>(input.NodeCapacity));
     SetGpuRoamProgramUInt(input.ProgramId, "uMaxDepth", static_cast<std::uint32_t>(std::max(input.MaxDepth, 0)));
     SetGpuRoamProgramUInt(input.ProgramId, "uBuildSequenceLow", GpuRoamLow32(input.BuildSequence));
     SetGpuRoamProgramUInt(input.ProgramId, "uBuildSequenceHigh", GpuRoamHigh32(input.BuildSequence));

@@ -11,7 +11,6 @@
 #include <glad/gl.h>
 
 #include <algorithm>
-#include <array>
 #include <chrono>
 #include <cstddef>
 #include <sstream>
@@ -23,7 +22,17 @@ namespace ParallelRoam::Algorithms::GpuRoam
 namespace
 {
 using Clock = std::chrono::steady_clock;
-constexpr std::size_t GpuRoamDebugSampleCount = 8U;
+
+struct GpuRoamUploadMetrics
+{
+    float CpuUploadMilliseconds{0.0F};
+    float BufferAllocationMilliseconds{0.0F};
+};
+
+float ElapsedMilliseconds(Clock::time_point start, Clock::time_point end)
+{
+    return std::chrono::duration<float, std::milli>(end - start).count();
+}
 
 std::string BuildGpuStatusMessage(bool usesIndirectDraw)
 {
@@ -35,13 +44,15 @@ std::string BuildGpuStatusMessage(bool usesIndirectDraw)
     return "GPU ROAM-like: CPU DOD baseline, GPU split-only topology, mesh emit and GPU buffer draw";
 }
 
-bool UploadBuffer(
+bool EnsureBufferCapacity(
     GLenum target,
     std::uint32_t& bufferId,
-    const void* data,
-    std::size_t byteCount,
+    std::size_t& currentCapacityBytes,
+    std::size_t requiredCapacityBytes,
+    GpuRoamUploadMetrics& metrics,
     std::string* errorMessage)
 {
+    const std::size_t safeRequiredCapacityBytes = std::max<std::size_t>(requiredCapacityBytes, 1U);
     if (bufferId == 0U)
     {
         GLuint nextBufferId = 0U;
@@ -58,28 +69,29 @@ bool UploadBuffer(
         return false;
     }
 
-    glBindBuffer(target, bufferId);
-    glBufferData(target, static_cast<GLsizeiptr>(byteCount), data, GL_DYNAMIC_DRAW);
-    glBindBuffer(target, 0);
+    if (currentCapacityBytes < safeRequiredCapacityBytes)
+    {
+        const auto allocationStart = Clock::now();
+        glBindBuffer(target, bufferId);
+        glBufferData(target, static_cast<GLsizeiptr>(safeRequiredCapacityBytes), nullptr, GL_DYNAMIC_DRAW);
+        glBindBuffer(target, 0);
+        metrics.BufferAllocationMilliseconds += ElapsedMilliseconds(allocationStart, Clock::now());
+        currentCapacityBytes = safeRequiredCapacityBytes;
+    }
     return true;
 }
 
-bool UploadBufferWithCapacity(
+bool UploadBufferRange(
     GLenum target,
     std::uint32_t& bufferId,
+    std::size_t& currentCapacityBytes,
     const void* data,
     std::size_t dataByteCount,
     std::size_t capacityByteCount,
+    GpuRoamUploadMetrics& metrics,
     std::string* errorMessage)
 {
-    if (bufferId == 0U)
-    {
-        GLuint nextBufferId = 0U;
-        glGenBuffers(1, &nextBufferId);
-        bufferId = nextBufferId;
-    }
-
-    if (bufferId == 0U || dataByteCount > capacityByteCount)
+    if (dataByteCount > capacityByteCount)
     {
         if (errorMessage != nullptr)
         {
@@ -88,30 +100,51 @@ bool UploadBufferWithCapacity(
         return false;
     }
 
-    glBindBuffer(target, bufferId);
-    glBufferData(target, static_cast<GLsizeiptr>(capacityByteCount), nullptr, GL_DYNAMIC_DRAW);
+    if (!EnsureBufferCapacity(target, bufferId, currentCapacityBytes, capacityByteCount, metrics, errorMessage))
+    {
+        return false;
+    }
+
     if (data != nullptr && dataByteCount > 0U)
     {
+        const auto uploadStart = Clock::now();
+        glBindBuffer(target, bufferId);
         glBufferSubData(target, 0, static_cast<GLsizeiptr>(dataByteCount), data);
+        glBindBuffer(target, 0);
+        metrics.CpuUploadMilliseconds += ElapsedMilliseconds(uploadStart, Clock::now());
     }
-    glBindBuffer(target, 0);
     return true;
 }
 
-bool UploadHeightMapTexture(
+bool HeightMapTextureMatches(const GpuRoamState& state, const Terrain::HeightMap& heightMap)
+{
+    return state.HeightMapTextureUploaded &&
+           state.HeightMapTextureId != 0U &&
+           state.CachedHeightMapWidth == heightMap.Width() &&
+           state.CachedHeightMapHeight == heightMap.Height() &&
+           state.CachedHeightMapPath == heightMap.SourcePath();
+}
+
+bool UploadHeightMapTextureIfNeeded(
     const Terrain::HeightMap& heightMap,
-    std::uint32_t& textureId,
+    GpuRoamState& state,
     std::size_t& uploadBytes,
+    GpuRoamUploadMetrics& metrics,
     std::string* errorMessage)
 {
-    if (textureId == 0U)
+    if (HeightMapTextureMatches(state, heightMap))
+    {
+        return true;
+    }
+
+    if (state.HeightMapTextureId == 0U)
     {
         GLuint nextTextureId = 0U;
         glGenTextures(1, &nextTextureId);
-        textureId = nextTextureId;
+        state.HeightMapTextureId = nextTextureId;
     }
 
-    if (textureId == 0U)
+    if (state.HeightMapTextureId == 0U)
     {
         if (errorMessage != nullptr)
         {
@@ -120,6 +153,7 @@ bool UploadHeightMapTexture(
         return false;
     }
 
+    const auto uploadStart = Clock::now();
     std::vector<float> heights;
     heights.resize(static_cast<std::size_t>(heightMap.Width()) * static_cast<std::size_t>(heightMap.Height()));
     for (int y = 0; y < heightMap.Height(); ++y)
@@ -132,7 +166,7 @@ bool UploadHeightMapTexture(
         }
     }
 
-    glBindTexture(GL_TEXTURE_2D, textureId);
+    glBindTexture(GL_TEXTURE_2D, state.HeightMapTextureId);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -149,6 +183,116 @@ bool UploadHeightMapTexture(
         heights.data());
     glBindTexture(GL_TEXTURE_2D, 0);
     uploadBytes += heights.size() * sizeof(float);
+    metrics.CpuUploadMilliseconds += ElapsedMilliseconds(uploadStart, Clock::now());
+    state.CachedHeightMapPath = heightMap.SourcePath();
+    state.CachedHeightMapWidth = heightMap.Width();
+    state.CachedHeightMapHeight = heightMap.Height();
+    state.HeightMapTextureUploaded = true;
+    return true;
+}
+
+bool ResolveTimingReadbackSlot(
+    GpuRoamState& state,
+    std::size_t slotIndex,
+    float& gpuComputeMilliseconds,
+    std::size_t& readbackBytes,
+    float& queryWaitMilliseconds,
+    float& readbackWaitMilliseconds,
+    std::string* errorMessage)
+{
+    GpuRoamTimingReadbackSlot& slot = state.TimingReadbackSlots[slotIndex];
+    gpuComputeMilliseconds =
+        state.HasCompletedTimingReadback ? state.LastCompletedGpuComputeMilliseconds : 0.0F;
+
+    if (!slot.Pending)
+    {
+        return true;
+    }
+
+    GLuint queryAvailable = GL_FALSE;
+    glGetQueryObjectuiv(slot.TimerQueryId, GL_QUERY_RESULT_AVAILABLE, &queryAvailable);
+
+    const auto queryWaitStart = Clock::now();
+    GLuint64 elapsedNanoseconds = 0U;
+    // 延迟多个 slot 后通常已 ready；若仍未 ready，这里会等待并把等待时间单独记账
+    glGetQueryObjectui64v(slot.TimerQueryId, GL_QUERY_RESULT, &elapsedNanoseconds);
+    queryWaitMilliseconds += ElapsedMilliseconds(queryWaitStart, Clock::now());
+
+    GpuRoamCounters counters{};
+    const auto readbackStart = Clock::now();
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, slot.CounterBufferId);
+    glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, static_cast<GLsizeiptr>(sizeof(counters)), &counters);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    readbackWaitMilliseconds += ElapsedMilliseconds(readbackStart, Clock::now());
+    readbackBytes += sizeof(counters);
+
+    const std::size_t expectedActiveLeafCount =
+        slot.BaseActiveLeafCount + static_cast<std::size_t>(counters.SplitOnlyCommitCount);
+    const std::size_t expectedAllocatedNodeCount =
+        slot.BaseNodeCount + static_cast<std::size_t>(counters.SplitOnlyCommitCount) * 2U;
+    if (counters.ActiveLeafCount != expectedActiveLeafCount ||
+        counters.AllocatedNodeCount != expectedAllocatedNodeCount ||
+        expectedActiveLeafCount > slot.ActiveLeafCapacity ||
+        expectedAllocatedNodeCount > slot.NodeCapacity)
+    {
+        if (errorMessage != nullptr)
+        {
+            std::ostringstream stream;
+            stream << "GPU ROAM-like delayed topology count mismatch: active leaves gpu="
+                   << counters.ActiveLeafCount << " expected=" << expectedActiveLeafCount
+                   << ", allocated nodes gpu=" << counters.AllocatedNodeCount
+                   << " expected=" << expectedAllocatedNodeCount
+                   << ", queryAvailable=" << (queryAvailable == GL_TRUE ? "true" : "false");
+            *errorMessage = stream.str();
+        }
+        slot.Pending = false;
+        return false;
+    }
+
+    state.LastCompletedCounters = counters;
+    state.LastCompletedGpuComputeMilliseconds =
+        static_cast<float>(static_cast<double>(elapsedNanoseconds) / 1'000'000.0);
+    state.HasCompletedTimingReadback = true;
+    gpuComputeMilliseconds = state.LastCompletedGpuComputeMilliseconds;
+    slot.Pending = false;
+    return true;
+}
+
+bool EnsureTimingReadbackSlot(
+    GpuRoamState& state,
+    std::size_t slotIndex,
+    GpuRoamUploadMetrics& metrics,
+    std::string* errorMessage)
+{
+    GpuRoamTimingReadbackSlot& slot = state.TimingReadbackSlots[slotIndex];
+    if (slot.TimerQueryId == 0U)
+    {
+        GLuint queryId = 0U;
+        glGenQueries(1, &queryId);
+        slot.TimerQueryId = queryId;
+    }
+
+    if (slot.TimerQueryId == 0U)
+    {
+        if (errorMessage != nullptr)
+        {
+            *errorMessage = "GPU ROAM-like timer query allocation failed";
+        }
+        return false;
+    }
+
+    if (!EnsureBufferCapacity(
+            GL_SHADER_STORAGE_BUFFER,
+            slot.CounterBufferId,
+            slot.CounterBufferCapacityBytes,
+            sizeof(GpuRoamCounters),
+            metrics,
+            errorMessage))
+    {
+        return false;
+    }
+
+    state.CounterBufferId = slot.CounterBufferId;
     return true;
 }
 } // namespace
@@ -163,13 +307,24 @@ bool GpuRoamMeshBuilder::Build(
     const std::size_t gpuNodeCapacity = snapshot.Nodes.size() + snapshot.ActiveLeafIndices.size() * 2U;
     std::size_t uploadBytes = 0U;
     float cpuUploadMilliseconds = 0.0F;
-    if (!UploadSnapshot(snapshot, *input.HeightMap, gpuNodeCapacity, uploadBytes, cpuUploadMilliseconds, errorMessage))
+    float bufferAllocationMilliseconds = 0.0F;
+    if (!UploadSnapshot(
+            snapshot,
+            *input.HeightMap,
+            gpuNodeCapacity,
+            uploadBytes,
+            cpuUploadMilliseconds,
+            bufferAllocationMilliseconds,
+            errorMessage))
     {
         return false;
     }
 
     float gpuComputeMilliseconds = 0.0F;
     std::size_t readbackBytes = 0U;
+    float dispatchWallMilliseconds = 0.0F;
+    float queryWaitMilliseconds = 0.0F;
+    float readbackWaitMilliseconds = 0.0F;
     std::size_t gpuActiveLeafCount = snapshot.ActiveLeafIndices.size();
     std::size_t gpuNodeCount = snapshot.Nodes.size();
     std::size_t gpuSplitOnlyCommitCount = 0U;
@@ -179,6 +334,10 @@ bool GpuRoamMeshBuilder::Build(
             uploadBytes,
             gpuComputeMilliseconds,
             readbackBytes,
+            bufferAllocationMilliseconds,
+            dispatchWallMilliseconds,
+            queryWaitMilliseconds,
+            readbackWaitMilliseconds,
             gpuActiveLeafCount,
             gpuNodeCount,
             gpuSplitOnlyCommitCount,
@@ -191,6 +350,10 @@ bool GpuRoamMeshBuilder::Build(
     inOutStats.CpuGpuReadbackBytes = readbackBytes;
     inOutStats.GpuComputeMilliseconds = gpuComputeMilliseconds;
     inOutStats.CpuUploadMilliseconds = cpuUploadMilliseconds;
+    inOutStats.GpuBufferAllocationMilliseconds = bufferAllocationMilliseconds;
+    inOutStats.GpuDispatchWallMilliseconds = dispatchWallMilliseconds;
+    inOutStats.GpuQueryWaitMilliseconds = queryWaitMilliseconds;
+    inOutStats.GpuReadbackWaitMilliseconds = readbackWaitMilliseconds;
     if (gpuSplitOnlyCommitCount > 0U)
     {
         inOutStats.ActiveTriangleCount = gpuActiveLeafCount;
@@ -229,37 +392,41 @@ bool GpuRoamMeshBuilder::UploadSnapshot(
     std::size_t nodeCapacity,
     std::size_t& uploadBytes,
     float& cpuUploadMilliseconds,
+    float& bufferAllocationMilliseconds,
     std::string* errorMessage)
 {
-    const auto uploadStart = Clock::now();
-    if (!UploadBufferWithCapacity(
+    GpuRoamUploadMetrics metrics{};
+    if (!UploadBufferRange(
             GL_SHADER_STORAGE_BUFFER,
             _state.NodeBufferId,
+            _state.NodeBufferCapacityBytes,
             snapshot.Nodes.data(),
             snapshot.NodeBufferBytes(),
             nodeCapacity * sizeof(GpuRoamNodeRecord),
+            metrics,
             errorMessage))
     {
         return false;
     }
     uploadBytes += snapshot.NodeBufferBytes();
 
-    if (!UploadBuffer(
+    if (!EnsureBufferCapacity(
             GL_SHADER_STORAGE_BUFFER,
             _state.ActiveLeafBufferId,
-            nullptr,
+            _state.ActiveLeafBufferCapacityBytes,
             nodeCapacity * sizeof(std::uint32_t),
+            metrics,
             errorMessage))
     {
         return false;
     }
 
-    if (!UploadHeightMapTexture(heightMap, _state.HeightMapTextureId, uploadBytes, errorMessage))
+    if (!UploadHeightMapTextureIfNeeded(heightMap, _state, uploadBytes, metrics, errorMessage))
     {
         return false;
     }
-    const auto uploadEnd = Clock::now();
-    cpuUploadMilliseconds = std::chrono::duration<float, std::milli>(uploadEnd - uploadStart).count();
+    cpuUploadMilliseconds = metrics.CpuUploadMilliseconds;
+    bufferAllocationMilliseconds = metrics.BufferAllocationMilliseconds;
     return true;
 }
 
@@ -269,6 +436,10 @@ bool GpuRoamMeshBuilder::RunGpuComputePipeline(
     std::size_t& uploadBytes,
     float& gpuComputeMilliseconds,
     std::size_t& readbackBytes,
+    float& bufferAllocationMilliseconds,
+    float& dispatchWallMilliseconds,
+    float& queryWaitMilliseconds,
+    float& readbackWaitMilliseconds,
     std::size_t& gpuActiveLeafCount,
     std::size_t& gpuNodeCount,
     std::size_t& gpuSplitOnlyCommitCount,
@@ -294,38 +465,85 @@ bool GpuRoamMeshBuilder::RunGpuComputePipeline(
         activeLeafCapacity * 3U * sizeof(std::uint32_t);
     const GpuRoamDrawElementsIndirectCommand emptyIndirectCommand{};
 
-    if (!UploadBuffer(GL_SHADER_STORAGE_BUFFER, _state.ScreenErrorBufferId, nullptr, screenErrorBytes, errorMessage) ||
-        !UploadBuffer(GL_SHADER_STORAGE_BUFFER, _state.SplitCandidateBufferId, nullptr, candidateBufferBytes, errorMessage) ||
-        !UploadBuffer(GL_SHADER_STORAGE_BUFFER, _state.MergeCandidateBufferId, nullptr, candidateBufferBytes, errorMessage) ||
-        !UploadBuffer(GL_SHADER_STORAGE_BUFFER, _state.GpuVertexBufferId, nullptr, vertexBufferBytes, errorMessage) ||
-        !UploadBuffer(GL_SHADER_STORAGE_BUFFER, _state.GpuIndexBufferId, nullptr, indexBufferBytes, errorMessage) ||
-        !UploadBuffer(
-            GL_SHADER_STORAGE_BUFFER,
-            _state.IndirectDrawBufferId,
-            &emptyIndirectCommand,
-            sizeof(emptyIndirectCommand),
-            errorMessage))
+    GpuRoamUploadMetrics metrics{};
+    const std::size_t timingSlotIndex = _state.TimingReadbackCursor % GpuRoamTimingReadbackSlotCount;
+    if (!ResolveTimingReadbackSlot(
+            _state,
+            timingSlotIndex,
+            gpuComputeMilliseconds,
+            readbackBytes,
+            queryWaitMilliseconds,
+            readbackWaitMilliseconds,
+            errorMessage) ||
+        !EnsureTimingReadbackSlot(_state, timingSlotIndex, metrics, errorMessage))
     {
         return false;
     }
 
     GpuRoamCounters zeroCounters{};
     zeroCounters.AllocatedNodeCount = static_cast<std::uint32_t>(nodeCount);
-    if (!UploadBuffer(GL_SHADER_STORAGE_BUFFER, _state.CounterBufferId, &zeroCounters, sizeof(zeroCounters), errorMessage))
+    if (!EnsureBufferCapacity(
+            GL_SHADER_STORAGE_BUFFER,
+            _state.ScreenErrorBufferId,
+            _state.ScreenErrorBufferCapacityBytes,
+            screenErrorBytes,
+            metrics,
+            errorMessage) ||
+        !EnsureBufferCapacity(
+            GL_SHADER_STORAGE_BUFFER,
+            _state.SplitCandidateBufferId,
+            _state.SplitCandidateBufferCapacityBytes,
+            candidateBufferBytes,
+            metrics,
+            errorMessage) ||
+        !EnsureBufferCapacity(
+            GL_SHADER_STORAGE_BUFFER,
+            _state.MergeCandidateBufferId,
+            _state.MergeCandidateBufferCapacityBytes,
+            candidateBufferBytes,
+            metrics,
+            errorMessage) ||
+        !EnsureBufferCapacity(
+            GL_SHADER_STORAGE_BUFFER,
+            _state.GpuVertexBufferId,
+            _state.GpuVertexBufferCapacityBytes,
+            vertexBufferBytes,
+            metrics,
+            errorMessage) ||
+        !EnsureBufferCapacity(
+            GL_SHADER_STORAGE_BUFFER,
+            _state.GpuIndexBufferId,
+            _state.GpuIndexBufferCapacityBytes,
+            indexBufferBytes,
+            metrics,
+            errorMessage) ||
+        !UploadBufferRange(
+            GL_SHADER_STORAGE_BUFFER,
+            _state.IndirectDrawBufferId,
+            _state.IndirectDrawBufferCapacityBytes,
+            &emptyIndirectCommand,
+            sizeof(emptyIndirectCommand),
+            sizeof(emptyIndirectCommand),
+            metrics,
+            errorMessage) ||
+        !UploadBufferRange(
+            GL_SHADER_STORAGE_BUFFER,
+            _state.CounterBufferId,
+            _state.TimingReadbackSlots[timingSlotIndex].CounterBufferCapacityBytes,
+            &zeroCounters,
+            sizeof(zeroCounters),
+            sizeof(zeroCounters),
+            metrics,
+            errorMessage))
     {
         return false;
     }
     uploadBytes += sizeof(zeroCounters);
     uploadBytes += sizeof(emptyIndirectCommand);
+    bufferAllocationMilliseconds += metrics.BufferAllocationMilliseconds;
 
-    if (_state.TimerQueryId == 0U)
-    {
-        GLuint queryId = 0U;
-        glGenQueries(1, &queryId);
-        _state.TimerQueryId = queryId;
-    }
-
-    glBeginQuery(GL_TIME_ELAPSED, _state.TimerQueryId);
+    const auto dispatchWallStart = Clock::now();
+    glBeginQuery(GL_TIME_ELAPSED, _state.TimingReadbackSlots[timingSlotIndex].TimerQueryId);
 
     GpuRoamActiveLeafCompactionPassInput compactionInput{};
     compactionInput.ProgramId = _state.ActiveLeafCompactionProgramId;
@@ -404,6 +622,7 @@ bool GpuRoamMeshBuilder::RunGpuComputePipeline(
     emitInput.IndirectDrawBufferId = _state.IndirectDrawBufferId;
     emitInput.HeightMapTextureId = _state.HeightMapTextureId;
     emitInput.ActiveLeafCapacity = activeLeafCapacity;
+    emitInput.NodeCapacity = nodeCapacity;
     emitInput.MaxDepth = input.Settings.MaxDepth;
     emitInput.BuildSequence = snapshot.BuildSequence;
     emitInput.TerrainSize = input.Settings.TerrainSize;
@@ -411,58 +630,24 @@ bool GpuRoamMeshBuilder::RunGpuComputePipeline(
     RunGpuRoamMeshEmitPass(emitInput);
 
     glEndQuery(GL_TIME_ELAPSED);
-
-    GLuint64 elapsedNanoseconds = 0U;
-    glGetQueryObjectui64v(_state.TimerQueryId, GL_QUERY_RESULT, &elapsedNanoseconds);
-    gpuComputeMilliseconds = static_cast<float>(static_cast<double>(elapsedNanoseconds) / 1'000'000.0);
-
-    GpuRoamCounters counters{};
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, _state.CounterBufferId);
-    glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, static_cast<GLsizeiptr>(sizeof(counters)), &counters);
-    readbackBytes += sizeof(counters);
-
-    const std::size_t sampleCount = std::min(activeLeafCount, GpuRoamDebugSampleCount);
-    if (sampleCount > 0U)
-    {
-        std::array<std::uint32_t, GpuRoamDebugSampleCount> leafSamples{};
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, _state.ActiveLeafBufferId);
-        glGetBufferSubData(
-            GL_SHADER_STORAGE_BUFFER,
-            0,
-            static_cast<GLsizeiptr>(sampleCount * sizeof(std::uint32_t)),
-            leafSamples.data());
-        readbackBytes += sampleCount * sizeof(std::uint32_t);
-
-        std::array<float, GpuRoamDebugSampleCount> errorSamples{};
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, _state.ScreenErrorBufferId);
-        glGetBufferSubData(
-            GL_SHADER_STORAGE_BUFFER,
-            0,
-            static_cast<GLsizeiptr>(sampleCount * sizeof(float)),
-            errorSamples.data());
-        readbackBytes += sampleCount * sizeof(float);
-    }
+    dispatchWallMilliseconds += ElapsedMilliseconds(dispatchWallStart, Clock::now());
 
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
     glBindTexture(GL_TEXTURE_2D, 0);
 
-    gpuActiveLeafCount = counters.ActiveLeafCount;
-    gpuNodeCount = std::min<std::size_t>(counters.AllocatedNodeCount, nodeCapacity);
-    gpuSplitOnlyCommitCount = counters.SplitOnlyCommitCount;
+    GpuRoamTimingReadbackSlot& slot = _state.TimingReadbackSlots[timingSlotIndex];
+    slot.BaseActiveLeafCount = activeLeafCount;
+    slot.BaseNodeCount = nodeCount;
+    slot.ActiveLeafCapacity = activeLeafCapacity;
+    slot.NodeCapacity = nodeCapacity;
+    slot.Pending = true;
+    _state.TimingReadbackCursor = (_state.TimingReadbackCursor + 1U) % GpuRoamTimingReadbackSlotCount;
 
-    if (counters.ActiveLeafCount < activeLeafCount ||
-        counters.ActiveLeafCount > activeLeafCapacity)
-    {
-        if (errorMessage != nullptr)
-        {
-            std::ostringstream stream;
-            stream << "GPU ROAM-like active leaf compaction mismatch after split-only topology: gpu="
-                   << counters.ActiveLeafCount << " expected range=[" << activeLeafCount
-                   << ", " << activeLeafCapacity << "]";
-            *errorMessage = stream.str();
-        }
-        return false;
-    }
+    // 当前帧不再同步等待 GPU counter。Renderer 对 indirect draw 使用 GPU 端 command，
+    // CPU 统计保留 DOD baseline，延迟读回只用于后续 timing 和防御验证。
+    gpuActiveLeafCount = activeLeafCount;
+    gpuNodeCount = nodeCount;
+    gpuSplitOnlyCommitCount = 0U;
 
     return true;
 }

@@ -137,6 +137,11 @@ struct TerrainLodStats
     float CpuMeshBuildMilliseconds{0.0F};
     float CpuUploadMilliseconds{0.0F};
     float GpuComputeMilliseconds{0.0F};
+    float GpuSnapshotBuildMilliseconds{0.0F};
+    float GpuBufferAllocationMilliseconds{0.0F};
+    float GpuDispatchWallMilliseconds{0.0F};
+    float GpuQueryWaitMilliseconds{0.0F};
+    float GpuReadbackWaitMilliseconds{0.0F};
     float RenderMilliseconds{0.0F};
     float SplitMilliseconds{0.0F};
     float MergeMilliseconds{0.0F};

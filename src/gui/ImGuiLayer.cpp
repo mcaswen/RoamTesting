@@ -75,16 +75,11 @@ void ApplyEditorStyle()
 void LoadChineseFont()
 {
     ImGuiIO& io = ImGui::GetIO();
-    // 项目可能只携带其中一个中文字体文件
-    // 按常见命名顺序探测
-    // 找不到时回退默认字体让程序仍可启动
-    const std::array<std::filesystem::path, 8> fontCandidates{
+    const std::array<std::filesystem::path, 6> fontCandidates{
         std::filesystem::path{"assets/fonts/NotoSansSC-Regular.otf"},
         std::filesystem::path{"assets/fonts/NotoSansSC-Regular.ttf"},
         std::filesystem::path{"assets/fonts/SourceHanSansSC-Regular.otf"},
         std::filesystem::path{"assets/fonts/SourceHanSansSC-Regular.ttf"},
-        std::filesystem::path{"assets/fonts/思源黑体-Regular.otf"},
-        std::filesystem::path{"assets/fonts/思源黑体-Regular.ttf"},
         std::filesystem::path{"assets/fonts/AlibabaPuHuiTi-3-55-Regular.ttf"},
         std::filesystem::path{"assets/fonts/AlibabaPuHuiTi-Regular.ttf"},
     };
@@ -110,10 +105,12 @@ void LoadChineseFont()
                 &fontConfig,
                 io.Fonts->GetGlyphRangesChineseFull()) != nullptr)
         {
+            std::printf("ImGui font loaded: %s\n", fontPath.string().c_str());
             return;
         }
     }
 
+    std::fprintf(stderr, "Chinese font not found; using the ImGui default font.\n");
     io.Fonts->AddFontDefault();
 }
 
@@ -288,7 +285,7 @@ void DrawCompactPerformanceMetrics(const DebugOverlayData& data)
     DrawMetricRow("模式", TerrainModeName(data.UseTerrainLod, data.TerrainLodAlgorithm));
     DrawMetricSize("三角形数", data.TriangleCount);
     DrawMetricSize("节点数", data.RoamNodeCount);
-    DrawMetricFloat("ROAM ms", data.RoamUpdateMilliseconds, "%.2f");
+    DrawMetricFloat("LOD total ms", data.RoamTotalMilliseconds, "%.2f");
     DrawMetricSize("CPU Worker", data.RoamCpuWorkerCount);
     DrawMetricFloat("CPU 占用", data.RoamCpuUtilizationPercent, "%.1f%%");
     DrawMetricFloat("GPU ms", data.RoamGpuComputeMilliseconds, "%.2f");
@@ -343,11 +340,19 @@ void DrawDetailedPerformanceMetrics(const DebugOverlayData& data)
     DrawMetricSize("T-junction", data.RoamTjunctionCount);
     DrawMetricSize("邻接错误", data.RoamInvalidNeighborCount);
     DrawMetricSize("拓扑错误", data.RoamInvalidTopologyCount);
+    DrawMetricFloat("LOD total ms", data.RoamTotalMilliseconds, "%.2f");
+    DrawMetricFloat("CPU update ms", data.RoamUpdateMilliseconds, "%.2f");
+    DrawMetricFloat("CPU upload ms", data.RoamCpuUploadMilliseconds, "%.2f");
     DrawMetricFloat("Split ms", data.RoamSplitMilliseconds, "%.2f");
     DrawMetricFloat("Merge ms", data.RoamMergeMilliseconds, "%.2f");
     DrawMetricFloat("Emit ms", data.RoamEmitMilliseconds, "%.2f");
     DrawMetricFloat("Validate ms", data.RoamValidateMilliseconds, "%.2f");
     DrawMetricFloat("GPU ms", data.RoamGpuComputeMilliseconds, "%.2f");
+    DrawMetricFloat("GPU snapshot ms", data.RoamGpuSnapshotBuildMilliseconds, "%.2f");
+    DrawMetricFloat("GPU alloc ms", data.RoamGpuBufferAllocationMilliseconds, "%.2f");
+    DrawMetricFloat("GPU dispatch wall ms", data.RoamGpuDispatchWallMilliseconds, "%.2f");
+    DrawMetricFloat("GPU query wait ms", data.RoamGpuQueryWaitMilliseconds, "%.2f");
+    DrawMetricFloat("GPU readback wait ms", data.RoamGpuReadbackWaitMilliseconds, "%.2f");
     DrawMetricSize("GPU 上传 B", data.RoamCpuGpuUploadBytes);
     DrawMetricSize("GPU 回读 B", data.RoamCpuGpuReadbackBytes);
     DrawMetricInt("设置深度", data.RoamMaxDepthSetting);

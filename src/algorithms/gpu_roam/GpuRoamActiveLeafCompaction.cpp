@@ -39,6 +39,8 @@ layout(std430, binding = 3) buffer CounterBuffer
     uint splitCandidateCount;
     uint mergeCandidateCount;
     uint reservedCounter;
+    uint splitOnlyCommitCount;
+    uint allocatedNodeCount;
 };
 
 uniform uint uNodeCount;
@@ -46,14 +48,16 @@ uniform uint uNodeCount;
 void main()
 {
     uint nodeIndex = gl_GlobalInvocationID.x;
-    if (nodeIndex >= uNodeCount)
+    uint readableNodeCount = min(uNodeCount, allocatedNodeCount);
+    if (nodeIndex >= readableNodeCount)
     {
         return;
     }
 
+    const uint splitFlag = 1u << 0u;
     const uint activeLeafFlag = 1u << 2u;
     uint flags = nodes[nodeIndex].topology1.w;
-    if ((flags & activeLeafFlag) == 0u)
+    if ((flags & activeLeafFlag) == 0u || (flags & splitFlag) != 0u)
     {
         return;
     }

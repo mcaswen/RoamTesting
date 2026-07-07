@@ -65,12 +65,19 @@ struct DebugOverlayData
     float RoamCpuUtilizationPercent{0.0F};
 
     // UI 直接展示算法层统计的各 pass 耗时
+    float RoamTotalMilliseconds{0.0F};
     float RoamUpdateMilliseconds{0.0F};
+    float RoamCpuUploadMilliseconds{0.0F};
     float RoamSplitMilliseconds{0.0F};
     float RoamMergeMilliseconds{0.0F};
     float RoamEmitMilliseconds{0.0F};
     float RoamValidateMilliseconds{0.0F};
     float RoamGpuComputeMilliseconds{0.0F};
+    float RoamGpuSnapshotBuildMilliseconds{0.0F};
+    float RoamGpuBufferAllocationMilliseconds{0.0F};
+    float RoamGpuDispatchWallMilliseconds{0.0F};
+    float RoamGpuQueryWaitMilliseconds{0.0F};
+    float RoamGpuReadbackWaitMilliseconds{0.0F};
     float RoamRenderMilliseconds{0.0F};
     std::size_t RoamCpuGpuUploadBytes{0};
     std::size_t RoamCpuGpuReadbackBytes{0};

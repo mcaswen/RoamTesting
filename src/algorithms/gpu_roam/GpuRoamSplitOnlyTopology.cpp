@@ -61,24 +61,30 @@ bool isActiveLeaf(uint nodeIndex)
     return (flags & activeLeafFlag) != 0u && (flags & splitFlag) == 0u;
 }
 
-bool markParentSplit(uint nodeIndex)
+bool markParentSplit(uint nodeIndex, out uint originalFlags)
 {
-    uint flags = nodes[nodeIndex].topology1.w;
-    if ((flags & activeLeafFlag) == 0u || (flags & splitFlag) != 0u)
+    originalFlags = nodes[nodeIndex].topology1.w;
+    if ((originalFlags & activeLeafFlag) == 0u || (originalFlags & splitFlag) != 0u)
     {
         return false;
     }
 
-    uint nextFlags = (flags | splitFlag) & ~activeLeafFlag;
-    uint previous = atomicCompSwap(nodes[nodeIndex].topology1.w, flags, nextFlags);
-    return previous == flags;
+    uint splitFlags = (originalFlags | splitFlag) & ~activeLeafFlag;
+    uint previous = atomicCompSwap(nodes[nodeIndex].topology1.w, originalFlags, splitFlags);
+    return previous == originalFlags;
+}
+
+void restoreParentLeaf(uint nodeIndex, uint originalFlags)
+{
+    uint splitFlags = (originalFlags | splitFlag) & ~activeLeafFlag;
+    atomicCompSwap(nodes[nodeIndex].topology1.w, splitFlags, originalFlags);
 }
 
 bool allocateNodes(uint count, out uint firstNode)
 {
     for (uint attempt = 0u; attempt < 8u; ++attempt)
     {
-        uint current = allocatedNodeCount;
+        uint current = atomicAdd(allocatedNodeCount, 0u);
         if (current + count > uNodeCapacity)
         {
             return false;
@@ -157,9 +163,16 @@ void main()
     uint baseNeighbor = candidate.topology0.w;
     if (baseNeighbor == invalidNode)
     {
-        uint firstChild = 0u;
-        if (!allocateNodes(2u, firstChild) || !markParentSplit(nodeIndex))
+        uint originalFlags = 0u;
+        if (!markParentSplit(nodeIndex, originalFlags))
         {
+            return;
+        }
+
+        uint firstChild = 0u;
+        if (!allocateNodes(2u, firstChild))
+        {
+            restoreParentLeaf(nodeIndex, originalFlags);
             return;
         }
 
@@ -182,14 +195,24 @@ void main()
         return;
     }
 
-    uint firstChild = 0u;
-    if (!allocateNodes(4u, firstChild))
+    uint originalFlags = 0u;
+    uint pairedOriginalFlags = 0u;
+    if (!markParentSplit(nodeIndex, originalFlags))
     {
         return;
     }
 
-    if (!markParentSplit(nodeIndex) || !markParentSplit(baseNeighbor))
+    if (!markParentSplit(baseNeighbor, pairedOriginalFlags))
     {
+        restoreParentLeaf(nodeIndex, originalFlags);
+        return;
+    }
+
+    uint firstChild = 0u;
+    if (!allocateNodes(4u, firstChild))
+    {
+        restoreParentLeaf(baseNeighbor, pairedOriginalFlags);
+        restoreParentLeaf(nodeIndex, originalFlags);
         return;
     }
 
