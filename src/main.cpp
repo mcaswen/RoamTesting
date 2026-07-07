@@ -5,6 +5,8 @@
 #include "benchmark/RoamProbe.h"
 #include "benchmark/TerrainLodBenchmark.h"
 
+#include <exception>
+#include <string>
 #include <string_view>
 #endif
 
@@ -24,28 +26,221 @@ int main(int argc, char** argv)
     bool fixedFrameSmokeTest = false;
     bool gpuSmokeTest = false;
     bool automaticRuntimeBenchmark = false;
+    ParallelRoam::App::RuntimeBenchmarkOverrides runtimeBenchmarkOverrides{};
+    bool hasRuntimeBenchmarkOverrides = false;
+    std::string parseError;
+
+    auto requireValue = [&](int& index, std::string_view option) -> const char* {
+        if (index + 1 >= argc)
+        {
+            parseError = "Missing value for " + std::string{option};
+            return nullptr;
+        }
+        ++index;
+        return argv[index];
+    };
+
+    auto parseFloatOption = [&](int& index, std::string_view option, float& output) -> bool {
+        const char* value = requireValue(index, option);
+        if (value == nullptr)
+        {
+            return false;
+        }
+
+        try
+        {
+            output = std::stof(std::string{value});
+        }
+        catch (const std::exception&)
+        {
+            parseError = "Invalid float for " + std::string{option} + ": " + value;
+            return false;
+        }
+        return true;
+    };
+
+    auto parseIntOption = [&](int& index, std::string_view option, int& output) -> bool {
+        const char* value = requireValue(index, option);
+        if (value == nullptr)
+        {
+            return false;
+        }
+
+        try
+        {
+            output = std::stoi(std::string{value});
+        }
+        catch (const std::exception&)
+        {
+            parseError = "Invalid integer for " + std::string{option} + ": " + value;
+            return false;
+        }
+        return true;
+    };
+
+    auto parseHeightMapOption = [&](int& index, std::string_view option, int& output) -> bool {
+        const char* value = requireValue(index, option);
+        if (value == nullptr)
+        {
+            return false;
+        }
+
+        const std::string_view heightMapValue{value};
+        if (heightMapValue == "0" || heightMapValue == "test" || heightMapValue == "test129")
+        {
+            output = 0;
+            return true;
+        }
+
+        if (heightMapValue == "1" || heightMapValue == "peking" || heightMapValue == "peking513")
+        {
+            output = 1;
+            return true;
+        }
+
+        parseError = "Invalid height map for " + std::string{option} + ": " + value;
+        return false;
+    };
     for (int index = 1; index < argc; ++index)
     {
+        const std::string_view argument{argv[index]};
         // smoke test 用固定帧数退出，避免自动化验证卡在窗口循环里
-        if (std::string_view{argv[index]} == "--smoke-test")
+        if (argument == "--smoke-test")
         {
             fixedFrameSmokeTest = true;
             maxFrameCount = 3;
         }
 
-        if (std::string_view{argv[index]} == "--gpu-smoke-test")
+        if (argument == "--gpu-smoke-test")
         {
             gpuSmokeTest = true;
             maxFrameCount = 32;
         }
 
-        if (std::string_view{argv[index]} == "--runtime-benchmark")
+        if (argument == "--runtime-benchmark")
         {
             automaticRuntimeBenchmark = true;
+            continue;
+        }
+
+        if (argument == "--runtime-benchmark-heightmap")
+        {
+            int value = 0;
+            if (!parseHeightMapOption(index, argument, value))
+            {
+                break;
+            }
+            runtimeBenchmarkOverrides.HasHeightMapIndex = true;
+            runtimeBenchmarkOverrides.HeightMapIndex = value;
+            hasRuntimeBenchmarkOverrides = true;
+            continue;
+        }
+
+        if (argument == "--runtime-benchmark-terrain-size")
+        {
+            float value = 0.0F;
+            if (!parseFloatOption(index, argument, value))
+            {
+                break;
+            }
+            runtimeBenchmarkOverrides.HasTerrainSize = true;
+            runtimeBenchmarkOverrides.TerrainSize = value;
+            hasRuntimeBenchmarkOverrides = true;
+            continue;
+        }
+
+        if (argument == "--runtime-benchmark-height-scale")
+        {
+            float value = 0.0F;
+            if (!parseFloatOption(index, argument, value))
+            {
+                break;
+            }
+            runtimeBenchmarkOverrides.HasHeightScale = true;
+            runtimeBenchmarkOverrides.HeightScale = value;
+            hasRuntimeBenchmarkOverrides = true;
+            continue;
+        }
+
+        if (argument == "--runtime-benchmark-depth" || argument == "--runtime-benchmark-max-depth")
+        {
+            int value = 0;
+            if (!parseIntOption(index, argument, value))
+            {
+                break;
+            }
+            runtimeBenchmarkOverrides.HasMaxDepth = true;
+            runtimeBenchmarkOverrides.MaxDepth = value;
+            hasRuntimeBenchmarkOverrides = true;
+            continue;
+        }
+
+        if (argument == "--runtime-benchmark-split-threshold")
+        {
+            float value = 0.0F;
+            if (!parseFloatOption(index, argument, value))
+            {
+                break;
+            }
+            runtimeBenchmarkOverrides.HasSplitThreshold = true;
+            runtimeBenchmarkOverrides.SplitThreshold = value;
+            hasRuntimeBenchmarkOverrides = true;
+            continue;
+        }
+
+        if (argument == "--runtime-benchmark-merge-threshold")
+        {
+            float value = 0.0F;
+            if (!parseFloatOption(index, argument, value))
+            {
+                break;
+            }
+            runtimeBenchmarkOverrides.HasMergeThreshold = true;
+            runtimeBenchmarkOverrides.MergeThreshold = value;
+            hasRuntimeBenchmarkOverrides = true;
+            continue;
+        }
+
+        if (argument == "--runtime-benchmark-distance-scale")
+        {
+            float value = 0.0F;
+            if (!parseFloatOption(index, argument, value))
+            {
+                break;
+            }
+            runtimeBenchmarkOverrides.HasDistanceScale = true;
+            runtimeBenchmarkOverrides.DistanceScale = value;
+            hasRuntimeBenchmarkOverrides = true;
+            continue;
+        }
+
+        if (argument == "--runtime-benchmark-duration")
+        {
+            float value = 0.0F;
+            if (!parseFloatOption(index, argument, value))
+            {
+                break;
+            }
+            runtimeBenchmarkOverrides.HasDurationSeconds = true;
+            runtimeBenchmarkOverrides.DurationSeconds = value;
+            hasRuntimeBenchmarkOverrides = true;
+            continue;
+        }
+
+        if (argument == "--runtime-benchmark-label")
+        {
+            const char* value = requireValue(index, argument);
+            if (value == nullptr)
+            {
+                break;
+            }
+            runtimeBenchmarkOverrides.Label = value;
+            hasRuntimeBenchmarkOverrides = true;
+            continue;
         }
 
         // ROAM 探针不启动窗口，用于快速确认算法层 LOD 是否随相机变化
-        if (std::string_view{argv[index]} == "--roam-probe")
+        if (argument == "--roam-probe")
         {
             // --roam-probe 保留旧探针命令
             // probe 也必须早于 Application 初始化
@@ -53,12 +248,18 @@ int main(int argc, char** argv)
             return ParallelRoam::Benchmark::RunRoamProbe();
         }
 
-        if (std::string_view{argv[index]} == "--benchmark")
+        if (argument == "--benchmark")
         {
             // --benchmark 走三算法共享 benchmark
             // benchmark 必须在 Application 创建前分流
             return ParallelRoam::Benchmark::RunTerrainLodBenchmarkFromCommandLine(argc, argv);
         }
+    }
+
+    if (!parseError.empty())
+    {
+        std::cerr << parseError << '\n';
+        return 2;
     }
 
     if (automaticRuntimeBenchmark && (fixedFrameSmokeTest || gpuSmokeTest))
@@ -68,6 +269,10 @@ int main(int argc, char** argv)
     }
 
     ParallelRoam::App::Application application;
+    if (hasRuntimeBenchmarkOverrides)
+    {
+        application.ConfigureRuntimeBenchmark(runtimeBenchmarkOverrides);
+    }
     if (gpuSmokeTest)
     {
         application.EnableGpuSmokeTest();

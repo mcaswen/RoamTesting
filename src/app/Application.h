@@ -14,6 +14,35 @@
 
 namespace ParallelRoam::App
 {
+struct RuntimeBenchmarkOverrides
+{
+    bool HasHeightMapIndex{false};
+    int HeightMapIndex{0};
+
+    bool HasTerrainSize{false};
+    float TerrainSize{30.0F};
+
+    bool HasHeightScale{false};
+    float HeightScale{4.0F};
+
+    bool HasMaxDepth{false};
+    int MaxDepth{14};
+
+    bool HasSplitThreshold{false};
+    float SplitThreshold{0.04F};
+
+    bool HasMergeThreshold{false};
+    float MergeThreshold{0.02F};
+
+    bool HasDistanceScale{false};
+    float DistanceScale{24.0F};
+
+    bool HasDurationSeconds{false};
+    float DurationSeconds{10.0F};
+
+    std::string Label;
+};
+
 /// <summary>
 /// 协调平台层、输入层、渲染层和 GUI 层的应用主循环
 /// </summary>
@@ -28,6 +57,7 @@ public:
 
     void EnableGpuSmokeTest();
     void EnableAutomaticRuntimeBenchmark();
+    void ConfigureRuntimeBenchmark(const RuntimeBenchmarkOverrides& overrides);
     bool Initialize();
 
     /// <summary>
@@ -136,6 +166,7 @@ private:
 
     // 应用不影响 terrain mesh 的窗口运行参数
     void ApplyWindowPanelSettings();
+    void ApplyPendingRuntimeBenchmarkOverrides();
 
     // 根据 UI 选择加载不同 HeightMap，并重置 terrain LOD 状态
     void ApplyHeightMapSelection();
@@ -171,6 +202,8 @@ private:
     bool _automaticRuntimeBenchmarkEnabled{false};
     bool _automaticRuntimeBenchmarkCompleted{false};
     bool _automaticRuntimeBenchmarkFailed{false};
+    bool _hasRuntimeBenchmarkOverrides{false};
+    RuntimeBenchmarkOverrides _runtimeBenchmarkOverrides;
     float _framesPerSecond{0.0F};
     float _frameTimeMilliseconds{0.0F};
 };

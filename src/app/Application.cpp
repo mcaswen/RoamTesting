@@ -119,6 +119,13 @@ void Application::EnableAutomaticRuntimeBenchmark()
     _automaticRuntimeBenchmarkEnabled = true;
 }
 
+void Application::ConfigureRuntimeBenchmark(const RuntimeBenchmarkOverrides& overrides)
+{
+    _runtimeBenchmarkOverrides = overrides;
+    _hasRuntimeBenchmarkOverrides = true;
+    ApplyPendingRuntimeBenchmarkOverrides();
+}
+
 bool Application::Initialize()
 {
     // SDL 窗口必须先创建，后续 GLAD 和 ImGui 都依赖当前 OpenGL context
@@ -130,6 +137,7 @@ bool Application::Initialize()
     _input.SetWindowSize(_window.Width(), _window.Height());
     _terrainPanelState.VSyncEnabled = _window.VSyncEnabled();
     _terrainPanelState.HeightMapIndex = 0;
+    ApplyPendingRuntimeBenchmarkOverrides();
 
     // GLAD 加载失败时不能继续创建任何 OpenGL 对象
     if (!LoadOpenGL())
@@ -464,6 +472,65 @@ void Application::ApplyWindowPanelSettings()
     }
 }
 
+void Application::ApplyPendingRuntimeBenchmarkOverrides()
+{
+    if (!_hasRuntimeBenchmarkOverrides)
+    {
+        return;
+    }
+
+    const RuntimeBenchmarkOverrides& overrides = _runtimeBenchmarkOverrides;
+    if (overrides.HasHeightMapIndex)
+    {
+        _terrainPanelState.HeightMapIndex =
+            std::clamp(overrides.HeightMapIndex, 0, static_cast<int>(HeightMapPaths.size()) - 1);
+    }
+
+    if (overrides.HasTerrainSize)
+    {
+        _terrainPanelState.TerrainSize = std::clamp(overrides.TerrainSize, 6.0F, 80.0F);
+    }
+
+    if (overrides.HasHeightScale)
+    {
+        _terrainPanelState.HeightScale = std::clamp(overrides.HeightScale, 0.0F, 12.0F);
+    }
+
+    if (overrides.HasMaxDepth)
+    {
+        _terrainPanelState.RoamMaxDepth = std::clamp(overrides.MaxDepth, 1, 20);
+    }
+
+    if (overrides.HasSplitThreshold)
+    {
+        _terrainPanelState.RoamSplitThreshold = std::clamp(overrides.SplitThreshold, 0.005F, 1.0F);
+    }
+
+    if (overrides.HasMergeThreshold)
+    {
+        _terrainPanelState.RoamMergeThreshold = std::clamp(overrides.MergeThreshold, 0.001F, 1.0F);
+    }
+
+    if (overrides.HasDistanceScale)
+    {
+        _terrainPanelState.RoamDistanceScale = std::clamp(overrides.DistanceScale, 1.0F, 80.0F);
+    }
+
+    if (overrides.HasDurationSeconds)
+    {
+        _runtimeBenchmark.DurationSeconds = std::max(0.1F, overrides.DurationSeconds);
+    }
+
+    _terrainPanelState.RoamMergeThreshold =
+        std::min(_terrainPanelState.RoamMergeThreshold, _terrainPanelState.RoamSplitThreshold);
+
+    if (_initialized)
+    {
+        ApplyTerrainPanelSettings();
+        ApplyHeightMapSelection();
+    }
+}
+
 void Application::ApplyHeightMapSelection()
 {
     // UI index 先钳制到资源表范围，防止未来增删选项时越界
@@ -505,6 +572,10 @@ void Application::StartRuntimeBenchmark()
     _runtimeBenchmark.Results.clear();
     _runtimeBenchmark.Notes.clear();
     _runtimeBenchmark.Notes.push_back("Build configuration: " + BuildConfigurationName());
+    if (!_runtimeBenchmarkOverrides.Label.empty())
+    {
+        _runtimeBenchmark.Notes.push_back("Benchmark label: " + _runtimeBenchmarkOverrides.Label);
+    }
     _runtimeBenchmark.AlgorithmSequence = {
         Algorithms::TerrainLodAlgorithmId::ClassicCpuRoam,
         Algorithms::TerrainLodAlgorithmId::DataOrientedCpuRoam,
