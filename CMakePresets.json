@@ -78,31 +78,38 @@
   "buildPresets": [
     {
       "name": "debug",
-      "configurePreset": "debug"
+      "configurePreset": "debug",
+      "configuration": "Debug"
     },
     {
       "name": "debug-vcpkg",
-      "configurePreset": "debug-vcpkg"
+      "configurePreset": "debug-vcpkg",
+      "configuration": "Debug"
     },
     {
       "name": "debug-fetch",
-      "configurePreset": "debug-fetch"
+      "configurePreset": "debug-fetch",
+      "configuration": "Debug"
     },
     {
       "name": "release",
-      "configurePreset": "release"
+      "configurePreset": "release",
+      "configuration": "Release"
     },
     {
       "name": "release-fetch",
-      "configurePreset": "release-fetch"
+      "configurePreset": "release-fetch",
+      "configuration": "Release"
     },
     {
       "name": "relwithdebinfo",
-      "configurePreset": "relwithdebinfo"
+      "configurePreset": "relwithdebinfo",
+      "configuration": "RelWithDebInfo"
     },
     {
       "name": "relwithdebinfo-fetch",
-      "configurePreset": "relwithdebinfo-fetch"
+      "configurePreset": "relwithdebinfo-fetch",
+      "configuration": "RelWithDebInfo"
     }
   ],
   "testPresets": [

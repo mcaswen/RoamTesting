@@ -20,6 +20,10 @@ find_package(Threads REQUIRED)
 add_library(parallel_roam_project_options INTERFACE)
 target_compile_features(parallel_roam_project_options INTERFACE cxx_std_20)
 
+if(MSVC)
+    target_compile_options(parallel_roam_project_options INTERFACE /utf-8)
+endif()
+
 add_library(parallel_roam_project_warnings INTERFACE)
 parallel_roam_set_project_warnings(parallel_roam_project_warnings)
 
@@ -88,6 +92,7 @@ if(PARALLEL_ROAM_BUILD_APP)
     add_executable(ParallelROAM::app ALIAS parallel_roam)
 
     target_include_directories(parallel_roam PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_compile_definitions(parallel_roam PRIVATE PARALLEL_ROAM_BUILD_CONFIG="$<CONFIG>")
 
     target_link_libraries(
         parallel_roam
@@ -108,6 +113,25 @@ if(PARALLEL_ROAM_BUILD_APP)
         PROPERTIES
             OUTPUT_NAME "ParallelROAM"
             RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+
+    foreach(config IN ITEMS Debug Release RelWithDebInfo MinSizeRel)
+        string(TOUPPER "${config}" config_upper)
+        set_target_properties(
+            parallel_roam
+            PROPERTIES
+                "RUNTIME_OUTPUT_DIRECTORY_${config_upper}" "${CMAKE_BINARY_DIR}/bin"
+        )
+    endforeach()
+
+    add_custom_command(
+        TARGET parallel_roam
+        POST_BUILD
+        COMMAND
+            ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_CURRENT_SOURCE_DIR}/assets"
+            "$<TARGET_FILE_DIR:parallel_roam>/assets"
+        COMMENT "Copying runtime assets next to ParallelROAM"
     )
 endif()
 
