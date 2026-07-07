@@ -6,6 +6,21 @@
 
 namespace ParallelRoam::Algorithms::DataOrientedRoam
 {
+namespace
+{
+constexpr float MinimumCameraDistance = 0.05F;
+constexpr float ProjectedEdgeWeight = 0.20F;
+constexpr float DefaultDistanceScale = 24.0F;
+constexpr float NearDistanceRadiusMultiplier = 2.0F;
+
+float ComputeNearDistanceBoost(float distance, float distanceScale)
+{
+    const float safeDistanceScale = std::max(distanceScale, 0.0F);
+    const float nearDistanceWeight = (safeDistanceScale * NearDistanceRadiusMultiplier) / distance;
+    return std::max(1.0F, std::sqrt(nearDistanceWeight));
+}
+} // namespace
+
 bool ShouldSplitWithScore(
     const DataOrientedRoamState& state,
     DataOrientedRoamNodeConstRef node,
@@ -142,7 +157,7 @@ float ComputeScreenErrorScore(const DataOrientedRoamState& state, DataOrientedRo
     const glm::vec3 c = DomainToWorld(state, node.Domain.C);
     const glm::vec3 center = (a + b + c) / 3.0F;
     // distance 下限避免相机贴近三角形中心时分数爆炸
-    const float distance = std::max(glm::length(center - state.CameraPosition), 0.05F);
+    const float distance = std::max(glm::length(center - state.CameraPosition), MinimumCameraDistance);
     const float worldError = node.GeometricError * state.HeightScale;
     // longestEdgeLength 让近处平坦区域也能继续细分
     const float longestEdgeLength = std::max({
@@ -150,9 +165,12 @@ float ComputeScreenErrorScore(const DataOrientedRoamState& state, DataOrientedRo
         glm::length(b - c),
         glm::length(c - a),
     });
-    constexpr float ProjectedEdgeWeight = 0.20F;
-    const float heightErrorScore = worldError * state.Settings.DistanceScale / distance;
-    const float edgeLengthScore = longestEdgeLength * ProjectedEdgeWeight / distance;
+    const float distanceScale = std::max(state.Settings.DistanceScale, 0.0F);
+    // 近场额外提升让相机距离变化能更明显地反映到细分层级上
+    const float nearDistanceBoost = ComputeNearDistanceBoost(distance, distanceScale);
+    const float heightErrorScore = worldError * distanceScale / distance * nearDistanceBoost;
+    const float edgeLengthScore =
+        longestEdgeLength * ProjectedEdgeWeight * (distanceScale / DefaultDistanceScale) / distance * nearDistanceBoost;
     // 两项取最大值，避免高频地形和近处平地互相掩盖
     return std::max(heightErrorScore, edgeLengthScore);
 }

@@ -6,6 +6,21 @@
 
 namespace ParallelRoam::Algorithms::ClassicRoam
 {
+namespace
+{
+constexpr float MinimumCameraDistance = 0.05F;
+constexpr float ProjectedEdgeWeight = 0.20F;
+constexpr float DefaultDistanceScale = 24.0F;
+constexpr float NearDistanceRadiusMultiplier = 2.0F;
+
+float ComputeNearDistanceBoost(float distance, float distanceScale)
+{
+    const float safeDistanceScale = std::max(distanceScale, 0.0F);
+    const float nearDistanceWeight = (safeDistanceScale * NearDistanceRadiusMultiplier) / distance;
+    return std::max(1.0F, std::sqrt(nearDistanceWeight));
+}
+} // namespace
+
 bool ClassicRoamMeshBuilder::ShouldSplit(const ClassicRoamNode& node) const
 {
     // 最大深度限制优先于误差判断，避免相机贴近时无限细分
@@ -139,17 +154,20 @@ float ClassicRoamMeshBuilder::ComputeScreenErrorScore(const ClassicRoamNode& nod
     const glm::vec3 c = DomainToWorld(node.Domain.C);
     // 使用三角形中心估算视距，足够支撑当前 LOD 展示
     const glm::vec3 center = (a + b + c) / 3.0F;
-    const float distance = std::max(glm::length(center - _cameraPosition), 0.05F);
+    const float distance = std::max(glm::length(center - _cameraPosition), MinimumCameraDistance);
     const float worldError = node.GeometricError * _heightScale;
     const float longestEdgeLength = std::max({
         glm::length(a - b),
         glm::length(b - c),
         glm::length(c - a),
     });
-    constexpr float ProjectedEdgeWeight = 0.20F;
-    const float heightErrorScore = worldError * _settings.DistanceScale / distance;
+    const float distanceScale = std::max(_settings.DistanceScale, 0.0F);
+    // 近场额外提升让相机距离变化能更明显地反映到细分层级上
+    const float nearDistanceBoost = ComputeNearDistanceBoost(distance, distanceScale);
+    const float heightErrorScore = worldError * distanceScale / distance * nearDistanceBoost;
     // edge length 项让近处平坦区域也继续细分出足够网格密度
-    const float edgeLengthScore = longestEdgeLength * ProjectedEdgeWeight / distance;
+    const float edgeLengthScore =
+        longestEdgeLength * ProjectedEdgeWeight * (distanceScale / DefaultDistanceScale) / distance * nearDistanceBoost;
 
     // 高度误差负责地形起伏，边长项保证近处平缓地形也会继续细分
     // 两者取最大值，避免平地近处被过早 merge
