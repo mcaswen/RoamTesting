@@ -27,7 +27,7 @@
   <text x="550" y="38" text-anchor="middle" class="title">图3-1 项目总体架构图：类与接口关系</text>
 
   <rect x="455" y="62" width="190" height="58" rx="8" class="data"/>
-  <text x="550" y="88" text-anchor="middle" class="code">main.cpp</text>
+  <text x="550" y="88" text-anchor="middle" class="code">程序入口</text>
   <text x="550" y="109" text-anchor="middle" class="caption">CLI / benchmark / smoke-test 入口</text>
   <path d="M550 120 L550 150" class="line"/>
 
@@ -72,12 +72,12 @@
   <text x="172" y="387" text-anchor="middle" class="section">Terrain 数据层</text>
   <text x="172" y="413" text-anchor="middle" class="code">Terrain::HeightMap</text>
   <text x="172" y="436" text-anchor="middle" class="code">Terrain::TerrainMeshData</text>
-  <text x="172" y="459" text-anchor="middle" class="code">TerrainMeshBuilder.cpp</text>
+  <text x="172" y="459" text-anchor="middle" class="code">TerrainMeshBuilder</text>
   <path d="M290 420 L325 420" class="line"/>
 
   <rect x="810" y="360" width="235" height="118" rx="8" class="bench"/>
   <text x="927" y="387" text-anchor="middle" class="section">Benchmark 输出</text>
-  <text x="927" y="413" text-anchor="middle" class="code">RuntimeBenchmark.cpp</text>
+  <text x="927" y="413" text-anchor="middle" class="tinycode">WriteRuntimeBenchmarkReport()</text>
   <text x="927" y="436" text-anchor="middle" class="code">RuntimeBenchmarkSample</text>
   <text x="927" y="459" text-anchor="middle" class="tinycode">RuntimeBenchmarkAlgorithmResult</text>
   <path d="M775 420 L810 420" class="dash"/>

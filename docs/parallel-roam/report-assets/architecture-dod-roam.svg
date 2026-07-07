@@ -56,29 +56,29 @@
   <text x="205" y="683" text-anchor="middle" class="small">worker 数、候选数量、chunk commit 覆盖面</text>
 
   <rect x="400" y="340" width="300" height="64" rx="8" class="pass"/>
-  <text x="550" y="366" text-anchor="middle" class="code">DataOrientedRoamState.cpp</text>
+  <text x="550" y="366" text-anchor="middle" class="code">状态初始化与叶节点收集</text>
   <text x="550" y="388" text-anchor="middle" class="small">ResetTopology() / CollectLeafNodes()</text>
   <path d="M550 404 L550 424" class="line"/>
 
   <rect x="400" y="424" width="300" height="64" rx="8" class="pass"/>
-  <text x="550" y="450" text-anchor="middle" class="code">DataOrientedRoamErrorEvaluation.cpp</text>
+  <text x="550" y="450" text-anchor="middle" class="code">并行误差评估 pass</text>
   <text x="550" y="472" text-anchor="middle" class="small">EvaluateScreenErrors()</text>
   <path d="M550 488 L550 508" class="line"/>
 
   <rect x="400" y="508" width="300" height="74" rx="8" class="pass"/>
-  <text x="550" y="535" text-anchor="middle" class="code">DataOrientedRoamCandidateMarking.cpp</text>
+  <text x="550" y="535" text-anchor="middle" class="code">候选标记 pass</text>
   <text x="550" y="558" text-anchor="middle" class="small">CollectSplitCandidates()</text>
   <text x="550" y="577" text-anchor="middle" class="small">CollectMergeCandidates()</text>
   <path d="M550 582 L550 604" class="line"/>
 
   <rect x="400" y="604" width="300" height="84" rx="8" class="pass"/>
-  <text x="550" y="631" text-anchor="middle" class="code">DataOrientedRoamTopology.cpp</text>
+  <text x="550" y="631" text-anchor="middle" class="code">Split / Merge 拓扑提交</text>
   <text x="550" y="654" text-anchor="middle" class="small">MergeWithDiamondQueue()</text>
   <text x="550" y="675" text-anchor="middle" class="small">RefineWithSplitQueue()</text>
   <path d="M550 688 L550 710" class="line"/>
 
   <rect x="400" y="710" width="300" height="64" rx="8" class="pass"/>
-  <text x="550" y="736" text-anchor="middle" class="code">DataOrientedRoamMeshEmit.cpp</text>
+  <text x="550" y="736" text-anchor="middle" class="code">CPU mesh emit pass</text>
   <text x="550" y="758" text-anchor="middle" class="small">EmitLeafTriangles()</text>
 
   <rect x="730" y="340" width="330" height="365" rx="8" class="thread"/>
@@ -87,11 +87,11 @@
   <text x="895" y="423" text-anchor="middle" class="small">EnsureWorkerCount()</text>
   <text x="895" y="446" text-anchor="middle" class="small">ParallelFor(begin, end, fn)</text>
   <line x1="760" y1="470" x2="1030" y2="470" stroke="#bfdbfe"/>
-  <text x="895" y="497" text-anchor="middle" class="code">DataOrientedRoamValidation.cpp</text>
+  <text x="895" y="497" text-anchor="middle" class="code">拓扑验证 pass</text>
   <text x="895" y="521" text-anchor="middle" class="small">ValidateTopology()</text>
   <text x="895" y="544" text-anchor="middle" class="small">只在 EnableTopologyValidation 开启时运行</text>
   <line x1="760" y1="568" x2="1030" y2="568" stroke="#bfdbfe"/>
-  <text x="895" y="595" text-anchor="middle" class="code">DataOrientedRoamScoring.cpp</text>
+  <text x="895" y="595" text-anchor="middle" class="code">误差评分函数</text>
   <text x="895" y="619" text-anchor="middle" class="small">ComputeScreenErrorScore()</text>
   <text x="895" y="642" text-anchor="middle" class="small">被 error / candidate pass 复用</text>
   <line x1="760" y1="666" x2="1030" y2="666" stroke="#bfdbfe"/>

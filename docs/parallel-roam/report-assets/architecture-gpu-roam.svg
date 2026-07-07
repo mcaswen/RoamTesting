@@ -58,7 +58,7 @@
   <path d="M485 503 L615 503" class="line"/>
 
   <rect x="95" y="590" width="390" height="98" rx="8" class="schema"/>
-  <text x="290" y="619" text-anchor="middle" class="code">GpuRoamBufferSchema.h</text>
+  <text x="290" y="619" text-anchor="middle" class="code">GPU buffer schema</text>
   <text x="290" y="644" text-anchor="middle" class="small">GpuRoamNodeRecord: std430 16 字节对齐记录</text>
   <text x="290" y="667" text-anchor="middle" class="small">GpuRoamNodeFlags: IsSplit / ActiveLeaf / ForcedSplit</text>
 
@@ -76,27 +76,27 @@
 
   <rect x="615" y="470" width="390" height="54" rx="8" class="gpu"/>
   <text x="810" y="492" text-anchor="middle" class="code">RunGpuRoamActiveLeafCompactionPass()</text>
-  <text x="810" y="512" text-anchor="middle" class="caption">GpuRoamActiveLeafCompaction.cpp</text>
+  <text x="810" y="512" text-anchor="middle" class="caption">活跃叶节点压缩 pass</text>
   <path d="M810 524 L810 544" class="line"/>
 
   <rect x="615" y="544" width="390" height="54" rx="8" class="gpu"/>
   <text x="810" y="566" text-anchor="middle" class="code">RunGpuRoamErrorEvaluationPass()</text>
-  <text x="810" y="586" text-anchor="middle" class="caption">GpuRoamErrorEvaluation.cpp</text>
+  <text x="810" y="586" text-anchor="middle" class="caption">GPU screen error pass</text>
   <path d="M810 598 L810 618" class="line"/>
 
   <rect x="615" y="618" width="390" height="54" rx="8" class="gpu"/>
   <text x="810" y="640" text-anchor="middle" class="code">RunGpuRoamCandidateMarkingPass()</text>
-  <text x="810" y="660" text-anchor="middle" class="caption">GpuRoamCandidateMarking.cpp</text>
+  <text x="810" y="660" text-anchor="middle" class="caption">GPU candidate marking pass</text>
   <path d="M810 672 L810 692" class="line"/>
 
   <rect x="615" y="692" width="390" height="54" rx="8" class="gpu"/>
   <text x="810" y="714" text-anchor="middle" class="code">RunGpuRoamSplitOnlyTopologyPass()</text>
-  <text x="810" y="734" text-anchor="middle" class="caption">GpuRoamSplitOnlyTopology.cpp</text>
+  <text x="810" y="734" text-anchor="middle" class="caption">GPU split-only topology pass</text>
   <path d="M810 746 L810 766" class="line"/>
 
   <rect x="615" y="766" width="390" height="54" rx="8" class="gpu"/>
   <text x="810" y="788" text-anchor="middle" class="code">RunGpuRoamMeshEmitPass()</text>
-  <text x="810" y="808" text-anchor="middle" class="caption">GpuRoamMeshEmit.cpp 写 vertex / index / indirect draw</text>
+  <text x="810" y="808" text-anchor="middle" class="caption">GPU mesh emit pass 写 vertex / index / indirect draw</text>
 
   <path d="M810 820 L810 858" class="line"/>
   <rect x="255" y="850" width="590" height="44" rx="8" class="output"/>

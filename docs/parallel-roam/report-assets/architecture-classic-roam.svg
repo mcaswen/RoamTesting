@@ -20,7 +20,7 @@
   </defs>
 
   <rect width="100%" height="100%" fill="#fbfcfd"/>
-  <text x="550" y="38" text-anchor="middle" class="title">图3-2 Classic CPU ROAM：类与文件级结构</text>
+  <text x="550" y="38" text-anchor="middle" class="title">图3-2 Classic CPU ROAM：类与 pass 结构</text>
 
   <rect x="300" y="62" width="500" height="86" rx="8" class="adapter"/>
   <text x="550" y="91" text-anchor="middle" class="section">ClassicRoamTerrainLodAlgorithm</text>
@@ -61,30 +61,30 @@
   <text x="895" y="566" text-anchor="middle" class="code">ToTerrainLodStats()</text>
 
   <rect x="395" y="340" width="310" height="64" rx="8" class="pass"/>
-  <text x="550" y="366" text-anchor="middle" class="code">ClassicRoamState.cpp</text>
+  <text x="550" y="366" text-anchor="middle" class="code">状态与叶节点收集</text>
   <text x="550" y="388" text-anchor="middle" class="small">ResetTopology() / CollectLeafNodes()</text>
   <path d="M550 404 L550 428" class="line"/>
 
   <rect x="395" y="428" width="310" height="64" rx="8" class="pass"/>
-  <text x="550" y="454" text-anchor="middle" class="code">ClassicRoamScoring.cpp</text>
+  <text x="550" y="454" text-anchor="middle" class="code">误差评分 pass</text>
   <text x="550" y="473" text-anchor="middle" class="small">ComputeScreenErrorScore()</text>
   <text x="550" y="489" text-anchor="middle" class="small">ShouldSplit()</text>
   <path d="M550 492 L550 516" class="line"/>
 
   <rect x="395" y="516" width="310" height="86" rx="8" class="pass"/>
-  <text x="550" y="543" text-anchor="middle" class="code">ClassicRoamTopology.cpp</text>
+  <text x="550" y="543" text-anchor="middle" class="code">Split / Merge 拓扑 pass</text>
   <text x="550" y="564" text-anchor="middle" class="small">MergeWithDiamondQueue()</text>
   <text x="550" y="583" text-anchor="middle" class="small">RefineWithSplitQueue() / SplitNode()</text>
   <text x="550" y="599" text-anchor="middle" class="small">LinkSplitNeighbors()</text>
   <path d="M550 602 L550 626" class="line"/>
 
   <rect x="395" y="626" width="310" height="64" rx="8" class="pass"/>
-  <text x="550" y="652" text-anchor="middle" class="code">ClassicRoamValidation.cpp</text>
+  <text x="550" y="652" text-anchor="middle" class="code">拓扑验证 pass</text>
   <text x="550" y="674" text-anchor="middle" class="small">ValidateTopology()</text>
   <path d="M550 690 L550 714" class="line"/>
 
   <rect x="395" y="714" width="310" height="64" rx="8" class="pass"/>
-  <text x="550" y="740" text-anchor="middle" class="code">ClassicRoamMeshEmit.cpp</text>
+  <text x="550" y="740" text-anchor="middle" class="code">CPU mesh emit pass</text>
   <text x="550" y="762" text-anchor="middle" class="small">EmitLeafTriangles() 写 CPU vertex / index</text>
 
   <path d="M365 515 L395 515" class="dash"/>
