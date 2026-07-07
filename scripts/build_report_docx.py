@@ -25,6 +25,8 @@ EMU_PER_INCH = 914400
 CM_PER_INCH = 2.54
 MAX_IMAGE_WIDTH_EMU = int(15.2 / CM_PER_INCH * EMU_PER_INCH)
 GENERATED_DATE = date.today()
+SUBSCRIPT_OPEN = "\ue100"
+SUBSCRIPT_CLOSE = "\ue101"
 
 
 @dataclass
@@ -164,12 +166,26 @@ def replace_fractions(text: str) -> str:
     return text
 
 
+def subscript_marker(text: str) -> str:
+    return f"{SUBSCRIPT_OPEN}{latex_to_math_text(text)}{SUBSCRIPT_CLOSE}"
+
+
 def replace_scripts(text: str) -> str:
-    for marker, mapping, fallback in [
-        ("_", SUBSCRIPT_MAP, "_"),
-        ("^", SUPERSCRIPT_MAP, "^"),
-    ]:
-        placeholders: dict[str, str] = {}
+    placeholders: dict[str, str] = {}
+    pattern = re.compile(r"_\{([^{}]+)\}")
+
+    def repl_subscript_group(match: re.Match[str]) -> str:
+        key = f"\ue000{len(placeholders)}\ue001"
+        placeholders[key] = subscript_marker(match.group(1))
+        return key
+
+    text = pattern.sub(repl_subscript_group, text)
+    text = re.sub(r"_([A-Za-z0-9+\-=()])", lambda match: subscript_marker(match.group(1)), text)
+    for key, value in placeholders.items():
+        text = text.replace(key, value)
+
+    for marker, mapping, fallback in [("^", SUPERSCRIPT_MAP, "^")]:
+        placeholders = {}
         pattern = re.compile(rf"\{marker}\{{([^{{}}]+)\}}")
 
         def repl_group(match: re.Match[str]) -> str:
@@ -365,10 +381,85 @@ def w_run(text: str, *, bold: bool = False, italic: bool = False, style: str | N
     return f"<w:r>{prop_xml}<w:t{xml_space_attr(text)}>{esc(text)}</w:t></w:r>"
 
 
+def m_text_run(text: str) -> str:
+    return f"<m:r><m:t{xml_space_attr(text)}>{esc(text)}</m:t></m:r>"
+
+
+def split_math_base(buffer: list[str]) -> str:
+    text = "".join(buffer)
+    if not text:
+        return ""
+    index = len(text)
+    while index > 0:
+        char = text[index - 1]
+        if char.isspace() or char in "=+-*/(),[]{}<>≤≥≠≈∈∪∩":
+            break
+        index -= 1
+    base = text[index:]
+    del buffer[:]
+    if text[:index]:
+        buffer.append(text[:index])
+    return base
+
+
+def m_subscript(base: str, subscript: str) -> str:
+    return (
+        "<m:sSub>"
+        "<m:sSubPr/>"
+        f"<m:e>{m_run(base, convert_latex=False)}</m:e>"
+        f"<m:sub>{m_run(subscript, convert_latex=False)}</m:sub>"
+        "</m:sSub>"
+    )
+
+
+def find_subscript_close(text: str, start: int) -> int:
+    depth = 1
+    index = start
+    while index < len(text):
+        if text.startswith(SUBSCRIPT_OPEN, index):
+            depth += 1
+            index += len(SUBSCRIPT_OPEN)
+            continue
+        if text.startswith(SUBSCRIPT_CLOSE, index):
+            depth -= 1
+            if depth == 0:
+                return index
+            index += len(SUBSCRIPT_CLOSE)
+            continue
+        index += 1
+    return -1
+
+
 def m_run(text: str, *, convert_latex: bool = True) -> str:
     if convert_latex:
         text = latex_to_math_text(text)
-    return f"<m:r><m:t{xml_space_attr(text)}>{esc(text)}</m:t></m:r>"
+    parts: list[str] = []
+    buffer: list[str] = []
+    index = 0
+    while index < len(text):
+        if text.startswith(SUBSCRIPT_OPEN, index):
+            end = find_subscript_close(text, index + len(SUBSCRIPT_OPEN))
+            if end == -1:
+                buffer.append(text[index])
+                index += 1
+                continue
+            subscript = text[index + len(SUBSCRIPT_OPEN):end]
+            base = split_math_base(buffer)
+            if not base:
+                buffer.append("_")
+                buffer.append(subscript)
+            else:
+                if buffer:
+                    parts.append(m_text_run("".join(buffer)))
+                    buffer = []
+                parts.append(m_subscript(base, subscript))
+            index = end + len(SUBSCRIPT_CLOSE)
+            continue
+        buffer.append(text[index])
+        index += 1
+    if buffer:
+        parts.append(m_text_run("".join(buffer)))
+    return "".join(parts)
 
 
 def inline_math(math_text: str) -> str:
