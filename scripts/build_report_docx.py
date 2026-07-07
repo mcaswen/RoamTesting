@@ -45,43 +45,312 @@ def xml_space_attr(text: str) -> str:
     return ' xml:space="preserve"' if text.startswith(" ") or text.endswith(" ") else ""
 
 
+SUBSCRIPT_MAP = str.maketrans({
+    "0": "₀",
+    "1": "₁",
+    "2": "₂",
+    "3": "₃",
+    "4": "₄",
+    "5": "₅",
+    "6": "₆",
+    "7": "₇",
+    "8": "₈",
+    "9": "₉",
+    "+": "₊",
+    "-": "₋",
+    "=": "₌",
+    "(": "₍",
+    ")": "₎",
+    "a": "ₐ",
+    "e": "ₑ",
+    "h": "ₕ",
+    "i": "ᵢ",
+    "j": "ⱼ",
+    "k": "ₖ",
+    "l": "ₗ",
+    "m": "ₘ",
+    "n": "ₙ",
+    "o": "ₒ",
+    "p": "ₚ",
+    "r": "ᵣ",
+    "s": "ₛ",
+    "t": "ₜ",
+    "u": "ᵤ",
+    "v": "ᵥ",
+    "x": "ₓ",
+})
+
+SUPERSCRIPT_MAP = str.maketrans({
+    "0": "⁰",
+    "1": "¹",
+    "2": "²",
+    "3": "³",
+    "4": "⁴",
+    "5": "⁵",
+    "6": "⁶",
+    "7": "⁷",
+    "8": "⁸",
+    "9": "⁹",
+    "+": "⁺",
+    "-": "⁻",
+    "=": "⁼",
+    "(": "⁽",
+    ")": "⁾",
+    "d": "ᵈ",
+    "i": "ⁱ",
+    "j": "ʲ",
+    "k": "ᵏ",
+    "n": "ⁿ",
+    "r": "ʳ",
+})
+
+
+def convert_script_text(text: str, mapping: dict[int, str], fallback_prefix: str) -> str:
+    converted = text.translate(mapping)
+    fully_convertible = all((not char.isascii()) or (not char.isalnum()) or ord(char) in mapping for char in text)
+    if fully_convertible and len(converted) == len(text) and converted != text:
+        return converted
+    return f"{fallback_prefix}{text}"
+
+
+def replace_grouped_command(text: str, command: str, formatter) -> str:
+    marker = f"\\{command}"
+    while marker + "{" in text:
+        start = text.find(marker + "{")
+        group_start = start + len(marker)
+        content, end = read_braced_group(text, group_start)
+        if content is None:
+            break
+        text = text[:start] + formatter(content) + text[end:]
+    return text
+
+
+def read_braced_group(text: str, start: int) -> tuple[str | None, int]:
+    if start >= len(text) or text[start] != "{":
+        return None, start
+    depth = 0
+    for index in range(start, len(text)):
+        char = text[index]
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start + 1:index], index + 1
+    return None, start
+
+
+def replace_fractions(text: str) -> str:
+    marker = r"\frac"
+    while marker + "{" in text:
+        start = text.find(marker + "{")
+        numerator, numerator_end = read_braced_group(text, start + len(marker))
+        if numerator is None:
+            break
+        denominator, denominator_end = read_braced_group(text, numerator_end)
+        if denominator is None:
+            break
+        numerator_text = latex_to_math_text(numerator)
+        denominator_text = latex_to_math_text(denominator)
+        if re.fullmatch(r"[\w\u0370-\u03ff₀-₉⁰-⁹]+", numerator_text):
+            left = numerator_text
+        else:
+            left = f"({numerator_text})"
+        if re.fullmatch(r"[\w\u0370-\u03ff₀-₉⁰-⁹]+", denominator_text):
+            right = denominator_text
+        else:
+            right = f"({denominator_text})"
+        text = text[:start] + f"{left}/{right}" + text[denominator_end:]
+    return text
+
+
+def replace_scripts(text: str) -> str:
+    for marker, mapping, fallback in [
+        ("_", SUBSCRIPT_MAP, "_"),
+        ("^", SUPERSCRIPT_MAP, "^"),
+    ]:
+        placeholders: dict[str, str] = {}
+        pattern = re.compile(rf"\{marker}\{{([^{{}}]+)\}}")
+
+        def repl_group(match: re.Match[str]) -> str:
+            key = f"\ue000{len(placeholders)}\ue001"
+            placeholders[key] = convert_script_text(match.group(1), mapping, fallback)
+            return key
+
+        text = pattern.sub(repl_group, text)
+        pattern = re.compile(rf"\{marker}([A-Za-z0-9+\-=()])")
+        text = pattern.sub(lambda match: convert_script_text(match.group(1), mapping, fallback), text)
+        for key, value in placeholders.items():
+            text = text.replace(key, value)
+    return text
+
+
 def latex_to_math_text(text: str) -> str:
+    text = text.strip()
+    text = re.sub(r"\\text\{([^{}]*)\}", r"\1", text)
+    text = re.sub(r"\\hat\{([^{}]+)\}", lambda match: f"{latex_to_math_text(match.group(1))}\u0302", text)
+    text = re.sub(r"\\tilde\{([^{}]+)\}", lambda match: f"{latex_to_math_text(match.group(1))}\u0303", text)
+    text = replace_fractions(text)
+
     replacements = {
-        r"\cdot": "·",
+        r"\left": "",
+        r"\right": "",
+        r"\cdots": "⋯",
+        r"\ldots": "…",
+        r"\alpha": "α",
+        r"\beta": "β",
+        r"\gamma": "γ",
+        r"\lambda": "λ",
+        r"\theta": "θ",
+        r"\tau": "τ",
         r"\epsilon": "ε",
-        r"\max": "max",
+        r"\Delta": "Δ",
+        r"\Omega": "Ω",
+        r"\partial": "∂",
+        r"\cup": "∪",
+        r"\cap": "∩",
+        r"\sim": "∼",
+        r"\cdot": "·",
+        r"\times": "×",
+        r"\approx": "≈",
+        r"\ge": "≥",
+        r"\le": "≤",
+        r"\ne": "≠",
+        r"\neq": "≠",
         r"\in": "∈",
-        r"\quad": "   ",
+        r"\varnothing": "∅",
+        r"\Rightarrow": "⇒",
+        r"\max": "max",
+        r"\tan": "tan",
+        r"\sum": "Σ",
+        r"\lfloor": "⌊",
+        r"\rfloor": "⌋",
+        r"\lceil": "⌈",
+        r"\rceil": "⌉",
+        r"\qquad": "   ",
+        r"\quad": "  ",
+        r"\{": "{",
+        r"\}": "}",
+        r"\|": "‖",
         r"\_": "_",
+        r"\ ": " ",
     }
     for old, new in replacements.items():
         text = text.replace(old, new)
-    text = re.sub(r"\\hat\{H\}", "Ĥ", text)
+
+    text = text.replace("&", "")
+    text = replace_scripts(text)
     text = text.replace("{", "").replace("}", "")
-    subscript_map = str.maketrans({
-        "0": "₀",
-        "1": "₁",
-        "2": "₂",
-        "3": "₃",
-        "4": "₄",
-        "5": "₅",
-        "6": "₆",
-        "7": "₇",
-        "8": "₈",
-        "9": "₉",
-        "h": "ₕ",
-        "s": "ₛ",
-        "p": "ₚ",
-        "l": "ₗ",
-    })
-
-    def repl_sub(match: re.Match[str]) -> str:
-        base = match.group(1)
-        sub = match.group(2).translate(subscript_map)
-        return f"{base}{sub}"
-
-    text = re.sub(r"([A-Za-z])_([A-Za-z0-9])", repl_sub, text)
+    text = re.sub(r"\s+", " ", text).strip()
     return text
+
+
+def strip_latex_line_break(text: str) -> str:
+    return re.sub(r"\s*\\\\\s*$", "", text.strip())
+
+
+def append_latex_rows(rows: list[str], text: str) -> None:
+    for part in re.split(r"\\\\", text):
+        stripped = part.strip()
+        if stripped:
+            rows.append(stripped)
+
+
+def latex_matrix_lines(math_text: str, environment: str) -> list[str]:
+    lines = math_text.splitlines()
+    rows: list[str] = []
+    prefix_parts: list[str] = []
+    prefix = ""
+    in_matrix = False
+    begin_marker = rf"\begin{{{environment}}}"
+    end_marker = rf"\end{{{environment}}}"
+    for line in lines:
+        stripped = line.strip()
+        if begin_marker in stripped:
+            before, after = stripped.split(begin_marker, 1)
+            if before.strip():
+                prefix_parts.append(strip_latex_line_break(before))
+            prefix = latex_to_math_text(" ".join(prefix_parts))
+            in_matrix = True
+            if after.strip():
+                append_latex_rows(rows, strip_latex_line_break(after))
+            continue
+        if end_marker in stripped:
+            before = stripped.split(end_marker, 1)[0].strip()
+            if before:
+                append_latex_rows(rows, strip_latex_line_break(before))
+            in_matrix = False
+            continue
+        if in_matrix:
+            append_latex_rows(rows, strip_latex_line_break(stripped))
+        elif stripped:
+            prefix_parts.append(strip_latex_line_break(stripped))
+
+    converted_rows = [latex_to_math_text(row) for row in rows if row.strip()]
+    if not converted_rows:
+        return [prefix] if prefix else []
+    result = [f"{prefix} [" if prefix else "["]
+    result.extend(f"  {row}" for row in converted_rows)
+    result.append("]")
+    return result
+
+
+def latex_cases_lines(math_text: str) -> list[str]:
+    lines = math_text.splitlines()
+    rows: list[str] = []
+    prefix_parts: list[str] = []
+    prefix = ""
+    in_cases = False
+    for line in lines:
+        stripped = line.strip()
+        if r"\begin{cases}" in stripped:
+            before, after = stripped.split(r"\begin{cases}", 1)
+            if before.strip():
+                prefix_parts.append(strip_latex_line_break(before))
+            prefix = latex_to_math_text(" ".join(prefix_parts))
+            in_cases = True
+            if after.strip():
+                rows.append(strip_latex_line_break(after))
+            continue
+        if r"\end{cases}" in stripped:
+            before = stripped.split(r"\end{cases}", 1)[0].strip()
+            if before:
+                rows.append(strip_latex_line_break(before))
+            in_cases = False
+            continue
+        if in_cases:
+            rows.append(strip_latex_line_break(stripped))
+        elif stripped:
+            prefix_parts.append(strip_latex_line_break(stripped))
+    converted_rows = [latex_to_math_text(row.replace("&", "  ")) for row in rows if row.strip()]
+    return [f"{prefix} {{" if prefix else "{", *(f"  {row}" for row in converted_rows), "}"]
+
+
+def latex_aligned_lines(math_text: str) -> list[str]:
+    lines: list[str] = []
+    for line in math_text.splitlines():
+        stripped = line.strip()
+        if stripped in {r"\begin{aligned}", r"\end{aligned}"}:
+            continue
+        if stripped:
+            lines.append(latex_to_math_text(strip_latex_line_break(stripped)))
+    return lines
+
+
+def latex_to_display_lines(math_text: str) -> list[str]:
+    if r"\begin{bmatrix}" in math_text:
+        return latex_matrix_lines(math_text, "bmatrix")
+    if r"\begin{cases}" in math_text:
+        return latex_cases_lines(math_text)
+    if r"\begin{aligned}" in math_text:
+        return latex_aligned_lines(math_text)
+    lines: list[str] = []
+    for raw_line in math_text.splitlines():
+        for part in re.split(r"\\\\", raw_line):
+            stripped = part.strip()
+            if stripped:
+                lines.append(latex_to_math_text(stripped))
+    return lines or [latex_to_math_text(math_text)]
 
 
 def w_run(text: str, *, bold: bool = False, italic: bool = False, style: str | None = None) -> str:
@@ -96,8 +365,9 @@ def w_run(text: str, *, bold: bool = False, italic: bool = False, style: str | N
     return f"<w:r>{prop_xml}<w:t{xml_space_attr(text)}>{esc(text)}</w:t></w:r>"
 
 
-def m_run(text: str) -> str:
-    text = latex_to_math_text(text)
+def m_run(text: str, *, convert_latex: bool = True) -> str:
+    if convert_latex:
+        text = latex_to_math_text(text)
     return f"<m:r><m:t{xml_space_attr(text)}>{esc(text)}</m:t></m:r>"
 
 
@@ -106,29 +376,19 @@ def inline_math(math_text: str) -> str:
 
 
 def block_math_para(math_text: str) -> str:
-    fraction_match = re.search(r"^(.*?)\\frac\{(.+)\}\{(.+)\}$", math_text)
-    if fraction_match:
-        prefix = latex_to_math_text(fraction_match.group(1).strip())
-        numerator = latex_to_math_text(fraction_match.group(2).strip())
-        denominator = latex_to_math_text(fraction_match.group(3).strip())
-        formula = (
-            "<m:oMath>"
-            f"{m_run(prefix + ' ')}"
-            "<m:f><m:fPr><m:type m:val=\"bar\"/></m:fPr>"
-            f"<m:num>{m_run(numerator)}</m:num>"
-            f"<m:den>{m_run(denominator)}</m:den>"
-            "</m:f>"
-            "</m:oMath>"
+    paragraphs: list[str] = []
+    display_lines = latex_to_display_lines(math_text)
+    for index, line in enumerate(display_lines):
+        before = "120" if index == 0 else "0"
+        after = "120" if index == len(display_lines) - 1 else "0"
+        paragraphs.append(
+            "<w:p><w:pPr><w:jc w:val=\"center\"/>"
+            f"<w:spacing w:before=\"{before}\" w:after=\"{after}\"/>"
+            "</w:pPr>"
+            f"<m:oMathPara><m:oMath>{m_run(line, convert_latex=False)}</m:oMath></m:oMathPara>"
+            "</w:p>"
         )
-    else:
-        formula = f"<m:oMath>{m_run(math_text)}</m:oMath>"
-    return (
-        "<w:p><w:pPr><w:jc w:val=\"center\"/>"
-        "<w:spacing w:before=\"120\" w:after=\"120\"/>"
-        "</w:pPr>"
-        f"<m:oMathPara>{formula}</m:oMathPara>"
-        "</w:p>"
-    )
+    return "\n".join(paragraphs)
 
 
 def parse_inline_runs(text: str) -> str:
@@ -278,7 +538,7 @@ def build_body_from_markdown(md_path: Path) -> tuple[list[str], list[ImageRel]]:
             math_lines = []
             continue
         if stripped == r"\]":
-            body.append(block_math_para(" ".join(math_lines).strip()))
+            body.append(block_math_para("\n".join(math_lines).strip()))
             in_math = False
             math_lines = []
             continue
