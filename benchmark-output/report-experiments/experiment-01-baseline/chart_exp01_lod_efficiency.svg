@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="640" viewBox="0 0 1080 640">
+<rect width="100%" height="100%" fill="white"/>
+<style>text{font-family:Arial,"Microsoft YaHei",sans-serif;fill:#222}.small{font-size:12px}.axis{stroke:#333;stroke-width:1}.grid{stroke:#E5E5E5;stroke-width:1}</style>
+<text x="540.0" y="34" font-size="22" text-anchor="middle">实验1：单位三角形规模的 LOD 耗时</text>
+<line class="grid" x1="92" y1="510.0" x2="1040" y2="510.0"/>
+<text class="small" x="82" y="514.0" text-anchor="end">0.00</text>
+<line class="grid" x1="92" y1="423.6" x2="1040" y2="423.6"/>
+<text class="small" x="82" y="427.6" text-anchor="end">2.00</text>
+<line class="grid" x1="92" y1="337.2" x2="1040" y2="337.2"/>
+<text class="small" x="82" y="341.2" text-anchor="end">4.00</text>
+<line class="grid" x1="92" y1="250.8" x2="1040" y2="250.8"/>
+<text class="small" x="82" y="254.8" text-anchor="end">6.00</text>
+<line class="grid" x1="92" y1="164.4" x2="1040" y2="164.4"/>
+<text class="small" x="82" y="168.4" text-anchor="end">8.00</text>
+<line class="grid" x1="92" y1="78.0" x2="1040" y2="78.0"/>
+<text class="small" x="82" y="82.0" text-anchor="end">10.00</text>
+<line class="axis" x1="92" y1="78" x2="92" y2="510"/>
+<line class="axis" x1="92" y1="510" x2="1040" y2="510"/>
+<text x="24" y="294.0" font-size="14" text-anchor="middle" transform="rotate(-90 24 294.0)">毫秒 / 1 万三角形</text>
+<rect x="229.0" y="169.1" width="35.7" height="340.9" fill="#4C78A8" rx="2"/>
+<text class="small" x="246.8" y="163.1" text-anchor="middle">7.89</text>
+<text class="small" x="250.0" y="546" text-anchor="middle">经典 CPU ROAM</text>
+<rect x="545.0" y="366.6" width="35.7" height="143.4" fill="#4C78A8" rx="2"/>
+<text class="small" x="562.9" y="360.6" text-anchor="middle">3.32</text>
+<text class="small" x="566.0" y="546" text-anchor="middle">DOD CPU ROAM</text>
+<rect x="861.0" y="326.2" width="35.7" height="183.8" fill="#4C78A8" rx="2"/>
+<text class="small" x="878.9" y="320.2" text-anchor="middle">4.25</text>
+<text class="small" x="882.0" y="546" text-anchor="middle">GPU 类 ROAM</text>
+<rect x="92" y="580" width="14" height="14" fill="#4C78A8" rx="2"/>
+<text class="small" x="112" y="592" text-anchor="start">每万三角形耗时</text>
+</svg>

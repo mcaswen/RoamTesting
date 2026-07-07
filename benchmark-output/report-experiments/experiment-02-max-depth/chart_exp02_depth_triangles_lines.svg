@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="640" viewBox="0 0 1080 640">
+<rect width="100%" height="100%" fill="white"/>
+<style>text{font-family:Arial,"Microsoft YaHei",sans-serif;fill:#222}.small{font-size:12px}.axis{stroke:#333;stroke-width:1}.grid{stroke:#E5E5E5;stroke-width:1}</style>
+<text x="540.0" y="34" font-size="22" text-anchor="middle">实验2：最大深度对平均三角形数的影响</text>
+<line class="grid" x1="92" y1="510.0" x2="1040" y2="510.0"/>
+<text class="small" x="82" y="514.0" text-anchor="end">0.00</text>
+<line class="grid" x1="92" y1="423.6" x2="1040" y2="423.6"/>
+<text class="small" x="82" y="427.6" text-anchor="end">12000.00</text>
+<line class="grid" x1="92" y1="337.2" x2="1040" y2="337.2"/>
+<text class="small" x="82" y="341.2" text-anchor="end">24000.00</text>
+<line class="grid" x1="92" y1="250.8" x2="1040" y2="250.8"/>
+<text class="small" x="82" y="254.8" text-anchor="end">36000.00</text>
+<line class="grid" x1="92" y1="164.4" x2="1040" y2="164.4"/>
+<text class="small" x="82" y="168.4" text-anchor="end">48000.00</text>
+<line class="grid" x1="92" y1="78.0" x2="1040" y2="78.0"/>
+<text class="small" x="82" y="82.0" text-anchor="end">60000.00</text>
+<line class="axis" x1="92" y1="78" x2="92" y2="510"/>
+<line class="axis" x1="92" y1="510" x2="1040" y2="510"/>
+<text x="24" y="294.0" font-size="14" text-anchor="middle" transform="rotate(-90 24 294.0)">三角形数</text>
+<line class="grid" x1="92.0" y1="510" x2="92.0" y2="515"/>
+<text class="small" x="92.0" y="544" text-anchor="middle">12</text>
+<line class="grid" x1="329.0" y1="510" x2="329.0" y2="515"/>
+<text class="small" x="329.0" y="544" text-anchor="middle">14</text>
+<line class="grid" x1="566.0" y1="510" x2="566.0" y2="515"/>
+<text class="small" x="566.0" y="544" text-anchor="middle">16</text>
+<line class="grid" x1="803.0" y1="510" x2="803.0" y2="515"/>
+<text class="small" x="803.0" y="544" text-anchor="middle">18</text>
+<line class="grid" x1="1040.0" y1="510" x2="1040.0" y2="515"/>
+<text class="small" x="1040.0" y="544" text-anchor="middle">20</text>
+<polyline points="92.0,451.6 329.0,322.1 566.0,285.7 803.0,284.5 1040.0,284.1" fill="none" stroke="#4C78A8" stroke-width="3"/>
+<circle cx="92.0" cy="451.6" r="4" fill="#4C78A8"/>
+<text class="small" x="92.0" y="443.6" text-anchor="middle">8116</text>
+<circle cx="329.0" cy="322.1" r="4" fill="#4C78A8"/>
+<text class="small" x="329.0" y="314.1" text-anchor="middle">26100</text>
+<circle cx="566.0" cy="285.7" r="4" fill="#4C78A8"/>
+<text class="small" x="566.0" y="277.7" text-anchor="middle">31156</text>
+<circle cx="803.0" cy="284.5" r="4" fill="#4C78A8"/>
+<text class="small" x="803.0" y="276.5" text-anchor="middle">31315</text>
+<circle cx="1040.0" cy="284.1" r="4" fill="#4C78A8"/>
+<text class="small" x="1040.0" y="276.1" text-anchor="middle">31376</text>
+<polyline points="92.0,451.6 329.0,322.1 566.0,283.5 803.0,283.6 1040.0,283.6" fill="none" stroke="#F58518" stroke-width="3"/>
+<circle cx="92.0" cy="451.6" r="4" fill="#F58518"/>
+<text class="small" x="92.0" y="443.6" text-anchor="middle">8117</text>
+<circle cx="329.0" cy="322.1" r="4" fill="#F58518"/>
+<text class="small" x="329.0" y="314.1" text-anchor="middle">26102</text>
+<circle cx="566.0" cy="283.5" r="4" fill="#F58518"/>
+<text class="small" x="566.0" y="275.5" text-anchor="middle">31459</text>
+<circle cx="803.0" cy="283.6" r="4" fill="#F58518"/>
+<text class="small" x="803.0" y="275.6" text-anchor="middle">31447</text>
+<circle cx="1040.0" cy="283.6" r="4" fill="#F58518"/>
+<text class="small" x="1040.0" y="275.6" text-anchor="middle">31441</text>
+<polyline points="92.0,451.6 329.0,322.0 566.0,284.7 803.0,284.1 1040.0,284.1" fill="none" stroke="#54A24B" stroke-width="3"/>
+<circle cx="92.0" cy="451.6" r="4" fill="#54A24B"/>
+<text class="small" x="92.0" y="443.6" text-anchor="middle">8116</text>
+<circle cx="329.0" cy="322.0" r="4" fill="#54A24B"/>
+<text class="small" x="329.0" y="314.0" text-anchor="middle">26113</text>
+<circle cx="566.0" cy="284.7" r="4" fill="#54A24B"/>
+<text class="small" x="566.0" y="276.7" text-anchor="middle">31296</text>
+<circle cx="803.0" cy="284.1" r="4" fill="#54A24B"/>
+<text class="small" x="803.0" y="276.1" text-anchor="middle">31378</text>
+<circle cx="1040.0" cy="284.1" r="4" fill="#54A24B"/>
+<text class="small" x="1040.0" y="276.1" text-anchor="middle">31375</text>
+<rect x="92" y="580" width="14" height="14" fill="#4C78A8" rx="2"/>
+<text class="small" x="112" y="592" text-anchor="start">经典 CPU ROAM</text>
+<rect x="408" y="580" width="14" height="14" fill="#F58518" rx="2"/>
+<text class="small" x="428" y="592" text-anchor="start">DOD CPU ROAM</text>
+<rect x="724" y="580" width="14" height="14" fill="#54A24B" rx="2"/>
+<text class="small" x="744" y="592" text-anchor="start">GPU 类 ROAM</text>
+</svg>

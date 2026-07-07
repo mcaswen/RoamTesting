@@ -70,8 +70,6 @@ coverage/
 logs/
 captures/
 screenshots/
-benchmark-output/
-experiment-output/
 code-output/
 *.csv.tmp
 

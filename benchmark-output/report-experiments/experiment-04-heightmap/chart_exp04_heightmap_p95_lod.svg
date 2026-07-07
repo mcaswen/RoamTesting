@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="640" viewBox="0 0 1080 640">
+<rect width="100%" height="100%" fill="white"/>
+<style>text{font-family:Arial,"Microsoft YaHei",sans-serif;fill:#222}.small{font-size:12px}.axis{stroke:#333;stroke-width:1}.grid{stroke:#E5E5E5;stroke-width:1}</style>
+<text x="540.0" y="34" font-size="22" text-anchor="middle">实验4：不同高度图的 P95 LOD 耗时</text>
+<line class="grid" x1="92" y1="510.0" x2="1040" y2="510.0"/>
+<text class="small" x="82" y="514.0" text-anchor="end">0.00</text>
+<line class="grid" x1="92" y1="423.6" x2="1040" y2="423.6"/>
+<text class="small" x="82" y="427.6" text-anchor="end">12.00</text>
+<line class="grid" x1="92" y1="337.2" x2="1040" y2="337.2"/>
+<text class="small" x="82" y="341.2" text-anchor="end">24.00</text>
+<line class="grid" x1="92" y1="250.8" x2="1040" y2="250.8"/>
+<text class="small" x="82" y="254.8" text-anchor="end">36.00</text>
+<line class="grid" x1="92" y1="164.4" x2="1040" y2="164.4"/>
+<text class="small" x="82" y="168.4" text-anchor="end">48.00</text>
+<line class="grid" x1="92" y1="78.0" x2="1040" y2="78.0"/>
+<text class="small" x="82" y="82.0" text-anchor="end">60.00</text>
+<line class="axis" x1="92" y1="78" x2="92" y2="510"/>
+<line class="axis" x1="92" y1="510" x2="1040" y2="510"/>
+<text x="24" y="294.0" font-size="14" text-anchor="middle" transform="rotate(-90 24 294.0)">P95 LOD 耗时（毫秒）</text>
+<rect x="266.0" y="255.3" width="35.7" height="254.7" fill="#4C78A8" rx="2"/>
+<text class="small" x="283.9" y="249.3" text-anchor="middle">35.37</text>
+<rect x="308.0" y="419.9" width="35.7" height="90.1" fill="#F58518" rx="2"/>
+<text class="small" x="325.9" y="413.9" text-anchor="middle">12.52</text>
+<rect x="350.0" y="386.4" width="35.7" height="123.6" fill="#54A24B" rx="2"/>
+<text class="small" x="367.9" y="380.4" text-anchor="middle">17.16</text>
+<text class="small" x="329.0" y="546" text-anchor="middle">Test129</text>
+<rect x="740.0" y="455.0" width="35.7" height="55.0" fill="#4C78A8" rx="2"/>
+<text class="small" x="757.9" y="449.0" text-anchor="middle">7.64</text>
+<rect x="782.0" y="479.3" width="35.7" height="30.7" fill="#F58518" rx="2"/>
+<text class="small" x="799.9" y="473.3" text-anchor="middle">4.26</text>
+<rect x="824.0" y="471.4" width="35.7" height="38.6" fill="#54A24B" rx="2"/>
+<text class="small" x="841.9" y="465.4" text-anchor="middle">5.37</text>
+<text class="small" x="803.0" y="546" text-anchor="middle">Peking513</text>
+<rect x="92" y="580" width="14" height="14" fill="#4C78A8" rx="2"/>
+<text class="small" x="112" y="592" text-anchor="start">经典 CPU ROAM</text>
+<rect x="408" y="580" width="14" height="14" fill="#F58518" rx="2"/>
+<text class="small" x="428" y="592" text-anchor="start">DOD CPU ROAM</text>
+<rect x="724" y="580" width="14" height="14" fill="#54A24B" rx="2"/>
+<text class="small" x="744" y="592" text-anchor="start">GPU 类 ROAM</text>
+</svg>

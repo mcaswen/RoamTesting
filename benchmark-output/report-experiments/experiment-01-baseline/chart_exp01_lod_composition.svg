@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="660" viewBox="0 0 1080 660">
+<rect width="100%" height="100%" fill="white"/>
+<style>text{font-family:Arial,"Microsoft YaHei",sans-serif;fill:#222}.small{font-size:12px}.axis{stroke:#333;stroke-width:1}.grid{stroke:#E5E5E5;stroke-width:1}</style>
+<text x="540.0" y="34" font-size="22" text-anchor="middle">实验1：LOD 时间组成</text>
+<line class="grid" x1="92" y1="520.0" x2="1040" y2="520.0"/>
+<text class="small" x="82" y="524.0" text-anchor="end">0.00</text>
+<line class="grid" x1="92" y1="431.6" x2="1040" y2="431.6"/>
+<text class="small" x="82" y="435.6" text-anchor="end">6.00</text>
+<line class="grid" x1="92" y1="343.2" x2="1040" y2="343.2"/>
+<text class="small" x="82" y="347.2" text-anchor="end">12.00</text>
+<line class="grid" x1="92" y1="254.8" x2="1040" y2="254.8"/>
+<text class="small" x="82" y="258.8" text-anchor="end">18.00</text>
+<line class="grid" x1="92" y1="166.4" x2="1040" y2="166.4"/>
+<text class="small" x="82" y="170.4" text-anchor="end">24.00</text>
+<line class="grid" x1="92" y1="78.0" x2="1040" y2="78.0"/>
+<text class="small" x="82" y="82.0" text-anchor="end">30.00</text>
+<line class="axis" x1="92" y1="78" x2="92" y2="520"/>
+<line class="axis" x1="92" y1="520" x2="1040" y2="520"/>
+<text x="24" y="299.0" font-size="14" text-anchor="middle" transform="rotate(-90 24 299.0)">毫秒</text>
+<rect x="203.0" y="229.9" width="94.0" height="290.1" fill="#4C78A8" rx="1"/>
+<rect x="203.0" y="220.4" width="94.0" height="9.4" fill="#F58518" rx="1"/>
+<rect x="203.0" y="220.4" width="94.0" height="0.0" fill="#B279A2" rx="1"/>
+<rect x="203.0" y="220.4" width="94.0" height="0.0" fill="#E45756" rx="1"/>
+<rect x="203.0" y="220.4" width="94.0" height="0.0" fill="#54A24B" rx="1"/>
+<rect x="203.0" y="220.4" width="94.0" height="0.0" fill="#72B7B2" rx="1"/>
+<rect x="203.0" y="156.9" width="94.0" height="63.6" fill="#9D755D" rx="1"/>
+<text class="small" x="250.0" y="148.9" text-anchor="middle">24.65</text>
+<text class="small" x="250.0" y="556" text-anchor="middle">经典 CPU ROAM</text>
+<rect x="519.0" y="414.2" width="94.0" height="105.8" fill="#4C78A8" rx="1"/>
+<rect x="519.0" y="404.7" width="94.0" height="9.4" fill="#F58518" rx="1"/>
+<rect x="519.0" y="404.7" width="94.0" height="0.0" fill="#B279A2" rx="1"/>
+<rect x="519.0" y="404.7" width="94.0" height="0.0" fill="#E45756" rx="1"/>
+<rect x="519.0" y="404.7" width="94.0" height="0.0" fill="#54A24B" rx="1"/>
+<rect x="519.0" y="404.7" width="94.0" height="0.0" fill="#72B7B2" rx="1"/>
+<rect x="519.0" y="366.3" width="94.0" height="38.4" fill="#9D755D" rx="1"/>
+<text class="small" x="566.0" y="358.3" text-anchor="middle">10.43</text>
+<text class="small" x="566.0" y="556" text-anchor="middle">DOD CPU ROAM</text>
+<rect x="835.0" y="439.1" width="94.0" height="80.9" fill="#4C78A8" rx="1"/>
+<rect x="835.0" y="426.9" width="94.0" height="12.1" fill="#F58518" rx="1"/>
+<rect x="835.0" y="402.3" width="94.0" height="24.6" fill="#B279A2" rx="1"/>
+<rect x="835.0" y="398.7" width="94.0" height="3.7" fill="#E45756" rx="1"/>
+<rect x="835.0" y="389.6" width="94.0" height="9.0" fill="#54A24B" rx="1"/>
+<rect x="835.0" y="361.6" width="94.0" height="28.1" fill="#72B7B2" rx="1"/>
+<rect x="835.0" y="322.9" width="94.0" height="38.7" fill="#9D755D" rx="1"/>
+<text class="small" x="882.0" y="314.9" text-anchor="middle">13.38</text>
+<text class="small" x="882.0" y="556" text-anchor="middle">GPU 类 ROAM</text>
+<rect x="92" y="600" width="14" height="14" fill="#4C78A8" rx="2"/>
+<text class="small" x="112" y="612" text-anchor="start">CPU 更新</text>
+<rect x="242" y="600" width="14" height="14" fill="#F58518" rx="2"/>
+<text class="small" x="262" y="612" text-anchor="start">CPU 上传</text>
+<rect x="392" y="600" width="14" height="14" fill="#B279A2" rx="2"/>
+<text class="small" x="412" y="612" text-anchor="start">GPU 快照</text>
+<rect x="542" y="600" width="14" height="14" fill="#E45756" rx="2"/>
+<text class="small" x="562" y="612" text-anchor="start">GPU 调度</text>
+<rect x="692" y="600" width="14" height="14" fill="#54A24B" rx="2"/>
+<text class="small" x="712" y="612" text-anchor="start">GPU 计算</text>
+<rect x="842" y="600" width="14" height="14" fill="#72B7B2" rx="2"/>
+<text class="small" x="862" y="612" text-anchor="start">GPU 读回</text>
+<rect x="992" y="600" width="14" height="14" fill="#9D755D" rx="2"/>
+<text class="small" x="1012" y="612" text-anchor="start">其他 LOD</text>
+</svg>
