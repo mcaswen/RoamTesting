@@ -15,7 +15,9 @@ COLORS = {
     "CPU update": "#4C78A8",
     "CPU upload": "#F58518",
     "GPU snapshot": "#B279A2",
+    "GPU alloc": "#FF9DA6",
     "GPU dispatch": "#E45756",
+    "GPU query wait": "#BAB0AC",
     "GPU compute": "#54A24B",
     "GPU readback": "#72B7B2",
     "Other LOD": "#9D755D",
@@ -36,6 +38,21 @@ ALGORITHM_LABELS = {
     "GPU ROAM-like": "GPU 类 ROAM",
 }
 
+CASE_LABELS = {
+    "baseline": "默认参数",
+    "depth 12": "最大深度 12",
+    "depth 14": "最大深度 14",
+    "depth 16": "最大深度 16",
+    "depth 18": "最大深度 18",
+    "depth 20": "最大深度 20",
+    "distance 20": "距离权重 20",
+    "distance 40": "距离权重 40",
+    "distance 60": "距离权重 60",
+    "distance 80": "距离权重 80",
+    "Test129": "Test129 高度图",
+    "Peking513": "Peking513 高度图",
+}
+
 COMPONENT_LABELS = {
     "Snapshot": "快照构建",
     "Buffer alloc": "缓冲区分配",
@@ -46,7 +63,9 @@ COMPONENT_LABELS = {
     "CPU update": "CPU 更新",
     "CPU upload": "CPU 上传",
     "GPU snapshot": "GPU 快照",
+    "GPU alloc": "GPU 分配",
     "GPU dispatch": "GPU 调度",
+    "GPU query wait": "GPU 查询等待",
     "GPU readback": "GPU 读回",
     "Other LOD": "其他 LOD",
     "Split": "分裂",
@@ -98,7 +117,7 @@ def esc(value: object) -> str:
 
 
 def display_label(value: str) -> str:
-    return ALGORITHM_LABELS.get(value, COMPONENT_LABELS.get(value, value))
+    return ALGORITHM_LABELS.get(value, CASE_LABELS.get(value, COMPONENT_LABELS.get(value, value)))
 
 
 def mean(values: list[float]) -> float:
@@ -480,6 +499,66 @@ def stats_by_algorithm(stats: dict[tuple[str, str], dict[str, float]], case: str
     return {algorithm: values for (case_name, algorithm), values in stats.items() if case_name == case}
 
 
+def cases_for_folder(folder_name: str) -> list[str]:
+    if folder_name == "experiment-01-baseline":
+        return ["baseline"]
+    if folder_name == "experiment-02-max-depth":
+        return [f"depth {depth}" for depth in [12, 14, 16, 18, 20]]
+    if folder_name == "experiment-03-distance-scale":
+        return [f"distance {distance}" for distance in [20, 40, 60, 80]]
+    if folder_name == "experiment-04-heightmap":
+        return ["Test129", "Peking513"]
+    return ["baseline"]
+
+
+def generate_common_charts(folder: Path, stats: dict[tuple[str, str], dict[str, float]]) -> None:
+    algorithms = ["Classic CPU ROAM", "Data-Oriented CPU ROAM", "GPU ROAM-like"]
+    cases = cases_for_folder(folder.name)
+    cases = [case for case in cases if all((case, algorithm) in stats for algorithm in algorithms)]
+
+    bar_chart(
+        folder / "chart_avg_lod_ms.svg",
+        "平均 LOD 耗时对比",
+        cases,
+        [(a, [stats[(case, a)]["avgLodMs"] for case in cases], COLORS[a]) for a in algorithms],
+        "平均 LOD 耗时（毫秒）",
+    )
+    bar_chart(
+        folder / "chart_avg_frame_ms.svg",
+        "平均帧耗时对比",
+        cases,
+        [(a, [stats[(case, a)]["avgFrameMs"] for case in cases], COLORS[a]) for a in algorithms],
+        "平均帧耗时（毫秒）",
+    )
+    bar_chart(
+        folder / "chart_avg_triangles.svg",
+        "平均生成三角形数对比",
+        cases,
+        [(a, [stats[(case, a)]["avgTriangles"] for case in cases], COLORS[a]) for a in algorithms],
+        "三角形数",
+        "{:.0f}",
+    )
+    bar_chart(
+        folder / "chart_avg_cpu_percent.svg",
+        "平均进程 CPU 利用率对比",
+        cases,
+        [(a, [stats[(case, a)]["avgCpuPercent"] for case in cases], COLORS[a]) for a in algorithms],
+        "CPU 利用率（%）",
+    )
+
+    gpu_cases = [case for case in cases if (case, "GPU ROAM-like") in stats]
+    if gpu_cases:
+        components = [
+            ("GPU snapshot", [stats[(case, "GPU ROAM-like")]["gpuSnapshotMs"] for case in gpu_cases], COLORS["GPU snapshot"]),
+            ("GPU alloc", [stats[(case, "GPU ROAM-like")]["gpuAllocMs"] for case in gpu_cases], COLORS["GPU alloc"]),
+            ("GPU dispatch", [stats[(case, "GPU ROAM-like")]["gpuDispatchMs"] for case in gpu_cases], COLORS["GPU dispatch"]),
+            ("GPU query wait", [stats[(case, "GPU ROAM-like")]["gpuQueryWaitMs"] for case in gpu_cases], COLORS["GPU query wait"]),
+            ("GPU readback", [stats[(case, "GPU ROAM-like")]["gpuReadbackMs"] for case in gpu_cases], COLORS["GPU readback"]),
+            ("GPU compute", [stats[(case, "GPU ROAM-like")]["gpuComputeMs"] for case in gpu_cases], COLORS["GPU compute"]),
+        ]
+        stacked_bar_chart(folder / "chart_gpu_breakdown_ms.svg", "GPU 类 ROAM 分项平均耗时", gpu_cases, components, "毫秒")
+
+
 def roam_stage_components(data: dict[str, dict[str, float]], algorithms: list[str]) -> list[tuple[str, list[float], str]]:
     return [
         ("Split", [data[a]["splitMs"] for a in algorithms], COLORS["Split"]),
@@ -698,6 +777,7 @@ def main() -> None:
         if not rows:
             continue
         stats = write_analysis_csv(folder, rows)
+        generate_common_charts(folder, stats)
         if folder.name == "experiment-01-baseline":
             generate_experiment_01(folder, stats)
         elif folder.name == "experiment-02-max-depth":
