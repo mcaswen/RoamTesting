@@ -1,62 +1,108 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="960" height="880" viewBox="0 0 960 880">
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="900" viewBox="0 0 1100 900">
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
-      <path d="M 0 0 L 10 5 L 0 10 z" fill="#444"/>
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#344054"/>
     </marker>
     <style>
-      .title{font:700 24px "Microsoft YaHei",Arial,sans-serif;fill:#1f2933}
-      .cpu{fill:#fff7ed;stroke:#d88924;stroke-width:2.2;rx:12}
-      .gpu{fill:#edf8ef;stroke:#3d8b46;stroke-width:2.2;rx:12}
-      .sync{fill:#fef2f2;stroke:#cc4b37;stroke-width:2.2;rx:12}
-      .txt{font:16px "Microsoft YaHei",Arial,sans-serif;fill:#1f2933}
-      .small{font:13px "Microsoft YaHei",Arial,sans-serif;fill:#52606d}
-      .line{stroke:#444;stroke-width:2;fill:none;marker-end:url(#arrow)}
+      .title{font:700 24px "Microsoft YaHei",Arial,sans-serif;fill:#111827}
+      .lane{font:700 15px "Microsoft YaHei",Arial,sans-serif;fill:#344054}
+      .section{font:700 17px "Microsoft YaHei",Arial,sans-serif;fill:#111827}
+      .code{font:600 14px "Consolas","SFMono-Regular",monospace;fill:#1f2937}
+      .small{font:13px "Microsoft YaHei",Arial,sans-serif;fill:#475467}
+      .caption{font:12px "Microsoft YaHei",Arial,sans-serif;fill:#667085}
+      .line{stroke:#344054;stroke-width:2;fill:none;marker-end:url(#arrow)}
+      .dash{stroke:#667085;stroke-width:1.8;stroke-dasharray:6 5;fill:none;marker-end:url(#arrow)}
+      .adapter{fill:#fff7ed;stroke:#f97316;stroke-width:2}
+      .cpu{fill:#f0fdf4;stroke:#22c55e;stroke-width:1.9}
+      .schema{fill:#f8fafc;stroke:#64748b;stroke-width:1.8}
+      .gpu{fill:#eff6ff;stroke:#2563eb;stroke-width:1.9}
+      .sync{fill:#fef2f2;stroke:#ef4444;stroke-width:1.8}
+      .output{fill:#fdf2f8;stroke:#db2777;stroke-width:1.9}
+      .laneBg{fill:#ffffff;stroke:#e5e7eb;stroke-width:1.2}
     </style>
   </defs>
+
   <rect width="100%" height="100%" fill="#fbfcfd"/>
-  <text x="480" y="38" text-anchor="middle" class="title">图3-4 GPU ROAM-like 子架构</text>
+  <text x="550" y="38" text-anchor="middle" class="title">图3-4 GPU ROAM-like：类与 GPU pass 结构</text>
 
-  <rect x="330" y="70" width="300" height="70" class="cpu"/>
-  <text x="480" y="100" text-anchor="middle" class="txt">DOD CPU Topology Baseline</text>
-  <text x="480" y="124" text-anchor="middle" class="small">保留 crack-free split / merge 语义</text>
-  <path d="M480 140 L480 180" class="line"/>
+  <rect x="235" y="60" width="630" height="86" rx="8" class="adapter"/>
+  <text x="550" y="90" text-anchor="middle" class="section">GpuRoamTerrainLodAlgorithm</text>
+  <text x="550" y="115" text-anchor="middle" class="code">BuildRenderData()  /  GpuRoamLikeUnavailableReason()</text>
+  <text x="550" y="136" text-anchor="middle" class="caption">ITerrainLodAlgorithm 适配层；同时持有 CPU 拓扑 builder 与 GPU mesh builder</text>
 
-  <rect x="330" y="180" width="300" height="70" class="cpu"/>
-  <text x="480" y="210" text-anchor="middle" class="txt">Snapshot Build</text>
-  <text x="480" y="234" text-anchor="middle" class="small">把 node pool / active leaf 打包为 GPU buffer 输入</text>
-  <path d="M480 250 L480 292" class="line"/>
+  <rect x="55" y="178" width="470" height="656" rx="10" class="laneBg"/>
+  <text x="290" y="205" text-anchor="middle" class="lane">CPU 拓扑与上传快照</text>
+  <rect x="575" y="178" width="470" height="656" rx="10" class="laneBg"/>
+  <text x="810" y="205" text-anchor="middle" class="lane">OpenGL compute pipeline</text>
 
-  <rect x="330" y="292" width="300" height="74" class="sync"/>
-  <text x="480" y="324" text-anchor="middle" class="txt">CPU → GPU Upload</text>
-  <text x="480" y="348" text-anchor="middle" class="small">SSBO / height texture / counter buffer 容量复用</text>
-  <path d="M480 366 L480 410" class="line"/>
+  <path d="M445 146 L290 225" class="line"/>
+  <path d="M655 146 L810 225" class="line"/>
 
-  <rect x="50" y="410" width="250" height="84" class="gpu"/>
-  <text x="175" y="443" text-anchor="middle" class="txt">Active Leaf Compaction</text>
-  <text x="175" y="468" text-anchor="middle" class="small">GPU 扫描并压缩 active leaf 列表</text>
+  <rect x="95" y="225" width="390" height="86" rx="8" class="cpu"/>
+  <text x="290" y="251" text-anchor="middle" class="code">DataOrientedRoamMeshBuilder</text>
+  <text x="290" y="274" text-anchor="middle" class="code">_cpuTopologyBuilder.UpdateTopology()</text>
+  <text x="290" y="298" text-anchor="middle" class="caption">沿用 DOD CPU 的 crack-free split / merge 语义</text>
+  <path d="M290 311 L290 340" class="line"/>
 
-  <rect x="355" y="410" width="250" height="84" class="gpu"/>
-  <text x="480" y="443" text-anchor="middle" class="txt">Error Evaluation</text>
-  <text x="480" y="468" text-anchor="middle" class="small">并行计算 screen error / candidate 标记</text>
+  <rect x="95" y="340" width="390" height="86" rx="8" class="cpu"/>
+  <text x="290" y="369" text-anchor="middle" class="code">DataOrientedRoamState</text>
+  <text x="290" y="394" text-anchor="middle" class="small">DataOrientedRoamNodePool + FinalActiveLeaves</text>
+  <text x="290" y="415" text-anchor="middle" class="caption">GPU 路径读取的是拓扑稳定后的 DOD 状态</text>
+  <path d="M290 426 L290 455" class="line"/>
 
-  <rect x="660" y="410" width="250" height="84" class="gpu"/>
-  <text x="785" y="443" text-anchor="middle" class="txt">Split-only Experiment</text>
-  <text x="785" y="468" text-anchor="middle" class="small">实验性 GPU split pass，仍受拓扑同步限制</text>
+  <rect x="95" y="455" width="390" height="96" rx="8" class="schema"/>
+  <text x="290" y="484" text-anchor="middle" class="code">BuildGpuRoamBufferSnapshot()</text>
+  <text x="290" y="509" text-anchor="middle" class="code">GpuRoamBufferSnapshot</text>
+  <text x="290" y="532" text-anchor="middle" class="small">Nodes: vector&lt;GpuRoamNodeRecord&gt;</text>
+  <text x="290" y="548" text-anchor="middle" class="caption">ActiveLeafIndices / BuildSequence / MaxDepthReached</text>
+  <path d="M485 503 L615 503" class="line"/>
 
-  <path d="M175 494 L330 560" class="line"/>
-  <path d="M480 494 L480 560" class="line"/>
-  <path d="M785 494 L630 560" class="line"/>
+  <rect x="95" y="590" width="390" height="98" rx="8" class="schema"/>
+  <text x="290" y="619" text-anchor="middle" class="code">GpuRoamBufferSchema.h</text>
+  <text x="290" y="644" text-anchor="middle" class="small">GpuRoamNodeRecord: std430 16 字节对齐记录</text>
+  <text x="290" y="667" text-anchor="middle" class="small">GpuRoamNodeFlags: IsSplit / ActiveLeaf / ForcedSplit</text>
 
-  <rect x="330" y="560" width="300" height="80" class="gpu"/>
-  <text x="480" y="593" text-anchor="middle" class="txt">GPU Mesh Emit</text>
-  <text x="480" y="618" text-anchor="middle" class="small">Compute Shader 写 vertex / index / indirect draw buffer</text>
-  <path d="M480 640 L480 686" class="line"/>
+  <rect x="615" y="225" width="390" height="94" rx="8" class="gpu"/>
+  <text x="810" y="254" text-anchor="middle" class="code">GpuRoamMeshBuilder _gpuMeshBuilder</text>
+  <text x="810" y="279" text-anchor="middle" class="small">Build(snapshot, input, outPacket, stats)</text>
+  <text x="810" y="301" text-anchor="middle" class="small">UploadSnapshot() / RunGpuComputePipeline()</text>
+  <path d="M810 319 L810 348" class="line"/>
 
-  <rect x="330" y="686" width="300" height="74" class="sync"/>
-  <text x="480" y="718" text-anchor="middle" class="txt">Delayed Query / Readback</text>
-  <text x="480" y="742" text-anchor="middle" class="small">4-slot ring buffer 延迟读取，减少 GL_QUERY_RESULT 阻塞</text>
-  <path d="M480 760 L480 805" class="line"/>
+  <rect x="615" y="348" width="390" height="92" rx="8" class="sync"/>
+  <text x="810" y="377" text-anchor="middle" class="code">GpuRoamState</text>
+  <text x="810" y="402" text-anchor="middle" class="small">NodeBufferId / ActiveLeafBufferId / CounterBufferId</text>
+  <text x="810" y="424" text-anchor="middle" class="small">TimingReadbackSlots[4] / IndirectDrawBufferId</text>
+  <path d="M810 440 L810 470" class="line"/>
 
-  <rect x="330" y="805" width="300" height="54" class="gpu"/>
-  <text x="480" y="839" text-anchor="middle" class="txt">Indirect Draw / Render</text>
+  <rect x="615" y="470" width="390" height="54" rx="8" class="gpu"/>
+  <text x="810" y="492" text-anchor="middle" class="code">RunGpuRoamActiveLeafCompactionPass()</text>
+  <text x="810" y="512" text-anchor="middle" class="caption">GpuRoamActiveLeafCompaction.cpp</text>
+  <path d="M810 524 L810 544" class="line"/>
+
+  <rect x="615" y="544" width="390" height="54" rx="8" class="gpu"/>
+  <text x="810" y="566" text-anchor="middle" class="code">RunGpuRoamErrorEvaluationPass()</text>
+  <text x="810" y="586" text-anchor="middle" class="caption">GpuRoamErrorEvaluation.cpp</text>
+  <path d="M810 598 L810 618" class="line"/>
+
+  <rect x="615" y="618" width="390" height="54" rx="8" class="gpu"/>
+  <text x="810" y="640" text-anchor="middle" class="code">RunGpuRoamCandidateMarkingPass()</text>
+  <text x="810" y="660" text-anchor="middle" class="caption">GpuRoamCandidateMarking.cpp</text>
+  <path d="M810 672 L810 692" class="line"/>
+
+  <rect x="615" y="692" width="390" height="54" rx="8" class="gpu"/>
+  <text x="810" y="714" text-anchor="middle" class="code">RunGpuRoamSplitOnlyTopologyPass()</text>
+  <text x="810" y="734" text-anchor="middle" class="caption">GpuRoamSplitOnlyTopology.cpp</text>
+  <path d="M810 746 L810 766" class="line"/>
+
+  <rect x="615" y="766" width="390" height="54" rx="8" class="gpu"/>
+  <text x="810" y="788" text-anchor="middle" class="code">RunGpuRoamMeshEmitPass()</text>
+  <text x="810" y="808" text-anchor="middle" class="caption">GpuRoamMeshEmit.cpp 写 vertex / index / indirect draw</text>
+
+  <path d="M810 820 L810 858" class="line"/>
+  <rect x="255" y="850" width="590" height="44" rx="8" class="output"/>
+  <text x="550" y="869" text-anchor="middle" class="code">TerrainLodRenderPacket::Mode = GpuIndirect / GpuBuffers</text>
+  <text x="550" y="887" text-anchor="middle" class="code">TerrainRenderer::BindGpuTerrainBuffers()</text>
+
+  <path d="M615 394 L485 634" class="dash"/>
+  <text x="548" y="630" text-anchor="middle" class="caption">schema 决定 SSBO 端字段解释</text>
 </svg>

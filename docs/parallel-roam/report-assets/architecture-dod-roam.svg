@@ -1,63 +1,107 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="940" height="820" viewBox="0 0 940 820">
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="860" viewBox="0 0 1100 860">
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
-      <path d="M 0 0 L 10 5 L 0 10 z" fill="#444"/>
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#344054"/>
     </marker>
     <style>
-      .title{font:700 24px "Microsoft YaHei",Arial,sans-serif;fill:#1f2933}
-      .box{fill:#fff7ed;stroke:#d88924;stroke-width:2.2;rx:12}
-      .parallel{fill:#edf8ef;stroke:#3d8b46}
-      .serial{fill:#fef2f2;stroke:#cc4b37}
-      .txt{font:16px "Microsoft YaHei",Arial,sans-serif;fill:#1f2933}
-      .small{font:13px "Microsoft YaHei",Arial,sans-serif;fill:#52606d}
-      .line{stroke:#444;stroke-width:2;fill:none;marker-end:url(#arrow)}
+      .title{font:700 24px "Microsoft YaHei",Arial,sans-serif;fill:#111827}
+      .section{font:700 17px "Microsoft YaHei",Arial,sans-serif;fill:#111827}
+      .code{font:600 14px "Consolas","SFMono-Regular",monospace;fill:#1f2937}
+      .small{font:13px "Microsoft YaHei",Arial,sans-serif;fill:#475467}
+      .caption{font:12px "Microsoft YaHei",Arial,sans-serif;fill:#667085}
+      .line{stroke:#344054;stroke-width:2;fill:none;marker-end:url(#arrow)}
+      .dash{stroke:#667085;stroke-width:1.8;stroke-dasharray:6 5;fill:none;marker-end:url(#arrow)}
+      .adapter{fill:#fff7ed;stroke:#f97316;stroke-width:2}
+      .builder{fill:#f0fdf4;stroke:#22c55e;stroke-width:2}
+      .state{fill:#ecfdf3;stroke:#16a34a;stroke-width:1.9}
+      .pass{fill:#f8fafc;stroke:#64748b;stroke-width:1.8}
+      .thread{fill:#eef4ff;stroke:#3b82f6;stroke-width:1.9}
+      .output{fill:#fdf2f8;stroke:#db2777;stroke-width:1.9}
     </style>
   </defs>
+
   <rect width="100%" height="100%" fill="#fbfcfd"/>
-  <text x="470" y="38" text-anchor="middle" class="title">图3-3 Data-Oriented CPU ROAM 子架构</text>
+  <text x="550" y="38" text-anchor="middle" class="title">图3-3 Data-Oriented CPU ROAM：类与 pass 结构</text>
 
-  <rect x="320" y="70" width="300" height="70" class="box"/>
-  <text x="470" y="100" text-anchor="middle" class="txt">Index-based Node Pool</text>
-  <text x="470" y="124" text-anchor="middle" class="small">节点用 index 互相引用，减少 pointer 追踪</text>
-  <path d="M470 140 L470 180" class="line"/>
+  <rect x="250" y="60" width="600" height="86" rx="8" class="adapter"/>
+  <text x="550" y="90" text-anchor="middle" class="section">DataOrientedRoamTerrainLodAlgorithm</text>
+  <text x="550" y="115" text-anchor="middle" class="code">BuildRenderData()  /  Stats()  /  Reset()</text>
+  <text x="550" y="136" text-anchor="middle" class="caption">算法接口适配层，持有 DataOrientedRoamMeshBuilder _builder</text>
+  <path d="M550 146 L550 178" class="line"/>
 
-  <rect x="320" y="180" width="300" height="70" class="box"/>
-  <text x="470" y="210" text-anchor="middle" class="txt">SoA / Cache-friendly State</text>
-  <text x="470" y="234" text-anchor="middle" class="small">候选、active leaf、统计数据分开存储</text>
-  <path d="M470 250 L470 294" class="line"/>
+  <rect x="235" y="178" width="630" height="122" rx="8" class="builder"/>
+  <text x="550" y="208" text-anchor="middle" class="section">DataOrientedRoamMeshBuilder</text>
+  <text x="550" y="233" text-anchor="middle" class="code">Build(...)  /  UpdateTopology(...)  /  State()</text>
+  <text x="550" y="256" text-anchor="middle" class="code">BuildInternal(..., emitCpuMesh)</text>
+  <text x="550" y="279" text-anchor="middle" class="caption">用 _state 交换 pass 数据；用 _threadPool 支撑 error / mark / emit 并行</text>
 
-  <rect x="70" y="294" width="250" height="90" class="parallel"/>
-  <text x="195" y="326" text-anchor="middle" class="txt">并行误差评估</text>
-  <text x="195" y="352" text-anchor="middle" class="small">worker 分段计算 screen error</text>
+  <path d="M430 300 L245 340" class="line"/>
+  <path d="M550 300 L550 340" class="line"/>
+  <path d="M670 300 L855 340" class="line"/>
 
-  <rect x="345" y="294" width="250" height="90" class="parallel"/>
-  <text x="470" y="326" text-anchor="middle" class="txt">并行候选标记</text>
-  <text x="470" y="352" text-anchor="middle" class="small">local vector 收集 split / merge candidate</text>
+  <rect x="40" y="340" width="330" height="365" rx="8" class="state"/>
+  <text x="205" y="370" text-anchor="middle" class="section">DataOrientedRoamState</text>
+  <text x="205" y="397" text-anchor="middle" class="code">DataOrientedRoamNodePool Nodes</text>
+  <text x="205" y="421" text-anchor="middle" class="small">Domains / Parents / LeftChildren / RightChildren</text>
+  <text x="205" y="444" text-anchor="middle" class="small">BaseNeighbors / LeftNeighbors / RightNeighbors</text>
+  <text x="205" y="467" text-anchor="middle" class="small">ScreenErrors / Depths / IsSplits / PathIds</text>
+  <line x1="70" y1="490" x2="340" y2="490" stroke="#bbf7d0"/>
+  <text x="205" y="517" text-anchor="middle" class="code">PreviousSplitPaths</text>
+  <text x="205" y="540" text-anchor="middle" class="code">CurrentSplitPaths</text>
+  <text x="205" y="563" text-anchor="middle" class="code">FinalActiveLeaves</text>
+  <text x="205" y="586" text-anchor="middle" class="code">RootA / RootB</text>
+  <line x1="70" y1="609" x2="340" y2="609" stroke="#bbf7d0"/>
+  <text x="205" y="636" text-anchor="middle" class="code">DataOrientedRoamStats</text>
+  <text x="205" y="660" text-anchor="middle" class="small">Error / Collect / Topology / Emit 耗时桶</text>
+  <text x="205" y="683" text-anchor="middle" class="small">worker 数、候选数量、chunk commit 覆盖面</text>
 
-  <rect x="620" y="294" width="250" height="90" class="parallel"/>
-  <text x="745" y="326" text-anchor="middle" class="txt">并行 Active Leaf 收集</text>
-  <text x="745" y="352" text-anchor="middle" class="small">扫描 node pool，合并 worker 本地结果</text>
+  <rect x="400" y="340" width="300" height="64" rx="8" class="pass"/>
+  <text x="550" y="366" text-anchor="middle" class="code">DataOrientedRoamState.cpp</text>
+  <text x="550" y="388" text-anchor="middle" class="small">ResetTopology() / CollectLeafNodes()</text>
+  <path d="M550 404 L550 424" class="line"/>
 
-  <path d="M195 384 L345 452" class="line"/>
-  <path d="M470 384 L470 452" class="line"/>
-  <path d="M745 384 L595 452" class="line"/>
+  <rect x="400" y="424" width="300" height="64" rx="8" class="pass"/>
+  <text x="550" y="450" text-anchor="middle" class="code">DataOrientedRoamErrorEvaluation.cpp</text>
+  <text x="550" y="472" text-anchor="middle" class="small">EvaluateScreenErrors()</text>
+  <path d="M550 488 L550 508" class="line"/>
 
-  <rect x="320" y="452" width="300" height="86" class="serial"/>
-  <text x="470" y="485" text-anchor="middle" class="txt">保守拓扑提交</text>
-  <text x="470" y="511" text-anchor="middle" class="small">边界/冲突 candidate 保持串行，保证 crack-free</text>
-  <path d="M470 538 L470 590" class="line"/>
+  <rect x="400" y="508" width="300" height="74" rx="8" class="pass"/>
+  <text x="550" y="535" text-anchor="middle" class="code">DataOrientedRoamCandidateMarking.cpp</text>
+  <text x="550" y="558" text-anchor="middle" class="small">CollectSplitCandidates()</text>
+  <text x="550" y="577" text-anchor="middle" class="small">CollectMergeCandidates()</text>
+  <path d="M550 582 L550 604" class="line"/>
 
-  <rect x="120" y="590" width="300" height="86" class="parallel"/>
-  <text x="270" y="623" text-anchor="middle" class="txt">Chunked Interior Commit</text>
-  <text x="270" y="649" text-anchor="middle" class="small">安全 interior 候选按 chunk 分给 worker</text>
+  <rect x="400" y="604" width="300" height="84" rx="8" class="pass"/>
+  <text x="550" y="631" text-anchor="middle" class="code">DataOrientedRoamTopology.cpp</text>
+  <text x="550" y="654" text-anchor="middle" class="small">MergeWithDiamondQueue()</text>
+  <text x="550" y="675" text-anchor="middle" class="small">RefineWithSplitQueue()</text>
+  <path d="M550 688 L550 710" class="line"/>
 
-  <rect x="520" y="590" width="300" height="86" class="parallel"/>
-  <text x="670" y="623" text-anchor="middle" class="txt">Parallel Mesh Emit</text>
-  <text x="670" y="649" text-anchor="middle" class="small">预分配输出槽位，各 worker 写独占范围</text>
+  <rect x="400" y="710" width="300" height="64" rx="8" class="pass"/>
+  <text x="550" y="736" text-anchor="middle" class="code">DataOrientedRoamMeshEmit.cpp</text>
+  <text x="550" y="758" text-anchor="middle" class="small">EmitLeafTriangles()</text>
 
-  <path d="M270 676 L370 730" class="line"/>
-  <path d="M670 676 L570 730" class="line"/>
+  <rect x="730" y="340" width="330" height="365" rx="8" class="thread"/>
+  <text x="895" y="370" text-anchor="middle" class="section">并行调度与验证</text>
+  <text x="895" y="399" text-anchor="middle" class="code">DataOrientedRoamThreadPool</text>
+  <text x="895" y="423" text-anchor="middle" class="small">EnsureWorkerCount()</text>
+  <text x="895" y="446" text-anchor="middle" class="small">ParallelFor(begin, end, fn)</text>
+  <line x1="760" y1="470" x2="1030" y2="470" stroke="#bfdbfe"/>
+  <text x="895" y="497" text-anchor="middle" class="code">DataOrientedRoamValidation.cpp</text>
+  <text x="895" y="521" text-anchor="middle" class="small">ValidateTopology()</text>
+  <text x="895" y="544" text-anchor="middle" class="small">只在 EnableTopologyValidation 开启时运行</text>
+  <line x1="760" y1="568" x2="1030" y2="568" stroke="#bfdbfe"/>
+  <text x="895" y="595" text-anchor="middle" class="code">DataOrientedRoamScoring.cpp</text>
+  <text x="895" y="619" text-anchor="middle" class="small">ComputeScreenErrorScore()</text>
+  <text x="895" y="642" text-anchor="middle" class="small">被 error / candidate pass 复用</text>
+  <line x1="760" y1="666" x2="1030" y2="666" stroke="#bfdbfe"/>
+  <text x="895" y="693" text-anchor="middle" class="caption">Topology commit 使用 chunk 统计区分 interior / boundary 候选</text>
 
-  <rect x="320" y="730" width="300" height="58" class="box"/>
-  <text x="470" y="765" text-anchor="middle" class="txt">统一 RenderPacket 输出</text>
+  <path d="M370 520 L400 520" class="dash"/>
+  <path d="M730 520 L700 520" class="dash"/>
+  <path d="M550 774 L550 808" class="line"/>
+
+  <rect x="235" y="808" width="630" height="42" rx="8" class="output"/>
+  <text x="550" y="829" text-anchor="middle" class="code">emitCpuMesh=true: TerrainMeshData / CpuMesh</text>
+  <text x="550" y="846" text-anchor="middle" class="caption">emitCpuMesh=false: State() 留给 GPU 路径构建 GpuRoamBufferSnapshot</text>
 </svg>
