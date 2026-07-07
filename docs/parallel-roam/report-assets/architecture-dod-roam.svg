@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="940" height="820" viewBox="0 0 940 820">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#444"/>
+    </marker>
+    <style>
+      .title{font:700 24px "Microsoft YaHei",Arial,sans-serif;fill:#1f2933}
+      .box{fill:#fff7ed;stroke:#d88924;stroke-width:2.2;rx:12}
+      .parallel{fill:#edf8ef;stroke:#3d8b46}
+      .serial{fill:#fef2f2;stroke:#cc4b37}
+      .txt{font:16px "Microsoft YaHei",Arial,sans-serif;fill:#1f2933}
+      .small{font:13px "Microsoft YaHei",Arial,sans-serif;fill:#52606d}
+      .line{stroke:#444;stroke-width:2;fill:none;marker-end:url(#arrow)}
+    </style>
+  </defs>
+  <rect width="100%" height="100%" fill="#fbfcfd"/>
+  <text x="470" y="38" text-anchor="middle" class="title">图3-3 Data-Oriented CPU ROAM 子架构</text>
+
+  <rect x="320" y="70" width="300" height="70" class="box"/>
+  <text x="470" y="100" text-anchor="middle" class="txt">Index-based Node Pool</text>
+  <text x="470" y="124" text-anchor="middle" class="small">节点用 index 互相引用，减少 pointer 追踪</text>
+  <path d="M470 140 L470 180" class="line"/>
+
+  <rect x="320" y="180" width="300" height="70" class="box"/>
+  <text x="470" y="210" text-anchor="middle" class="txt">SoA / Cache-friendly State</text>
+  <text x="470" y="234" text-anchor="middle" class="small">候选、active leaf、统计数据分开存储</text>
+  <path d="M470 250 L470 294" class="line"/>
+
+  <rect x="70" y="294" width="250" height="90" class="parallel"/>
+  <text x="195" y="326" text-anchor="middle" class="txt">并行误差评估</text>
+  <text x="195" y="352" text-anchor="middle" class="small">worker 分段计算 screen error</text>
+
+  <rect x="345" y="294" width="250" height="90" class="parallel"/>
+  <text x="470" y="326" text-anchor="middle" class="txt">并行候选标记</text>
+  <text x="470" y="352" text-anchor="middle" class="small">local vector 收集 split / merge candidate</text>
+
+  <rect x="620" y="294" width="250" height="90" class="parallel"/>
+  <text x="745" y="326" text-anchor="middle" class="txt">并行 Active Leaf 收集</text>
+  <text x="745" y="352" text-anchor="middle" class="small">扫描 node pool，合并 worker 本地结果</text>
+
+  <path d="M195 384 L345 452" class="line"/>
+  <path d="M470 384 L470 452" class="line"/>
+  <path d="M745 384 L595 452" class="line"/>
+
+  <rect x="320" y="452" width="300" height="86" class="serial"/>
+  <text x="470" y="485" text-anchor="middle" class="txt">保守拓扑提交</text>
+  <text x="470" y="511" text-anchor="middle" class="small">边界/冲突 candidate 保持串行，保证 crack-free</text>
+  <path d="M470 538 L470 590" class="line"/>
+
+  <rect x="120" y="590" width="300" height="86" class="parallel"/>
+  <text x="270" y="623" text-anchor="middle" class="txt">Chunked Interior Commit</text>
+  <text x="270" y="649" text-anchor="middle" class="small">安全 interior 候选按 chunk 分给 worker</text>
+
+  <rect x="520" y="590" width="300" height="86" class="parallel"/>
+  <text x="670" y="623" text-anchor="middle" class="txt">Parallel Mesh Emit</text>
+  <text x="670" y="649" text-anchor="middle" class="small">预分配输出槽位，各 worker 写独占范围</text>
+
+  <path d="M270 676 L370 730" class="line"/>
+  <path d="M670 676 L570 730" class="line"/>
+
+  <rect x="320" y="730" width="300" height="58" class="box"/>
+  <text x="470" y="765" text-anchor="middle" class="txt">统一 RenderPacket 输出</text>
+</svg>

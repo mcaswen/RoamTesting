@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="920" viewBox="0 0 980 920">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#444"/>
+    </marker>
+    <style>
+      .title{font:700 26px "Microsoft YaHei",Arial,sans-serif;fill:#1f2933}
+      .box{fill:#ffffff;stroke:#2f5d7c;stroke-width:2.2;rx:12}
+      .core{fill:#e8f3ff;stroke:#1f6fb2}
+      .algo{fill:#fff5e8;stroke:#d88924}
+      .gpu{fill:#edf8ef;stroke:#3d8b46}
+      .txt{font:16px "Microsoft YaHei",Arial,sans-serif;fill:#1f2933}
+      .small{font:13px "Microsoft YaHei",Arial,sans-serif;fill:#52606d}
+      .line{stroke:#444;stroke-width:2;fill:none;marker-end:url(#arrow)}
+    </style>
+  </defs>
+  <rect width="100%" height="100%" fill="#fbfcfd"/>
+  <text x="490" y="40" text-anchor="middle" class="title">图3-1 项目总体架构图</text>
+
+  <rect x="340" y="70" width="300" height="70" class="box core"/>
+  <text x="490" y="100" text-anchor="middle" class="txt">Application 主循环</text>
+  <text x="490" y="124" text-anchor="middle" class="small">事件轮询、相机更新、渲染调度、Benchmark 状态机</text>
+
+  <path d="M490 140 L490 185" class="line"/>
+  <rect x="90" y="185" width="220" height="86" class="box"/>
+  <text x="200" y="220" text-anchor="middle" class="txt">SDL2 / Window</text>
+  <text x="200" y="245" text-anchor="middle" class="small">窗口、OpenGL Context、VSync</text>
+
+  <rect x="380" y="185" width="220" height="86" class="box"/>
+  <text x="490" y="220" text-anchor="middle" class="txt">Input + Camera</text>
+  <text x="490" y="245" text-anchor="middle" class="small">键鼠输入、自由飞行相机、矩阵生成</text>
+
+  <rect x="670" y="185" width="220" height="86" class="box"/>
+  <text x="780" y="220" text-anchor="middle" class="txt">Dear ImGui</text>
+  <text x="780" y="245" text-anchor="middle" class="small">参数面板、性能面板、Debug 开关</text>
+
+  <path d="M380 228 L310 228" class="line"/>
+  <path d="M600 228 L670 228" class="line"/>
+  <path d="M490 271 L490 320" class="line"/>
+
+  <rect x="340" y="320" width="300" height="82" class="box core"/>
+  <text x="490" y="354" text-anchor="middle" class="txt">TerrainRenderer</text>
+  <text x="490" y="378" text-anchor="middle" class="small">统一接入地形、算法输出、VBO/IBO、Shader 绘制</text>
+
+  <path d="M340 360 L230 430" class="line"/>
+  <path d="M490 402 L490 430" class="line"/>
+  <path d="M640 360 L750 430" class="line"/>
+
+  <rect x="80" y="430" width="250" height="86" class="box"/>
+  <text x="205" y="464" text-anchor="middle" class="txt">HeightMap / Texture</text>
+  <text x="205" y="489" text-anchor="middle" class="small">PGM/PNG 加载、采样、高度缩放</text>
+
+  <rect x="365" y="430" width="250" height="86" class="box algo"/>
+  <text x="490" y="464" text-anchor="middle" class="txt">ITerrainLodAlgorithm</text>
+  <text x="490" y="489" text-anchor="middle" class="small">三种算法共享输入输出接口</text>
+
+  <rect x="650" y="430" width="250" height="86" class="box"/>
+  <text x="775" y="464" text-anchor="middle" class="txt">Shader / OpenGL</text>
+  <text x="775" y="489" text-anchor="middle" class="small">地形光照、Wireframe、Debug Color</text>
+
+  <path d="M490 516 L490 560" class="line"/>
+
+  <rect x="55" y="560" width="260" height="94" class="box algo"/>
+  <text x="185" y="594" text-anchor="middle" class="txt">Classic CPU ROAM</text>
+  <text x="185" y="620" text-anchor="middle" class="small">二叉三角树、split/merge、diamond 修补</text>
+
+  <rect x="360" y="560" width="260" height="94" class="box algo"/>
+  <text x="490" y="594" text-anchor="middle" class="txt">Data-Oriented CPU ROAM</text>
+  <text x="490" y="620" text-anchor="middle" class="small">index node pool、SoA、线程池并行 pass</text>
+
+  <rect x="665" y="560" width="260" height="94" class="box gpu"/>
+  <text x="795" y="594" text-anchor="middle" class="txt">GPU ROAM-like</text>
+  <text x="795" y="620" text-anchor="middle" class="small">SSBO、Compute Shader、GPU mesh emit</text>
+
+  <path d="M185 654 L365 720" class="line"/>
+  <path d="M490 654 L490 720" class="line"/>
+  <path d="M795 654 L615 720" class="line"/>
+
+  <rect x="340" y="720" width="300" height="82" class="box core"/>
+  <text x="490" y="754" text-anchor="middle" class="txt">Runtime Benchmark</text>
+  <text x="490" y="779" text-anchor="middle" class="small">固定相机路径、逐帧采样、CSV / Markdown 输出</text>
+
+  <path d="M490 802 L490 845" class="line"/>
+  <rect x="340" y="845" width="300" height="50" class="box"/>
+  <text x="490" y="877" text-anchor="middle" class="txt">报告图表与结果分析</text>
+</svg>

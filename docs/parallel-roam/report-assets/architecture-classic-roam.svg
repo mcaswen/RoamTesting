@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="760" viewBox="0 0 880 760">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#444"/>
+    </marker>
+    <style>
+      .title{font:700 24px "Microsoft YaHei",Arial,sans-serif;fill:#1f2933}
+      .box{fill:#fff7ed;stroke:#d88924;stroke-width:2.2;rx:12}
+      .check{fill:#f0f9ff;stroke:#1f6fb2}
+      .txt{font:16px "Microsoft YaHei",Arial,sans-serif;fill:#1f2933}
+      .small{font:13px "Microsoft YaHei",Arial,sans-serif;fill:#52606d}
+      .line{stroke:#444;stroke-width:2;fill:none;marker-end:url(#arrow)}
+    </style>
+  </defs>
+  <rect width="100%" height="100%" fill="#fbfcfd"/>
+  <text x="440" y="38" text-anchor="middle" class="title">图3-2 Classic CPU ROAM 子架构</text>
+
+  <rect x="290" y="70" width="300" height="70" class="box"/>
+  <text x="440" y="100" text-anchor="middle" class="txt">BuildRenderData 输入</text>
+  <text x="440" y="124" text-anchor="middle" class="small">HeightMap、相机位置、阈值、最大深度</text>
+  <path d="M440 140 L440 180" class="line"/>
+
+  <rect x="290" y="180" width="300" height="70" class="box"/>
+  <text x="440" y="210" text-anchor="middle" class="txt">持久化二叉三角树</text>
+  <text x="440" y="234" text-anchor="middle" class="small">两个根三角互为 base neighbor</text>
+  <path d="M440 250 L440 292" class="line"/>
+
+  <rect x="90" y="292" width="300" height="80" class="box"/>
+  <text x="240" y="324" text-anchor="middle" class="txt">Split Priority Queue</text>
+  <text x="240" y="350" text-anchor="middle" class="small">按 screen error 选择最需要细分的 leaf</text>
+
+  <rect x="490" y="292" width="300" height="80" class="box"/>
+  <text x="640" y="324" text-anchor="middle" class="txt">Merge Diamond Queue</text>
+  <text x="640" y="350" text-anchor="middle" class="small">低于 merge 阈值时尝试回收 diamond</text>
+  <path d="M390 332 L490 332" class="line"/>
+  <path d="M240 372 L240 430" class="line"/>
+  <path d="M640 372 L640 430" class="line"/>
+
+  <rect x="90" y="430" width="300" height="86" class="box"/>
+  <text x="240" y="463" text-anchor="middle" class="txt">Forced Split</text>
+  <text x="240" y="489" text-anchor="middle" class="small">先补齐 base neighbor，避免 T-junction</text>
+
+  <rect x="490" y="430" width="300" height="86" class="box"/>
+  <text x="640" y="463" text-anchor="middle" class="txt">Neighbor Rewire</text>
+  <text x="640" y="489" text-anchor="middle" class="small">更新 left/right/base neighbor 关系</text>
+
+  <path d="M240 516 L340 574" class="line"/>
+  <path d="M640 516 L540 574" class="line"/>
+
+  <rect x="290" y="574" width="300" height="70" class="check"/>
+  <text x="440" y="604" text-anchor="middle" class="txt">Topology Validation</text>
+  <text x="440" y="628" text-anchor="middle" class="small">统计 T-junction、invalid neighbor、invalid topology</text>
+  <path d="M440 644 L440 682" class="line"/>
+
+  <rect x="290" y="682" width="300" height="55" class="box"/>
+  <text x="440" y="716" text-anchor="middle" class="txt">Emit CPU Mesh → Renderer</text>
+</svg>

@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="880" viewBox="0 0 960 880">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#444"/>
+    </marker>
+    <style>
+      .title{font:700 24px "Microsoft YaHei",Arial,sans-serif;fill:#1f2933}
+      .cpu{fill:#fff7ed;stroke:#d88924;stroke-width:2.2;rx:12}
+      .gpu{fill:#edf8ef;stroke:#3d8b46;stroke-width:2.2;rx:12}
+      .sync{fill:#fef2f2;stroke:#cc4b37;stroke-width:2.2;rx:12}
+      .txt{font:16px "Microsoft YaHei",Arial,sans-serif;fill:#1f2933}
+      .small{font:13px "Microsoft YaHei",Arial,sans-serif;fill:#52606d}
+      .line{stroke:#444;stroke-width:2;fill:none;marker-end:url(#arrow)}
+    </style>
+  </defs>
+  <rect width="100%" height="100%" fill="#fbfcfd"/>
+  <text x="480" y="38" text-anchor="middle" class="title">图3-4 GPU ROAM-like 子架构</text>
+
+  <rect x="330" y="70" width="300" height="70" class="cpu"/>
+  <text x="480" y="100" text-anchor="middle" class="txt">DOD CPU Topology Baseline</text>
+  <text x="480" y="124" text-anchor="middle" class="small">保留 crack-free split / merge 语义</text>
+  <path d="M480 140 L480 180" class="line"/>
+
+  <rect x="330" y="180" width="300" height="70" class="cpu"/>
+  <text x="480" y="210" text-anchor="middle" class="txt">Snapshot Build</text>
+  <text x="480" y="234" text-anchor="middle" class="small">把 node pool / active leaf 打包为 GPU buffer 输入</text>
+  <path d="M480 250 L480 292" class="line"/>
+
+  <rect x="330" y="292" width="300" height="74" class="sync"/>
+  <text x="480" y="324" text-anchor="middle" class="txt">CPU → GPU Upload</text>
+  <text x="480" y="348" text-anchor="middle" class="small">SSBO / height texture / counter buffer 容量复用</text>
+  <path d="M480 366 L480 410" class="line"/>
+
+  <rect x="50" y="410" width="250" height="84" class="gpu"/>
+  <text x="175" y="443" text-anchor="middle" class="txt">Active Leaf Compaction</text>
+  <text x="175" y="468" text-anchor="middle" class="small">GPU 扫描并压缩 active leaf 列表</text>
+
+  <rect x="355" y="410" width="250" height="84" class="gpu"/>
+  <text x="480" y="443" text-anchor="middle" class="txt">Error Evaluation</text>
+  <text x="480" y="468" text-anchor="middle" class="small">并行计算 screen error / candidate 标记</text>
+
+  <rect x="660" y="410" width="250" height="84" class="gpu"/>
+  <text x="785" y="443" text-anchor="middle" class="txt">Split-only Experiment</text>
+  <text x="785" y="468" text-anchor="middle" class="small">实验性 GPU split pass，仍受拓扑同步限制</text>
+
+  <path d="M175 494 L330 560" class="line"/>
+  <path d="M480 494 L480 560" class="line"/>
+  <path d="M785 494 L630 560" class="line"/>
+
+  <rect x="330" y="560" width="300" height="80" class="gpu"/>
+  <text x="480" y="593" text-anchor="middle" class="txt">GPU Mesh Emit</text>
+  <text x="480" y="618" text-anchor="middle" class="small">Compute Shader 写 vertex / index / indirect draw buffer</text>
+  <path d="M480 640 L480 686" class="line"/>
+
+  <rect x="330" y="686" width="300" height="74" class="sync"/>
+  <text x="480" y="718" text-anchor="middle" class="txt">Delayed Query / Readback</text>
+  <text x="480" y="742" text-anchor="middle" class="small">4-slot ring buffer 延迟读取，减少 GL_QUERY_RESULT 阻塞</text>
+  <path d="M480 760 L480 805" class="line"/>
+
+  <rect x="330" y="805" width="300" height="54" class="gpu"/>
+  <text x="480" y="839" text-anchor="middle" class="txt">Indirect Draw / Render</text>
+</svg>

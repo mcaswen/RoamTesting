@@ -1,5 +1,4 @@
 # Project Scope and Goals
-
 ## 项目定位
 
 本项目实现一个基于 Height Map 的实时自适应地形渲染系统，并围绕同一套 ROAM（Real-time Optimally Adapting Meshes）思想，比较三种计算架构下的实现方式：
