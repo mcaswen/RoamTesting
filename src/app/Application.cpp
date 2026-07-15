@@ -1,8 +1,10 @@
 #include "app/Application.h"
 
+#if defined(PARALLEL_ROAM_GRAPHICS_API_OPENGL)
 #include "platform/OpenGlCapabilities.h"
+#endif
 
-#include <glad/gl.h>
+#include <glm/ext/matrix_clip_space.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <SDL.h>
@@ -27,22 +29,6 @@ const std::array<std::filesystem::path, 2> HeightMapPaths{
     // Peking 513 用于更大输入规模下观察 ROAM 行为
     std::filesystem::path{"assets/heightmaps/Hm_Terrain_Peking_513.png"},
 };
-
-// SDL 返回的是平台相关函数指针，GLAD 需要统一包装成 loader 回调
-GLADapiproc LoadOpenGLProc(const char* name)
-{
-    return reinterpret_cast<GLADapiproc>(SDL_GL_GetProcAddress(name));
-}
-
-// macOS 桌面 OpenGL 最高暴露 4.1 core，因此 shader 版本需要单独选择
-const char* ImGuiGlslVersion()
-{
-#if defined(__APPLE__)
-    return "#version 410";
-#else
-    return "#version 430";
-#endif
-}
 
 float SmoothStep(float value)
 {
@@ -128,29 +114,55 @@ void Application::ConfigureRuntimeBenchmark(const RuntimeBenchmarkOverrides& ove
 
 bool Application::Initialize()
 {
-    // SDL 窗口必须先创建，后续 GLAD 和 ImGui 都依赖当前 OpenGL context
-    if (!_window.Create("Parallel ROAM", 1280, 720))
+    _graphicsBackend = Render::CreateConfiguredGraphicsBackend();
+    if (_graphicsBackend == nullptr)
+    {
+        std::cerr << "Configured graphics backend is not implemented: "
+                  << Render::ConfiguredGraphicsApiName() << '\n';
+        return false;
+    }
+
+    if (!_window.Initialize())
     {
         return false;
     }
 
-    _input.SetWindowSize(_window.Width(), _window.Height());
-    _terrainPanelState.VSyncEnabled = _window.VSyncEnabled();
-    _terrainPanelState.HeightMapIndex = 0;
-    ApplyPendingRuntimeBenchmarkOverrides();
+    std::string graphicsError;
+    if (!_graphicsBackend->ConfigureWindow(&graphicsError))
+    {
+        std::cerr << graphicsError << '\n';
+        Shutdown();
+        return false;
+    }
 
-    // GLAD 加载失败时不能继续创建任何 OpenGL 对象
-    if (!LoadOpenGL())
+    if (!_window.Create(
+            "Parallel ROAM",
+            1280,
+            720,
+            _graphicsBackend->RequiredSdlWindowFlags()))
     {
         Shutdown();
         return false;
     }
+
+    if (!_graphicsBackend->Initialize(_window.NativeWindow(), &graphicsError))
+    {
+        std::cerr << graphicsError << '\n';
+        Shutdown();
+        return false;
+    }
+
+    _input.SetWindowSize(_window.Width(), _window.Height());
+    _terrainPanelState.VSyncEnabled = _graphicsBackend->VSyncEnabled();
+    _terrainPanelState.HeightMapIndex = 0;
+    ApplyPendingRuntimeBenchmarkOverrides();
 
     _terrainSettings = ToRenderSettings(_terrainPanelState);
 
     // 渲染器加载 Height Map、地表纹理和内置 shader
     std::string rendererError;
     if (!_terrainRenderer.Initialize(
+            *_graphicsBackend,
             HeightMapPaths[static_cast<std::size_t>(_terrainPanelState.HeightMapIndex)],
             std::filesystem::path{"assets/textures/Tex_Terrain_Debug_Diffuse.ppm"},
             _terrainSettings,
@@ -161,10 +173,9 @@ bool Application::Initialize()
         return false;
     }
 
-    // ImGui backend 绑定当前 SDL window 和 OpenGL context
-    if (!_guiLayer.Initialize(_window.NativeWindow(), _window.GlContext(), ImGuiGlslVersion()))
+    if (!_graphicsBackend->InitializeImGui(_guiLayer, &graphicsError))
     {
-        std::cerr << "Dear ImGui initialization failed.\n";
+        std::cerr << graphicsError << '\n';
         Shutdown();
         return false;
     }
@@ -219,14 +230,14 @@ int Application::Run(int maxFrameCount)
         }
 
         RenderFrame(frameTiming);
-        _window.SwapBuffers();
+        _graphicsBackend->Present();
         CompleteRuntimeBenchmarkFrame();
         if (_automaticRuntimeBenchmarkEnabled && _automaticRuntimeBenchmarkCompleted)
         {
             break;
         }
 
-        // smoke test 通过固定帧数退出，便于自动验证窗口和 GL context
+        // smoke test 通过固定帧数退出，便于自动验证窗口和图形后端
         ++frameCount;
         if (maxFrameCount > 0 && frameCount >= maxFrameCount)
         {
@@ -244,33 +255,22 @@ int Application::Run(int maxFrameCount)
 
 void Application::Shutdown()
 {
-    // 允许析构函数和显式 Shutdown 重复调用，避免双重释放
-    if (!_initialized && !_window.IsValid())
+    // 所有子系统的 Shutdown 都允许重复调用。
+    // 不能只根据窗口是否存在早退，因为 SDL 可能已初始化但窗口创建失败。
+    if (_graphicsBackend != nullptr && _graphicsBackend->IsValid())
     {
-        return;
+        // DX12 资源由 GUI 和 terrain renderer 持有，销毁前必须完成所有在飞行帧。
+        _graphicsBackend->WaitForGpuIdle();
     }
-
-    // 资源释放顺序与依赖关系相反，ImGui 先于窗口和 context 释放
     _guiLayer.Shutdown();
     _terrainRenderer.Shutdown();
+    if (_graphicsBackend != nullptr)
+    {
+        _graphicsBackend->Shutdown();
+        _graphicsBackend.reset();
+    }
     _window.Destroy();
     _initialized = false;
-}
-
-bool Application::LoadOpenGL() const
-{
-    // gladLoadGL 只能在当前线程已有 OpenGL context 时调用
-    const int version = gladLoadGL(LoadOpenGLProc);
-    if (version == 0)
-    {
-        std::cerr << "gladLoadGL failed.\n";
-        return false;
-    }
-
-    std::cout << "OpenGL loaded: " << GLAD_VERSION_MAJOR(version) << '.' << GLAD_VERSION_MINOR(version) << '\n';
-    std::cout << "OpenGL renderer: " << glGetString(GL_RENDERER) << '\n';
-    std::cout << "OpenGL version: " << glGetString(GL_VERSION) << '\n';
-    return true;
 }
 
 Application::FrameTiming Application::ComputeFrameTiming()
@@ -304,10 +304,11 @@ void Application::PollEvents()
 void Application::RenderFrame(const FrameTiming& frameTiming)
 {
     _window.RefreshSize();
+    _graphicsBackend->RefreshDrawableSize();
 
     // HiDPI 下 drawable 尺寸可能大于窗口逻辑尺寸，viewport 必须使用 drawable
-    const int drawableWidth = std::max(_window.DrawableWidth(), 1);
-    const int drawableHeight = std::max(_window.DrawableHeight(), 1);
+    const int drawableWidth = std::max(_graphicsBackend->DrawableWidth(), 1);
+    const int drawableHeight = std::max(_graphicsBackend->DrawableHeight(), 1);
     const float aspectRatio = static_cast<float>(drawableWidth) / static_cast<float>(drawableHeight);
 
     // FPS 和帧时间必须使用 raw delta，不能受相机 delta clamp 影响
@@ -317,10 +318,9 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
         _frameTimeMilliseconds = frameTiming.RawDeltaSeconds * 1000.0F;
     }
 
-    glClearColor(0.035F, 0.045F, 0.055F, 1.0F);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    _graphicsBackend->BeginFrame();
 
-    _guiLayer.BeginFrame();
+    _graphicsBackend->BeginImGuiFrame(_guiLayer);
 
     const glm::vec3 cameraPosition = _camera.Position();
     if (_gpuSmokeTestEnabled)
@@ -400,6 +400,7 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
     debugData.RoamGpuDispatchWallMilliseconds = terrainStats.RoamGpuDispatchWallMilliseconds;
     debugData.RoamGpuQueryWaitMilliseconds = terrainStats.RoamGpuQueryWaitMilliseconds;
     debugData.RoamGpuReadbackWaitMilliseconds = terrainStats.RoamGpuReadbackWaitMilliseconds;
+    debugData.RoamFrameFenceWaitMilliseconds = terrainStats.RoamFrameFenceWaitMilliseconds;
     debugData.RoamRenderMilliseconds = terrainStats.RoamRenderMilliseconds;
     debugData.RoamCpuGpuUploadBytes = terrainStats.RoamCpuGpuUploadBytes;
     debugData.RoamCpuGpuReadbackBytes = terrainStats.RoamCpuGpuReadbackBytes;
@@ -443,14 +444,16 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
 
     Render::RenderContext renderContext{};
     renderContext.View = _camera.GetViewMatrix();
-    renderContext.Projection = glm::perspective(glm::radians(60.0F), aspectRatio, 0.05F, 1000.0F);
+    renderContext.Projection = _graphicsBackend->UsesZeroToOneDepth()
+        ? glm::perspectiveRH_ZO(glm::radians(60.0F), aspectRatio, 0.05F, 1000.0F)
+        : glm::perspectiveRH_NO(glm::radians(60.0F), aspectRatio, 0.05F, 1000.0F);
     renderContext.CameraPosition = cameraPosition;
     renderContext.DrawableWidth = drawableWidth;
     renderContext.DrawableHeight = drawableHeight;
 
     // terrain renderer 消费相机矩阵和 UI 参数，不直接处理输入事件
     _terrainRenderer.Render(renderContext);
-    _guiLayer.EndFrame();
+    _graphicsBackend->RenderImGui(_guiLayer);
 }
 
 void Application::ApplyTerrainPanelSettings()
@@ -466,9 +469,9 @@ void Application::ApplyTerrainPanelSettings()
 
 void Application::ApplyWindowPanelSettings()
 {
-    if (!_window.SetVSyncEnabled(_terrainPanelState.VSyncEnabled))
+    if (!_graphicsBackend->SetVSyncEnabled(_terrainPanelState.VSyncEnabled))
     {
-        _terrainPanelState.VSyncEnabled = _window.VSyncEnabled();
+        _terrainPanelState.VSyncEnabled = _graphicsBackend->VSyncEnabled();
     }
 }
 
@@ -572,6 +575,9 @@ void Application::StartRuntimeBenchmark()
     _runtimeBenchmark.Results.clear();
     _runtimeBenchmark.Notes.clear();
     _runtimeBenchmark.Notes.push_back("Build configuration: " + BuildConfigurationName());
+    _runtimeBenchmark.Notes.push_back("Graphics backend: " + std::string{_graphicsBackend->Name()});
+    _runtimeBenchmark.Notes.push_back(
+        "Graphics adapter: " + _graphicsBackend->AdapterName() + " (" + _graphicsBackend->VersionString() + ")");
     if (!_runtimeBenchmarkOverrides.Label.empty())
     {
         _runtimeBenchmark.Notes.push_back("Benchmark label: " + _runtimeBenchmarkOverrides.Label);
@@ -580,8 +586,9 @@ void Application::StartRuntimeBenchmark()
         Algorithms::TerrainLodAlgorithmId::ClassicCpuRoam,
         Algorithms::TerrainLodAlgorithmId::DataOrientedCpuRoam,
     };
+#if defined(PARALLEL_ROAM_GRAPHICS_API_OPENGL)
     const Platform::OpenGlGpuCapabilities gpuCapabilities = Platform::QueryOpenGlGpuCapabilities();
-    if (gpuCapabilities.SupportsGpuRoamCompute())
+    if (_graphicsBackend->SupportsGpuRoamLike() && gpuCapabilities.SupportsGpuRoamCompute())
     {
         _runtimeBenchmark.AlgorithmSequence.push_back(Algorithms::TerrainLodAlgorithmId::GpuRoamLike);
         _runtimeBenchmark.Notes.push_back(
@@ -596,6 +603,18 @@ void Application::StartRuntimeBenchmark()
         _runtimeBenchmark.Notes.push_back(
             "GPU ROAM-like skipped: " + gpuCapabilities.GpuRoamComputeUnavailableReason());
     }
+#else
+    if (_graphicsBackend->SupportsGpuRoamLike())
+    {
+        _runtimeBenchmark.AlgorithmSequence.push_back(Algorithms::TerrainLodAlgorithmId::GpuRoamLike);
+        _runtimeBenchmark.Notes.push_back(
+            "GPU timing model: DX12 compute topology refinement, GPU mesh emission and ExecuteIndirect");
+    }
+    else
+    {
+        _runtimeBenchmark.Notes.push_back("GPU ROAM-like skipped: unavailable on the configured DX12 device");
+    }
+#endif
     _runtimeBenchmark.PreviousTerrainPanelState = _terrainPanelState;
     _runtimeBenchmark.PreviousTerrainPanelState.StartBenchmarkRequested = false;
     _runtimeBenchmark.PreviousCameraPose = CameraPose{
@@ -720,6 +739,9 @@ void Application::RecordRuntimeBenchmarkSample(
 
     RuntimeBenchmarkSample sample{};
     sample.BuildConfiguration = BuildConfigurationName();
+    sample.GraphicsBackend = _graphicsBackend->Name();
+    sample.GraphicsAdapter = _graphicsBackend->AdapterName();
+    sample.GraphicsVersion = _graphicsBackend->VersionString();
     sample.VSyncEnabled = _terrainPanelState.VSyncEnabled;
     sample.TimeSeconds = _runtimeBenchmark.ElapsedSeconds;
     sample.CameraPosition = cameraPosition;

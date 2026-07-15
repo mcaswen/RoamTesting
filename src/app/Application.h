@@ -5,10 +5,12 @@
 #include "app/RuntimeBenchmark.h"
 #include "gui/ImGuiLayer.h"
 #include "platform/Window.h"
+#include "render/GraphicsBackend.h"
 #include "render/TerrainRenderer.h"
 
 #include <chrono>
 #include <filesystem>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -149,9 +151,6 @@ private:
         std::filesystem::path LastCsvPath;
     };
 
-    // GLAD 必须在 SDL OpenGL context 创建后加载函数指针
-    [[nodiscard]] bool LoadOpenGL() const;
-
     // 同时计算真实帧时间和模拟用帧时间
     [[nodiscard]] FrameTiming ComputeFrameTiming();
 
@@ -187,6 +186,7 @@ private:
 
     // 子系统按生命周期依赖顺序声明，析构和 Shutdown 更容易保持一致
     Platform::Window _window;
+    std::unique_ptr<Render::IGraphicsBackend> _graphicsBackend;
     InputState _input;
     CameraController _camera;
     Render::TerrainRenderer _terrainRenderer;

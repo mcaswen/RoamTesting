@@ -8,8 +8,48 @@
 #include <cstddef>
 #include <string>
 
+#if defined(PARALLEL_ROAM_GRAPHICS_API_D3D12)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <d3d12.h>
+#include <dxgiformat.h>
+#endif
+
 namespace ParallelRoam::Gui
 {
+struct ImGuiOpenGlBackendConfig
+{
+    SDL_Window* Window{nullptr};
+    SDL_GLContext Context{nullptr};
+    const char* GlslVersion{nullptr};
+};
+
+#if defined(PARALLEL_ROAM_GRAPHICS_API_D3D12)
+struct ImGuiD3D12BackendConfig
+{
+    SDL_Window* Window{nullptr};
+    ID3D12Device* Device{nullptr};
+    ID3D12CommandQueue* CommandQueue{nullptr};
+    ID3D12DescriptorHeap* SrvDescriptorHeap{nullptr};
+    D3D12_CPU_DESCRIPTOR_HANDLE FontSrvCpuDescriptor{};
+    D3D12_GPU_DESCRIPTOR_HANDLE FontSrvGpuDescriptor{};
+    DXGI_FORMAT RenderTargetFormat{DXGI_FORMAT_R8G8B8A8_UNORM};
+    DXGI_FORMAT DepthStencilFormat{DXGI_FORMAT_D32_FLOAT};
+    int FramesInFlight{2};
+};
+#endif
+
+enum class ImGuiRenderBackend
+{
+    None,
+    OpenGl,
+    Direct3D12,
+};
+
 /// <summary>
 /// 调试面板需要展示的单帧状态
 /// </summary>
@@ -78,6 +118,7 @@ struct DebugOverlayData
     float RoamGpuDispatchWallMilliseconds{0.0F};
     float RoamGpuQueryWaitMilliseconds{0.0F};
     float RoamGpuReadbackWaitMilliseconds{0.0F};
+    float RoamFrameFenceWaitMilliseconds{0.0F};
     float RoamRenderMilliseconds{0.0F};
     std::size_t RoamCpuGpuUploadBytes{0};
     std::size_t RoamCpuGpuReadbackBytes{0};
@@ -138,9 +179,13 @@ class ImGuiLayer
 {
 public:
     /// <summary>
-    /// 初始化 ImGui context 和 SDL2/OpenGL3 backend
+    /// 使用明确的 OpenGL 后端配置初始化 ImGui。
+    /// DX12 阶段会增加独立配置类型，不复用 OpenGL 参数。
     /// </summary>
-    bool Initialize(SDL_Window* window, SDL_GLContext glContext, const char* glslVersion);
+    bool Initialize(const ImGuiOpenGlBackendConfig& config);
+#if defined(PARALLEL_ROAM_GRAPHICS_API_D3D12)
+    bool Initialize(const ImGuiD3D12BackendConfig& config);
+#endif
 
     void Shutdown();
     void ProcessEvent(const SDL_Event& event);
@@ -151,13 +196,19 @@ public:
     /// </summary>
     [[nodiscard]] bool DrawDebugOverlay(const DebugOverlayData& data, TerrainPanelState& terrainState);
 
-    void EndFrame();
+    void EndFrame(void* nativeCommandList = nullptr);
 
 private:
     // 防止未初始化或重复 Shutdown 时调用 backend 清理接口
     bool _initialized{false};
+    ImGuiRenderBackend _renderBackend{ImGuiRenderBackend::None};
 
     // 性能 overlay 的详细模式属于 GUI 展示偏好，不触发 renderer 设置更新
     bool _performanceOverlayDetailed{false};
+#if defined(PARALLEL_ROAM_GRAPHICS_API_D3D12)
+    D3D12_CPU_DESCRIPTOR_HANDLE _fontSrvCpuDescriptor{};
+    D3D12_GPU_DESCRIPTOR_HANDLE _fontSrvGpuDescriptor{};
+    bool _fontDescriptorInUse{false};
+#endif
 };
 } // 命名空间 ParallelRoam::Gui

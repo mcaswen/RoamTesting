@@ -1,6 +1,9 @@
 option(PARALLEL_ROAM_BUILD_APP "Build the Parallel ROAM application target." ON)
 option(PARALLEL_ROAM_BUILD_TESTS "Build tests when tests/CMakeLists.txt exists." OFF)
 
+set(PARALLEL_ROAM_GRAPHICS_API "OpenGL" CACHE STRING "Graphics backend selected at configure time.")
+set_property(CACHE PARALLEL_ROAM_GRAPHICS_API PROPERTY STRINGS OpenGL D3D12)
+
 option(PARALLEL_ROAM_WITH_SDL2 "Try to link SDL2 when it is available." ON)
 option(PARALLEL_ROAM_WITH_OPENGL "Try to link OpenGL when it is available." ON)
 option(PARALLEL_ROAM_WITH_GLM "Try to link GLM when it is available." ON)

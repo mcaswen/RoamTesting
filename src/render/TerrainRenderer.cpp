@@ -1,5 +1,7 @@
 #include "render/TerrainRenderer.h"
 
+#include "render/GraphicsBackend.h"
+
 #include "algorithms/classic_roam/ClassicRoamTerrainLodAlgorithm.h"
 #include "algorithms/data_oriented_roam/DataOrientedRoamTerrainLodAlgorithm.h"
 #include "algorithms/gpu_roam/GpuRoamTerrainLodAlgorithm.h"
@@ -160,17 +162,30 @@ std::unique_ptr<Algorithms::ITerrainLodAlgorithm> CreateTerrainLodAlgorithm(
 }
 } // 匿名命名空间
 
+TerrainRenderer::TerrainRenderer() = default;
+
 TerrainRenderer::~TerrainRenderer()
 {
     Shutdown();
 }
 
 bool TerrainRenderer::Initialize(
+    IGraphicsBackend& graphicsBackend,
     const std::filesystem::path& heightMapPath,
     const std::filesystem::path& texturePath,
     const TerrainRenderSettings& settings,
     std::string* errorMessage)
 {
+    if (graphicsBackend.Api() != GraphicsApi::OpenGl)
+    {
+        if (errorMessage != nullptr)
+        {
+            *errorMessage = "OpenGL terrain renderer received a non-OpenGL graphics backend";
+        }
+        return false;
+    }
+
+    _graphicsBackend = &graphicsBackend;
     _settings = settings;
     _heightMapPath = heightMapPath;
     _texturePath = texturePath;
@@ -332,6 +347,7 @@ void TerrainRenderer::Shutdown()
     _drawTriangleCount = 0U;
     _renderMode = Algorithms::TerrainLodRenderMode::CpuMesh;
     _shader.Destroy();
+    _graphicsBackend = nullptr;
     _initialized = false;
 }
 
@@ -558,6 +574,13 @@ bool TerrainRenderer::RebuildTerrainLod(const glm::vec3& cameraPosition, std::st
         return false;
     }
 
+    if (!renderPacket.HasConsistentResourceContract())
+    {
+        *buildErrorMessage = "Terrain LOD render packet violates the GPU resource lifetime contract";
+        _terrainLodStatusMessage = *buildErrorMessage;
+        return false;
+    }
+
     _terrainLodStats = _terrainLodAlgorithm->Stats();
     _terrainLodCpuUploadMilliseconds = _terrainLodStats.CpuUploadMilliseconds;
     _terrainLodStatusMessage = renderPacket.StatusMessage;
@@ -764,7 +787,8 @@ bool TerrainRenderer::BindGpuTerrainBuffers(
     const Algorithms::TerrainLodRenderPacket& renderPacket,
     std::string* errorMessage)
 {
-    if ((renderPacket.Mode != Algorithms::TerrainLodRenderMode::GpuBuffers &&
+    if (!renderPacket.HasConsistentResourceContract() ||
+        (renderPacket.Mode != Algorithms::TerrainLodRenderMode::GpuBuffers &&
          renderPacket.Mode != Algorithms::TerrainLodRenderMode::GpuIndirect) ||
         renderPacket.GpuVertexBufferId == 0U ||
         renderPacket.GpuIndexBufferId == 0U ||

@@ -3,7 +3,9 @@
 #include "algorithms/ITerrainLodAlgorithm.h"
 #include "algorithms/classic_roam/ClassicRoamTerrainLodAlgorithm.h"
 #include "algorithms/data_oriented_roam/DataOrientedRoamTerrainLodAlgorithm.h"
+#if defined(PARALLEL_ROAM_GRAPHICS_API_OPENGL)
 #include "algorithms/gpu_roam/GpuRoamTerrainLodAlgorithm.h"
+#endif
 #include "terrain/HeightMap.h"
 
 #include <glm/glm.hpp>
@@ -214,7 +216,11 @@ std::unique_ptr<Algorithms::ITerrainLodAlgorithm> CreateAlgorithm(BenchmarkAlgor
 
     if (selection == BenchmarkAlgorithmSelection::Gpu)
     {
+#if defined(PARALLEL_ROAM_GRAPHICS_API_OPENGL)
         return std::make_unique<Algorithms::GpuRoam::GpuRoamTerrainLodAlgorithm>();
+#else
+        return nullptr;
+#endif
     }
 
     return nullptr;
@@ -328,7 +334,12 @@ BenchmarkAlgorithmRun RunAlgorithm(
 
     if (selection == BenchmarkAlgorithmSelection::Gpu)
     {
+#if defined(PARALLEL_ROAM_GRAPHICS_API_OPENGL)
         run.UnavailableReason = Algorithms::GpuRoam::GpuRoamLikeUnavailableReason();
+#else
+        run.UnavailableReason =
+            "DX12 GPU ROAM-like requires an initialized graphics backend; use --runtime-benchmark or --gpu-smoke-test";
+#endif
         if (!run.UnavailableReason.empty())
         {
             return run;

@@ -1,7 +1,11 @@
 #include "gui/ImGuiLayer.h"
 
 #include <imgui.h>
+#if defined(PARALLEL_ROAM_GRAPHICS_API_OPENGL)
 #include <imgui_impl_opengl3.h>
+#elif defined(PARALLEL_ROAM_GRAPHICS_API_D3D12)
+#include <imgui_impl_dx12.h>
+#endif
 #include <imgui_impl_sdl2.h>
 
 #include <algorithm>
@@ -353,6 +357,7 @@ void DrawDetailedPerformanceMetrics(const DebugOverlayData& data)
     DrawMetricFloat("GPU dispatch wall ms", data.RoamGpuDispatchWallMilliseconds, "%.2f");
     DrawMetricFloat("GPU query wait ms", data.RoamGpuQueryWaitMilliseconds, "%.2f");
     DrawMetricFloat("GPU readback wait ms", data.RoamGpuReadbackWaitMilliseconds, "%.2f");
+    DrawMetricFloat("Frame fence wait ms", data.RoamFrameFenceWaitMilliseconds, "%.2f");
     DrawMetricSize("GPU 上传 B", data.RoamCpuGpuUploadBytes);
     DrawMetricSize("GPU 回读 B", data.RoamCpuGpuReadbackBytes);
     DrawMetricInt("设置深度", data.RoamMaxDepthSetting);
@@ -402,8 +407,14 @@ void DrawPerformanceOverlay(const DebugOverlayData& data, bool& detailedMode)
 }
 } // 匿名命名空间
 
-bool ImGuiLayer::Initialize(SDL_Window* window, SDL_GLContext glContext, const char* glslVersion)
+#if defined(PARALLEL_ROAM_GRAPHICS_API_OPENGL)
+bool ImGuiLayer::Initialize(const ImGuiOpenGlBackendConfig& config)
 {
+    if (_initialized || config.Window == nullptr || config.Context == nullptr || config.GlslVersion == nullptr)
+    {
+        return false;
+    }
+
     // ImGui context 必须先创建，backend 初始化会访问当前 context
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -419,7 +430,7 @@ bool ImGuiLayer::Initialize(SDL_Window* window, SDL_GLContext glContext, const c
     // SDL2 backend 负责事件和输入状态桥接
     // 失败时必须销毁 context
     // 否则后续重新初始化会留下 ImGui 全局状态
-    if (!ImGui_ImplSDL2_InitForOpenGL(window, glContext))
+    if (!ImGui_ImplSDL2_InitForOpenGL(config.Window, config.Context))
     {
         ImGui::DestroyContext();
         return false;
@@ -428,16 +439,81 @@ bool ImGuiLayer::Initialize(SDL_Window* window, SDL_GLContext glContext, const c
     // OpenGL3 backend 负责生成 GUI draw call
     // SDL backend 已经成功时
     // OpenGL backend 失败必须按相反顺序清理
-    if (!ImGui_ImplOpenGL3_Init(glslVersion))
+    if (!ImGui_ImplOpenGL3_Init(config.GlslVersion))
     {
         ImGui_ImplSDL2_Shutdown();
         ImGui::DestroyContext();
         return false;
     }
 
+    _renderBackend = ImGuiRenderBackend::OpenGl;
     _initialized = true;
     return true;
 }
+#endif
+
+#if defined(PARALLEL_ROAM_GRAPHICS_API_D3D12)
+bool ImGuiLayer::Initialize(const ImGuiD3D12BackendConfig& config)
+{
+    if (_initialized || config.Window == nullptr || config.Device == nullptr ||
+        config.CommandQueue == nullptr || config.SrvDescriptorHeap == nullptr ||
+        config.FontSrvCpuDescriptor.ptr == 0 || config.FontSrvGpuDescriptor.ptr == 0)
+    {
+        return false;
+    }
+
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    LoadChineseFont();
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    ImGui::StyleColorsDark();
+    ApplyEditorStyle();
+
+    if (!ImGui_ImplSDL2_InitForD3D(config.Window))
+    {
+        ImGui::DestroyContext();
+        return false;
+    }
+
+    _fontSrvCpuDescriptor = config.FontSrvCpuDescriptor;
+    _fontSrvGpuDescriptor = config.FontSrvGpuDescriptor;
+    _fontDescriptorInUse = false;
+
+    ImGui_ImplDX12_InitInfo initInfo{};
+    initInfo.Device = config.Device;
+    initInfo.CommandQueue = config.CommandQueue;
+    initInfo.NumFramesInFlight = config.FramesInFlight;
+    initInfo.RTVFormat = config.RenderTargetFormat;
+    initInfo.DSVFormat = config.DepthStencilFormat;
+    initInfo.SrvDescriptorHeap = config.SrvDescriptorHeap;
+    initInfo.UserData = this;
+    initInfo.SrvDescriptorAllocFn = [](ImGui_ImplDX12_InitInfo* info,
+                                       D3D12_CPU_DESCRIPTOR_HANDLE* cpuHandle,
+                                       D3D12_GPU_DESCRIPTOR_HANDLE* gpuHandle) {
+        auto* layer = static_cast<ImGuiLayer*>(info->UserData);
+        *cpuHandle = layer->_fontSrvCpuDescriptor;
+        *gpuHandle = layer->_fontSrvGpuDescriptor;
+        layer->_fontDescriptorInUse = true;
+    };
+    initInfo.SrvDescriptorFreeFn = [](ImGui_ImplDX12_InitInfo* info,
+                                      D3D12_CPU_DESCRIPTOR_HANDLE,
+                                      D3D12_GPU_DESCRIPTOR_HANDLE) {
+        static_cast<ImGuiLayer*>(info->UserData)->_fontDescriptorInUse = false;
+    };
+
+    if (!ImGui_ImplDX12_Init(&initInfo))
+    {
+        ImGui_ImplSDL2_Shutdown();
+        ImGui::DestroyContext();
+        return false;
+    }
+
+    _renderBackend = ImGuiRenderBackend::Direct3D12;
+    _initialized = true;
+    return true;
+}
+#endif
 
 void ImGuiLayer::Shutdown()
 {
@@ -447,9 +523,21 @@ void ImGuiLayer::Shutdown()
         return;
     }
 
-    ImGui_ImplOpenGL3_Shutdown();
+    if (_renderBackend == ImGuiRenderBackend::OpenGl)
+    {
+#if defined(PARALLEL_ROAM_GRAPHICS_API_OPENGL)
+        ImGui_ImplOpenGL3_Shutdown();
+#endif
+    }
+#if defined(PARALLEL_ROAM_GRAPHICS_API_D3D12)
+    else if (_renderBackend == ImGuiRenderBackend::Direct3D12)
+    {
+        ImGui_ImplDX12_Shutdown();
+    }
+#endif
     ImGui_ImplSDL2_Shutdown();
     ImGui::DestroyContext();
+    _renderBackend = ImGuiRenderBackend::None;
     _initialized = false;
 }
 
@@ -460,8 +548,24 @@ void ImGuiLayer::ProcessEvent(const SDL_Event& event)
 
 void ImGuiLayer::BeginFrame()
 {
+    if (!_initialized)
+    {
+        return;
+    }
+
     // backend new frame 必须早于 ImGui::NewFrame
-    ImGui_ImplOpenGL3_NewFrame();
+    if (_renderBackend == ImGuiRenderBackend::OpenGl)
+    {
+#if defined(PARALLEL_ROAM_GRAPHICS_API_OPENGL)
+        ImGui_ImplOpenGL3_NewFrame();
+#endif
+    }
+#if defined(PARALLEL_ROAM_GRAPHICS_API_D3D12)
+    else if (_renderBackend == ImGuiRenderBackend::Direct3D12)
+    {
+        ImGui_ImplDX12_NewFrame();
+    }
+#endif
     ImGui_ImplSDL2_NewFrame();
     ImGui::NewFrame();
 }
@@ -583,10 +687,30 @@ bool ImGuiLayer::DrawDebugOverlay(const DebugOverlayData& data, TerrainPanelStat
     return changed;
 }
 
-void ImGuiLayer::EndFrame()
+void ImGuiLayer::EndFrame(void* nativeCommandList)
 {
-    // ImGui::Render 只生成 draw data，真正绘制由 OpenGL backend 完成
+    if (!_initialized)
+    {
+        return;
+    }
+
+    // ImGui::Render 只生成 draw data，真正绘制由选定图形后端完成
     ImGui::Render();
-    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    if (_renderBackend == ImGuiRenderBackend::OpenGl)
+    {
+#if defined(PARALLEL_ROAM_GRAPHICS_API_OPENGL)
+        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+#endif
+    }
+#if defined(PARALLEL_ROAM_GRAPHICS_API_D3D12)
+    else if (_renderBackend == ImGuiRenderBackend::Direct3D12 && nativeCommandList != nullptr)
+    {
+        ImGui_ImplDX12_RenderDrawData(
+            ImGui::GetDrawData(),
+            static_cast<ID3D12GraphicsCommandList*>(nativeCommandList));
+    }
+#else
+    (void)nativeCommandList;
+#endif
 }
 } // 命名空间 ParallelRoam::Gui

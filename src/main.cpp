@@ -117,6 +117,17 @@ int main(int argc, char** argv)
             maxFrameCount = 32;
         }
 
+        if (argument == "--dx12-smoke-test")
+        {
+#if defined(PARALLEL_ROAM_GRAPHICS_API_D3D12)
+            fixedFrameSmokeTest = true;
+            maxFrameCount = 32;
+#else
+            parseError = "--dx12-smoke-test requires PARALLEL_ROAM_GRAPHICS_API=D3D12";
+            break;
+#endif
+        }
+
         if (argument == "--runtime-benchmark")
         {
             automaticRuntimeBenchmark = true;
@@ -291,6 +302,14 @@ int main(int argc, char** argv)
 #else
     // 依赖不完整时保留 bootstrap，方便只验证 CMake 和基础链接
     std::cout << "Parallel ROAM bootstrap\n";
+
+#if defined(PARALLEL_ROAM_GRAPHICS_API_OPENGL)
+    std::cout << "Graphics API: OpenGL\n";
+#elif defined(PARALLEL_ROAM_GRAPHICS_API_D3D12)
+    std::cout << "Graphics API: D3D12 (backend implementation pending)\n";
+#else
+    std::cout << "Graphics API: unknown\n";
+#endif
 
 #if defined(PARALLEL_ROAM_HAS_OPENGL)
     std::cout << "OpenGL: linked\n";

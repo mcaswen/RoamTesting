@@ -17,6 +17,9 @@ namespace ParallelRoam::App
 struct RuntimeBenchmarkSample
 {
     std::string BuildConfiguration;
+    std::string GraphicsBackend;
+    std::string GraphicsAdapter;
+    std::string GraphicsVersion;
     bool VSyncEnabled{false};
 
     // 路径内时间用于把每帧样本映射回 10 秒回放

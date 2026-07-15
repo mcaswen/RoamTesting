@@ -84,6 +84,22 @@ enum class TerrainLodRenderMode
 };
 
 /// <summary>
+/// GPU 资源由算法实例持有，渲染器只能在约定生命周期内借用。
+/// 后续 DX12 数据包沿用此语义，不把资源所有权按帧复制给 renderer。
+/// </summary>
+enum class TerrainLodGpuResourceLifetime
+{
+    None,
+    UntilNextBuildOrReset,
+};
+
+enum class TerrainLodNativeResourceApi
+{
+    None,
+    Direct3D12,
+};
+
+/// <summary>
 /// 算法输出给 renderer 或 benchmark 的统一渲染数据包
 /// </summary>
 struct TerrainLodRenderPacket
@@ -97,9 +113,62 @@ struct TerrainLodRenderPacket
     std::uint32_t GpuIndexBufferId{0};
     std::uint32_t ActiveLeafBufferId{0};
     std::uint32_t IndirectDrawBufferId{0};
+    TerrainLodNativeResourceApi NativeResourceApi{TerrainLodNativeResourceApi::None};
+    std::uintptr_t NativeVertexBuffer{0};
+    std::uintptr_t NativeIndexBuffer{0};
+    std::uintptr_t NativeIndirectDrawBuffer{0};
+    std::size_t GpuVertexBufferCapacityBytes{0};
+    std::size_t GpuIndexBufferCapacityBytes{0};
+    TerrainLodGpuResourceLifetime GpuResourceLifetime{TerrainLodGpuResourceLifetime::None};
+    std::uint64_t GpuResourceGeneration{0};
     std::size_t ActiveLeafCount{0};
     std::size_t ActiveTriangleCount{0};
     std::size_t IndexCount{0};
+
+    [[nodiscard]] bool HasConsistentResourceContract() const
+    {
+        const bool hasGpuResourceIds =
+            GpuNodeBufferId != 0U ||
+            GpuHeightMapTextureId != 0U ||
+            GpuVertexBufferId != 0U ||
+            GpuIndexBufferId != 0U ||
+            ActiveLeafBufferId != 0U ||
+            IndirectDrawBufferId != 0U;
+        const bool hasNativeGpuResources =
+            NativeVertexBuffer != 0U ||
+            NativeIndexBuffer != 0U ||
+            NativeIndirectDrawBuffer != 0U;
+
+        if (Mode == TerrainLodRenderMode::CpuMesh || Mode == TerrainLodRenderMode::DebugOnly)
+        {
+            return !hasGpuResourceIds && !hasNativeGpuResources &&
+                   NativeResourceApi == TerrainLodNativeResourceApi::None &&
+                   GpuResourceLifetime == TerrainLodGpuResourceLifetime::None &&
+                   GpuResourceGeneration == 0U;
+        }
+
+        const bool hasOpenGlDrawResources =
+            NativeResourceApi == TerrainLodNativeResourceApi::None &&
+            GpuVertexBufferId != 0U && GpuIndexBufferId != 0U;
+        const bool hasD3D12DrawResources =
+            NativeResourceApi == TerrainLodNativeResourceApi::Direct3D12 &&
+            NativeVertexBuffer != 0U && NativeIndexBuffer != 0U &&
+            GpuVertexBufferCapacityBytes > 0U && GpuIndexBufferCapacityBytes > 0U;
+        const bool hasRequiredDrawResources =
+            (hasOpenGlDrawResources || hasD3D12DrawResources) &&
+            IndexCount > 0U &&
+            ActiveTriangleCount > 0U;
+        const bool hasRequiredIndirectResource =
+            Mode != TerrainLodRenderMode::GpuIndirect ||
+            (NativeResourceApi == TerrainLodNativeResourceApi::Direct3D12
+                ? NativeIndirectDrawBuffer != 0U
+                : IndirectDrawBufferId != 0U);
+
+        return hasRequiredDrawResources &&
+               hasRequiredIndirectResource &&
+               GpuResourceLifetime == TerrainLodGpuResourceLifetime::UntilNextBuildOrReset &&
+               GpuResourceGeneration > 0U;
+    }
 };
 
 /// <summary>

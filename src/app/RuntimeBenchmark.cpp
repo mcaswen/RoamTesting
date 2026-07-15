@@ -35,6 +35,10 @@ struct RuntimeBenchmarkSummary
     float AverageGpuDispatchWallMilliseconds{0.0F};
     float AverageGpuQueryWaitMilliseconds{0.0F};
     float AverageGpuReadbackWaitMilliseconds{0.0F};
+    float AverageFrameFenceWaitMilliseconds{0.0F};
+    float MaxFrameFenceWaitMilliseconds{0.0F};
+    float AverageRenderMilliseconds{0.0F};
+    float MaxRenderMilliseconds{0.0F};
 
     // 三角形数量是画面复杂度和 GPU 提交压力的共同代理
     double AverageTriangles{0.0};
@@ -122,6 +126,8 @@ RuntimeBenchmarkSummary SummarizeRuntimeBenchmark(const RuntimeBenchmarkAlgorith
     double totalGpuDispatchWallMilliseconds = 0.0;
     double totalGpuQueryWaitMilliseconds = 0.0;
     double totalGpuReadbackWaitMilliseconds = 0.0;
+    double totalFrameFenceWaitMilliseconds = 0.0;
+    double totalRenderMilliseconds = 0.0;
     double totalTriangles = 0.0;
     double totalNodes = 0.0;
     double totalCpuUtilization = 0.0;
@@ -144,6 +150,8 @@ RuntimeBenchmarkSummary SummarizeRuntimeBenchmark(const RuntimeBenchmarkAlgorith
         totalGpuDispatchWallMilliseconds += stats.RoamGpuDispatchWallMilliseconds;
         totalGpuQueryWaitMilliseconds += stats.RoamGpuQueryWaitMilliseconds;
         totalGpuReadbackWaitMilliseconds += stats.RoamGpuReadbackWaitMilliseconds;
+        totalFrameFenceWaitMilliseconds += stats.RoamFrameFenceWaitMilliseconds;
+        totalRenderMilliseconds += stats.RoamRenderMilliseconds;
         totalTriangles += static_cast<double>(stats.TriangleCount);
         totalNodes += static_cast<double>(stats.RoamNodeCount);
         totalCpuUtilization += stats.RoamCpuUtilizationPercent;
@@ -153,6 +161,10 @@ RuntimeBenchmarkSummary SummarizeRuntimeBenchmark(const RuntimeBenchmarkAlgorith
             std::max(summary.MaxTotalLodMilliseconds, stats.RoamTotalMilliseconds);
         summary.MaxGpuComputeMilliseconds =
             std::max(summary.MaxGpuComputeMilliseconds, stats.RoamGpuComputeMilliseconds);
+        summary.MaxRenderMilliseconds =
+            std::max(summary.MaxRenderMilliseconds, stats.RoamRenderMilliseconds);
+        summary.MaxFrameFenceWaitMilliseconds =
+            std::max(summary.MaxFrameFenceWaitMilliseconds, stats.RoamFrameFenceWaitMilliseconds);
         summary.MaxTriangles = std::max(summary.MaxTriangles, stats.TriangleCount);
         summary.MaxNodes = std::max(summary.MaxNodes, stats.RoamNodeCount);
         // CPU 占用和 worker 数一起观察并行路径是否真正生效
@@ -182,6 +194,9 @@ RuntimeBenchmarkSummary SummarizeRuntimeBenchmark(const RuntimeBenchmarkAlgorith
         static_cast<float>(totalGpuQueryWaitMilliseconds / sampleCount);
     summary.AverageGpuReadbackWaitMilliseconds =
         static_cast<float>(totalGpuReadbackWaitMilliseconds / sampleCount);
+    summary.AverageFrameFenceWaitMilliseconds =
+        static_cast<float>(totalFrameFenceWaitMilliseconds / sampleCount);
+    summary.AverageRenderMilliseconds = static_cast<float>(totalRenderMilliseconds / sampleCount);
     summary.AverageTriangles = totalTriangles / sampleCount;
     summary.AverageNodes = totalNodes / sampleCount;
     summary.AverageCpuUtilizationPercent = static_cast<float>(totalCpuUtilization / sampleCount);
@@ -200,7 +215,7 @@ void WriteDetailedCsv(
     }
 
     // 配置字段放在时间序列前，方便按高度图和参数筛选
-    csv << "algorithm,buildConfiguration,vSyncEnabled,"
+    csv << "algorithm,buildConfiguration,graphicsBackend,graphicsAdapter,graphicsVersion,vSyncEnabled,"
         << "heightMapPath,heightMapWidth,heightMapHeight,terrainSize,heightScale,"
         << "maxDepthSetting,splitThreshold,mergeThreshold,distanceScale,"
         << "timeSeconds,cameraX,cameraY,cameraZ,frameMilliseconds,triangles,nodes,"
@@ -209,6 +224,7 @@ void WriteDetailedCsv(
         << "cpuUpdateMilliseconds,cpuUploadMilliseconds,gpuComputeMilliseconds,"
         << "gpuSnapshotBuildMilliseconds,gpuBufferAllocationMilliseconds,"
         << "gpuDispatchWallMilliseconds,gpuQueryWaitMilliseconds,gpuReadbackWaitMilliseconds,"
+        << "frameFenceWaitMilliseconds,renderMilliseconds,"
         << "cpuGpuUploadBytes,cpuGpuReadbackBytes,splitMilliseconds,"
         << "mergeMilliseconds,emitMilliseconds,validateMilliseconds,maxDepthReached\n";
 
@@ -221,6 +237,9 @@ void WriteDetailedCsv(
             const Render::TerrainRenderStats& stats = sample.Stats;
             csv << result.AlgorithmName << ','
                 << sample.BuildConfiguration << ','
+                << sample.GraphicsBackend << ','
+                << sample.GraphicsAdapter << ','
+                << sample.GraphicsVersion << ','
                 << (sample.VSyncEnabled ? "true" : "false") << ','
                 << stats.HeightMapPath.generic_string() << ','
                 << stats.HeightMapWidth << ','
@@ -257,6 +276,8 @@ void WriteDetailedCsv(
                 << stats.RoamGpuDispatchWallMilliseconds << ','
                 << stats.RoamGpuQueryWaitMilliseconds << ','
                 << stats.RoamGpuReadbackWaitMilliseconds << ','
+                << stats.RoamFrameFenceWaitMilliseconds << ','
+                << stats.RoamRenderMilliseconds << ','
                 << stats.RoamCpuGpuUploadBytes << ','
                 << stats.RoamCpuGpuReadbackBytes << ','
                 << stats.RoamSplitMilliseconds << ','
@@ -282,8 +303,17 @@ void WriteSummaryMarkdown(
     }
 
     markdown << "# Runtime Benchmark\n\n";
+    float sampledDurationSeconds = 0.0F;
+    for (const RuntimeBenchmarkAlgorithmResult& result : results)
+    {
+        if (!result.Samples.empty())
+        {
+            sampledDurationSeconds = std::max(sampledDurationSeconds, result.Samples.back().TimeSeconds);
+        }
+    }
+
     markdown << "- Camera path: edge midpoint to terrain center\n";
-    markdown << "- Duration per algorithm: 10 seconds\n";
+    markdown << "- Sampled duration per algorithm: " << sampledDurationSeconds << " seconds\n";
     markdown << "- Detailed CSV: `" << csvPath.filename().string() << "`\n\n";
     for (const std::string& note : notes)
     {
@@ -310,10 +340,12 @@ void WriteSummaryMarkdown(
              << "Avg CPU Update ms | Avg CPU Upload ms | Avg GPU ms | Max GPU ms | "
              << "Avg GPU Snapshot ms | Avg GPU Alloc ms | Avg GPU Dispatch Wall ms | "
              << "Avg GPU Query Wait ms | Avg GPU Readback Wait ms | "
+             << "Avg Frame Fence Wait ms | Max Frame Fence Wait ms | "
+             << "Avg Render ms | Max Render ms | "
              << "Avg Triangles | Max Triangles | Avg Nodes | Max Nodes | Avg CPU % | Max CPU % | "
              << "Max Workers | Max Upload B | Max Readback B | Config Max Depth | Reached Max Depth | Max Topology Issues |\n";
     markdown << "| ---";
-    for (int column = 0; column < 26; ++column)
+    for (int column = 0; column < 30; ++column)
     {
         markdown << " | ---:";
     }
@@ -339,6 +371,10 @@ void WriteSummaryMarkdown(
                  << " | " << summary.AverageGpuDispatchWallMilliseconds
                  << " | " << summary.AverageGpuQueryWaitMilliseconds
                  << " | " << summary.AverageGpuReadbackWaitMilliseconds
+                 << " | " << summary.AverageFrameFenceWaitMilliseconds
+                 << " | " << summary.MaxFrameFenceWaitMilliseconds
+                 << " | " << summary.AverageRenderMilliseconds
+                 << " | " << summary.MaxRenderMilliseconds
                  << " | " << summary.AverageTriangles
                  << " | " << summary.MaxTriangles
                  << " | " << summary.AverageNodes

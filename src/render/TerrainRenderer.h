@@ -1,7 +1,9 @@
 #pragma once
 
 #include "algorithms/ITerrainLodAlgorithm.h"
+#if defined(PARALLEL_ROAM_GRAPHICS_API_OPENGL)
 #include "render/Shader.h"
+#endif
 #include "terrain/HeightMap.h"
 #include "terrain/TerrainMeshBuilder.h"
 
@@ -12,6 +14,11 @@
 
 namespace ParallelRoam::Render
 {
+class IGraphicsBackend;
+#if defined(PARALLEL_ROAM_GRAPHICS_API_D3D12)
+struct D3D12TerrainRendererState;
+#endif
+
 /// <summary>
 /// terrain shader 的调试着色模式
 /// </summary>
@@ -152,6 +159,7 @@ struct TerrainRenderStats
     float RoamGpuDispatchWallMilliseconds{0.0F};
     float RoamGpuQueryWaitMilliseconds{0.0F};
     float RoamGpuReadbackWaitMilliseconds{0.0F};
+    float RoamFrameFenceWaitMilliseconds{0.0F};
     float RoamRenderMilliseconds{0.0F};
     std::size_t RoamCpuGpuUploadBytes{0};
     std::size_t RoamCpuGpuReadbackBytes{0};
@@ -166,13 +174,14 @@ struct TerrainRenderStats
 class TerrainRenderer
 {
 public:
-    TerrainRenderer() = default;
+    TerrainRenderer();
     ~TerrainRenderer();
 
     TerrainRenderer(const TerrainRenderer&) = delete;
     TerrainRenderer& operator=(const TerrainRenderer&) = delete;
 
     bool Initialize(
+        IGraphicsBackend& graphicsBackend,
         const std::filesystem::path& heightMapPath,
         const std::filesystem::path& texturePath,
         const TerrainRenderSettings& settings,
@@ -203,6 +212,7 @@ private:
     // Terrain LOD 路径会随相机位置动态更新
     bool RebuildTerrainLod(const glm::vec3& cameraPosition, std::string* errorMessage);
     bool UploadMesh(std::string* errorMessage);
+#if defined(PARALLEL_ROAM_GRAPHICS_API_OPENGL)
     bool ConfigureTerrainVertexArray(
         unsigned int vertexBufferId,
         unsigned int indexBufferId,
@@ -210,10 +220,16 @@ private:
     bool BindGpuTerrainBuffers(
         const Algorithms::TerrainLodRenderPacket& renderPacket,
         std::string* errorMessage);
+#endif
     bool LoadTexture(const std::filesystem::path& texturePath, std::string* errorMessage);
     [[nodiscard]] bool HasDrawableTerrain() const;
 
+#if defined(PARALLEL_ROAM_GRAPHICS_API_OPENGL)
     Shader _shader;
+#elif defined(PARALLEL_ROAM_GRAPHICS_API_D3D12)
+    std::unique_ptr<D3D12TerrainRendererState> _d3d12State;
+#endif
+    IGraphicsBackend* _graphicsBackend{nullptr};
     Terrain::HeightMap _heightMap;
     Terrain::TerrainMeshData _meshData;
     std::unique_ptr<Algorithms::ITerrainLodAlgorithm> _terrainLodAlgorithm;
@@ -226,6 +242,7 @@ private:
     std::filesystem::path _texturePath;
     glm::vec3 _lastCameraPosition{0.0F};
     glm::vec3 _lastRoamBuildCameraPosition{0.0F};
+#if defined(PARALLEL_ROAM_GRAPHICS_API_OPENGL)
     unsigned int _vertexArrayId{0};
     unsigned int _vertexBufferId{0};
     unsigned int _indexBufferId{0};
@@ -235,6 +252,7 @@ private:
     unsigned int _gpuVertexBufferId{0};
     unsigned int _gpuIndexBufferId{0};
     unsigned int _gpuIndirectDrawBufferId{0};
+#endif
     Algorithms::TerrainLodRenderMode _renderMode{Algorithms::TerrainLodRenderMode::CpuMesh};
     std::size_t _drawVertexCount{0};
     std::size_t _drawIndexCount{0};

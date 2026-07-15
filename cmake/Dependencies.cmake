@@ -293,7 +293,15 @@ function(parallel_roam_ensure_imgui)
     set(PARALLEL_ROAM_LOCAL_IMGUI_DIR "${PROJECT_SOURCE_DIR}/third_party/imgui")
     if(EXISTS "${PARALLEL_ROAM_LOCAL_IMGUI_DIR}/imgui.cpp")
         parallel_roam_ensure_sdl2()
-        parallel_roam_ensure_opengl()
+        if(PARALLEL_ROAM_GRAPHICS_API_NORMALIZED STREQUAL "OPENGL")
+            parallel_roam_ensure_opengl()
+            set(PARALLEL_ROAM_IMGUI_RENDERER_SOURCE
+                ${PARALLEL_ROAM_LOCAL_IMGUI_DIR}/backends/imgui_impl_opengl3.cpp)
+        else()
+            parallel_roam_ensure_d3d12()
+            set(PARALLEL_ROAM_IMGUI_RENDERER_SOURCE
+                ${PARALLEL_ROAM_LOCAL_IMGUI_DIR}/backends/imgui_impl_dx12.cpp)
+        endif()
 
         add_library(
             parallel_roam_imgui_impl STATIC
@@ -303,7 +311,7 @@ function(parallel_roam_ensure_imgui)
             ${PARALLEL_ROAM_LOCAL_IMGUI_DIR}/imgui_tables.cpp
             ${PARALLEL_ROAM_LOCAL_IMGUI_DIR}/imgui_widgets.cpp
             ${PARALLEL_ROAM_LOCAL_IMGUI_DIR}/backends/imgui_impl_sdl2.cpp
-            ${PARALLEL_ROAM_LOCAL_IMGUI_DIR}/backends/imgui_impl_opengl3.cpp
+            ${PARALLEL_ROAM_IMGUI_RENDERER_SOURCE}
         )
 
         target_include_directories(
@@ -319,6 +327,10 @@ function(parallel_roam_ensure_imgui)
 
         if(TARGET ParallelROAM::OpenGL)
             target_link_libraries(parallel_roam_imgui_impl PUBLIC ParallelROAM::OpenGL)
+        endif()
+
+        if(TARGET ParallelROAM::D3D12)
+            target_link_libraries(parallel_roam_imgui_impl PUBLIC ParallelROAM::D3D12)
         endif()
 
         parallel_roam_make_interface_alias(parallel_roam_imgui ParallelROAM::ImGui)
@@ -338,7 +350,11 @@ function(parallel_roam_ensure_imgui)
 
     if(PARALLEL_ROAM_FETCH_MISSING_DEPS)
         parallel_roam_ensure_sdl2()
-        parallel_roam_ensure_opengl()
+        if(PARALLEL_ROAM_GRAPHICS_API_NORMALIZED STREQUAL "OPENGL")
+            parallel_roam_ensure_opengl()
+        else()
+            parallel_roam_ensure_d3d12()
+        endif()
 
         FetchContent_Declare(
             imgui
@@ -348,6 +364,12 @@ function(parallel_roam_ensure_imgui)
         )
         FetchContent_MakeAvailable(imgui)
 
+        if(PARALLEL_ROAM_GRAPHICS_API_NORMALIZED STREQUAL "OPENGL")
+            set(PARALLEL_ROAM_IMGUI_RENDERER_SOURCE ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp)
+        else()
+            set(PARALLEL_ROAM_IMGUI_RENDERER_SOURCE ${imgui_SOURCE_DIR}/backends/imgui_impl_dx12.cpp)
+        endif()
+
         add_library(
             parallel_roam_imgui_impl STATIC
             ${imgui_SOURCE_DIR}/imgui.cpp
@@ -356,7 +378,7 @@ function(parallel_roam_ensure_imgui)
             ${imgui_SOURCE_DIR}/imgui_tables.cpp
             ${imgui_SOURCE_DIR}/imgui_widgets.cpp
             ${imgui_SOURCE_DIR}/backends/imgui_impl_sdl2.cpp
-            ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp
+            ${PARALLEL_ROAM_IMGUI_RENDERER_SOURCE}
         )
 
         target_include_directories(
@@ -372,6 +394,10 @@ function(parallel_roam_ensure_imgui)
 
         if(TARGET ParallelROAM::OpenGL)
             target_link_libraries(parallel_roam_imgui_impl PUBLIC ParallelROAM::OpenGL)
+        endif()
+
+        if(TARGET ParallelROAM::D3D12)
+            target_link_libraries(parallel_roam_imgui_impl PUBLIC ParallelROAM::D3D12)
         endif()
 
         parallel_roam_make_interface_alias(parallel_roam_imgui ParallelROAM::ImGui)
@@ -396,12 +422,18 @@ function(parallel_roam_prepare_dependencies)
         return()
     endif()
 
-    parallel_roam_ensure_opengl()
     parallel_roam_ensure_sdl2()
     parallel_roam_ensure_glm()
-    parallel_roam_ensure_glad()
     parallel_roam_ensure_stb()
-    parallel_roam_ensure_imgui()
+
+    if(PARALLEL_ROAM_GRAPHICS_API_NORMALIZED STREQUAL "OPENGL")
+        parallel_roam_ensure_opengl()
+        parallel_roam_ensure_glad()
+        parallel_roam_ensure_imgui()
+    else()
+        parallel_roam_ensure_d3d12()
+        parallel_roam_ensure_imgui()
+    endif()
 
     set_property(GLOBAL PROPERTY PARALLEL_ROAM_DEPENDENCIES_PREPARED TRUE)
 endfunction()
@@ -409,10 +441,31 @@ endfunction()
 function(parallel_roam_link_optional_dependencies target)
     parallel_roam_prepare_dependencies()
 
-    parallel_roam_link_if_target(${target} ParallelROAM::OpenGL PARALLEL_ROAM_HAS_OPENGL)
     parallel_roam_link_if_target(${target} ParallelROAM::SDL2 PARALLEL_ROAM_HAS_SDL2)
     parallel_roam_link_if_target(${target} ParallelROAM::GLM PARALLEL_ROAM_HAS_GLM)
-    parallel_roam_link_if_target(${target} ParallelROAM::GLAD PARALLEL_ROAM_HAS_GLAD)
     parallel_roam_link_if_target(${target} ParallelROAM::STB PARALLEL_ROAM_HAS_STB)
-    parallel_roam_link_if_target(${target} ParallelROAM::ImGui PARALLEL_ROAM_HAS_IMGUI)
+
+    if(PARALLEL_ROAM_GRAPHICS_API_NORMALIZED STREQUAL "OPENGL")
+        parallel_roam_link_if_target(${target} ParallelROAM::OpenGL PARALLEL_ROAM_HAS_OPENGL)
+        parallel_roam_link_if_target(${target} ParallelROAM::GLAD PARALLEL_ROAM_HAS_GLAD)
+        parallel_roam_link_if_target(${target} ParallelROAM::ImGui PARALLEL_ROAM_HAS_IMGUI)
+    else()
+        parallel_roam_link_if_target(${target} ParallelROAM::D3D12 PARALLEL_ROAM_HAS_D3D12)
+        parallel_roam_link_if_target(${target} ParallelROAM::ImGui PARALLEL_ROAM_HAS_IMGUI)
+    endif()
+endfunction()
+
+function(parallel_roam_ensure_d3d12)
+    if(TARGET ParallelROAM::D3D12)
+        return()
+    endif()
+
+    if(NOT WIN32)
+        message(STATUS "D3D12 backend is only available on Windows.")
+        return()
+    endif()
+
+    parallel_roam_make_interface_alias(parallel_roam_d3d12 ParallelROAM::D3D12)
+    target_link_libraries(parallel_roam_d3d12 INTERFACE d3d12 dxgi dxguid)
+    message(STATUS "D3D12 system libraries found and linked.")
 endfunction()

@@ -371,6 +371,8 @@ bool GpuRoamMeshBuilder::Build(
     outPacket.GpuIndexBufferId = _state.GpuIndexBufferId;
     outPacket.ActiveLeafBufferId = _state.ActiveLeafBufferId;
     outPacket.IndirectDrawBufferId = usesIndirectDraw ? _state.IndirectDrawBufferId : 0U;
+    outPacket.GpuResourceLifetime = TerrainLodGpuResourceLifetime::UntilNextBuildOrReset;
+    outPacket.GpuResourceGeneration = snapshot.BuildSequence;
     outPacket.ActiveLeafCount = gpuActiveLeafCount;
     outPacket.ActiveTriangleCount = inOutStats.ActiveTriangleCount;
     outPacket.IndexCount = gpuActiveLeafCount * 3U;
@@ -378,7 +380,8 @@ bool GpuRoamMeshBuilder::Build(
            outPacket.IndexCount > 0U &&
            outPacket.GpuVertexBufferId != 0U &&
            outPacket.GpuIndexBufferId != 0U &&
-           (outPacket.Mode != TerrainLodRenderMode::GpuIndirect || outPacket.IndirectDrawBufferId != 0U);
+           (outPacket.Mode != TerrainLodRenderMode::GpuIndirect || outPacket.IndirectDrawBufferId != 0U) &&
+           outPacket.HasConsistentResourceContract();
 }
 
 void GpuRoamMeshBuilder::Reset()
