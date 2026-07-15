@@ -1,0 +1,9 @@
+profile,algorithm,frameIndex,timeSeconds,cameraName,cameraX,cameraY,cameraZ,heightMapWidth,heightMapHeight,terrainSize,heightScale,maxDepth,splitThreshold,mergeThreshold,activeTriangleCount,activeNodeCount,splitCount,forcedSplitCount,mergeCount,candidatePeakCount,tjunctionCount,invalidNeighborCount,invalidTopologyCount,cpuWorkerCount,cpuUtilizationPercent,cpuUpdateMs,cpuErrorEvalMs,cpuDecisionMs,cpuTopologyMs,cpuCollectMs,cpuMeshBuildMs,cpuUploadMs,gpuComputeMs,renderMs,cpuGpuUploadBytes,cpuGpuReadbackBytes,buildWallMs,passed
+smoke,classic_cpu_roam,0,0,far,0,14,28,129,129,30,4,14,0.04,0.02,906,1810,904,600,0,177,0,0,0,1,0,1.4351,0,0.4862,0.4886,0,0.3943,0,0,0,0,0,1.5162,1
+smoke,classic_cpu_roam,1,1,center,0,4,0,129,129,30,4,14,0.04,0.02,13537,27072,12631,7869,0,2275,0,0,0,1,125.15,22.2308,0,7.331,7.3581,0,5.444,0,0,0,0,0,24.9739,1
+smoke,classic_cpu_roam,2,2,near-corner,-13,2.5,-13,129,129,30,4,14,0.04,0.02,13855,35510,4219,2471,3901,934,0,0,0,1,74.8944,19.6177,0,2.9299,4.8026,0,5.7336,0,0,0,0,0,20.8664,1
+smoke,classic_cpu_roam,3,3,center-return,0,4,0,129,129,30,4,14,0.04,0.02,18779,39476,5884,3125,960,4950,0,0,0,1,122.809,23.0993,0,2.4987,3.3466,0,7.3402,0,0,0,0,0,25.4535,1
+smoke,data_oriented_cpu_roam,0,0,far,0,14,28,129,129,30,4,14,0.04,0.02,906,1810,904,600,0,177,0,0,0,8,0,1.9762,0.0005,0.5437,0.5514,0.0026,0.8764,0,0,0,0,0,2.0984,1
+smoke,data_oriented_cpu_roam,1,1,center,0,4,0,129,129,30,4,14,0.04,0.02,13537,27072,12631,7869,0,2275,0,0,0,8,148.968,19.3058,0.0353,8.9599,8.962,0.2232,1.4441,0,0,0,0,0,20.9821,1
+smoke,data_oriented_cpu_roam,2,2,near-corner,-13,2.5,-13,129,129,30,4,14,0.04,0.02,13855,35510,4219,2471,3901,934,0,0,0,8,89.4908,15.8823,0.2234,2.9723,4.4975,1.7106,1.5816,0,0,0,0,0,17.4663,1
+smoke,data_oriented_cpu_roam,3,3,center-return,0,4,0,129,129,30,4,14,0.04,0.02,18779,39476,5884,3125,960,4950,0,0,0,8,75.2617,18.4438,0.1261,3.5492,4.0335,1.3932,2.0587,0,0,0,0,0,20.7653,1
