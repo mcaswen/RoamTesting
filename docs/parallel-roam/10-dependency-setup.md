@@ -21,6 +21,26 @@
 | GLAD | OpenGL function loader | `third_party/glad` | vcpkg / FetchContent 生成 | 已提交 OpenGL core 4.3 loader |
 | stb | Height Map / image loading | `third_party/stb` | system headers / FetchContent | header-only |
 | Dear ImGui | GUI/debug panels | `third_party/imgui` | vcpkg / FetchContent | 本地构建 SDL2 + OpenGL3 backend |
+| D3D12 Agility SDK | 固定 CBT 运行时和 Shader Model 6.6 能力 | `third_party/microsoft/d3d12-agility-sdk/1.614.1` | Microsoft NuGet | 与 CBT 2024 官方实现保持一致 |
+| DirectX Shader Compiler | 编译 DX12/HLSL 着色器 | `third_party/microsoft/dxc/1.7.2308.12` | Microsoft NuGet | `dxcompiler.dll` 版本为 1.7.2308.7 |
+
+## CBT DX12 固定依赖
+
+D3D12 构建固定使用 CBT 2024 官方实现相同的 Agility SDK 和 DXC。首次配置前运行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/setup_cbt_dx12_dependencies.ps1
+```
+
+脚本从 Microsoft 官方 NuGet 下载固定包，校验包和关键二进制的 SHA-256，并解压到 Git 忽略的本地依赖目录。重复执行时，已通过校验的文件不会重新下载。需要恢复损坏或被替换的文件时使用：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/setup_cbt_dx12_dependencies.ps1 -Force
+```
+
+D3D12 CMake 配置会检查固定文件、版本和哈希。缺失或不匹配时直接停止配置，不会静默回退到 Windows SDK 中的其他 DXC。
+
+应用导出与 CBT 官方实现相同的 `D3D12SDKVersion=614` 和 `D3D12SDKPath=.\\D3D12\\`。按照 Microsoft 的 Agility SDK 加载规则，如果操作系统内置的 `D3D12Core.dll` 更新，系统版本会优先于应用携带的 1.614.1 运行时。项目会在启动日志和 benchmark 图形版本字段中记录实际加载的 D3D12Core 路径与文件版本；同一机器上的官方程序和接入版应以该实际值作为运行时对照。
 
 ## 默认路径：项目内依赖
 
@@ -161,6 +181,8 @@ GLM       1.0.3
 GLAD      v2.0.8
 Dear ImGui v1.92.8
 stb       31c1ad37456438565541f4919958214b6e762fb4
+D3D12 Agility SDK 1.614.1
+DXC       1.7.2308.12（dxcompiler.dll 1.7.2308.7）
 ```
 
 GLAD 已经使用官方生成器生成 OpenGL core 4.3 loader，并放在 `third_party/glad/`。CMake 会优先使用这份本地源码，因此普通构建不需要 Python 或 `jinja2`。

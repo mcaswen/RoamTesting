@@ -13,6 +13,7 @@ include(ProjectOptions)
 include(CompilerWarnings)
 include(Sanitizers)
 include(Dependencies)
+include(PinnedD3D12Runtime)
 
 parallel_roam_apply_global_options()
 find_package(Threads REQUIRED)
@@ -144,6 +145,7 @@ if(PARALLEL_ROAM_BUILD_APP)
                 src/gui/ImGuiLayer.cpp
                 src/platform/Window.cpp
                 src/render/GraphicsBackend.cpp
+                src/render/D3D12AgilitySdkExports.cpp
                 src/render/D3D12GraphicsBackend.cpp
                 src/render/D3D12TerrainRenderer.cpp
                 src/terrain/HeightMap.cpp
@@ -181,13 +183,7 @@ if(PARALLEL_ROAM_BUILD_APP)
     endif()
 
     if(PARALLEL_ROAM_FULL_APP_AVAILABLE AND PARALLEL_ROAM_GRAPHICS_API_NORMALIZED STREQUAL "D3D12")
-        file(GLOB PARALLEL_ROAM_DXC_CANDIDATES
-            "C:/Program Files (x86)/Windows Kits/10/bin/*/x64/dxc.exe")
-        list(SORT PARALLEL_ROAM_DXC_CANDIDATES COMPARE NATURAL ORDER DESCENDING)
-        if(NOT PARALLEL_ROAM_DXC_CANDIDATES)
-            message(FATAL_ERROR "D3D12 terrain rendering requires dxc.exe from the Windows SDK.")
-        endif()
-        list(GET PARALLEL_ROAM_DXC_CANDIDATES 0 PARALLEL_ROAM_DXC_EXECUTABLE)
+        parallel_roam_configure_pinned_d3d12_runtime(parallel_roam PARALLEL_ROAM_DXC_EXECUTABLE)
 
         set(PARALLEL_ROAM_DX12_SHADER_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated/shaders")
         set(PARALLEL_ROAM_DX12_VERTEX_SHADER "${PARALLEL_ROAM_DX12_SHADER_DIR}/TerrainVS.cso")

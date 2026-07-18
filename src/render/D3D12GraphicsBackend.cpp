@@ -73,6 +73,54 @@ std::string HResultText(HRESULT result)
     return stream.str();
 }
 
+std::string LoadedD3D12RuntimeDescription()
+{
+    const HMODULE runtimeModule = GetModuleHandleW(L"D3D12Core.dll");
+    if (runtimeModule == nullptr)
+    {
+        return "D3D12Core unavailable";
+    }
+
+    std::array<wchar_t, 32768> runtimePath{};
+    const DWORD pathLength = GetModuleFileNameW(
+        runtimeModule,
+        runtimePath.data(),
+        static_cast<DWORD>(runtimePath.size()));
+    const std::string path = pathLength > 0 ? WideToUtf8(runtimePath.data()) : "unknown path";
+
+    DWORD unusedHandle = 0;
+    const DWORD versionDataSize = GetFileVersionInfoSizeW(runtimePath.data(), &unusedHandle);
+    if (versionDataSize == 0)
+    {
+        return path;
+    }
+
+    std::vector<std::uint8_t> versionData(versionDataSize);
+    if (!GetFileVersionInfoW(runtimePath.data(), 0, versionDataSize, versionData.data()))
+    {
+        return path;
+    }
+
+    VS_FIXEDFILEINFO* versionInfo = nullptr;
+    UINT versionInfoSize = 0;
+    if (!VerQueryValueW(
+            versionData.data(),
+            L"\\",
+            reinterpret_cast<void**>(&versionInfo),
+            &versionInfoSize) ||
+        versionInfo == nullptr || versionInfoSize < sizeof(VS_FIXEDFILEINFO))
+    {
+        return path;
+    }
+
+    std::ostringstream stream;
+    stream << HIWORD(versionInfo->dwFileVersionMS) << '.'
+           << LOWORD(versionInfo->dwFileVersionMS) << '.'
+           << HIWORD(versionInfo->dwFileVersionLS) << '.'
+           << LOWORD(versionInfo->dwFileVersionLS) << " (" << path << ')';
+    return stream.str();
+}
+
 void SetError(std::string* errorMessage, const char* operation, HRESULT result)
 {
     if (errorMessage != nullptr)
@@ -714,12 +762,21 @@ bool D3D12GraphicsBackend::CreateDeviceAndQueue(std::string* errorMessage)
     if (SUCCEEDED(_adapter->CheckInterfaceSupport(__uuidof(IDXGIDevice), &driverVersion)))
     {
         std::ostringstream versionStream;
-        versionStream << "Direct3D 12 (feature level 12_0); driver "
+        versionStream << "Direct3D 12 (feature level 12_0); requested Agility SDK "
+                      << PARALLEL_ROAM_D3D12_AGILITY_SDK_VERSION << "; runtime "
+                      << LoadedD3D12RuntimeDescription() << "; driver "
                       << HIWORD(driverVersion.HighPart) << '.'
                       << LOWORD(driverVersion.HighPart) << '.'
                       << HIWORD(driverVersion.LowPart) << '.'
                       << LOWORD(driverVersion.LowPart);
         _versionString = versionStream.str();
+    }
+    else
+    {
+        _versionString =
+            "Direct3D 12 (feature level 12_0); requested Agility SDK " +
+            std::to_string(PARALLEL_ROAM_D3D12_AGILITY_SDK_VERSION) + "; runtime " +
+            LoadedD3D12RuntimeDescription();
     }
 
     result = D3D12CreateDevice(_adapter.Get(), D3D_FEATURE_LEVEL_12_0, IID_PPV_ARGS(&_device));

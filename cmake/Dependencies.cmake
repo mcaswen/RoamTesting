@@ -465,7 +465,16 @@ function(parallel_roam_ensure_d3d12)
         return()
     endif()
 
+    set(agility_include_dir "${PARALLEL_ROAM_D3D12_AGILITY_SDK_ROOT}/build/native/include")
+    if(NOT EXISTS "${agility_include_dir}/d3d12.h")
+        message(FATAL_ERROR
+            "Pinned D3D12 Agility SDK ${PARALLEL_ROAM_D3D12_AGILITY_SDK_PACKAGE_VERSION} is missing. "
+            "Run scripts/setup_cbt_dx12_dependencies.ps1 before configuring a D3D12 preset.")
+    endif()
+
     parallel_roam_make_interface_alias(parallel_roam_d3d12 ParallelROAM::D3D12)
-    target_link_libraries(parallel_roam_d3d12 INTERFACE d3d12 dxgi dxguid)
-    message(STATUS "D3D12 system libraries found and linked.")
+    target_include_directories(parallel_roam_d3d12 SYSTEM INTERFACE "${agility_include_dir}")
+    target_link_libraries(parallel_roam_d3d12 INTERFACE d3d12 dxgi dxguid version)
+    message(STATUS
+        "D3D12 system libraries linked with Agility SDK ${PARALLEL_ROAM_D3D12_AGILITY_SDK_PACKAGE_VERSION} headers.")
 endfunction()

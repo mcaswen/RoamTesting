@@ -18,6 +18,22 @@ set(PARALLEL_ROAM_GLAD_FETCH_TAG "v2.0.8" CACHE STRING "GLAD tag used when Fetch
 set(PARALLEL_ROAM_IMGUI_FETCH_TAG "v1.92.8" CACHE STRING "Dear ImGui tag used when FetchContent is enabled.")
 set(PARALLEL_ROAM_STB_FETCH_TAG "31c1ad37456438565541f4919958214b6e762fb4" CACHE STRING "stb commit used when FetchContent is enabled.")
 
+set(PARALLEL_ROAM_D3D12_AGILITY_SDK_PACKAGE_VERSION "1.614.1" CACHE INTERNAL "Pinned D3D12 Agility SDK package version." FORCE)
+set(PARALLEL_ROAM_D3D12_AGILITY_SDK_VERSION "614" CACHE INTERNAL "D3D12SDKVersion exported by the application." FORCE)
+set(
+    PARALLEL_ROAM_D3D12_AGILITY_SDK_ROOT
+    "${CMAKE_SOURCE_DIR}/third_party/microsoft/d3d12-agility-sdk/1.614.1"
+    CACHE PATH
+    "Root of the pinned D3D12 Agility SDK package."
+)
+set(PARALLEL_ROAM_DXC_PACKAGE_VERSION "1.7.2308.12" CACHE INTERNAL "Pinned DirectX Shader Compiler package version." FORCE)
+set(
+    PARALLEL_ROAM_DXC_ROOT
+    "${CMAKE_SOURCE_DIR}/third_party/microsoft/dxc/1.7.2308.12"
+    CACHE PATH
+    "Root of the pinned DirectX Shader Compiler package."
+)
+
 option(PARALLEL_ROAM_ENABLE_WARNINGS "Enable project compiler warnings." ON)
 option(PARALLEL_ROAM_WARNINGS_AS_ERRORS "Treat project warnings as errors." OFF)
 option(PARALLEL_ROAM_ENABLE_SANITIZERS "Enable sanitizer flags for supported compilers." OFF)
