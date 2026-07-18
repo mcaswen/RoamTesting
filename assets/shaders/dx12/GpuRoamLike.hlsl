@@ -237,6 +237,7 @@ void RestoreParentLeaf(uint nodeIndex, uint originalFlags)
 
 bool AllocateNodes(uint count, out uint firstNode)
 {
+    firstNode = 0u;
     // Counters[5] 作为无锁节点池尾指针
     [loop]
     for (uint attempt = 0u; attempt < 8u; ++attempt)
