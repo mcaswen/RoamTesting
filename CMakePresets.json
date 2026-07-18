@@ -15,6 +15,19 @@
       }
     },
     {
+      "name": "d3d12-base",
+      "hidden": true,
+      "inherits": "base",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      },
+      "cacheVariables": {
+        "PARALLEL_ROAM_GRAPHICS_API": "D3D12"
+      }
+    },
+    {
       "name": "debug",
       "displayName": "Debug",
       "inherits": "base",
@@ -41,6 +54,32 @@
       }
     },
     {
+      "name": "debug-d3d12",
+      "displayName": "Debug - D3D12",
+      "inherits": "d3d12-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "debug-d3d12-vcpkg",
+      "displayName": "Debug - D3D12 (vcpkg manifest)",
+      "inherits": "d3d12-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
+      }
+    },
+    {
+      "name": "debug-d3d12-fetch",
+      "displayName": "Debug - D3D12 (FetchContent dependencies)",
+      "inherits": "d3d12-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "PARALLEL_ROAM_FETCH_MISSING_DEPS": "ON"
+      }
+    },
+    {
       "name": "release",
       "displayName": "Release",
       "inherits": "base",
@@ -58,6 +97,23 @@
       }
     },
     {
+      "name": "release-d3d12",
+      "displayName": "Release - D3D12",
+      "inherits": "d3d12-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "release-d3d12-fetch",
+      "displayName": "Release - D3D12 (FetchContent dependencies)",
+      "inherits": "d3d12-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "PARALLEL_ROAM_FETCH_MISSING_DEPS": "ON"
+      }
+    },
+    {
       "name": "relwithdebinfo",
       "displayName": "RelWithDebInfo",
       "inherits": "base",
@@ -69,6 +125,23 @@
       "name": "relwithdebinfo-fetch",
       "displayName": "RelWithDebInfo (FetchContent dependencies)",
       "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "PARALLEL_ROAM_FETCH_MISSING_DEPS": "ON"
+      }
+    },
+    {
+      "name": "relwithdebinfo-d3d12",
+      "displayName": "RelWithDebInfo - D3D12",
+      "inherits": "d3d12-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo"
+      }
+    },
+    {
+      "name": "relwithdebinfo-d3d12-fetch",
+      "displayName": "RelWithDebInfo - D3D12 (FetchContent dependencies)",
+      "inherits": "d3d12-base",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "RelWithDebInfo",
         "PARALLEL_ROAM_FETCH_MISSING_DEPS": "ON"
@@ -92,6 +165,21 @@
       "configuration": "Debug"
     },
     {
+      "name": "debug-d3d12",
+      "configurePreset": "debug-d3d12",
+      "configuration": "Debug"
+    },
+    {
+      "name": "debug-d3d12-vcpkg",
+      "configurePreset": "debug-d3d12-vcpkg",
+      "configuration": "Debug"
+    },
+    {
+      "name": "debug-d3d12-fetch",
+      "configurePreset": "debug-d3d12-fetch",
+      "configuration": "Debug"
+    },
+    {
       "name": "release",
       "configurePreset": "release",
       "configuration": "Release"
@@ -102,6 +190,16 @@
       "configuration": "Release"
     },
     {
+      "name": "release-d3d12",
+      "configurePreset": "release-d3d12",
+      "configuration": "Release"
+    },
+    {
+      "name": "release-d3d12-fetch",
+      "configurePreset": "release-d3d12-fetch",
+      "configuration": "Release"
+    },
+    {
       "name": "relwithdebinfo",
       "configurePreset": "relwithdebinfo",
       "configuration": "RelWithDebInfo"
@@ -109,6 +207,16 @@
     {
       "name": "relwithdebinfo-fetch",
       "configurePreset": "relwithdebinfo-fetch",
+      "configuration": "RelWithDebInfo"
+    },
+    {
+      "name": "relwithdebinfo-d3d12",
+      "configurePreset": "relwithdebinfo-d3d12",
+      "configuration": "RelWithDebInfo"
+    },
+    {
+      "name": "relwithdebinfo-d3d12-fetch",
+      "configurePreset": "relwithdebinfo-d3d12-fetch",
       "configuration": "RelWithDebInfo"
     }
   ],
