@@ -13,6 +13,9 @@ class ImGuiLayer;
 
 namespace ParallelRoam::Render
 {
+/// <summary>
+/// 构建配置可选择的图形 API
+/// </summary>
 enum class GraphicsApi
 {
     OpenGl,
@@ -20,8 +23,7 @@ enum class GraphicsApi
 };
 
 /// <summary>
-/// 应用主循环依赖的最小图形后端边界。
-/// TerrainRenderer 和 GPU 算法的资源接口会在后续阶段继续迁移。
+/// 应用主循环与具体图形 API 之间的生命周期边界
 /// </summary>
 class IGraphicsBackend
 {
@@ -31,9 +33,6 @@ public:
     [[nodiscard]] virtual GraphicsApi Api() const = 0;
     [[nodiscard]] virtual const char* Name() const = 0;
 
-    /// <summary>
-    /// SDL 视频子系统初始化后、窗口创建前配置后端所需窗口属性。
-    /// </summary>
     [[nodiscard]] virtual bool ConfigureWindow(std::string* errorMessage) = 0;
     [[nodiscard]] virtual std::uint32_t RequiredSdlWindowFlags() const = 0;
 

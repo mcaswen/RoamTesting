@@ -12,6 +12,7 @@ namespace ParallelRoam::Render
 {
 std::unique_ptr<IGraphicsBackend> CreateConfiguredGraphicsBackend()
 {
+    // 后端在编译期唯一选择，避免运行时同时携带两套平台依赖
 #if defined(PARALLEL_ROAM_GRAPHICS_API_OPENGL)
     return std::make_unique<OpenGlGraphicsBackend>();
 #elif defined(PARALLEL_ROAM_GRAPHICS_API_D3D12)
@@ -23,6 +24,7 @@ std::unique_ptr<IGraphicsBackend> CreateConfiguredGraphicsBackend()
 
 const char* ConfiguredGraphicsApiName()
 {
+    // 即使配置异常也返回稳定字符串供启动错误日志使用
 #if defined(PARALLEL_ROAM_GRAPHICS_API_OPENGL)
     return "OpenGL";
 #elif defined(PARALLEL_ROAM_GRAPHICS_API_D3D12)

@@ -14,6 +14,9 @@ namespace ParallelRoam::Algorithms::GpuRoam::D3D12
 {
 struct D3D12GpuRoamState;
 
+/// <summary>
+/// 将 DOD CPU 拓扑快照桥接到 D3D12 计算管线的实验算法
+/// </summary>
 class D3D12GpuRoamTerrainLodAlgorithm final : public ITerrainLodAlgorithm
 {
 public:
@@ -30,7 +33,9 @@ public:
     void Reset() override;
 
 private:
+    // 后端由 Application 持有，算法只在生命周期内借用
     Render::D3D12GraphicsBackend* _backend{nullptr};
+    // 当前实现先通过 DOD CPU ROAM 生成拓扑快照
     DataOrientedRoam::DataOrientedRoamMeshBuilder _cpuTopologyBuilder;
     std::unique_ptr<D3D12GpuRoamState> _state;
     TerrainLodStats _stats{};

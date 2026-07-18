@@ -455,6 +455,7 @@ bool ImGuiLayer::Initialize(const ImGuiOpenGlBackendConfig& config)
 #if defined(PARALLEL_ROAM_GRAPHICS_API_D3D12)
 bool ImGuiLayer::Initialize(const ImGuiD3D12BackendConfig& config)
 {
+    // D3D12 后端必须同时提供设备 队列 可见堆和稳定字体句柄
     if (_initialized || config.Window == nullptr || config.Device == nullptr ||
         config.CommandQueue == nullptr || config.SrvDescriptorHeap == nullptr ||
         config.FontSrvCpuDescriptor.ptr == 0 || config.FontSrvGpuDescriptor.ptr == 0)
@@ -462,6 +463,7 @@ bool ImGuiLayer::Initialize(const ImGuiD3D12BackendConfig& config)
         return false;
     }
 
+    // context 创建早于平台和渲染后端初始化
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
@@ -470,16 +472,19 @@ bool ImGuiLayer::Initialize(const ImGuiD3D12BackendConfig& config)
     ImGui::StyleColorsDark();
     ApplyEditorStyle();
 
+    // SDL 平台后端在 D3D12 下只负责窗口事件和输入
     if (!ImGui_ImplSDL2_InitForD3D(config.Window))
     {
         ImGui::DestroyContext();
         return false;
     }
 
+    // 回调触发前先缓存后端分配的固定描述符句柄
     _fontSrvCpuDescriptor = config.FontSrvCpuDescriptor;
     _fontSrvGpuDescriptor = config.FontSrvGpuDescriptor;
     _fontDescriptorInUse = false;
 
+    // ImGui 不创建独立描述符堆，绘制时与地形共享后端可见堆
     ImGui_ImplDX12_InitInfo initInfo{};
     initInfo.Device = config.Device;
     initInfo.CommandQueue = config.CommandQueue;
@@ -488,20 +493,24 @@ bool ImGuiLayer::Initialize(const ImGuiD3D12BackendConfig& config)
     initInfo.DSVFormat = config.DepthStencilFormat;
     initInfo.SrvDescriptorHeap = config.SrvDescriptorHeap;
     initInfo.UserData = this;
+    // 当前只允许 ImGui 占用预留字体槽位，不开放通用描述符分配
     initInfo.SrvDescriptorAllocFn = [](ImGui_ImplDX12_InitInfo* info,
                                        D3D12_CPU_DESCRIPTOR_HANDLE* cpuHandle,
                                        D3D12_GPU_DESCRIPTOR_HANDLE* gpuHandle) {
         auto* layer = static_cast<ImGuiLayer*>(info->UserData);
         *cpuHandle = layer->_fontSrvCpuDescriptor;
         *gpuHandle = layer->_fontSrvGpuDescriptor;
+        // 状态位用于验证 ImGui 已请求并接管字体描述符
         layer->_fontDescriptorInUse = true;
     };
+    // 实际槽位由 D3D12GraphicsBackend 在 ImGui Shutdown 后归还
     initInfo.SrvDescriptorFreeFn = [](ImGui_ImplDX12_InitInfo* info,
                                       D3D12_CPU_DESCRIPTOR_HANDLE,
                                       D3D12_GPU_DESCRIPTOR_HANDLE) {
         static_cast<ImGuiLayer*>(info->UserData)->_fontDescriptorInUse = false;
     };
 
+    // 渲染后端失败时按逆序关闭已成功的平台后端和 context
     if (!ImGui_ImplDX12_Init(&initInfo))
     {
         ImGui_ImplSDL2_Shutdown();
@@ -509,6 +518,7 @@ bool ImGuiLayer::Initialize(const ImGuiD3D12BackendConfig& config)
         return false;
     }
 
+    // 只有两个后端都成功后才发布已初始化状态
     _renderBackend = ImGuiRenderBackend::Direct3D12;
     _initialized = true;
     return true;
@@ -523,6 +533,7 @@ void ImGuiLayer::Shutdown()
         return;
     }
 
+    // 必须调用与初始化类型匹配的渲染后端清理函数
     if (_renderBackend == ImGuiRenderBackend::OpenGl)
     {
 #if defined(PARALLEL_ROAM_GRAPHICS_API_OPENGL)
@@ -535,6 +546,7 @@ void ImGuiLayer::Shutdown()
         ImGui_ImplDX12_Shutdown();
     }
 #endif
+    // 平台后端晚于渲染后端关闭并早于 context 销毁
     ImGui_ImplSDL2_Shutdown();
     ImGui::DestroyContext();
     _renderBackend = ImGuiRenderBackend::None;
@@ -554,6 +566,7 @@ void ImGuiLayer::BeginFrame()
     }
 
     // backend new frame 必须早于 ImGui::NewFrame
+    // 渲染后端先准备每帧状态，随后平台后端更新输入
     if (_renderBackend == ImGuiRenderBackend::OpenGl)
     {
 #if defined(PARALLEL_ROAM_GRAPHICS_API_OPENGL)

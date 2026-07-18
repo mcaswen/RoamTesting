@@ -14,8 +14,10 @@ namespace ParallelRoam::Render
 {
 namespace
 {
+// 后端内部格式固定，renderer 和 ImGui 从公开访问器取得同一约定
 constexpr DXGI_FORMAT BackBufferFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
 constexpr DXGI_FORMAT DepthBufferFormat = DXGI_FORMAT_D32_FLOAT;
+// 当前固定堆覆盖地形纹理、GPU 算法和 ImGui 的描述符需求
 constexpr std::uint32_t SrvDescriptorCount = 256;
 
 D3D12_HEAP_PROPERTIES HeapProperties(D3D12_HEAP_TYPE type)
@@ -31,6 +33,7 @@ D3D12_HEAP_PROPERTIES HeapProperties(D3D12_HEAP_TYPE type)
 
 std::string WideToUtf8(const wchar_t* text)
 {
+    // DXGI 适配器描述使用宽字符，实验输出统一保存 UTF-8
     if (text == nullptr || text[0] == L'\0')
     {
         return "Unknown D3D12 adapter";
@@ -106,6 +109,7 @@ std::uint32_t D3D12GraphicsBackend::RequiredSdlWindowFlags() const
 
 bool D3D12GraphicsBackend::Initialize(SDL_Window* window, std::string* errorMessage)
 {
+    // 初始化失败必须保持对象可再次 Initialize
     if (_initialized || window == nullptr)
     {
         if (errorMessage != nullptr)
@@ -117,6 +121,7 @@ bool D3D12GraphicsBackend::Initialize(SDL_Window* window, std::string* errorMess
 
     SDL_SysWMinfo windowInfo{};
     SDL_VERSION(&windowInfo.version);
+    // 交换链需要 HWND，SDL 仍负责窗口和事件生命周期
     if (SDL_GetWindowWMInfo(window, &windowInfo) != SDL_TRUE || windowInfo.subsystem != SDL_SYSWM_WINDOWS)
     {
         if (errorMessage != nullptr)
@@ -126,12 +131,15 @@ bool D3D12GraphicsBackend::Initialize(SDL_Window* window, std::string* errorMess
         return false;
     }
 
+    // 从这里开始 Shutdown 必须能清理部分初始化状态
     _window = window;
     _windowHandle = windowInfo.info.win.window;
     RefreshDrawableSize();
+    // 最小化状态也先以一像素创建交换链，实际帧在尺寸恢复前跳过
     _swapChainWidth = static_cast<std::uint32_t>(std::max(_drawableWidth, 1));
     _swapChainHeight = static_cast<std::uint32_t>(std::max(_drawableHeight, 1));
 
+    // 创建顺序体现依赖关系，失败时 Shutdown 按逆序清理部分状态
     if (!CreateDeviceAndQueue(errorMessage) ||
         !CreateSwapChain(errorMessage) ||
         !CreateDescriptorHeaps(errorMessage) ||
@@ -152,6 +160,7 @@ bool D3D12GraphicsBackend::Initialize(SDL_Window* window, std::string* errorMess
 
 bool D3D12GraphicsBackend::InitializeImGui(Gui::ImGuiLayer& guiLayer, std::string* errorMessage)
 {
+    // ImGui 后端要求字体描述符在整个上下文生命周期内保持不变
     _imguiFontDescriptor = AllocateSrvDescriptor();
     if (!_imguiFontDescriptor.IsValid())
     {
@@ -201,6 +210,7 @@ void D3D12GraphicsBackend::WaitForGpuIdle()
 
 void D3D12GraphicsBackend::Shutdown()
 {
+    // 资源释放前确保 GPU 不再引用任何后端对象
     if (_commandQueue != nullptr && _fence != nullptr && _fenceEvent != nullptr)
     {
         std::string ignoredError;
@@ -211,6 +221,7 @@ void D3D12GraphicsBackend::Shutdown()
     }
 
     _frameOpen = false;
+    // 描述符先归还，随后统一销毁其所属堆
     ReleaseSrvDescriptor(_imguiFontDescriptor);
     ReleaseRenderTargets();
     _timestampReadback.Reset();
@@ -218,6 +229,7 @@ void D3D12GraphicsBackend::Shutdown()
     _commandList.Reset();
     for (FrameResource& frame : _frames)
     {
+        // allocator 的 FenceValue 与对象一同失效
         frame.CommandAllocator.Reset();
         frame.FenceValue = 0;
     }
@@ -252,20 +264,24 @@ void D3D12GraphicsBackend::Shutdown()
 
 void D3D12GraphicsBackend::BeginFrame()
 {
+    // 一个 BeginFrame 只能对应一次 Present
     if (!_initialized || _frameOpen)
     {
         return;
     }
 
     RefreshDrawableSize();
+    // 最小化窗口时没有合法渲染尺寸，主循环仍可继续处理事件
     if (_drawableWidth <= 0 || _drawableHeight <= 0)
     {
         return;
     }
 
+    // 以像素尺寸而非逻辑窗口尺寸判断交换链是否需要重建
     if (_swapChainWidth != static_cast<std::uint32_t>(_drawableWidth) ||
         _swapChainHeight != static_cast<std::uint32_t>(_drawableHeight))
     {
+        // ResizeSwapChain 内部等待队列并重建所有尺寸相关资源
         std::string resizeError;
         if (!ResizeSwapChain(
                 static_cast<std::uint32_t>(_drawableWidth),
@@ -278,14 +294,17 @@ void D3D12GraphicsBackend::BeginFrame()
     }
 
     std::string waitError;
+    // 只等待即将复用的帧 allocator，不阻塞其他在途帧
     if (!WaitForFrame(_frameIndex, &waitError))
     {
         std::cerr << waitError << '\n';
         return;
     }
+    // 围栏完成保证该帧时间戳已经写入读回缓冲
     ReadCompletedTimestamp(_frameIndex);
 
     FrameResource& frame = _frames[_frameIndex];
+    // allocator 和 command list 必须在完成围栏之后按此顺序 Reset
     HRESULT result = frame.CommandAllocator->Reset();
     if (FAILED(result))
     {
@@ -300,6 +319,7 @@ void D3D12GraphicsBackend::BeginFrame()
     }
 
     D3D12_RESOURCE_BARRIER barrier{};
+    // 当前交换链缓冲在整个帧记录期间保持 RENDER_TARGET
     barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
     barrier.Transition.pResource = _backBuffers[_frameIndex].Get();
     barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
@@ -307,14 +327,17 @@ void D3D12GraphicsBackend::BeginFrame()
     barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
     _commandList->ResourceBarrier(1, &barrier);
 
+    // RTV 槽位索引与 back buffer 索引保持一一对应
     D3D12_CPU_DESCRIPTOR_HANDLE rtv = _rtvHeap->GetCPUDescriptorHandleForHeapStart();
     rtv.ptr += static_cast<SIZE_T>(_frameIndex) * _rtvDescriptorSize;
     const D3D12_CPU_DESCRIPTOR_HANDLE dsv = _dsvHeap->GetCPUDescriptorHandleForHeapStart();
     _commandList->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
+    // 后端统一清理颜色和深度，具体 renderer 只记录场景命令
     constexpr std::array<float, 4> ClearColor{0.035F, 0.045F, 0.055F, 1.0F};
     _commandList->ClearRenderTargetView(rtv, ClearColor.data(), 0, nullptr);
     _commandList->ClearDepthStencilView(dsv, D3D12_CLEAR_FLAG_DEPTH, 1.0F, 0, 0, nullptr);
 
+    // viewport 和 scissor 始终覆盖完整交换链目标
     const D3D12_VIEWPORT viewport{
         0.0F,
         0.0F,
@@ -326,11 +349,13 @@ void D3D12GraphicsBackend::BeginFrame()
     const D3D12_RECT scissor{0, 0, static_cast<LONG>(_swapChainWidth), static_cast<LONG>(_swapChainHeight)};
     _commandList->RSSetViewports(1, &viewport);
     _commandList->RSSetScissorRects(1, &scissor);
+    // 所有 renderer 共享同一个 shader-visible 描述符堆
     ID3D12DescriptorHeap* heaps[] = {_srvHeap.Get()};
     _commandList->SetDescriptorHeaps(1, heaps);
 
     if (_timestampQueryHeap != nullptr)
     {
+        // 时间戳覆盖本帧所有场景和 ImGui 命令
         _commandList->EndQuery(_timestampQueryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, _frameIndex * 2U);
     }
     _frameOpen = true;
@@ -343,6 +368,7 @@ void D3D12GraphicsBackend::BeginImGuiFrame(Gui::ImGuiLayer& guiLayer)
 
 void D3D12GraphicsBackend::RenderImGui(Gui::ImGuiLayer& guiLayer)
 {
+    // D3D12 ImGui 后端把绘制命令追加到仍打开的场景命令列表
     if (_frameOpen)
     {
         guiLayer.EndFrame(_commandList.Get());
@@ -351,13 +377,16 @@ void D3D12GraphicsBackend::RenderImGui(Gui::ImGuiLayer& guiLayer)
 
 void D3D12GraphicsBackend::Present()
 {
+    // 最小化或 BeginFrame 失败时没有可提交命令
     if (!_frameOpen)
     {
         return;
     }
 
+    // 只有查询堆和回读目标同时有效时才记录 Resolve
     if (_timestampQueryHeap != nullptr && _timestampReadback != nullptr)
     {
+        // Resolve 写入当前帧独占区域，下一次复用该帧时再读取
         const std::uint32_t queryStart = _frameIndex * 2U;
         _commandList->EndQuery(_timestampQueryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, queryStart + 1U);
         _commandList->ResolveQueryData(
@@ -370,6 +399,7 @@ void D3D12GraphicsBackend::Present()
     }
 
     D3D12_RESOURCE_BARRIER barrier{};
+    // Present 前必须把交换链缓冲恢复为 PRESENT
     barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
     barrier.Transition.pResource = _backBuffers[_frameIndex].Get();
     barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
@@ -377,6 +407,7 @@ void D3D12GraphicsBackend::Present()
     barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
     _commandList->ResourceBarrier(1, &barrier);
 
+    // 命令列表只有成功关闭后才能交给队列执行
     HRESULT result = _commandList->Close();
     if (FAILED(result))
     {
@@ -385,9 +416,11 @@ void D3D12GraphicsBackend::Present()
         return;
     }
 
+    // 当前后端每帧只提交一个包含场景和 ImGui 的直接命令列表
     ID3D12CommandList* lists[] = {_commandList.Get()};
     _commandQueue->ExecuteCommandLists(1, lists);
 
+    // 非 VSync 模式只在设备和交换链都支持时启用 tearing
     const UINT syncInterval = _vSyncEnabled ? 1U : 0U;
     const UINT presentFlags = !_vSyncEnabled && _tearingSupported ? DXGI_PRESENT_ALLOW_TEARING : 0U;
     result = _swapChain->Present(syncInterval, presentFlags);
@@ -396,7 +429,9 @@ void D3D12GraphicsBackend::Present()
         ReportFailure("IDXGISwapChain::Present", result);
     }
 
+    // 围栏值写回提交时使用的旧 frameIndex
     const std::uint64_t fenceValue = _nextFenceValue++;
+    // Signal 排在 Execute 和 Present 后，完成值覆盖本帧全部 GPU 工作
     result = _commandQueue->Signal(_fence.Get(), fenceValue);
     if (FAILED(result))
     {
@@ -407,12 +442,14 @@ void D3D12GraphicsBackend::Present()
         _frames[_frameIndex].FenceValue = fenceValue;
     }
 
+    // Present 后交换链索引可能变化，下一帧必须重新查询
     _frameIndex = _swapChain->GetCurrentBackBufferIndex();
     _frameOpen = false;
 }
 
 void D3D12GraphicsBackend::RefreshDrawableSize()
 {
+    // D3D12 交换链使用真实像素尺寸以适配 HiDPI 缩放
     if (_window == nullptr)
     {
         _drawableWidth = 0;
@@ -490,6 +527,7 @@ ID3D12CommandQueue* D3D12GraphicsBackend::CommandQueue() const
 
 ID3D12GraphicsCommandList* D3D12GraphicsBackend::CommandList() const
 {
+    // 算法只能在后端已打开帧命令列表时记录 GPU 工作
     return _frameOpen ? _commandList.Get() : nullptr;
 }
 
@@ -520,12 +558,15 @@ bool D3D12GraphicsBackend::FrameOpen() const
 
 D3D12DescriptorAllocation D3D12GraphicsBackend::AllocateSrvDescriptor()
 {
+    // 固定堆耗尽时由调用方决定降级或报告错误
     if (_srvHeap == nullptr || _freeSrvIndices.empty())
     {
         return {};
     }
 
+    // 槽位一经分配在显式归还前不会移动
     D3D12DescriptorAllocation allocation{};
+    // CPU/GPU 句柄必须由同一索引和各自堆起点计算
     allocation.Index = _freeSrvIndices.back();
     _freeSrvIndices.pop_back();
     allocation.Cpu = _srvHeap->GetCPUDescriptorHandleForHeapStart();
@@ -541,6 +582,7 @@ void D3D12GraphicsBackend::ReleaseSrvDescriptor(D3D12DescriptorAllocation& alloc
     {
         return;
     }
+    // 调用方句柄清空可阻止重复释放同一槽位
     _freeSrvIndices.push_back(allocation.Index);
     allocation = {};
 }
@@ -549,6 +591,7 @@ bool D3D12GraphicsBackend::ExecuteImmediate(
     const std::function<bool(ID3D12GraphicsCommandList*, std::string*)>& recorder,
     std::string* errorMessage)
 {
+    // 独立 allocator 避免破坏正在记录或等待的帧资源
     Microsoft::WRL::ComPtr<ID3D12CommandAllocator> allocator;
     HRESULT result = _device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&allocator));
     if (FAILED(result))
@@ -572,6 +615,7 @@ bool D3D12GraphicsBackend::ExecuteImmediate(
 
     if (!recorder(commandList.Get(), errorMessage))
     {
+        // recorder 负责提供比通用 HRESULT 更具体的资源错误
         return false;
     }
 
@@ -581,8 +625,10 @@ bool D3D12GraphicsBackend::ExecuteImmediate(
         SetError(errorMessage, "Close immediate command list", result);
         return false;
     }
+    // 立即路径的局部列表单独提交但仍进入共享围栏序列
     ID3D12CommandList* lists[] = {commandList.Get()};
     _commandQueue->ExecuteCommandLists(1, lists);
+    // 局部 COM 对象离开函数前必须确认 GPU 已消费命令
     return SignalAndWait(errorMessage);
 }
 
@@ -590,6 +636,7 @@ bool D3D12GraphicsBackend::CreateDeviceAndQueue(std::string* errorMessage)
 {
     UINT factoryFlags = 0;
 #if !defined(NDEBUG)
+    // Debug 层必须在创建设备前启用
     Microsoft::WRL::ComPtr<ID3D12Debug> debugController;
     if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debugController))))
     {
@@ -598,6 +645,7 @@ bool D3D12GraphicsBackend::CreateDeviceAndQueue(std::string* errorMessage)
     }
 #endif
 
+    // DXGI factory 负责适配器枚举 交换链创建和呈现能力查询
     HRESULT result = CreateDXGIFactory2(factoryFlags, IID_PPV_ARGS(&_factory));
     if (FAILED(result))
     {
@@ -608,6 +656,7 @@ bool D3D12GraphicsBackend::CreateDeviceAndQueue(std::string* errorMessage)
     Microsoft::WRL::ComPtr<IDXGIFactory5> factory5;
     if (SUCCEEDED(_factory.As(&factory5)))
     {
+        // tearing 是可选呈现能力，不影响基础 DX12 初始化
         BOOL allowTearing = FALSE;
         if (SUCCEEDED(factory5->CheckFeatureSupport(
                 DXGI_FEATURE_PRESENT_ALLOW_TEARING,
@@ -618,6 +667,7 @@ bool D3D12GraphicsBackend::CreateDeviceAndQueue(std::string* errorMessage)
         }
     }
 
+    // 按高性能偏好枚举并跳过软件适配器
     for (UINT adapterIndex = 0;; ++adapterIndex)
     {
         Microsoft::WRL::ComPtr<IDXGIAdapter1> candidate;
@@ -640,6 +690,7 @@ bool D3D12GraphicsBackend::CreateDeviceAndQueue(std::string* errorMessage)
         {
             continue;
         }
+        // 探测调用不创建设备，只验证最低功能级
         if (SUCCEEDED(D3D12CreateDevice(candidate.Get(), D3D_FEATURE_LEVEL_12_0, __uuidof(ID3D12Device), nullptr)))
         {
             _adapter = candidate;
@@ -648,6 +699,7 @@ bool D3D12GraphicsBackend::CreateDeviceAndQueue(std::string* errorMessage)
         }
     }
 
+    // 不回退 WARP，避免基准误把软件实现记录为 GPU 结果
     if (_adapter == nullptr)
     {
         if (errorMessage != nullptr)
@@ -658,6 +710,7 @@ bool D3D12GraphicsBackend::CreateDeviceAndQueue(std::string* errorMessage)
     }
 
     LARGE_INTEGER driverVersion{};
+    // 驱动版本只用于日志和 benchmark，不作为能力判断依据
     if (SUCCEEDED(_adapter->CheckInterfaceSupport(__uuidof(IDXGIDevice), &driverVersion)))
     {
         std::ostringstream versionStream;
@@ -677,6 +730,7 @@ bool D3D12GraphicsBackend::CreateDeviceAndQueue(std::string* errorMessage)
     }
 
 #if !defined(NDEBUG)
+    // 严重验证错误在开发构建中立即中断
     Microsoft::WRL::ComPtr<ID3D12InfoQueue> infoQueue;
     if (SUCCEEDED(_device.As(&infoQueue)))
     {
@@ -685,7 +739,9 @@ bool D3D12GraphicsBackend::CreateDeviceAndQueue(std::string* errorMessage)
     }
 #endif
 
+    // 单 direct queue 保证计算生成网格与后续图形读取天然有序
     D3D12_COMMAND_QUEUE_DESC queueDescription{};
+    // 当前 graphics/compute/copy 工作统一记录到 direct queue
     queueDescription.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
     queueDescription.Priority = D3D12_COMMAND_QUEUE_PRIORITY_NORMAL;
     result = _device->CreateCommandQueue(&queueDescription, IID_PPV_ARGS(&_commandQueue));
@@ -706,6 +762,7 @@ bool D3D12GraphicsBackend::CreateSwapChain(std::string* errorMessage)
     description.SampleDesc.Count = 1;
     description.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
     description.BufferCount = FrameCount;
+    // flip discard 是现代 DXGI 的低开销呈现模型
     description.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
     description.Flags = _tearingSupported ? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0U;
 
@@ -722,6 +779,7 @@ bool D3D12GraphicsBackend::CreateSwapChain(std::string* errorMessage)
         SetError(errorMessage, "CreateSwapChainForHwnd", result);
         return false;
     }
+    // 禁止 DXGI 接管 Alt+Enter，窗口模式由 SDL 管理
     _factory->MakeWindowAssociation(_windowHandle, DXGI_MWA_NO_ALT_ENTER);
     result = swapChain.As(&_swapChain);
     if (FAILED(result))
@@ -735,6 +793,7 @@ bool D3D12GraphicsBackend::CreateSwapChain(std::string* errorMessage)
 
 bool D3D12GraphicsBackend::CreateDescriptorHeaps(std::string* errorMessage)
 {
+    // 每个交换链缓冲占用一个 RTV 槽位
     D3D12_DESCRIPTOR_HEAP_DESC rtvDescription{};
     rtvDescription.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
     rtvDescription.NumDescriptors = FrameCount;
@@ -746,6 +805,7 @@ bool D3D12GraphicsBackend::CreateDescriptorHeaps(std::string* errorMessage)
     }
 
     D3D12_DESCRIPTOR_HEAP_DESC dsvDescription{};
+    // 所有帧共享一个随交换链尺寸重建的深度缓冲
     dsvDescription.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
     dsvDescription.NumDescriptors = 1;
     result = _device->CreateDescriptorHeap(&dsvDescription, IID_PPV_ARGS(&_dsvHeap));
@@ -756,6 +816,7 @@ bool D3D12GraphicsBackend::CreateDescriptorHeaps(std::string* errorMessage)
     }
 
     D3D12_DESCRIPTOR_HEAP_DESC srvDescription{};
+    // renderer 和算法从同一可见堆分配稳定资源视图
     srvDescription.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
     srvDescription.NumDescriptors = SrvDescriptorCount;
     srvDescription.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
@@ -769,6 +830,7 @@ bool D3D12GraphicsBackend::CreateDescriptorHeaps(std::string* errorMessage)
     _rtvDescriptorSize = _device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
     _srvDescriptorSize = _device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
     _freeSrvIndices.reserve(SrvDescriptorCount);
+    // 逆序填充使首次分配从索引零开始
     for (std::uint32_t index = SrvDescriptorCount; index > 0; --index)
     {
         _freeSrvIndices.push_back(index - 1U);
@@ -778,6 +840,7 @@ bool D3D12GraphicsBackend::CreateDescriptorHeaps(std::string* errorMessage)
 
 bool D3D12GraphicsBackend::CreateFrameResources(std::string* errorMessage)
 {
+    // allocator 不能在对应 GPU 工作完成前复用
     for (FrameResource& frame : _frames)
     {
         const HRESULT result = _device->CreateCommandAllocator(
@@ -801,6 +864,7 @@ bool D3D12GraphicsBackend::CreateFrameResources(std::string* errorMessage)
         SetError(errorMessage, "Create graphics command list", result);
         return false;
     }
+    // 新建命令列表默认处于 recording 状态，初始化后先关闭
     result = _commandList->Close();
     if (FAILED(result))
     {
@@ -814,6 +878,7 @@ bool D3D12GraphicsBackend::CreateFrameResources(std::string* errorMessage)
         SetError(errorMessage, "Create frame fence", result);
         return false;
     }
+    // 自动重置事件供所有帧等待顺序复用
     _fenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
     if (_fenceEvent == nullptr)
     {
@@ -828,6 +893,7 @@ bool D3D12GraphicsBackend::CreateFrameResources(std::string* errorMessage)
 
 bool D3D12GraphicsBackend::CreateRenderTargets(std::string* errorMessage)
 {
+    // RTV 描述符按交换链缓冲索引连续排列
     D3D12_CPU_DESCRIPTOR_HANDLE rtv = _rtvHeap->GetCPUDescriptorHandleForHeapStart();
     for (std::uint32_t index = 0; index < FrameCount; ++index)
     {
@@ -841,6 +907,7 @@ bool D3D12GraphicsBackend::CreateRenderTargets(std::string* errorMessage)
         rtv.ptr += _rtvDescriptorSize;
     }
 
+    // 深度资源尺寸必须始终与交换链一致
     D3D12_RESOURCE_DESC depthDescription{};
     depthDescription.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
     depthDescription.Width = _swapChainWidth;
@@ -853,6 +920,7 @@ bool D3D12GraphicsBackend::CreateRenderTargets(std::string* errorMessage)
     depthDescription.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
     const D3D12_HEAP_PROPERTIES heapProperties = HeapProperties(D3D12_HEAP_TYPE_DEFAULT);
     D3D12_CLEAR_VALUE clearValue{};
+    // 优化清除值与每帧 ClearDepthStencilView 保持一致
     clearValue.Format = DepthBufferFormat;
     clearValue.DepthStencil.Depth = 1.0F;
     HRESULT result = _device->CreateCommittedResource(
@@ -873,6 +941,7 @@ bool D3D12GraphicsBackend::CreateRenderTargets(std::string* errorMessage)
 
 bool D3D12GraphicsBackend::CreateTimestampResources(std::string* errorMessage)
 {
+    // 每个帧槽位保存开始和结束两个时间戳
     D3D12_QUERY_HEAP_DESC queryDescription{};
     queryDescription.Type = D3D12_QUERY_HEAP_TYPE_TIMESTAMP;
     queryDescription.Count = FrameCount * 2U;
@@ -883,6 +952,7 @@ bool D3D12GraphicsBackend::CreateTimestampResources(std::string* errorMessage)
         return false;
     }
 
+    // 共享读回缓冲按 frameIndex 划分互不覆盖的区域
     D3D12_RESOURCE_DESC readbackDescription{};
     readbackDescription.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
     readbackDescription.Width = FrameCount * 2U * sizeof(std::uint64_t);
@@ -920,6 +990,7 @@ bool D3D12GraphicsBackend::ResizeSwapChain(std::uint32_t width, std::uint32_t he
     {
         return true;
     }
+    // ResizeBuffers 要求所有旧 back buffer 引用已不再被 GPU 使用
     if (!SignalAndWait(errorMessage))
     {
         return false;
@@ -934,6 +1005,7 @@ bool D3D12GraphicsBackend::ResizeSwapChain(std::uint32_t width, std::uint32_t he
     }
     _swapChainWidth = width;
     _swapChainHeight = height;
+    // ResizeBuffers 可能改变当前缓冲索引
     _frameIndex = _swapChain->GetCurrentBackBufferIndex();
     return CreateRenderTargets(errorMessage);
 }
@@ -942,6 +1014,7 @@ bool D3D12GraphicsBackend::WaitForFrame(std::uint32_t frameIndex, std::string* e
 {
     _lastGpuWaitMilliseconds = 0.0F;
     const std::uint64_t fenceValue = _frames[frameIndex].FenceValue;
+    // 从未提交或已经完成的帧资源可直接复用
     if (fenceValue == 0 || _fence->GetCompletedValue() >= fenceValue)
     {
         return true;
@@ -952,6 +1025,7 @@ bool D3D12GraphicsBackend::WaitForFrame(std::uint32_t frameIndex, std::string* e
         SetError(errorMessage, "Set frame fence event", result);
         return false;
     }
+    // 该等待只覆盖当前 frame allocator 的所有权冲突
     const auto waitStart = std::chrono::steady_clock::now();
     WaitForSingleObject(_fenceEvent, INFINITE);
     _lastGpuWaitMilliseconds =
@@ -961,6 +1035,7 @@ bool D3D12GraphicsBackend::WaitForFrame(std::uint32_t frameIndex, std::string* e
 
 bool D3D12GraphicsBackend::SignalAndWait(std::string* errorMessage)
 {
+    // 全队列同步只用于资源销毁、缩放和立即提交
     const std::uint64_t fenceValue = _nextFenceValue++;
     HRESULT result = _commandQueue->Signal(_fence.Get(), fenceValue);
     if (FAILED(result))
@@ -980,12 +1055,14 @@ bool D3D12GraphicsBackend::SignalAndWait(std::string* errorMessage)
 
 void D3D12GraphicsBackend::ReadCompletedTimestamp(std::uint32_t frameIndex)
 {
+    // 调用方已等待该 frameIndex 的围栏，因此 Map 不会读取在途写入
     if (_timestampReadback == nullptr || _timestampFrequency == 0 || _frames[frameIndex].FenceValue == 0)
     {
         return;
     }
 
     const std::uint64_t offset = static_cast<std::uint64_t>(frameIndex) * 2U * sizeof(std::uint64_t);
+    // readRange 限制调试层和驱动只同步当前时间戳对
     D3D12_RANGE readRange{static_cast<SIZE_T>(offset), static_cast<SIZE_T>(offset + 2U * sizeof(std::uint64_t))};
     void* mappedData = nullptr;
     if (SUCCEEDED(_timestampReadback->Map(0, &readRange, &mappedData)))
@@ -994,6 +1071,7 @@ void D3D12GraphicsBackend::ReadCompletedTimestamp(std::uint32_t frameIndex)
         const std::uint64_t* pair = timestamps + frameIndex * 2U;
         if (pair[1] >= pair[0])
         {
+            // 时间戳频率是每秒 tick 数，结果统一输出毫秒
             _lastGpuFrameMilliseconds =
                 static_cast<float>(static_cast<double>(pair[1] - pair[0]) * 1000.0 /
                                    static_cast<double>(_timestampFrequency));
@@ -1005,6 +1083,7 @@ void D3D12GraphicsBackend::ReadCompletedTimestamp(std::uint32_t frameIndex)
 
 void D3D12GraphicsBackend::ReleaseRenderTargets()
 {
+    // 描述符堆保留，Resize 后在相同槽位重建视图
     _depthBuffer.Reset();
     for (auto& backBuffer : _backBuffers)
     {
@@ -1017,6 +1096,7 @@ void D3D12GraphicsBackend::ReportFailure(const char* operation, HRESULT result) 
     std::cerr << operation << " failed: " << HResultText(result);
     if (_device != nullptr)
     {
+        // 设备移除原因通常比触发失败的 API 更接近根因
         const HRESULT removedReason = _device->GetDeviceRemovedReason();
         if (FAILED(removedReason))
         {

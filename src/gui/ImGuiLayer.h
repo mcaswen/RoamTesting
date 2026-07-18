@@ -21,6 +21,9 @@
 
 namespace ParallelRoam::Gui
 {
+/// <summary>
+/// ImGui OpenGL 后端初始化参数
+/// </summary>
 struct ImGuiOpenGlBackendConfig
 {
     SDL_Window* Window{nullptr};
@@ -29,12 +32,16 @@ struct ImGuiOpenGlBackendConfig
 };
 
 #if defined(PARALLEL_ROAM_GRAPHICS_API_D3D12)
+/// <summary>
+/// ImGui D3D12 后端初始化参数
+/// </summary>
 struct ImGuiD3D12BackendConfig
 {
     SDL_Window* Window{nullptr};
     ID3D12Device* Device{nullptr};
     ID3D12CommandQueue* CommandQueue{nullptr};
     ID3D12DescriptorHeap* SrvDescriptorHeap{nullptr};
+    // 字体描述符由 D3D12GraphicsBackend 预留并保持稳定
     D3D12_CPU_DESCRIPTOR_HANDLE FontSrvCpuDescriptor{};
     D3D12_GPU_DESCRIPTOR_HANDLE FontSrvGpuDescriptor{};
     DXGI_FORMAT RenderTargetFormat{DXGI_FORMAT_R8G8B8A8_UNORM};
@@ -43,6 +50,9 @@ struct ImGuiD3D12BackendConfig
 };
 #endif
 
+/// <summary>
+/// 当前 ImGui context 使用的渲染后端
+/// </summary>
 enum class ImGuiRenderBackend
 {
     None,
@@ -178,10 +188,6 @@ struct TerrainPanelState
 class ImGuiLayer
 {
 public:
-    /// <summary>
-    /// 使用明确的 OpenGL 后端配置初始化 ImGui。
-    /// DX12 阶段会增加独立配置类型，不复用 OpenGL 参数。
-    /// </summary>
     bool Initialize(const ImGuiOpenGlBackendConfig& config);
 #if defined(PARALLEL_ROAM_GRAPHICS_API_D3D12)
     bool Initialize(const ImGuiD3D12BackendConfig& config);
@@ -201,13 +207,16 @@ public:
 private:
     // 防止未初始化或重复 Shutdown 时调用 backend 清理接口
     bool _initialized{false};
+    // Shutdown 和 EndFrame 依赖此值选择匹配的后端接口
     ImGuiRenderBackend _renderBackend{ImGuiRenderBackend::None};
 
     // 性能 overlay 的详细模式属于 GUI 展示偏好，不触发 renderer 设置更新
     bool _performanceOverlayDetailed{false};
 #if defined(PARALLEL_ROAM_GRAPHICS_API_D3D12)
+    // 字体描述符由图形后端预留，ImGui 回调只借用固定句柄
     D3D12_CPU_DESCRIPTOR_HANDLE _fontSrvCpuDescriptor{};
     D3D12_GPU_DESCRIPTOR_HANDLE _fontSrvGpuDescriptor{};
+    // 记录 ImGui 是否已经接管固定字体槽位
     bool _fontDescriptorInUse{false};
 #endif
 };

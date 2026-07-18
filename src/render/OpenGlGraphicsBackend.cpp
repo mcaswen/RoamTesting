@@ -13,11 +13,13 @@ namespace
 {
 GLADapiproc LoadOpenGlProc(const char* name)
 {
+    // SDL 返回平台函数指针，GLAD 通过统一回调加载入口
     return reinterpret_cast<GLADapiproc>(SDL_GL_GetProcAddress(name));
 }
 
 const char* ImGuiGlslVersion()
 {
+    // macOS 桌面 OpenGL 上限为 4.1，其余平台使用计算路径所需的 4.3
 #if defined(__APPLE__)
     return "#version 410";
 #else
@@ -27,6 +29,7 @@ const char* ImGuiGlslVersion()
 
 bool SetOpenGlAttribute(SDL_GLattr attribute, int value, const char* name, std::string* errorMessage)
 {
+    // 窗口创建前集中检查属性设置，避免得到配置不完整的 context
     if (SDL_GL_SetAttribute(attribute, value) == 0)
     {
         return true;
@@ -57,6 +60,7 @@ const char* OpenGlGraphicsBackend::Name() const
 
 bool OpenGlGraphicsBackend::ConfigureWindow(std::string* errorMessage)
 {
+    // 深度和 stencil 随默认 framebuffer 一次创建
     if (!SetOpenGlAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE, "profile", errorMessage) ||
         !SetOpenGlAttribute(SDL_GL_DOUBLEBUFFER, 1, "double buffer", errorMessage) ||
         !SetOpenGlAttribute(SDL_GL_DEPTH_SIZE, 24, "depth size", errorMessage) ||
@@ -66,6 +70,7 @@ bool OpenGlGraphicsBackend::ConfigureWindow(std::string* errorMessage)
     }
 
 #if defined(__APPLE__)
+    // Apple 要求 core context 同时声明 forward compatible
     return SetOpenGlAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4, "major version", errorMessage) &&
            SetOpenGlAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1, "minor version", errorMessage) &&
            SetOpenGlAttribute(
@@ -74,6 +79,7 @@ bool OpenGlGraphicsBackend::ConfigureWindow(std::string* errorMessage)
                "context flags",
                errorMessage);
 #else
+    // 4.3 是现有 OpenGL GPU ROAM-like 计算路径的最低版本
     return SetOpenGlAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4, "major version", errorMessage) &&
            SetOpenGlAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3, "minor version", errorMessage) &&
            SetOpenGlAttribute(SDL_GL_CONTEXT_FLAGS, 0, "context flags", errorMessage);
@@ -87,6 +93,7 @@ std::uint32_t OpenGlGraphicsBackend::RequiredSdlWindowFlags() const
 
 bool OpenGlGraphicsBackend::Initialize(SDL_Window* window, std::string* errorMessage)
 {
+    // Window 保留所有权，本后端只在自身生命周期内借用
     if (window == nullptr)
     {
         if (errorMessage != nullptr)
@@ -108,6 +115,7 @@ bool OpenGlGraphicsBackend::Initialize(SDL_Window* window, std::string* errorMes
         return false;
     }
 
+    // GLAD 加载和后续所有 GL 调用依赖当前线程已绑定 context
     if (SDL_GL_MakeCurrent(_window, _context) != 0)
     {
         if (errorMessage != nullptr)
@@ -118,6 +126,7 @@ bool OpenGlGraphicsBackend::Initialize(SDL_Window* window, std::string* errorMes
         return false;
     }
 
+    // 函数加载失败后不能创建任何渲染资源
     const int version = gladLoadGL(LoadOpenGlProc);
     if (version == 0)
     {
@@ -134,11 +143,13 @@ bool OpenGlGraphicsBackend::Initialize(SDL_Window* window, std::string* errorMes
     std::cout << "OpenGL renderer: " << glGetString(GL_RENDERER) << '\n';
     std::cout << "OpenGL version: " << glGetString(GL_VERSION) << '\n';
 
+    // 缓存字符串以供 benchmark 使用，避免 context 销毁后访问 GL 返回指针
     const auto* renderer = reinterpret_cast<const char*>(glGetString(GL_RENDERER));
     const auto* versionString = reinterpret_cast<const char*>(glGetString(GL_VERSION));
     _adapterName = renderer != nullptr ? renderer : "Unknown OpenGL adapter";
     _versionString = versionString != nullptr ? versionString : "Unknown OpenGL version";
 
+    // 默认关闭 VSync，让性能基准反映真实吞吐而非刷新率上限
     if (!SetVSyncEnabled(false))
     {
         std::cerr << "OpenGL backend could not disable VSync during initialization.\n";
@@ -149,6 +160,7 @@ bool OpenGlGraphicsBackend::Initialize(SDL_Window* window, std::string* errorMes
 
 bool OpenGlGraphicsBackend::InitializeImGui(Gui::ImGuiLayer& guiLayer, std::string* errorMessage)
 {
+    // ImGui 配置只借用窗口和 context，不转移所有权
     const Gui::ImGuiOpenGlBackendConfig config{
         .Window = _window,
         .Context = _context,
@@ -168,6 +180,7 @@ bool OpenGlGraphicsBackend::InitializeImGui(Gui::ImGuiLayer& guiLayer, std::stri
 
 void OpenGlGraphicsBackend::WaitForGpuIdle()
 {
+    // OpenGL 没有本后端管理的显式 fence，销毁前使用全队列等待
     if (_context != nullptr)
     {
         glFinish();
@@ -176,6 +189,7 @@ void OpenGlGraphicsBackend::WaitForGpuIdle()
 
 void OpenGlGraphicsBackend::Shutdown()
 {
+    // SDL 窗口由 Window 拥有，context 必须先于窗口释放
     if (_context != nullptr)
     {
         SDL_GL_DeleteContext(_context);
@@ -192,6 +206,7 @@ void OpenGlGraphicsBackend::Shutdown()
 
 void OpenGlGraphicsBackend::BeginFrame()
 {
+    // 默认 framebuffer 每帧由后端统一清除，地形渲染器只提交几何
     glClearColor(0.035F, 0.045F, 0.055F, 1.0F);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 }
@@ -223,17 +238,20 @@ void OpenGlGraphicsBackend::RefreshDrawableSize()
         return;
     }
 
+    // 逻辑窗口尺寸由 Window 管理，此处只保存渲染目标像素尺寸
     SDL_GL_GetDrawableSize(_window, &_drawableWidth, &_drawableHeight);
 }
 
 bool OpenGlGraphicsBackend::SetVSyncEnabled(bool enabled)
 {
     const int requestedInterval = enabled ? 1 : 0;
+    // 避免重复调用驱动交换间隔接口
     if (_swapInterval == requestedInterval)
     {
         return true;
     }
 
+    // 失败时回读真实状态，保证 UI 不展示未应用的请求值
     if (SDL_GL_SetSwapInterval(requestedInterval) != 0)
     {
         std::cerr << "SDL_GL_SetSwapInterval failed: " << SDL_GetError() << '\n';
@@ -282,11 +300,13 @@ bool OpenGlGraphicsBackend::SupportsGpuRoamLike() const
 
 float OpenGlGraphicsBackend::LastGpuFrameMilliseconds() const
 {
+    // OpenGL 路径沿用算法自身计时，后端不额外插入整帧查询
     return 0.0F;
 }
 
 float OpenGlGraphicsBackend::LastGpuWaitMilliseconds() const
 {
+    // OpenGL 帧循环没有显式逐帧 fence 等待统计
     return 0.0F;
 }
 

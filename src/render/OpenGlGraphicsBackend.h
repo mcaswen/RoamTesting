@@ -6,6 +6,9 @@
 
 namespace ParallelRoam::Render
 {
+/// <summary>
+/// 保留迁移前 OpenGL 行为的图形后端适配器
+/// </summary>
 class OpenGlGraphicsBackend final : public IGraphicsBackend
 {
 public:
@@ -43,8 +46,10 @@ public:
     [[nodiscard]] bool IsValid() const override;
 
 private:
+    // SDL 窗口由 Window 持有，OpenGL context 由本类持有
     SDL_Window* _window{nullptr};
     SDL_GLContext _context{nullptr};
+    // drawable 尺寸独立于 HiDPI 下的逻辑窗口尺寸
     int _drawableWidth{0};
     int _drawableHeight{0};
     int _swapInterval{-1};

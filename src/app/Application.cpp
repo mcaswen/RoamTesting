@@ -114,6 +114,7 @@ void Application::ConfigureRuntimeBenchmark(const RuntimeBenchmarkOverrides& ove
 
 bool Application::Initialize()
 {
+    // 图形后端由构建配置唯一选择并先于窗口属性配置创建
     _graphicsBackend = Render::CreateConfiguredGraphicsBackend();
     if (_graphicsBackend == nullptr)
     {
@@ -122,11 +123,13 @@ bool Application::Initialize()
         return false;
     }
 
+    // SDL 必须先初始化，后端才能设置窗口属性或查询平台句柄
     if (!_window.Initialize())
     {
         return false;
     }
 
+    // ConfigureWindow 位于 SDL 初始化和窗口创建之间
     std::string graphicsError;
     if (!_graphicsBackend->ConfigureWindow(&graphicsError))
     {
@@ -135,6 +138,7 @@ bool Application::Initialize()
         return false;
     }
 
+    // 后端决定窗口是否携带 OpenGL 标志或只作为原生交换链目标
     if (!_window.Create(
             "Parallel ROAM",
             1280,
@@ -145,6 +149,7 @@ bool Application::Initialize()
         return false;
     }
 
+    // 后端只借用窗口，Shutdown 顺序必须早于 Window::Destroy
     if (!_graphicsBackend->Initialize(_window.NativeWindow(), &graphicsError))
     {
         std::cerr << graphicsError << '\n';
@@ -152,6 +157,7 @@ bool Application::Initialize()
         return false;
     }
 
+    // 输入使用逻辑窗口尺寸，渲染尺寸由后端单独维护
     _input.SetWindowSize(_window.Width(), _window.Height());
     _terrainPanelState.VSyncEnabled = _graphicsBackend->VSyncEnabled();
     _terrainPanelState.HeightMapIndex = 0;
@@ -173,6 +179,7 @@ bool Application::Initialize()
         return false;
     }
 
+    // ImGui 依赖已建立的图形设备和 renderer 使用后的稳定资源布局
     if (!_graphicsBackend->InitializeImGui(_guiLayer, &graphicsError))
     {
         std::cerr << graphicsError << '\n';
@@ -180,6 +187,7 @@ bool Application::Initialize()
         return false;
     }
 
+    // 初始化完成后重置时钟，避免资源加载耗时进入首帧 delta
     _lastFrameTime = std::chrono::steady_clock::now();
     _initialized = true;
     return true;
@@ -229,6 +237,7 @@ int Application::Run(int maxFrameCount)
             _camera.Update(_input, frameTiming.ClampedDeltaSeconds);
         }
 
+        // RenderFrame 记录场景和 GUI，Present 统一关闭并提交后端帧
         RenderFrame(frameTiming);
         _graphicsBackend->Present();
         CompleteRuntimeBenchmarkFrame();
@@ -255,13 +264,14 @@ int Application::Run(int maxFrameCount)
 
 void Application::Shutdown()
 {
-    // 所有子系统的 Shutdown 都允许重复调用。
-    // 不能只根据窗口是否存在早退，因为 SDL 可能已初始化但窗口创建失败。
+    // 所有子系统的 Shutdown 都允许重复调用
+    // SDL 可能已初始化但窗口创建失败，因此不能按窗口状态提前返回
     if (_graphicsBackend != nullptr && _graphicsBackend->IsValid())
     {
-        // DX12 资源由 GUI 和 terrain renderer 持有，销毁前必须完成所有在飞行帧。
+        // GUI 和 terrain renderer 持有 GPU 资源，销毁前必须完成所有在途帧
         _graphicsBackend->WaitForGpuIdle();
     }
+    // 依赖顺序为 GUI renderer 图形后端 SDL 窗口
     _guiLayer.Shutdown();
     _terrainRenderer.Shutdown();
     if (_graphicsBackend != nullptr)

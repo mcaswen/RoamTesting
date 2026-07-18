@@ -26,14 +26,20 @@ namespace
 {
 constexpr float MinRoamRebuildDistance = 0.30F;
 constexpr float RoamRebuildTerrainScale = 0.01F;
+// D3D12 常量缓冲地址按 256 字节对齐
 constexpr std::size_t ConstantBufferSize = 256U;
 
+/// <summary>
+/// 单个交换链帧使用的 CPU 网格上传资源
+/// </summary>
 struct D3D12MeshFrameResources
 {
+    // 每帧独立持有上传缓冲，避免覆盖 GPU 尚未消费的数据
     Microsoft::WRL::ComPtr<ID3D12Resource> VertexBuffer;
     Microsoft::WRL::ComPtr<ID3D12Resource> IndexBuffer;
     std::uint8_t* MappedVertices{nullptr};
     std::uint8_t* MappedIndices{nullptr};
+    // 缓冲只在容量不足时增长
     std::size_t VertexCapacityBytes{0};
     std::size_t IndexCapacityBytes{0};
     std::uint64_t MeshGeneration{0};
@@ -41,6 +47,9 @@ struct D3D12MeshFrameResources
     D3D12_INDEX_BUFFER_VIEW IndexView{};
 };
 
+/// <summary>
+/// 与 Terrain.hlsl 保持相同布局的帧常量
+/// </summary>
 struct TerrainConstants
 {
     glm::mat4 View{1.0F};
@@ -48,11 +57,14 @@ struct TerrainConstants
     glm::vec4 CameraPosition{0.0F, 0.0F, 0.0F, 1.0F};
     glm::vec4 LightDirection{0.0F, -1.0F, 0.0F, 0.0F};
     glm::vec4 LightColor{1.0F};
+    // LightingParameters 依次保存环境光、漫反射、高光和调试叠加强度
     glm::vec4 LightingParameters{0.0F};
     glm::ivec4 DebugParameters{0};
+    // 补齐 D3D12 常量缓冲的 256 字节对齐
     std::array<std::uint32_t, 12> Padding{};
 };
 
+// 编译期锁定 CPU 与 HLSL 的常量缓冲布局契约
 static_assert(sizeof(TerrainConstants) == ConstantBufferSize);
 
 D3D12_HEAP_PROPERTIES HeapProperties(D3D12_HEAP_TYPE type)
@@ -68,6 +80,7 @@ D3D12_RESOURCE_DESC BufferDescription(std::uint64_t size)
 {
     D3D12_RESOURCE_DESC description{};
     description.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+    // D3D12 不允许创建零字节资源，空数据在上层单独拒绝
     description.Width = std::max<std::uint64_t>(size, 1U);
     description.Height = 1;
     description.DepthOrArraySize = 1;
@@ -87,6 +100,7 @@ void SetError(std::string* errorMessage, const std::string& message)
 
 bool NeedsMeshRebuild(const TerrainRenderSettings& previous, const TerrainRenderSettings& next)
 {
+    // 仅筛选会改变几何或 LOD 拓扑的设置，材质参数不应触发重建
     return previous.TerrainSize != next.TerrainSize ||
            previous.HeightScale != next.HeightScale ||
            previous.UseTerrainLod != next.UseTerrainLod ||
@@ -103,6 +117,7 @@ glm::vec3 NormalizeLightDirection(const glm::vec3& lightDirection)
 {
     if (glm::dot(lightDirection, lightDirection) <= 0.000001F)
     {
+        // 零向量无法归一化，使用稳定默认方向避免向着色器写入 NaN
         return glm::normalize(glm::vec3{-0.45F, -1.0F, -0.35F});
     }
     return glm::normalize(lightDirection);
@@ -112,6 +127,7 @@ std::unique_ptr<Algorithms::ITerrainLodAlgorithm> CreateTerrainLodAlgorithm(
     Algorithms::TerrainLodAlgorithmId algorithmId,
     D3D12GraphicsBackend& backend)
 {
+    // CPU 算法与图形 API 无关，GPU 实现需要借用当前 D3D12 后端
     if (algorithmId == Algorithms::TerrainLodAlgorithmId::ClassicCpuRoam)
     {
         return std::make_unique<Algorithms::ClassicRoam::ClassicRoamTerrainLodAlgorithm>();
@@ -158,6 +174,7 @@ bool CreateMappedUploadBuffer(
     std::uint8_t*& mappedMemory,
     std::string* errorMessage)
 {
+    // 上传堆支持 CPU 持久映射，生命周期内不重复 Map 和 Unmap
     const D3D12_HEAP_PROPERTIES heapProperties = HeapProperties(D3D12_HEAP_TYPE_UPLOAD);
     const D3D12_RESOURCE_DESC description = BufferDescription(size);
     const HRESULT result = device->CreateCommittedResource(
@@ -172,6 +189,7 @@ bool CreateMappedUploadBuffer(
         SetError(errorMessage, "D3D12 upload buffer allocation failed");
         return false;
     }
+    // CPU 只写该资源，空读取范围允许驱动省略回读同步
     const D3D12_RANGE noReadRange{0, 0};
     void* mapped = nullptr;
     if (FAILED(resource->Map(0, &noReadRange, &mapped)))
@@ -202,6 +220,7 @@ D3D12_BLEND_DESC OpaqueBlendDescription()
 
 D3D12_RASTERIZER_DESC RasterizerDescription(D3D12_FILL_MODE fillMode)
 {
+    // 禁用剔除以容忍 CPU 和 GPU 网格在调试期间的绕序差异
     D3D12_RASTERIZER_DESC description{};
     description.FillMode = fillMode;
     description.CullMode = D3D12_CULL_MODE_NONE;
@@ -211,6 +230,7 @@ D3D12_RASTERIZER_DESC RasterizerDescription(D3D12_FILL_MODE fillMode)
 
 D3D12_DEPTH_STENCIL_DESC DepthStencilDescription()
 {
+    // LESS_EQUAL 允许共享边界上的等深度片元保持稳定
     D3D12_DEPTH_STENCIL_DESC description{};
     description.DepthEnable = TRUE;
     description.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
@@ -220,18 +240,24 @@ D3D12_DEPTH_STENCIL_DESC DepthStencilDescription()
 }
 } // namespace
 
+/// <summary>
+/// D3D12 地形渲染器持有的管线对象和逐帧资源
+/// </summary>
 struct D3D12TerrainRendererState
 {
+    // Backend 由 Application 持有，本状态只借用
     D3D12GraphicsBackend* Backend{nullptr};
     Microsoft::WRL::ComPtr<ID3D12RootSignature> RootSignature;
     Microsoft::WRL::ComPtr<ID3D12PipelineState> FillPipelineState;
     Microsoft::WRL::ComPtr<ID3D12PipelineState> WireframePipelineState;
     Microsoft::WRL::ComPtr<ID3D12CommandSignature> DrawIndexedCommandSignature;
+    // CPU 网格和常量缓冲按交换链帧隔离
     std::array<D3D12MeshFrameResources, D3D12GraphicsBackend::FrameCount> MeshFrames;
     std::array<Microsoft::WRL::ComPtr<ID3D12Resource>, D3D12GraphicsBackend::FrameCount> ConstantBuffers;
     std::array<std::uint8_t*, D3D12GraphicsBackend::FrameCount> MappedConstants{};
     Microsoft::WRL::ComPtr<ID3D12Resource> Texture;
     D3D12DescriptorAllocation TextureSrv;
+    // GPU LOD 缓冲由算法持有，renderer 只保存当前绘制需要的借用指针
     ID3D12Resource* GpuVertexBuffer{nullptr};
     ID3D12Resource* GpuIndexBuffer{nullptr};
     ID3D12Resource* GpuIndirectBuffer{nullptr};
@@ -244,12 +270,14 @@ namespace
 {
 bool CreateRootSignature(D3D12TerrainRendererState& state, std::string* errorMessage)
 {
+    // 根参数固定为帧常量 b0 和地形纹理 t0
     D3D12_DESCRIPTOR_RANGE srvRange{};
     srvRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
     srvRange.NumDescriptors = 1;
     srvRange.BaseShaderRegister = 0;
     srvRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
 
+    // 根 CBV 避免为每帧常量额外分配 CBV 描述符
     std::array<D3D12_ROOT_PARAMETER, 2> parameters{};
     parameters[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     parameters[0].Descriptor.ShaderRegister = 0;
@@ -259,6 +287,7 @@ bool CreateRootSignature(D3D12TerrainRendererState& state, std::string* errorMes
     parameters[1].DescriptorTable.pDescriptorRanges = &srvRange;
     parameters[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
+    // 地形纹理使用静态线性环绕采样器，避免额外占用描述符
     D3D12_STATIC_SAMPLER_DESC sampler{};
     sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
     sampler.AddressU = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
@@ -274,6 +303,7 @@ bool CreateRootSignature(D3D12TerrainRendererState& state, std::string* errorMes
     description.pParameters = parameters.data();
     description.NumStaticSamplers = 1;
     description.pStaticSamplers = &sampler;
+    // 未使用的可编程阶段明确拒绝根访问以缩小驱动验证范围
     description.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT |
                         D3D12_ROOT_SIGNATURE_FLAG_DENY_HULL_SHADER_ROOT_ACCESS |
                         D3D12_ROOT_SIGNATURE_FLAG_DENY_DOMAIN_SHADER_ROOT_ACCESS |
@@ -281,6 +311,7 @@ bool CreateRootSignature(D3D12TerrainRendererState& state, std::string* errorMes
 
     Microsoft::WRL::ComPtr<ID3DBlob> serialized;
     Microsoft::WRL::ComPtr<ID3DBlob> errors;
+    // 序列化错误 blob 提供比 HRESULT 更具体的根签名诊断
     HRESULT result = D3D12SerializeRootSignature(
         &description,
         D3D_ROOT_SIGNATURE_VERSION_1,
@@ -307,11 +338,13 @@ bool CreateRootSignature(D3D12TerrainRendererState& state, std::string* errorMes
 
 bool CreatePipelineStates(D3D12TerrainRendererState& state, std::string* errorMessage)
 {
+    // 着色器目录由构建系统注入，回退路径只服务于手动运行
 #if defined(PARALLEL_ROAM_DX12_SHADER_DIR)
     const std::filesystem::path shaderDirectory{PARALLEL_ROAM_DX12_SHADER_DIR};
 #else
     const std::filesystem::path shaderDirectory{"assets/shaders/dx12"};
 #endif
+    // 顶点和像素字节码必须来自同一构建配置
     const std::vector<std::uint8_t> vertexShader = ReadBinaryFile(shaderDirectory / "TerrainVS.cso", errorMessage);
     if (vertexShader.empty())
     {
@@ -323,6 +356,7 @@ bool CreatePipelineStates(D3D12TerrainRendererState& state, std::string* errorMe
         return false;
     }
 
+    // 输入布局必须与跨后端共享的 TerrainMeshVertex 内存布局一致
     const std::array<D3D12_INPUT_ELEMENT_DESC, 6> inputElements{{
         {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, static_cast<UINT>(offsetof(Terrain::TerrainMeshVertex, Position)), D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
         {"NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, static_cast<UINT>(offsetof(Terrain::TerrainMeshVertex, Normal)), D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
@@ -332,6 +366,7 @@ bool CreatePipelineStates(D3D12TerrainRendererState& state, std::string* errorMe
         {"TEXCOORD", 2, DXGI_FORMAT_R32_FLOAT, 0, static_cast<UINT>(offsetof(Terrain::TerrainMeshVertex, DebugHighlight)), D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
     }};
 
+    // PSO 格式必须与后端交换链和共享深度资源一致
     D3D12_GRAPHICS_PIPELINE_STATE_DESC description{};
     description.pRootSignature = state.RootSignature.Get();
     description.VS = {vertexShader.data(), vertexShader.size()};
@@ -346,6 +381,7 @@ bool CreatePipelineStates(D3D12TerrainRendererState& state, std::string* errorMe
     description.RTVFormats[0] = state.Backend->RenderTargetFormat();
     description.DSVFormat = state.Backend->DepthStencilFormat();
     description.SampleDesc.Count = 1;
+    // 先创建默认实体 PSO，失败时不尝试派生线框版本
     HRESULT result = state.Backend->Device()->CreateGraphicsPipelineState(
         &description,
         IID_PPV_ARGS(&state.FillPipelineState));
@@ -354,6 +390,7 @@ bool CreatePipelineStates(D3D12TerrainRendererState& state, std::string* errorMe
         SetError(errorMessage, "D3D12 solid terrain pipeline creation failed");
         return false;
     }
+    // 线框模式只替换光栅化状态，其余着色器和资源契约完全复用
     description.RasterizerState = RasterizerDescription(D3D12_FILL_MODE_WIREFRAME);
     result = state.Backend->Device()->CreateGraphicsPipelineState(
         &description,
@@ -372,6 +409,7 @@ bool InitializeState(D3D12TerrainRendererState& state, std::string* errorMessage
     {
         return false;
     }
+    // 常量缓冲按交换链帧拆分，写入前无需等待整个 GPU 队列空闲
     for (std::uint32_t frameIndex = 0; frameIndex < D3D12GraphicsBackend::FrameCount; ++frameIndex)
     {
         if (!CreateMappedUploadBuffer(
@@ -387,6 +425,7 @@ bool InitializeState(D3D12TerrainRendererState& state, std::string* errorMessage
 
     D3D12_INDIRECT_ARGUMENT_DESC argument{};
     argument.Type = D3D12_INDIRECT_ARGUMENT_TYPE_DRAW_INDEXED;
+    // 命令跨度必须与 HLSL 写入的五个 uint 字段完全一致
     D3D12_COMMAND_SIGNATURE_DESC signature{};
     signature.ByteStride = sizeof(D3D12_DRAW_INDEXED_ARGUMENTS);
     signature.NumArgumentDescs = 1;
@@ -404,6 +443,7 @@ bool InitializeState(D3D12TerrainRendererState& state, std::string* errorMessage
 
 void ReleaseMappedResource(Microsoft::WRL::ComPtr<ID3D12Resource>& resource, std::uint8_t*& mapped)
 {
+    // 映射指针只在资源仍存活时有效，释放后同时清空防止重复 Unmap
     if (resource != nullptr && mapped != nullptr)
     {
         resource->Unmap(0, nullptr);
@@ -419,6 +459,7 @@ bool UploadMeshForFrame(
     std::string* errorMessage)
 {
     D3D12MeshFrameResources& frame = state.MeshFrames[frameIndex];
+    // 当前交换链帧已拥有该版本时不重复复制大型网格
     if (frame.MeshGeneration == state.MeshGeneration)
     {
         return true;
@@ -432,6 +473,7 @@ bool UploadMeshForFrame(
         return false;
     }
 
+    // 缓冲采用只增长策略，避免相机移动触发 LOD 更新时频繁分配
     if (frame.VertexCapacityBytes < vertexBytes)
     {
         ReleaseMappedResource(frame.VertexBuffer, frame.MappedVertices);
@@ -453,6 +495,7 @@ bool UploadMeshForFrame(
         frame.IndexCapacityBytes = indexBytes;
     }
 
+    // 后端在复用帧索引前已经等待对应 fence，因此此处可直接写入
     std::memcpy(frame.MappedVertices, meshData.Vertices.data(), vertexBytes);
     std::memcpy(frame.MappedIndices, meshData.Indices.data(), indexBytes);
     frame.VertexView.BufferLocation = frame.VertexBuffer->GetGPUVirtualAddress();
@@ -485,6 +528,7 @@ bool TerrainRenderer::Initialize(
         SetError(errorMessage, "D3D12 terrain renderer received a non-D3D12 graphics backend");
         return false;
     }
+    // API 枚举通过后仍验证动态类型，避免错误工厂实现造成未定义行为
     auto* backend = dynamic_cast<D3D12GraphicsBackend*>(&graphicsBackend);
     if (backend == nullptr)
     {
@@ -498,6 +542,7 @@ bool TerrainRenderer::Initialize(
     _settings = settings;
     _heightMapPath = heightMapPath;
     _texturePath = texturePath;
+    // 先建立管线和高度数据，再生成几何并上传纹理
     if (!InitializeState(*_d3d12State, errorMessage) ||
         !_heightMap.LoadFromFile(heightMapPath, errorMessage))
     {
@@ -506,7 +551,7 @@ bool TerrainRenderer::Initialize(
     }
     if (_settings.TerrainLodAlgorithm == Algorithms::TerrainLodAlgorithmId::GpuRoamLike)
     {
-        // DX12 compute commands require an open frame command list; the first UpdateForCamera performs the build.
+        // D3D12 计算命令必须记录到已打开的帧命令列表，首次相机更新再构建
         _meshDirty = true;
     }
     else if (!RebuildMesh(errorMessage))
@@ -525,6 +570,7 @@ bool TerrainRenderer::Initialize(
 
 bool TerrainRenderer::ApplySettings(const TerrainRenderSettings& settings, std::string* errorMessage)
 {
+    // 光照和线框设置立即生效，只有几何相关设置会标记网格过期
     const bool rebuildMesh = NeedsMeshRebuild(_settings, settings);
     _settings = settings;
     _meshDirty = _meshDirty || rebuildMesh;
@@ -533,6 +579,7 @@ bool TerrainRenderer::ApplySettings(const TerrainRenderSettings& settings, std::
         _settings.TerrainLodAlgorithm == Algorithms::TerrainLodAlgorithmId::GpuRoamLike &&
         (_d3d12State == nullptr || !_d3d12State->Backend->FrameOpen()))
     {
+        // GPU 算法只能在 BeginFrame 与 Present 之间调度，暂存脏标记到下一帧
         return true;
     }
     return !_meshDirty || RebuildMesh(errorMessage);
@@ -545,13 +592,16 @@ bool TerrainRenderer::LoadHeightMap(const std::filesystem::path& heightMapPath, 
     {
         return false;
     }
+    // 加载完整后一次性交换，失败不会破坏现有高度数据
     _heightMap = std::move(nextHeightMap);
     _heightMapPath = heightMapPath;
+    // 高度图改变会使跨帧拓扑和 GPU 高度纹理同时失效
     ResetTerrainLodAlgorithm();
     if (_settings.UseTerrainLod &&
         _settings.TerrainLodAlgorithm == Algorithms::TerrainLodAlgorithmId::GpuRoamLike &&
         (_d3d12State == nullptr || !_d3d12State->Backend->FrameOpen()))
     {
+        // 高度图已经替换，GPU 资源在下一次有效帧命令列表中重建
         return true;
     }
     return RebuildMesh(errorMessage);
@@ -566,10 +616,12 @@ bool TerrainRenderer::UpdateForCamera(const glm::vec3& cameraPosition, std::stri
     }
     if (_settings.UseTerrainLod)
     {
+        // 阈值随地形尺度增长，同时保留小地形的最小移动距离
         const float rebuildDistance = std::max(
             _settings.TerrainSize * RoamRebuildTerrainScale,
             MinRoamRebuildDistance);
         const glm::vec3 buildDelta = cameraPosition - _lastRoamBuildCameraPosition;
+        // 使用平方距离避免每帧为判定执行开方
         const bool cameraMovedEnough = !_hasRoamBuildCameraPosition ||
             glm::dot(buildDelta, buildDelta) >= rebuildDistance * rebuildDistance;
         if (!_meshDirty && !cameraMovedEnough)
@@ -588,6 +640,7 @@ void TerrainRenderer::RequestMeshRebuild()
 
 void TerrainRenderer::ResetTerrainLodAlgorithm()
 {
+    // GPU 算法资源可能仍被队列引用，销毁所有者前必须完成队列同步
     if (_terrainLodAlgorithm != nullptr &&
         _terrainLodAlgorithm->Info().Id == Algorithms::TerrainLodAlgorithmId::GpuRoamLike &&
         _d3d12State != nullptr)
@@ -603,6 +656,7 @@ void TerrainRenderer::ResetTerrainLodAlgorithm()
     _drawIndexCount = 0U;
     _drawTriangleCount = 0U;
     _renderMode = Algorithms::TerrainLodRenderMode::CpuMesh;
+    // 清空借用指针，防止重置后误用已释放的算法资源
     if (_d3d12State != nullptr)
     {
         _d3d12State->GpuVertexBuffer = nullptr;
@@ -622,6 +676,7 @@ void TerrainRenderer::Shutdown()
     _terrainLodStatusMessage.clear();
     if (_d3d12State != nullptr)
     {
+        // 持久映射资源必须在释放 COM 引用前显式解除映射
         for (D3D12MeshFrameResources& frame : _d3d12State->MeshFrames)
         {
             ReleaseMappedResource(frame.VertexBuffer, frame.MappedVertices);
@@ -631,6 +686,7 @@ void TerrainRenderer::Shutdown()
         {
             ReleaseMappedResource(_d3d12State->ConstantBuffers[index], _d3d12State->MappedConstants[index]);
         }
+        // SRV 槽位归后端分配器管理，纹理 COM 引用由状态对象自行释放
         if (_d3d12State->Backend != nullptr)
         {
             _d3d12State->Backend->ReleaseSrvDescriptor(_d3d12State->TextureSrv);
@@ -658,9 +714,11 @@ void TerrainRenderer::Render(const RenderContext& context)
         return;
     }
 
+    // 后端保证当前帧资源的 fence 已完成，可更新对应上传缓冲
     const std::uint32_t frameIndex = backend.CurrentFrameIndex();
     if (_renderMode == Algorithms::TerrainLodRenderMode::CpuMesh)
     {
+        // 网格版本按帧懒同步，首次轮转到该帧时才复制数据
         std::string uploadError;
         if (!UploadMeshForFrame(*_d3d12State, _meshData, frameIndex, &uploadError))
         {
@@ -669,6 +727,7 @@ void TerrainRenderer::Render(const RenderContext& context)
         }
     }
 
+    // 常量缓冲逐帧独立，CPU 写入不会覆盖尚未执行的前序绘制
     TerrainConstants constants{};
     constants.View = context.View;
     constants.Projection = context.Projection;
@@ -683,6 +742,7 @@ void TerrainRenderer::Render(const RenderContext& context)
     constants.DebugParameters.x = static_cast<int>(_settings.DebugColorMode);
     std::memcpy(_d3d12State->MappedConstants[frameIndex], &constants, sizeof(constants));
 
+    // 根描述符表中的 GPU 句柄只对当前绑定的共享堆有效
     ID3D12DescriptorHeap* graphicsHeaps[] = {backend.ShaderVisibleSrvHeap()};
     commandList->SetDescriptorHeaps(1, graphicsHeaps);
     commandList->SetPipelineState(
@@ -695,6 +755,7 @@ void TerrainRenderer::Render(const RenderContext& context)
     commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     if (_renderMode == Algorithms::TerrainLodRenderMode::GpuIndirect)
     {
+        // 算法已经在同一命令列表中生成资源和 DrawIndexed 参数
         commandList->IASetVertexBuffers(0, 1, &_d3d12State->GpuVertexView);
         commandList->IASetIndexBuffer(&_d3d12State->GpuIndexView);
         commandList->ExecuteIndirect(
@@ -707,6 +768,7 @@ void TerrainRenderer::Render(const RenderContext& context)
     }
     else
     {
+        // CPU 算法走本帧上传缓冲并直接提交固定参数绘制
         D3D12MeshFrameResources& frame = _d3d12State->MeshFrames[frameIndex];
         commandList->IASetVertexBuffers(0, 1, &frame.VertexView);
         commandList->IASetIndexBuffer(&frame.IndexView);
@@ -791,6 +853,7 @@ bool TerrainRenderer::RebuildMesh(std::string* errorMessage)
 
 bool TerrainRenderer::RebuildRegularGrid(std::string* errorMessage)
 {
+    // 规则网格不保留任何 ROAM 算法状态或相机重建历史
     _meshData = Terrain::TerrainMeshBuilder::Build(_heightMap, _settings.TerrainSize, _settings.HeightScale);
     _terrainLodStats = {};
     _terrainLodStatusMessage.clear();
@@ -809,17 +872,20 @@ bool TerrainRenderer::RebuildRegularGrid(std::string* errorMessage)
 
 bool TerrainRenderer::RebuildTerrainLod(const glm::vec3& cameraPosition, std::string* errorMessage)
 {
+    // 总耗时覆盖算法创建 拓扑更新和可能的 CPU 上传
     const auto rebuildStart = std::chrono::steady_clock::now();
     _terrainLodTotalMilliseconds = 0.0F;
     _terrainLodCpuUploadMilliseconds = 0.0F;
     if (_terrainLodAlgorithm == nullptr || _terrainLodAlgorithm->Info().Id != _settings.TerrainLodAlgorithm)
     {
+        // 切入或切出 GPU 算法时，原生资源可能仍被当前队列引用
         if (_terrainLodAlgorithm != nullptr &&
             (_terrainLodAlgorithm->Info().Id == Algorithms::TerrainLodAlgorithmId::GpuRoamLike ||
              _settings.TerrainLodAlgorithm == Algorithms::TerrainLodAlgorithmId::GpuRoamLike))
         {
             _d3d12State->Backend->WaitForGpuIdle();
         }
+        // 算法对象同时拥有跨帧拓扑状态和对应 GPU 资源
         _terrainLodAlgorithm = CreateTerrainLodAlgorithm(
             _settings.TerrainLodAlgorithm,
             *_d3d12State->Backend);
@@ -832,6 +898,7 @@ bool TerrainRenderer::RebuildTerrainLod(const glm::vec3& cameraPosition, std::st
         return false;
     }
 
+    // 通过统一输入结构保持 CPU 和 GPU 算法的实验参数一致
     Algorithms::TerrainLodSettings lodSettings{};
     lodSettings.TerrainSize = _settings.TerrainSize;
     lodSettings.HeightScale = _settings.HeightScale;
@@ -854,6 +921,7 @@ bool TerrainRenderer::RebuildTerrainLod(const glm::vec3& cameraPosition, std::st
         _terrainLodStatusMessage = buildError->empty() ? "Terrain LOD build failed" : *buildError;
         return false;
     }
+    // 渲染器只消费完整的 CPU 网格或完整的 GPU 原生资源三元组
     if (!renderPacket.HasConsistentResourceContract())
     {
         _terrainLodStatusMessage = "D3D12 terrain LOD returned an inconsistent render packet";
@@ -868,6 +936,7 @@ bool TerrainRenderer::RebuildTerrainLod(const glm::vec3& cameraPosition, std::st
     if (renderPacket.Mode == Algorithms::TerrainLodRenderMode::GpuIndirect &&
         renderPacket.NativeResourceApi == Algorithms::TerrainLodNativeResourceApi::Direct3D12)
     {
+        // 原生指针只借用到算法对象下一次重建或销毁之前
         _meshData = {};
         _renderMode = Algorithms::TerrainLodRenderMode::GpuIndirect;
         _d3d12State->GpuVertexBuffer = reinterpret_cast<ID3D12Resource*>(renderPacket.NativeVertexBuffer);
@@ -876,6 +945,7 @@ bool TerrainRenderer::RebuildTerrainLod(const glm::vec3& cameraPosition, std::st
         _drawVertexCount = renderPacket.ActiveTriangleCount * 3U;
         _drawIndexCount = renderPacket.IndexCount;
         _drawTriangleCount = renderPacket.ActiveTriangleCount;
+        // 视图容量取分配容量，实际绘制范围由间接参数中的索引数量控制
         _d3d12State->GpuVertexView.BufferLocation = _d3d12State->GpuVertexBuffer->GetGPUVirtualAddress();
         _d3d12State->GpuVertexView.SizeInBytes = static_cast<UINT>(renderPacket.GpuVertexBufferCapacityBytes);
         _d3d12State->GpuVertexView.StrideInBytes = sizeof(Terrain::TerrainMeshVertex);
@@ -895,6 +965,7 @@ bool TerrainRenderer::RebuildTerrainLod(const glm::vec3& cameraPosition, std::st
         return false;
     }
 
+    // CPU 算法移交网格所有权，随后同步到逐帧上传缓冲
     _meshData = std::move(renderPacket.CpuMesh);
     if (_meshData.Vertices.empty() || _meshData.Indices.empty())
     {
@@ -903,6 +974,7 @@ bool TerrainRenderer::RebuildTerrainLod(const glm::vec3& cameraPosition, std::st
         return false;
     }
 
+    // CPU 上传单独计时以便与纯 GPU 数据路径比较
     const auto uploadStart = std::chrono::steady_clock::now();
     if (!UploadMesh(errorMessage))
     {
@@ -924,6 +996,7 @@ bool TerrainRenderer::UploadMesh(std::string* errorMessage)
         SetError(errorMessage, "D3D12 terrain mesh upload state is incomplete");
         return false;
     }
+    // 新版本先上传当前帧，其他帧在轮转到来时按版本号补齐
     ++_d3d12State->MeshGeneration;
     _renderMode = Algorithms::TerrainLodRenderMode::CpuMesh;
     _drawVertexCount = _meshData.Vertices.size();
@@ -941,6 +1014,7 @@ bool TerrainRenderer::LoadTexture(const std::filesystem::path& texturePath, std:
     int width = 0;
     int height = 0;
     int channels = 0;
+    // 统一转换为 RGBA8，简化纹理格式和行跨度契约
     unsigned char* pixels = stbi_load(texturePath.string().c_str(), &width, &height, &channels, 4);
     if (pixels == nullptr)
     {
@@ -957,6 +1031,7 @@ bool TerrainRenderer::LoadTexture(const std::filesystem::path& texturePath, std:
     textureDescription.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
     textureDescription.SampleDesc.Count = 1;
     textureDescription.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+    // 最终纹理驻留默认堆，只通过一次性上传缓冲写入
     const D3D12_HEAP_PROPERTIES defaultHeap = HeapProperties(D3D12_HEAP_TYPE_DEFAULT);
     HRESULT result = _d3d12State->Backend->Device()->CreateCommittedResource(
         &defaultHeap,
@@ -976,6 +1051,7 @@ bool TerrainRenderer::LoadTexture(const std::filesystem::path& texturePath, std:
     UINT rowCount = 0;
     UINT64 rowSize = 0;
     UINT64 uploadSize = 0;
+    // 由设备计算行对齐，不能假定源图像行宽满足 D3D12 要求
     _d3d12State->Backend->Device()->GetCopyableFootprints(
         &textureDescription, 0, 1, 0, &footprint, &rowCount, &rowSize, &uploadSize);
     Microsoft::WRL::ComPtr<ID3D12Resource> uploadBuffer;
@@ -990,6 +1066,7 @@ bool TerrainRenderer::LoadTexture(const std::filesystem::path& texturePath, std:
         stbi_image_free(pixels);
         return false;
     }
+    // 逐行复制并保留目标 RowPitch 的填充字节
     const std::size_t sourceRowBytes = static_cast<std::size_t>(width) * 4U;
     for (UINT row = 0; row < rowCount; ++row)
     {
@@ -1000,6 +1077,7 @@ bool TerrainRenderer::LoadTexture(const std::filesystem::path& texturePath, std:
     }
     stbi_image_free(pixels);
 
+    // 立即提交会等待复制完成，局部上传缓冲可在返回后安全释放
     const bool uploaded = _d3d12State->Backend->ExecuteImmediate(
         [&](ID3D12GraphicsCommandList* commandList, std::string*) {
             D3D12_TEXTURE_COPY_LOCATION source{};
@@ -1010,6 +1088,7 @@ bool TerrainRenderer::LoadTexture(const std::filesystem::path& texturePath, std:
             destination.pResource = _d3d12State->Texture.Get();
             destination.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
             commandList->CopyTextureRegion(&destination, 0, 0, 0, &source, nullptr);
+            // 复制完成后转为像素着色器只读状态
             D3D12_RESOURCE_BARRIER barrier{};
             barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
             barrier.Transition.pResource = _d3d12State->Texture.Get();
@@ -1026,6 +1105,7 @@ bool TerrainRenderer::LoadTexture(const std::filesystem::path& texturePath, std:
         return false;
     }
 
+    // SRV 需要在纹理整个生命周期内保持同一堆索引
     _d3d12State->TextureSrv = _d3d12State->Backend->AllocateSrvDescriptor();
     if (!_d3d12State->TextureSrv.IsValid())
     {
@@ -1052,6 +1132,7 @@ bool TerrainRenderer::HasDrawableTerrain() const
     }
     if (_renderMode == Algorithms::TerrainLodRenderMode::GpuIndirect)
     {
+        // GPU 路径缺少任一借用资源都不能提交 ExecuteIndirect
         return _d3d12State->GpuVertexBuffer != nullptr &&
                _d3d12State->GpuIndexBuffer != nullptr &&
                _d3d12State->GpuIndirectBuffer != nullptr;

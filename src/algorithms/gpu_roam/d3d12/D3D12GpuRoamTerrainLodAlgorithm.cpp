@@ -24,11 +24,17 @@ namespace ParallelRoam::Algorithms::GpuRoam::D3D12
 {
 namespace
 {
+// 必须与 HLSL numthreads 的 X 维保持一致
 constexpr std::uint32_t WorkGroupSize = 128U;
+// 每帧描述符布局固定为九个 UAV 和一个高度图 SRV
 constexpr std::uint32_t DescriptorsPerFrame = 10U;
 constexpr std::uint32_t UavDescriptorCount = 9U;
+// D3D12 根 CBV 地址要求 256 字节对齐
 constexpr std::size_t ConstantBufferBytes = 256U;
 
+/// <summary>
+/// 与 HLSL Counters 缓冲布局一致的 GPU 计数器
+/// </summary>
 struct GpuCounters
 {
     std::uint32_t ActiveLeafCount{0};
@@ -39,16 +45,22 @@ struct GpuCounters
     std::uint32_t AllocatedNodeCount{0};
 };
 
+/// <summary>
+/// GPU ROAM-like 计算入口共享的常量缓冲布局
+/// </summary>
 struct GpuConstants
 {
+    // 节点池范围和活动叶输出上限
     std::uint32_t NodeCount{0};
     std::uint32_t NodeCapacity{0};
     std::uint32_t ActiveLeafLimit{0};
     std::uint32_t MaxDepth{0};
+    // HLSL 通过两个 uint 保存 64 位构建序列号
     std::uint32_t BuildSequenceLow{0};
     std::uint32_t BuildSequenceHigh{0};
     std::uint32_t HeightMapWidth{0};
     std::uint32_t HeightMapHeight{0};
+    // 地形参数和 split merge 阈值与统一算法设置保持一致
     float TerrainSize{0.0F};
     float HeightScale{0.0F};
     float DistanceScale{0.0F};
@@ -57,28 +69,38 @@ struct GpuConstants
     glm::vec3 CameraPosition{0.0F};
 };
 
+// 锁定 CPU 回读布局和共享顶点布局，防止着色器侧索引错位
 static_assert(sizeof(GpuCounters) == 24U);
 static_assert(sizeof(Terrain::TerrainMeshVertex) == 13U * sizeof(float));
 
+/// <summary>
+/// 默认堆缓冲及其可选上传副本
+/// </summary>
 struct GpuBuffer
 {
     Microsoft::WRL::ComPtr<ID3D12Resource> Resource;
     Microsoft::WRL::ComPtr<ID3D12Resource> Upload;
     std::uint8_t* MappedUpload{nullptr};
+    // 默认堆和上传堆分别按需增长
     std::size_t CapacityBytes{0};
     std::size_t UploadCapacityBytes{0};
     std::uint32_t StructureStride{0};
     D3D12_RESOURCE_STATES State{D3D12_RESOURCE_STATE_COMMON};
 };
 
+/// <summary>
+/// 单个交换链帧独占的计算输入、输出和回读状态
+/// </summary>
 struct GpuFrameResources
 {
+    // 拓扑计算的节点池、活动叶、误差和候选缓冲
     GpuBuffer Nodes;
     GpuBuffer ActiveLeaves;
     GpuBuffer ScreenErrors;
     GpuBuffer Counters;
     GpuBuffer SplitCandidates;
     GpuBuffer MergeCandidates;
+    // emit pass 输出可直接绘制的网格和间接参数
     GpuBuffer Vertices;
     GpuBuffer Indices;
     GpuBuffer IndirectArgs;
@@ -100,6 +122,7 @@ D3D12_RESOURCE_DESC BufferDescription(std::size_t bytes, D3D12_RESOURCE_FLAGS fl
 {
     D3D12_RESOURCE_DESC description{};
     description.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+    // 至少保留一个标量元素，避免 D3D12 零大小资源
     description.Width = std::max<std::size_t>(bytes, 4U);
     description.Height = 1;
     description.DepthOrArraySize = 1;
@@ -150,6 +173,7 @@ std::vector<std::uint8_t> ReadShader(const char* name, std::string* errorMessage
 
 std::uint32_t DispatchCount(std::size_t itemCount)
 {
+    // 即使输入为空也提交一个组，由着色器边界检查保持输出可预测
     return static_cast<std::uint32_t>((std::max<std::size_t>(itemCount, 1U) + WorkGroupSize - 1U) / WorkGroupSize);
 }
 
@@ -219,6 +243,7 @@ bool CreateMappedUpload(
     std::uint8_t*& mapped,
     std::string* errorMessage)
 {
+    // 上传资源生命周期内保持映射，减少每帧 Map 调用
     const D3D12_HEAP_PROPERTIES heap = HeapProperties(D3D12_HEAP_TYPE_UPLOAD);
     const D3D12_RESOURCE_DESC description = BufferDescription(bytes, D3D12_RESOURCE_FLAG_NONE);
     HRESULT result = device->CreateCommittedResource(
@@ -248,6 +273,7 @@ bool CreateMappedUpload(
 
 void ReleaseBuffer(GpuBuffer& buffer)
 {
+    // 只有上传副本允许映射，默认堆始终只由 GPU 访问
     if (buffer.Upload != nullptr && buffer.MappedUpload != nullptr)
     {
         buffer.Upload->Unmap(0, nullptr);
@@ -260,6 +286,7 @@ void Transition(
     GpuBuffer& buffer,
     D3D12_RESOURCE_STATES nextState)
 {
+    // 由包装对象追踪状态，避免重复 barrier 和状态前值不一致
     if (buffer.Resource == nullptr || buffer.State == nextState)
     {
         return;
@@ -276,6 +303,7 @@ void Transition(
 
 void UavBarrier(ID3D12GraphicsCommandList* commandList)
 {
+    // 全局 UAV barrier 保证前一计算入口的写入对下一入口可见
     D3D12_RESOURCE_BARRIER barrier{};
     barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
     barrier.UAV.pResource = nullptr;
@@ -283,10 +311,15 @@ void UavBarrier(ID3D12GraphicsCommandList* commandList)
 }
 } // namespace
 
+/// <summary>
+/// GPU ROAM-like 算法跨帧持有的 D3D12 状态
+/// </summary>
 struct D3D12GpuRoamState
 {
+    // Backend 由 Application 持有，算法状态只借用
     Render::D3D12GraphicsBackend* Backend{nullptr};
     Microsoft::WRL::ComPtr<ID3D12RootSignature> RootSignature;
+    // 六个 compute pass 共享同一根签名和描述符布局
     Microsoft::WRL::ComPtr<ID3D12PipelineState> CompactPipeline;
     Microsoft::WRL::ComPtr<ID3D12PipelineState> ErrorPipeline;
     Microsoft::WRL::ComPtr<ID3D12PipelineState> CandidatePipeline;
@@ -296,10 +329,12 @@ struct D3D12GpuRoamState
     Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> DescriptorHeap;
     std::uint32_t DescriptorSize{0};
     std::array<GpuFrameResources, Render::D3D12GraphicsBackend::FrameCount> Frames;
+    // 高度图在路径和尺寸不变时跨帧复用
     Microsoft::WRL::ComPtr<ID3D12Resource> HeightMapTexture;
     std::filesystem::path HeightMapPath;
     int HeightMapWidth{0};
     int HeightMapHeight{0};
+    // 时间戳和计数器按 frameIndex 延迟回读
     Microsoft::WRL::ComPtr<ID3D12QueryHeap> QueryHeap;
     Microsoft::WRL::ComPtr<ID3D12Resource> QueryReadback;
     Microsoft::WRL::ComPtr<ID3D12Resource> CounterReadback;
@@ -310,6 +345,7 @@ struct D3D12GpuRoamState
 
     ~D3D12GpuRoamState()
     {
+        // 外层销毁前必须确保后端队列空闲，析构只负责解除持久映射
         for (GpuFrameResources& frame : Frames)
         {
             ReleaseBuffer(frame.Nodes);
@@ -337,6 +373,7 @@ bool CreateComputePipeline(
     Microsoft::WRL::ComPtr<ID3D12PipelineState>& pipeline,
     std::string* errorMessage)
 {
+    // 每个入口单独编译为字节码，共享同一资源绑定布局
     const std::vector<std::uint8_t> shader = ReadShader(shaderName, errorMessage);
     if (shader.empty())
     {
@@ -355,6 +392,7 @@ bool CreateComputePipeline(
 
 bool InitializeState(D3D12GpuRoamState& state, std::string* errorMessage)
 {
+    // 根参数顺序固定为 b0 常量 九个 UAV 和一个高度图 SRV
     D3D12_DESCRIPTOR_RANGE uavRange{};
     uavRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
     uavRange.NumDescriptors = UavDescriptorCount;
@@ -377,6 +415,7 @@ bool InitializeState(D3D12GpuRoamState& state, std::string* errorMessage)
     parameters[2].DescriptorTable.NumDescriptorRanges = 1;
     parameters[2].DescriptorTable.pDescriptorRanges = &srvRange;
 
+    // 高度图边界采用 clamp，有限差分法向不会跨越纹理边缘
     D3D12_STATIC_SAMPLER_DESC sampler{};
     sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
     sampler.AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
@@ -424,6 +463,7 @@ bool InitializeState(D3D12GpuRoamState& state, std::string* errorMessage)
         return false;
     }
 
+    // 描述符按帧连续分块，计算时只需偏移到当前帧起点
     D3D12_DESCRIPTOR_HEAP_DESC heapDescription{};
     heapDescription.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
     heapDescription.NumDescriptors = DescriptorsPerFrame * Render::D3D12GraphicsBackend::FrameCount;
@@ -438,6 +478,7 @@ bool InitializeState(D3D12GpuRoamState& state, std::string* errorMessage)
     state.DescriptorSize = state.Backend->Device()->GetDescriptorHandleIncrementSize(
         D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 
+    // 常量缓冲按帧拆分，后端 fence 保证复用前 GPU 已完成读取
     for (GpuFrameResources& frame : state.Frames)
     {
         if (!CreateMappedUpload(
@@ -451,6 +492,7 @@ bool InitializeState(D3D12GpuRoamState& state, std::string* errorMessage)
         }
     }
 
+    // 查询和回读区域都按帧索引固定布局，结果延迟到该槽位再次复用时读取
     D3D12_QUERY_HEAP_DESC queryDescription{};
     queryDescription.Type = D3D12_QUERY_HEAP_TYPE_TIMESTAMP;
     queryDescription.Count = Render::D3D12GraphicsBackend::FrameCount * 2U;
@@ -508,11 +550,13 @@ bool EnsureGpuBuffer(
     requiredBytes = std::max<std::size_t>(requiredBytes, structureStride);
     if (buffer.Resource == nullptr || buffer.CapacityBytes < requiredBytes)
     {
+        // 只在容量不足时增长，避免每次 LOD 波动都重新分配
         ReleaseBuffer(buffer);
         const D3D12_HEAP_PROPERTIES defaultHeap = HeapProperties(D3D12_HEAP_TYPE_DEFAULT);
         const D3D12_RESOURCE_DESC description = BufferDescription(
             requiredBytes,
             D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+        // CPU 快照缓冲先进入复制目标，其余纯 GPU 输出直接进入 UAV
         const D3D12_RESOURCE_STATES initialState = needsUpload
             ? D3D12_RESOURCE_STATE_COPY_DEST
             : D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
@@ -533,6 +577,7 @@ bool EnsureGpuBuffer(
     }
     if (needsUpload && (buffer.Upload == nullptr || buffer.UploadCapacityBytes < requiredBytes))
     {
+        // 上传副本与默认堆分别扩容，二者容量契约不隐式绑定
         if (buffer.Upload != nullptr && buffer.MappedUpload != nullptr)
         {
             buffer.Upload->Unmap(0, nullptr);
@@ -551,6 +596,7 @@ bool EnsureGpuBuffer(
         buffer.UploadCapacityBytes = requiredBytes;
     }
 
+    // 资源扩容后重写固定描述符槽，GPU 句柄偏移保持不变
     D3D12_UNORDERED_ACCESS_VIEW_DESC uavDescription{};
     uavDescription.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
     uavDescription.Format = DXGI_FORMAT_UNKNOWN;
@@ -569,6 +615,7 @@ bool EnsureFrameResources(
     std::string* errorMessage)
 {
     GpuFrameResources& frame = state.Frames[frameIndex];
+    // 当前帧的九个 UAV 从固定分块起点连续排列
     const std::uint32_t base = frameIndex * DescriptorsPerFrame;
     const std::size_t nodeBytes = nodeCapacity * sizeof(GpuRoamNodeRecord);
     const std::size_t scalarBytes = nodeCapacity * sizeof(std::uint32_t);
@@ -590,6 +637,7 @@ bool EnsureHeightMap(
     const Terrain::HeightMap& heightMap,
     std::string* errorMessage)
 {
+    // 路径和尺寸不变时复用 GPU 纹理，避免相机更新重复上传
     if (state.HeightMapTexture != nullptr &&
         state.HeightMapPath == heightMap.SourcePath() &&
         state.HeightMapWidth == heightMap.Width() &&
@@ -598,6 +646,7 @@ bool EnsureHeightMap(
         return true;
     }
 
+    // 所有帧描述符都将改写，先确保不存在引用旧纹理的在途命令
     state.Backend->WaitForGpuIdle();
     D3D12_RESOURCE_DESC textureDescription{};
     textureDescription.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
@@ -626,6 +675,7 @@ bool EnsureHeightMap(
     UINT rowCount = 0;
     UINT64 rowSize = 0;
     UINT64 uploadBytes = 0;
+    // 设备决定上传行跨度，不能按紧密浮点行直接复制
     state.Backend->Device()->GetCopyableFootprints(
         &textureDescription, 0, 1, 0, &footprint, &rowCount, &rowSize, &uploadBytes);
     Microsoft::WRL::ComPtr<ID3D12Resource> upload;
@@ -649,6 +699,7 @@ bool EnsureHeightMap(
         }
     }
 
+    // 立即提交完成后局部上传缓冲即可解除映射和释放
     const bool uploaded = state.Backend->ExecuteImmediate(
         [&](ID3D12GraphicsCommandList* commandList, std::string*) {
             D3D12_TEXTURE_COPY_LOCATION source{};
@@ -696,6 +747,7 @@ bool EnsureHeightMap(
 void ReadCompletedResults(D3D12GpuRoamState& state, std::uint32_t frameIndex, TerrainLodStats& stats)
 {
     GpuFrameResources& frame = state.Frames[frameIndex];
+    // 后端已经等待当前帧槽位的 fence，回读不会阻塞 CPU
     if (!frame.PendingReadback)
     {
         return;
@@ -712,6 +764,7 @@ void ReadCompletedResults(D3D12GpuRoamState& state, std::uint32_t frameIndex, Te
         state.CounterReadback->Unmap(0, nullptr);
     }
 
+    // 计算耗时由该帧第一个和最后一个计算调度外侧时间戳得出
     const std::size_t queryOffset = frameIndex * 2U * sizeof(std::uint64_t);
     D3D12_RANGE queryRange{queryOffset, queryOffset + 2U * sizeof(std::uint64_t)};
     void* mappedQueries = nullptr;
@@ -737,12 +790,14 @@ void UploadSnapshot(
     GpuFrameResources& frame,
     const GpuRoamBufferSnapshot& snapshot)
 {
+    // CPU 仅上传节点快照，活动叶列表由 GPU 重新压缩得到
     const std::size_t nodeBytes = snapshot.NodeBufferBytes();
     std::memcpy(frame.Nodes.MappedUpload, snapshot.Nodes.data(), nodeBytes);
     Transition(commandList, frame.Nodes, D3D12_RESOURCE_STATE_COPY_DEST);
     commandList->CopyBufferRegion(frame.Nodes.Resource.Get(), 0, frame.Nodes.Upload.Get(), 0, nodeBytes);
     Transition(commandList, frame.Nodes, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 
+    // 清零阶段计数器并从 CPU 快照节点数初始化节点池尾指针
     GpuCounters counters{};
     counters.AllocatedNodeCount = static_cast<std::uint32_t>(snapshot.Nodes.size());
     std::memcpy(frame.Counters.MappedUpload, &counters, sizeof(counters));
@@ -759,6 +814,7 @@ void DispatchPipeline(
 {
     commandList->SetPipelineState(pipeline);
     commandList->Dispatch(std::max(groupCount, 1U), 1, 1);
+    // 所有入口共享 UAV，阶段间必须建立写后读顺序
     UavBarrier(commandList);
 }
 } // namespace
@@ -784,6 +840,7 @@ TerrainLodAlgorithmInfo D3D12GpuRoamTerrainLodAlgorithm::Info() const
 
 TerrainLodAlgorithmCapabilities D3D12GpuRoamTerrainLodAlgorithm::Capabilities() const
 {
+    // merge 候选目前只统计不提交，能力标记沿用桥接基线的 CPU 拓扑能力
     TerrainLodAlgorithmCapabilities capabilities{};
     capabilities.SupportsGpuDrivenRendering = true;
     capabilities.SupportsSplit = true;
@@ -798,6 +855,7 @@ bool D3D12GpuRoamTerrainLodAlgorithm::BuildRenderData(
     TerrainLodRenderPacket& outPacket,
     std::string* errorMessage)
 {
+    // 计算命令直接写入后端当前命令列表，调用必须位于打开的帧内
     outPacket = {};
     _stats = {};
     if (_backend == nullptr || !_backend->FrameOpen() || input.HeightMap == nullptr || !input.HeightMap->IsValid())
@@ -814,6 +872,7 @@ bool D3D12GpuRoamTerrainLodAlgorithm::BuildRenderData(
         return false;
     }
 
+    // 当前桥接实现仍先在 CPU 完成 DOD ROAM 拓扑更新
     const TerrainLodCpuSample cpuStart = CaptureTerrainLodCpuSample();
     _cpuTopologyBuilder.UpdateTopology(
         *input.HeightMap,
@@ -822,6 +881,7 @@ bool D3D12GpuRoamTerrainLodAlgorithm::BuildRenderData(
         input.CameraPosition,
         ToDataSettings(input.Settings));
     _stats = ToLodStats(_cpuTopologyBuilder.Stats());
+    // 将 SoA CPU 状态打包为与 HLSL NodeRecord 一致的结构化快照
     const auto snapshotStart = std::chrono::steady_clock::now();
     const GpuRoamBufferSnapshot snapshot = BuildGpuRoamBufferSnapshot(_cpuTopologyBuilder.State());
     _stats.GpuSnapshotBuildMilliseconds =
@@ -832,8 +892,10 @@ bool D3D12GpuRoamTerrainLodAlgorithm::BuildRenderData(
         return false;
     }
 
+    // 当前帧 fence 已完成，因此可以先读取上次使用该槽位的延迟结果
     const std::uint32_t frameIndex = _backend->CurrentFrameIndex();
     ReadCompletedResults(*_state, frameIndex, _stats);
+    // 为每个输入活动叶节点预留一对潜在子节点，空间不足时着色器回滚分裂
     const std::size_t nodeCapacity = snapshot.Nodes.size() + snapshot.ActiveLeafIndices.size() * 2U;
     const auto allocationStart = std::chrono::steady_clock::now();
     if (!EnsureFrameResources(*_state, frameIndex, nodeCapacity, errorMessage))
@@ -846,11 +908,13 @@ bool D3D12GpuRoamTerrainLodAlgorithm::BuildRenderData(
     ID3D12GraphicsCommandList* commandList = _backend->CommandList();
     const auto dispatchStart = std::chrono::steady_clock::now();
 
+    // 上一轮这些缓冲可能处于图形读取状态，计算前统一转回 UAV
     Transition(commandList, frame.Vertices, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     Transition(commandList, frame.Indices, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     Transition(commandList, frame.IndirectArgs, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     UploadSnapshot(commandList, frame, snapshot);
 
+    // 常量布局必须与 HLSL GpuRoamConstants 的字段顺序一致
     GpuConstants constants{};
     constants.NodeCount = static_cast<std::uint32_t>(snapshot.Nodes.size());
     constants.NodeCapacity = static_cast<std::uint32_t>(nodeCapacity);
@@ -864,11 +928,13 @@ bool D3D12GpuRoamTerrainLodAlgorithm::BuildRenderData(
     constants.HeightScale = input.Settings.HeightScale;
     constants.DistanceScale = input.Settings.DistanceScale;
     constants.SplitThreshold = input.Settings.SplitThreshold;
+    // merge 阈值不允许高于 split 阈值，避免同一节点同时进入冲突候选集
     constants.MergeThreshold = std::min(input.Settings.MergeThreshold, input.Settings.SplitThreshold);
     constants.CameraPosition = input.CameraPosition;
     std::memset(frame.MappedConstants, 0, ConstantBufferBytes);
     std::memcpy(frame.MappedConstants, &constants, sizeof(constants));
 
+    // 当前帧九个 UAV 连续绑定，高度图 SRV 位于同一分块最后一个槽位
     ID3D12DescriptorHeap* heaps[] = {_state->DescriptorHeap.Get()};
     commandList->SetDescriptorHeaps(1, heaps);
     commandList->SetComputeRootSignature(_state->RootSignature.Get());
@@ -880,23 +946,32 @@ bool D3D12GpuRoamTerrainLodAlgorithm::BuildRenderData(
     heightGpu.ptr += static_cast<UINT64>(9U) * _state->DescriptorSize;
     commandList->SetComputeRootDescriptorTable(2, heightGpu);
 
+    // 时间戳包围完整计算链，不包含后续状态转换和回读复制
     const std::uint32_t queryStart = frameIndex * 2U;
     commandList->EndQuery(_state->QueryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, queryStart);
+    // 从 CPU 快照重新压缩活动叶节点
     DispatchPipeline(commandList, _state->CompactPipeline.Get(), DispatchCount(nodeCapacity));
+    // 对压缩后的叶节点计算距离加权误差
     DispatchPipeline(commandList, _state->ErrorPipeline.Get(), DispatchCount(nodeCapacity));
+    // 同时生成 split 候选和仅用于统计的 merge 候选
     DispatchPipeline(
         commandList,
         _state->CandidatePipeline.Get(),
         DispatchCount(std::max(snapshot.Nodes.size(), nodeCapacity)));
+    // 提交一次 base-neighbor 成对兼容分裂，暂不递归传播 compatibility chain
     DispatchPipeline(commandList, _state->SplitPipeline.Get(), DispatchCount(nodeCapacity));
+    // 分裂改变活动叶集合，清零计数并重新压缩
     DispatchPipeline(commandList, _state->ResetLeavesPipeline.Get(), 1U);
     DispatchPipeline(commandList, _state->CompactPipeline.Get(), DispatchCount(nodeCapacity));
+    // 展开最终叶节点网格并写入 DrawIndexed 间接参数
     DispatchPipeline(commandList, _state->EmitPipeline.Get(), DispatchCount(nodeCapacity));
     commandList->EndQuery(_state->QueryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, queryStart + 1U);
 
+    // 计算输出随后在同一命令列表中由图形管线直接消费
     Transition(commandList, frame.Vertices, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
     Transition(commandList, frame.Indices, D3D12_RESOURCE_STATE_INDEX_BUFFER);
     Transition(commandList, frame.IndirectArgs, D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT);
+    // 计数器和时间戳只异步复制，本次调用不等待 GPU 完成
     Transition(commandList, frame.Counters, D3D12_RESOURCE_STATE_COPY_SOURCE);
     commandList->CopyBufferRegion(
         _state->CounterReadback.Get(),
@@ -912,12 +987,14 @@ bool D3D12GpuRoamTerrainLodAlgorithm::BuildRenderData(
         2,
         _state->QueryReadback.Get(),
         static_cast<std::uint64_t>(queryStart) * sizeof(std::uint64_t));
+    // 结果在该帧槽位下一次通过 fence 验证后读取
     frame.PendingReadback = true;
 
     _stats.GpuDispatchWallMilliseconds =
         std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - dispatchStart).count();
     _stats.GpuComputeMilliseconds = _state->LastGpuMilliseconds;
     _stats.CpuGpuUploadBytes = snapshot.NodeBufferBytes() + sizeof(GpuCounters);
+    // 当前帧尚未执行完成，绘制统计先采用上次结果或 CPU 快照估值
     const std::size_t activeEstimate = _state->LastCounters.ActiveLeafCount > 0U
         ? _state->LastCounters.ActiveLeafCount
         : snapshot.ActiveLeafIndices.size();
@@ -926,6 +1003,7 @@ bool D3D12GpuRoamTerrainLodAlgorithm::BuildRenderData(
     _stats.SubdividedTriangleCount += _state->LastCounters.SplitOnlyCommitCount;
     _stats.MaxActiveDepth = std::max(_stats.MaxActiveDepth, snapshot.MaxDepthReached);
 
+    // 数据包返回算法拥有的原生资源，渲染器不得释放或跨重建缓存
     outPacket.Mode = TerrainLodRenderMode::GpuIndirect;
     outPacket.StatusMessage = "DX12 compute topology + GPU mesh emit + ExecuteIndirect";
     outPacket.NativeResourceApi = TerrainLodNativeResourceApi::Direct3D12;
@@ -952,6 +1030,7 @@ const TerrainLodStats& D3D12GpuRoamTerrainLodAlgorithm::Stats() const
 
 void D3D12GpuRoamTerrainLodAlgorithm::Reset()
 {
+    // 保留昂贵的 PSO 和缓冲容量，只清除拓扑历史与延迟统计
     _cpuTopologyBuilder = DataOrientedRoam::DataOrientedRoamMeshBuilder{};
     _stats = {};
     if (_state != nullptr)

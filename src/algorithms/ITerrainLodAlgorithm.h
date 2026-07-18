@@ -84,8 +84,7 @@ enum class TerrainLodRenderMode
 };
 
 /// <summary>
-/// GPU 资源由算法实例持有，渲染器只能在约定生命周期内借用。
-/// 后续 DX12 数据包沿用此语义，不把资源所有权按帧复制给 renderer。
+/// 算法返回的 GPU 资源借用生命周期
 /// </summary>
 enum class TerrainLodGpuResourceLifetime
 {
@@ -93,6 +92,9 @@ enum class TerrainLodGpuResourceLifetime
     UntilNextBuildOrReset,
 };
 
+/// <summary>
+/// 数据包内原生 GPU 资源所属的图形 API
+/// </summary>
 enum class TerrainLodNativeResourceApi
 {
     None,
@@ -113,13 +115,21 @@ struct TerrainLodRenderPacket
     std::uint32_t GpuIndexBufferId{0};
     std::uint32_t ActiveLeafBufferId{0};
     std::uint32_t IndirectDrawBufferId{0};
+    // 原生 API 与下列 uintptr_t 字段共同解释资源类型
     TerrainLodNativeResourceApi NativeResourceApi{TerrainLodNativeResourceApi::None};
+    // D3D12 路径借用的顶点资源地址
     std::uintptr_t NativeVertexBuffer{0};
+    // D3D12 路径借用的索引资源地址
     std::uintptr_t NativeIndexBuffer{0};
+    // D3D12 间接路径借用的命令参数资源地址
     std::uintptr_t NativeIndirectDrawBuffer{0};
+    // 原生顶点视图允许访问的总字节数
     std::size_t GpuVertexBufferCapacityBytes{0};
+    // 原生索引视图允许访问的总字节数
     std::size_t GpuIndexBufferCapacityBytes{0};
+    // 渲染器必须遵守的借用生命周期
     TerrainLodGpuResourceLifetime GpuResourceLifetime{TerrainLodGpuResourceLifetime::None};
+    // 每次算法重建递增，用于识别失效资源
     std::uint64_t GpuResourceGeneration{0};
     std::size_t ActiveLeafCount{0};
     std::size_t ActiveTriangleCount{0};
@@ -127,6 +137,7 @@ struct TerrainLodRenderPacket
 
     [[nodiscard]] bool HasConsistentResourceContract() const
     {
+        // OpenGL 对象编号和 D3D12 原生资源不能混合解释
         const bool hasGpuResourceIds =
             GpuNodeBufferId != 0U ||
             GpuHeightMapTextureId != 0U ||
@@ -141,15 +152,18 @@ struct TerrainLodRenderPacket
 
         if (Mode == TerrainLodRenderMode::CpuMesh || Mode == TerrainLodRenderMode::DebugOnly)
         {
+            // 非 GPU 模式禁止携带任何需要生命周期管理的资源
             return !hasGpuResourceIds && !hasNativeGpuResources &&
                    NativeResourceApi == TerrainLodNativeResourceApi::None &&
                    GpuResourceLifetime == TerrainLodGpuResourceLifetime::None &&
                    GpuResourceGeneration == 0U;
         }
 
+        // OpenGL 路径通过非零对象编号表达资源有效性
         const bool hasOpenGlDrawResources =
             NativeResourceApi == TerrainLodNativeResourceApi::None &&
             GpuVertexBufferId != 0U && GpuIndexBufferId != 0U;
+        // D3D12 视图除资源指针外还必须提供非零容量
         const bool hasD3D12DrawResources =
             NativeResourceApi == TerrainLodNativeResourceApi::Direct3D12 &&
             NativeVertexBuffer != 0U && NativeIndexBuffer != 0U &&
@@ -158,6 +172,7 @@ struct TerrainLodRenderPacket
             (hasOpenGlDrawResources || hasD3D12DrawResources) &&
             IndexCount > 0U &&
             ActiveTriangleCount > 0U;
+        // 只有间接模式强制要求额外命令参数缓冲
         const bool hasRequiredIndirectResource =
             Mode != TerrainLodRenderMode::GpuIndirect ||
             (NativeResourceApi == TerrainLodNativeResourceApi::Direct3D12
