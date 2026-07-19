@@ -41,6 +41,7 @@ public:
     [[nodiscard]] const std::string& AdapterName() const override;
     [[nodiscard]] const std::string& VersionString() const override;
     [[nodiscard]] bool SupportsGpuRoamLike() const override;
+    [[nodiscard]] const GraphicsDeviceCapabilities& GraphicsCapabilities() const override;
     [[nodiscard]] float LastGpuFrameMilliseconds() const override;
     [[nodiscard]] float LastGpuWaitMilliseconds() const override;
     [[nodiscard]] bool IsValid() const override;
@@ -53,6 +54,7 @@ private:
     int _drawableWidth{0};
     int _drawableHeight{0};
     int _swapInterval{-1};
+    GraphicsDeviceCapabilities _deviceCapabilities{};
     std::string _adapterName;
     std::string _versionString;
 };

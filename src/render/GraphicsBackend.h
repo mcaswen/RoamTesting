@@ -23,6 +23,17 @@ enum class GraphicsApi
 };
 
 /// <summary>
+/// 图形后端公开的通用着色器和资源原子操作能力
+/// </summary>
+struct GraphicsDeviceCapabilities
+{
+    std::uint32_t ShaderModelMajor{0U};
+    std::uint32_t ShaderModelMinor{0U};
+    bool SupportsShaderInt64{false};
+    bool SupportsTypedResourceInt64Atomics{false};
+};
+
+/// <summary>
 /// 应用主循环与具体图形 API 之间的生命周期边界
 /// </summary>
 class IGraphicsBackend
@@ -55,6 +66,7 @@ public:
     [[nodiscard]] virtual const std::string& AdapterName() const = 0;
     [[nodiscard]] virtual const std::string& VersionString() const = 0;
     [[nodiscard]] virtual bool SupportsGpuRoamLike() const = 0;
+    [[nodiscard]] virtual const GraphicsDeviceCapabilities& GraphicsCapabilities() const = 0;
     [[nodiscard]] virtual float LastGpuFrameMilliseconds() const = 0;
     [[nodiscard]] virtual float LastGpuWaitMilliseconds() const = 0;
     [[nodiscard]] virtual bool IsValid() const = 0;

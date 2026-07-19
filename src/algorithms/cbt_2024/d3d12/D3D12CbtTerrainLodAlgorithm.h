@@ -1,0 +1,40 @@
+#pragma once
+
+#include "algorithms/ITerrainLodAlgorithm.h"
+
+#include <memory>
+
+namespace ParallelRoam::Render
+{
+class D3D12GraphicsBackend;
+}
+
+namespace ParallelRoam::Algorithms::Cbt2024::D3D12
+{
+struct D3D12CbtProceduralState;
+
+/// <summary>
+/// 使用人工活动列表验证 CBT 程序化间接绘制边界
+/// </summary>
+class D3D12CbtTerrainLodAlgorithm final : public ITerrainLodAlgorithm
+{
+public:
+    explicit D3D12CbtTerrainLodAlgorithm(Render::D3D12GraphicsBackend& backend);
+    ~D3D12CbtTerrainLodAlgorithm() override;
+
+    [[nodiscard]] TerrainLodAlgorithmInfo Info() const override;
+    [[nodiscard]] TerrainLodAlgorithmCapabilities Capabilities() const override;
+    [[nodiscard]] bool BuildRenderData(
+        const TerrainLodBuildInput& input,
+        TerrainLodRenderPacket& outPacket,
+        std::string* errorMessage) override;
+    [[nodiscard]] const TerrainLodStats& Stats() const override;
+    void Reset() override;
+
+private:
+    // 后端由 Application 持有，算法仅借用设备和同步入口
+    Render::D3D12GraphicsBackend* _backend{nullptr};
+    std::unique_ptr<D3D12CbtProceduralState> _state;
+    TerrainLodStats _stats{};
+};
+} // namespace ParallelRoam::Algorithms::Cbt2024::D3D12

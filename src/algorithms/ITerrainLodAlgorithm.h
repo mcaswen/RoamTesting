@@ -5,6 +5,7 @@
 
 #include <glm/glm.hpp>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -20,6 +21,8 @@ enum class TerrainLodAlgorithmId
     ClassicCpuRoam,
     DataOrientedCpuRoam,
     GpuRoamLike,
+    Cbt2024,
+    Count,
 };
 
 /// <summary>
@@ -40,14 +43,27 @@ struct TerrainLodAlgorithmCapabilities
 {
     bool SupportsCpuMeshOutput{false};
     bool SupportsGpuDrivenRendering{false};
+    bool SupportsProceduralIndirectRendering{false};
     bool SupportsSplit{false};
     bool SupportsMerge{false};
     bool SupportsCrackFix{false};
     bool SupportsTopologyValidation{false};
+    bool RequiresShaderModel66{false};
+    bool RequiresInt64ShaderOps{false};
+    bool RequiresInt64Atomics{false};
 };
 
 /// <summary>
-/// 三种 ROAM 算法共享的运行参数，benchmark 和 renderer 使用同一套字段做公平对比
+/// 控制层和 GUI 共享的算法可用状态，不暴露具体图形后端实现
+/// </summary>
+struct TerrainLodAlgorithmAvailability
+{
+    bool Available{true};
+    std::string UnavailableReason;
+};
+
+/// <summary>
+/// terrain LOD 算法共享的运行参数，benchmark 和 renderer 使用同一套字段做公平对比
 /// </summary>
 struct TerrainLodSettings
 {
@@ -63,12 +79,42 @@ struct TerrainLodSettings
 };
 
 /// <summary>
-/// 单帧 LOD 构建输入，固定高度图、相机位置和统一算法参数
+/// 视锥平面在 TerrainLodViewInput 中的固定顺序
+/// </summary>
+enum class TerrainLodFrustumPlane
+{
+    Left,
+    Right,
+    Bottom,
+    Top,
+    Near,
+    Far,
+    Count,
+};
+
+/// <summary>
+/// renderer 与视点相关 LOD 算法共享的只读视图数据
+/// FrustumPlanes 使用向内法线，点位于平面内侧时 ax + by + cz + d 大于等于零
+/// </summary>
+struct TerrainLodViewInput
+{
+    glm::mat4 View{1.0F};
+    glm::mat4 Projection{1.0F};
+    glm::mat4 ViewProjection{1.0F};
+    glm::vec3 CameraPosition{0.0F};
+    glm::vec3 CameraForward{0.0F, 0.0F, -1.0F};
+    std::array<glm::vec4, static_cast<std::size_t>(TerrainLodFrustumPlane::Count)> FrustumPlanes{};
+    std::uint32_t DrawableWidth{1U};
+    std::uint32_t DrawableHeight{1U};
+};
+
+/// <summary>
+/// 单帧 LOD 构建输入，固定高度图、视图和统一算法参数
 /// </summary>
 struct TerrainLodBuildInput
 {
     const Terrain::HeightMap* HeightMap{nullptr};
-    glm::vec3 CameraPosition{0.0F};
+    TerrainLodViewInput View;
     TerrainLodSettings Settings;
 };
 
@@ -80,6 +126,7 @@ enum class TerrainLodRenderMode
     CpuMesh,
     GpuBuffers,
     GpuIndirect,
+    GpuProceduralIndirect,
     DebugOnly,
 };
 
@@ -121,12 +168,19 @@ struct TerrainLodRenderPacket
     std::uintptr_t NativeVertexBuffer{0};
     // D3D12 路径借用的索引资源地址
     std::uintptr_t NativeIndexBuffer{0};
+    // 程序化路径借用的活动二分器索引资源地址
+    std::uintptr_t NativeActiveLeafBuffer{0};
     // D3D12 间接路径借用的命令参数资源地址
     std::uintptr_t NativeIndirectDrawBuffer{0};
     // 原生顶点视图允许访问的总字节数
     std::size_t GpuVertexBufferCapacityBytes{0};
+    // 程序化顶点 SRV 的结构化元素跨度
+    std::size_t GpuVertexStrideBytes{0};
     // 原生索引视图允许访问的总字节数
     std::size_t GpuIndexBufferCapacityBytes{0};
+    // 活动二分器 SRV 允许访问的总字节数和结构化元素跨度
+    std::size_t GpuActiveLeafBufferCapacityBytes{0};
+    std::size_t GpuActiveLeafStrideBytes{0};
     // 渲染器必须遵守的借用生命周期
     TerrainLodGpuResourceLifetime GpuResourceLifetime{TerrainLodGpuResourceLifetime::None};
     // 每次算法重建递增，用于识别失效资源
@@ -135,6 +189,9 @@ struct TerrainLodRenderPacket
     std::size_t ActiveTriangleCount{0};
     std::size_t IndexCount{0};
 
+    /// <summary>
+    /// 校验跨 API 资源互斥、容量、步长和借用生命周期是否满足当前渲染模式
+    /// </summary>
     [[nodiscard]] bool HasConsistentResourceContract() const
     {
         // OpenGL 对象编号和 D3D12 原生资源不能混合解释
@@ -148,6 +205,7 @@ struct TerrainLodRenderPacket
         const bool hasNativeGpuResources =
             NativeVertexBuffer != 0U ||
             NativeIndexBuffer != 0U ||
+            NativeActiveLeafBuffer != 0U ||
             NativeIndirectDrawBuffer != 0U;
 
         if (Mode == TerrainLodRenderMode::CpuMesh || Mode == TerrainLodRenderMode::DebugOnly)
@@ -159,15 +217,52 @@ struct TerrainLodRenderPacket
                    GpuResourceGeneration == 0U;
         }
 
+        if (Mode == TerrainLodRenderMode::GpuProceduralIndirect)
+        {
+            const bool hasValidStrides =
+                GpuVertexStrideBytes > 0U &&
+                GpuActiveLeafStrideBytes > 0U;
+            const std::size_t vertexCapacity = hasValidStrides
+                ? GpuVertexBufferCapacityBytes / GpuVertexStrideBytes
+                : 0U;
+            const std::size_t activeLeafCapacity = hasValidStrides
+                ? GpuActiveLeafBufferCapacityBytes / GpuActiveLeafStrideBytes
+                : 0U;
+            const bool hasRequiredCapacity =
+                ActiveTriangleCount <= vertexCapacity / 3U &&
+                ActiveLeafCount <= activeLeafCapacity;
+
+            return NativeResourceApi == TerrainLodNativeResourceApi::Direct3D12 &&
+                   NativeVertexBuffer != 0U &&
+                   NativeIndexBuffer == 0U &&
+                   NativeActiveLeafBuffer != 0U &&
+                   NativeIndirectDrawBuffer != 0U &&
+                   !hasGpuResourceIds &&
+                   hasValidStrides &&
+                   hasRequiredCapacity &&
+                   ActiveLeafCount > 0U &&
+                   ActiveTriangleCount > 0U &&
+                   IndexCount == 0U &&
+                   GpuResourceLifetime == TerrainLodGpuResourceLifetime::UntilNextBuildOrReset &&
+                   GpuResourceGeneration > 0U;
+        }
+
         // OpenGL 路径通过非零对象编号表达资源有效性
         const bool hasOpenGlDrawResources =
             NativeResourceApi == TerrainLodNativeResourceApi::None &&
+            !hasNativeGpuResources &&
             GpuVertexBufferId != 0U && GpuIndexBufferId != 0U;
         // D3D12 视图除资源指针外还必须提供非零容量
         const bool hasD3D12DrawResources =
             NativeResourceApi == TerrainLodNativeResourceApi::Direct3D12 &&
+            !hasGpuResourceIds &&
             NativeVertexBuffer != 0U && NativeIndexBuffer != 0U &&
             GpuVertexBufferCapacityBytes > 0U && GpuIndexBufferCapacityBytes > 0U;
+        const bool hasNoProceduralMetadata =
+            NativeActiveLeafBuffer == 0U &&
+            GpuVertexStrideBytes == 0U &&
+            GpuActiveLeafBufferCapacityBytes == 0U &&
+            GpuActiveLeafStrideBytes == 0U;
         const bool hasRequiredDrawResources =
             (hasOpenGlDrawResources || hasD3D12DrawResources) &&
             IndexCount > 0U &&
@@ -181,13 +276,14 @@ struct TerrainLodRenderPacket
 
         return hasRequiredDrawResources &&
                hasRequiredIndirectResource &&
+               hasNoProceduralMetadata &&
                GpuResourceLifetime == TerrainLodGpuResourceLifetime::UntilNextBuildOrReset &&
                GpuResourceGeneration > 0U;
     }
 };
 
 /// <summary>
-/// 跨 Classic / Data-Oriented / GPU 版本共享的统计字段，用于 UI 展示、回归测试和 CSV 输出
+/// 跨 Classic / Data-Oriented / GPU / CBT 版本共享的统计字段，用于 UI 展示、回归测试和 CSV 输出
 /// </summary>
 struct TerrainLodStats
 {
@@ -236,7 +332,7 @@ struct TerrainLodStats
 };
 
 /// <summary>
-/// 地形 LOD 算法的统一边界，Classic / Data-Oriented / GPU 版本都通过它接入 renderer 和 benchmark
+/// 地形 LOD 算法的统一边界，所有 CPU 和 GPU 实现都通过它接入 renderer 和 benchmark
 /// </summary>
 class ITerrainLodAlgorithm
 {

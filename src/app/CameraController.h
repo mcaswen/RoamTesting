@@ -19,6 +19,7 @@ public:
 
     [[nodiscard]] glm::mat4 GetViewMatrix() const;
     [[nodiscard]] glm::vec3 Position() const;
+    [[nodiscard]] glm::vec3 Forward() const;
     [[nodiscard]] float YawDegrees() const;
     [[nodiscard]] float PitchDegrees() const;
 

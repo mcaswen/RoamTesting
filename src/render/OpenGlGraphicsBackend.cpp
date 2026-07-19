@@ -298,6 +298,11 @@ bool OpenGlGraphicsBackend::SupportsGpuRoamLike() const
     return GLAD_GL_VERSION_4_3 != 0;
 }
 
+const GraphicsDeviceCapabilities& OpenGlGraphicsBackend::GraphicsCapabilities() const
+{
+    return _deviceCapabilities;
+}
+
 float OpenGlGraphicsBackend::LastGpuFrameMilliseconds() const
 {
     // OpenGL 路径沿用算法自身计时，后端不额外插入整帧查询

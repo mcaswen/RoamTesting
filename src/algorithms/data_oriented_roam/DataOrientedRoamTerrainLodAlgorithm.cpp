@@ -75,7 +75,7 @@ bool DataOrientedRoamTerrainLodAlgorithm::BuildRenderData(
         *input.HeightMap,
         input.Settings.TerrainSize,
         input.Settings.HeightScale,
-        input.CameraPosition,
+        input.View.CameraPosition,
         ToDataOrientedSettings(input.Settings));
     const TerrainLodCpuSample cpuSampleEnd = CaptureTerrainLodCpuSample();
     _stats = ToTerrainLodStats(_builder.Stats());

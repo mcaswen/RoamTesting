@@ -29,15 +29,17 @@ enum class TerrainDebugColorMode
 };
 
 /// <summary>
-/// 单帧渲染上下文，承载相机矩阵和当前 drawable 尺寸
+/// 单帧渲染上下文，承载相机矩阵、投影深度约定和当前 drawable 尺寸
 /// </summary>
 struct RenderContext
 {
     glm::mat4 View{1.0F};
     glm::mat4 Projection{1.0F};
     glm::vec3 CameraPosition{0.0F};
+    glm::vec3 CameraForward{0.0F, 0.0F, -1.0F};
     int DrawableWidth{1};
     int DrawableHeight{1};
+    bool UsesZeroToOneDepth{false};
 };
 
 /// <summary>
@@ -189,7 +191,7 @@ public:
 
     bool ApplySettings(const TerrainRenderSettings& settings, std::string* errorMessage);
     bool LoadHeightMap(const std::filesystem::path& heightMapPath, std::string* errorMessage);
-    bool UpdateForCamera(const glm::vec3& cameraPosition, std::string* errorMessage);
+    bool UpdateForView(const RenderContext& context, std::string* errorMessage);
 
     // benchmark 可绕过普通相机位移缓存，要求下一帧重新构建 mesh
     void RequestMeshRebuild();
@@ -210,7 +212,7 @@ private:
     bool RebuildRegularGrid(std::string* errorMessage);
 
     // Terrain LOD 路径会随相机位置动态更新
-    bool RebuildTerrainLod(const glm::vec3& cameraPosition, std::string* errorMessage);
+    bool RebuildTerrainLod(const RenderContext& context, std::string* errorMessage);
     bool UploadMesh(std::string* errorMessage);
 #if defined(PARALLEL_ROAM_GRAPHICS_API_OPENGL)
     bool ConfigureTerrainVertexArray(
@@ -240,7 +242,7 @@ private:
     TerrainRenderSettings _settings;
     std::filesystem::path _heightMapPath;
     std::filesystem::path _texturePath;
-    glm::vec3 _lastCameraPosition{0.0F};
+    RenderContext _lastRenderContext{};
     glm::vec3 _lastRoamBuildCameraPosition{0.0F};
 #if defined(PARALLEL_ROAM_GRAPHICS_API_OPENGL)
     unsigned int _vertexArrayId{0};

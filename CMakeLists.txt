@@ -67,6 +67,8 @@ if(PARALLEL_ROAM_BUILD_APP)
                 src/app/CameraController.cpp
                 src/app/InputState.cpp
                 src/app/RuntimeBenchmark.cpp
+                src/algorithms/TerrainLodView.cpp
+                src/algorithms/cbt_2024/Cbt2024Support.cpp
                 src/algorithms/classic_roam/ClassicRoamTerrainLodAlgorithm.cpp
                 src/algorithms/classic_roam/ClassicRoamMeshBuilder.cpp
                 src/algorithms/classic_roam/ClassicRoamMeshEmit.cpp
@@ -121,6 +123,9 @@ if(PARALLEL_ROAM_BUILD_APP)
                 src/app/CameraController.cpp
                 src/app/InputState.cpp
                 src/app/RuntimeBenchmark.cpp
+                src/algorithms/TerrainLodView.cpp
+                src/algorithms/cbt_2024/Cbt2024Support.cpp
+                src/algorithms/cbt_2024/d3d12/D3D12CbtTerrainLodAlgorithm.cpp
                 src/algorithms/classic_roam/ClassicRoamTerrainLodAlgorithm.cpp
                 src/algorithms/classic_roam/ClassicRoamMeshBuilder.cpp
                 src/algorithms/classic_roam/ClassicRoamMeshEmit.cpp
@@ -147,6 +152,7 @@ if(PARALLEL_ROAM_BUILD_APP)
                 src/render/GraphicsBackend.cpp
                 src/render/D3D12AgilitySdkExports.cpp
                 src/render/D3D12GraphicsBackend.cpp
+                src/render/D3D12ProceduralTerrainPipeline.cpp
                 src/render/D3D12TerrainRenderer.cpp
                 src/terrain/HeightMap.cpp
                 src/terrain/TerrainMeshBuilder.cpp
@@ -188,6 +194,9 @@ if(PARALLEL_ROAM_BUILD_APP)
         set(PARALLEL_ROAM_DX12_SHADER_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated/shaders")
         set(PARALLEL_ROAM_DX12_VERTEX_SHADER "${PARALLEL_ROAM_DX12_SHADER_DIR}/TerrainVS.cso")
         set(PARALLEL_ROAM_DX12_PIXEL_SHADER "${PARALLEL_ROAM_DX12_SHADER_DIR}/TerrainPS.cso")
+        set(
+            PARALLEL_ROAM_DX12_CBT_PROCEDURAL_VERTEX_SHADER
+            "${PARALLEL_ROAM_DX12_SHADER_DIR}/CbtProceduralTerrainVS.cso")
         set(PARALLEL_ROAM_DX12_GPU_ROAM_SHADERS
             "${PARALLEL_ROAM_DX12_SHADER_DIR}/GpuRoamCompact.cso"
             "${PARALLEL_ROAM_DX12_SHADER_DIR}/GpuRoamError.cso"
@@ -203,6 +212,7 @@ if(PARALLEL_ROAM_BUILD_APP)
             OUTPUT
                 ${PARALLEL_ROAM_DX12_VERTEX_SHADER}
                 ${PARALLEL_ROAM_DX12_PIXEL_SHADER}
+                ${PARALLEL_ROAM_DX12_CBT_PROCEDURAL_VERTEX_SHADER}
                 ${PARALLEL_ROAM_DX12_GPU_ROAM_SHADERS}
             COMMAND ${CMAKE_COMMAND} -E make_directory "${PARALLEL_ROAM_DX12_SHADER_DIR}"
             COMMAND ${PARALLEL_ROAM_DXC_EXECUTABLE}
@@ -211,6 +221,9 @@ if(PARALLEL_ROAM_BUILD_APP)
             COMMAND ${PARALLEL_ROAM_DXC_EXECUTABLE}
                 -T ps_6_0 -E PSMain -Fo ${PARALLEL_ROAM_DX12_PIXEL_SHADER}
                 "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/dx12/Terrain.hlsl"
+            COMMAND ${PARALLEL_ROAM_DXC_EXECUTABLE}
+                -T vs_6_6 -E VSCbtProcedural -Fo ${PARALLEL_ROAM_DX12_CBT_PROCEDURAL_VERTEX_SHADER}
+                "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/dx12/CbtProceduralTerrain.hlsl"
             COMMAND ${PARALLEL_ROAM_DXC_EXECUTABLE}
                 -T cs_6_0 -E CSCompact -Fo "${PARALLEL_ROAM_DX12_SHADER_DIR}/GpuRoamCompact.cso"
                 "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/dx12/GpuRoamLike.hlsl"
@@ -231,6 +244,7 @@ if(PARALLEL_ROAM_BUILD_APP)
                 "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/dx12/GpuRoamLike.hlsl"
             DEPENDS
                 "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/dx12/Terrain.hlsl"
+                "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/dx12/CbtProceduralTerrain.hlsl"
                 "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/dx12/GpuRoamLike.hlsl"
             VERBATIM
         )
@@ -238,6 +252,7 @@ if(PARALLEL_ROAM_BUILD_APP)
             DEPENDS
                 ${PARALLEL_ROAM_DX12_VERTEX_SHADER}
                 ${PARALLEL_ROAM_DX12_PIXEL_SHADER}
+                ${PARALLEL_ROAM_DX12_CBT_PROCEDURAL_VERTEX_SHADER}
                 ${PARALLEL_ROAM_DX12_GPU_ROAM_SHADERS})
         add_dependencies(parallel_roam parallel_roam_dx12_shaders)
         add_custom_command(

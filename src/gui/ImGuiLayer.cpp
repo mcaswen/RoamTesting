@@ -175,11 +175,25 @@ int TerrainModeIndex(bool useTerrainLod, Algorithms::TerrainLodAlgorithmId algor
         return 3;
     }
 
+#if defined(PARALLEL_ROAM_GRAPHICS_API_D3D12)
+    if (algorithmId == Algorithms::TerrainLodAlgorithmId::Cbt2024)
+    {
+        return 4;
+    }
+#endif
+
     return 1;
 }
 
 Algorithms::TerrainLodAlgorithmId TerrainAlgorithmFromModeIndex(int modeIndex)
 {
+#if defined(PARALLEL_ROAM_GRAPHICS_API_D3D12)
+    if (modeIndex == 4)
+    {
+        return Algorithms::TerrainLodAlgorithmId::Cbt2024;
+    }
+#endif
+
     if (modeIndex == 3)
     {
         return Algorithms::TerrainLodAlgorithmId::GpuRoamLike;
@@ -210,6 +224,11 @@ const char* TerrainModeName(bool useTerrainLod, Algorithms::TerrainLodAlgorithmI
     if (algorithmId == Algorithms::TerrainLodAlgorithmId::GpuRoamLike)
     {
         return "GPU ROAM-like";
+    }
+
+    if (algorithmId == Algorithms::TerrainLodAlgorithmId::Cbt2024)
+    {
+        return "CBT 2024（程序化绘制验证）";
     }
 
     return "Classic CPU ROAM";
@@ -656,13 +675,40 @@ bool ImGuiLayer::DrawDebugOverlay(const DebugOverlayData& data, TerrainPanelStat
     }
     changed |= ImGui::Checkbox("线框模式", &terrainState.Wireframe);
     int terrainModeIndex = TerrainModeIndex(terrainState.UseTerrainLod, terrainState.TerrainLodAlgorithm);
+#if defined(PARALLEL_ROAM_GRAPHICS_API_D3D12)
+    const Algorithms::TerrainLodAlgorithmAvailability& cbtAvailability =
+        data.TerrainLodAvailability[
+            static_cast<std::size_t>(Algorithms::TerrainLodAlgorithmId::Cbt2024)];
+    const char* cbtModeLabel =
+        cbtAvailability.Available ? "CBT 2024（程序化绘制验证）" : "CBT 2024（不可用）";
+    const char* terrainModeItems[] = {
+        "规则网格",
+        "Classic CPU ROAM",
+        "Data-Oriented CPU ROAM",
+        "GPU ROAM-like",
+        cbtModeLabel,
+    };
+#else
     const char* terrainModeItems[] = {"规则网格", "Classic CPU ROAM", "Data-Oriented CPU ROAM", "GPU ROAM-like"};
-    if (ImGui::Combo("LOD 算法", &terrainModeIndex, terrainModeItems, 4))
+#endif
+    if (ImGui::Combo(
+            "LOD 算法",
+            &terrainModeIndex,
+            terrainModeItems,
+            static_cast<int>(std::size(terrainModeItems))))
     {
         changed = true;
         terrainState.UseTerrainLod = terrainModeIndex != 0;
         terrainState.TerrainLodAlgorithm = TerrainAlgorithmFromModeIndex(terrainModeIndex);
     }
+#if defined(PARALLEL_ROAM_GRAPHICS_API_D3D12)
+    if (terrainState.TerrainLodAlgorithm == Algorithms::TerrainLodAlgorithmId::Cbt2024 &&
+        !cbtAvailability.Available &&
+        !cbtAvailability.UnavailableReason.empty())
+    {
+        ImGui::TextWrapped("%s", cbtAvailability.UnavailableReason.c_str());
+    }
+#endif
     const char* debugColorModes[] = {"关闭", "LOD 状态"};
     changed |= ImGui::Combo("调试着色", &terrainState.DebugColorMode, debugColorModes, 2);
     changed |= ImGui::SliderFloat("着色强度", &terrainState.DebugOverlayStrength, 0.0F, 1.0F, "%.2f");

@@ -878,7 +878,7 @@ bool D3D12GpuRoamTerrainLodAlgorithm::BuildRenderData(
         *input.HeightMap,
         input.Settings.TerrainSize,
         input.Settings.HeightScale,
-        input.CameraPosition,
+        input.View.CameraPosition,
         ToDataSettings(input.Settings));
     _stats = ToLodStats(_cpuTopologyBuilder.Stats());
     // 将 SoA CPU 状态打包为与 HLSL NodeRecord 一致的结构化快照
@@ -930,7 +930,7 @@ bool D3D12GpuRoamTerrainLodAlgorithm::BuildRenderData(
     constants.SplitThreshold = input.Settings.SplitThreshold;
     // merge 阈值不允许高于 split 阈值，避免同一节点同时进入冲突候选集
     constants.MergeThreshold = std::min(input.Settings.MergeThreshold, input.Settings.SplitThreshold);
-    constants.CameraPosition = input.CameraPosition;
+    constants.CameraPosition = input.View.CameraPosition;
     std::memset(frame.MappedConstants, 0, ConstantBufferBytes);
     std::memcpy(frame.MappedConstants, &constants, sizeof(constants));
 

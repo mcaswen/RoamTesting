@@ -25,6 +25,7 @@ int main(int argc, char** argv)
     int maxFrameCount = -1;
     bool fixedFrameSmokeTest = false;
     bool gpuSmokeTest = false;
+    bool cbtProceduralSmokeTest = false;
     bool automaticRuntimeBenchmark = false;
     ParallelRoam::App::RuntimeBenchmarkOverrides runtimeBenchmarkOverrides{};
     bool hasRuntimeBenchmarkOverrides = false;
@@ -115,6 +116,17 @@ int main(int argc, char** argv)
         {
             gpuSmokeTest = true;
             maxFrameCount = 32;
+        }
+
+        if (argument == "--cbt-procedural-smoke-test")
+        {
+#if defined(PARALLEL_ROAM_GRAPHICS_API_D3D12)
+            cbtProceduralSmokeTest = true;
+            maxFrameCount = 32;
+#else
+            parseError = "--cbt-procedural-smoke-test requires PARALLEL_ROAM_GRAPHICS_API=D3D12";
+            break;
+#endif
         }
 
         if (argument == "--dx12-smoke-test")
@@ -273,7 +285,13 @@ int main(int argc, char** argv)
         return 2;
     }
 
-    if (automaticRuntimeBenchmark && (fixedFrameSmokeTest || gpuSmokeTest))
+    if (gpuSmokeTest && cbtProceduralSmokeTest)
+    {
+        std::cerr << "--gpu-smoke-test cannot be combined with --cbt-procedural-smoke-test.\n";
+        return 2;
+    }
+
+    if (automaticRuntimeBenchmark && (fixedFrameSmokeTest || gpuSmokeTest || cbtProceduralSmokeTest))
     {
         std::cerr << "--runtime-benchmark cannot be combined with a smoke-test option.\n";
         return 2;
@@ -287,6 +305,10 @@ int main(int argc, char** argv)
     if (gpuSmokeTest)
     {
         application.EnableGpuSmokeTest();
+    }
+    if (cbtProceduralSmokeTest)
+    {
+        application.EnableCbtProceduralSmokeTest();
     }
     if (automaticRuntimeBenchmark)
     {

@@ -58,6 +58,7 @@ public:
     Application& operator=(const Application&) = delete;
 
     void EnableGpuSmokeTest();
+    void EnableCbtProceduralSmokeTest();
     void EnableAutomaticRuntimeBenchmark();
     void ConfigureRuntimeBenchmark(const RuntimeBenchmarkOverrides& overrides);
     bool Initialize();
@@ -197,8 +198,8 @@ private:
     std::string _lastMeshUpdateError;
     std::chrono::steady_clock::time_point _lastFrameTime{};
     bool _initialized{false};
-    bool _gpuSmokeTestEnabled{false};
-    bool _gpuSmokeTestFailed{false};
+    bool _terrainLodSmokeTestEnabled{false};
+    bool _terrainLodSmokeTestFailed{false};
     bool _automaticRuntimeBenchmarkEnabled{false};
     bool _automaticRuntimeBenchmarkCompleted{false};
     bool _automaticRuntimeBenchmarkFailed{false};

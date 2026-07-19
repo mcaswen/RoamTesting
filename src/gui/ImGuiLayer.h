@@ -5,6 +5,7 @@
 #include <SDL.h>
 #include <glm/glm.hpp>
 
+#include <array>
 #include <cstddef>
 #include <string>
 
@@ -85,6 +86,10 @@ struct DebugOverlayData
     bool UseTerrainLod{false};
     Algorithms::TerrainLodAlgorithmId TerrainLodAlgorithm{Algorithms::TerrainLodAlgorithmId::ClassicCpuRoam};
     std::string TerrainLodStatusMessage;
+    std::array<
+        Algorithms::TerrainLodAlgorithmAvailability,
+        static_cast<std::size_t>(Algorithms::TerrainLodAlgorithmId::Count)>
+        TerrainLodAvailability{};
     std::size_t RoamNodeCount{0};
     std::size_t RoamOriginalTriangleCount{0};
     std::size_t RoamSubdividedTriangleCount{0};

@@ -80,6 +80,7 @@ public:
     [[nodiscard]] const std::string& AdapterName() const override;
     [[nodiscard]] const std::string& VersionString() const override;
     [[nodiscard]] bool SupportsGpuRoamLike() const override;
+    [[nodiscard]] const GraphicsDeviceCapabilities& GraphicsCapabilities() const override;
     [[nodiscard]] float LastGpuFrameMilliseconds() const override;
     [[nodiscard]] float LastGpuWaitMilliseconds() const override;
     [[nodiscard]] bool IsValid() const override;
@@ -112,6 +113,7 @@ private:
     };
 
     [[nodiscard]] bool CreateDeviceAndQueue(std::string* errorMessage);
+    void QueryDeviceCapabilities();
     [[nodiscard]] bool CreateSwapChain(std::string* errorMessage);
     [[nodiscard]] bool CreateDescriptorHeaps(std::string* errorMessage);
     [[nodiscard]] bool CreateFrameResources(std::string* errorMessage);
@@ -179,6 +181,7 @@ private:
     bool _tearingSupported{false};
     bool _frameOpen{false};
     bool _initialized{false};
+    GraphicsDeviceCapabilities _deviceCapabilities{};
     std::string _adapterName;
     std::string _versionString{"Direct3D 12 (feature level 12_0)"};
 };

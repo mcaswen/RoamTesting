@@ -56,7 +56,7 @@ bool ClassicRoamTerrainLodAlgorithm::BuildRenderData(
         *input.HeightMap,
         input.Settings.TerrainSize,
         input.Settings.HeightScale,
-        input.CameraPosition,
+        input.View.CameraPosition,
         ToClassicSettings(input.Settings));
     const TerrainLodCpuSample cpuSampleEnd = CaptureTerrainLodCpuSample();
     _stats = ToTerrainLodStats(_builder.Stats());

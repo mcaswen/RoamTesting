@@ -95,6 +95,11 @@ glm::vec3 CameraController::Position() const
     return _position;
 }
 
+glm::vec3 CameraController::Forward() const
+{
+    return _front;
+}
+
 float CameraController::YawDegrees() const
 {
     return _yawDegrees;

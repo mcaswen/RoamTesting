@@ -263,6 +263,11 @@ bool ValidateFrame(
         return false;
     }
 
+    if (!renderPacket.HasConsistentResourceContract())
+    {
+        return false;
+    }
+
     if (renderPacket.Mode == Algorithms::TerrainLodRenderMode::CpuMesh &&
         (renderPacket.CpuMesh.Vertices.empty() || renderPacket.CpuMesh.Indices.empty()))
     {
@@ -368,7 +373,7 @@ BenchmarkAlgorithmRun RunAlgorithm(
         const BenchmarkCameraKeyframe& camera = scenario.CameraPath[index];
         Algorithms::TerrainLodBuildInput buildInput{};
         buildInput.HeightMap = &heightMap;
-        buildInput.CameraPosition = camera.Position;
+        buildInput.View.CameraPosition = camera.Position;
         buildInput.Settings = scenario.Settings;
 
         Algorithms::TerrainLodRenderPacket renderPacket{};

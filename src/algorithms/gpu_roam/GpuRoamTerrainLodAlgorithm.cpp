@@ -142,7 +142,7 @@ bool GpuRoamTerrainLodAlgorithm::BuildRenderData(
         *input.HeightMap,
         input.Settings.TerrainSize,
         input.Settings.HeightScale,
-        input.CameraPosition,
+        input.View.CameraPosition,
         ToDataOrientedSettings(input.Settings));
 
     _stats = ToTerrainLodStats(_cpuTopologyBuilder.Stats());

@@ -2,6 +2,7 @@
 
 #include "render/GraphicsBackend.h"
 
+#include "algorithms/TerrainLodView.h"
 #include "algorithms/classic_roam/ClassicRoamTerrainLodAlgorithm.h"
 #include "algorithms/data_oriented_roam/DataOrientedRoamTerrainLodAlgorithm.h"
 #include "algorithms/gpu_roam/GpuRoamTerrainLodAlgorithm.h"
@@ -249,9 +250,9 @@ bool TerrainRenderer::LoadHeightMap(const std::filesystem::path& heightMapPath, 
     return RebuildMesh(errorMessage);
 }
 
-bool TerrainRenderer::UpdateForCamera(const glm::vec3& cameraPosition, std::string* errorMessage)
+bool TerrainRenderer::UpdateForView(const RenderContext& context, std::string* errorMessage)
 {
-    _lastCameraPosition = cameraPosition;
+    _lastRenderContext = context;
 
     // 规则网格不依赖相机，只有 UI 改变 mesh 参数时才重建
     if (!_settings.UseTerrainLod && !_meshDirty)
@@ -265,7 +266,7 @@ bool TerrainRenderer::UpdateForCamera(const glm::vec3& cameraPosition, std::stri
         // rebuild 距离随 terrain size 放大
         // 大地形下同样的世界位移对 screen error 影响更小
         const float rebuildDistance = std::max(_settings.TerrainSize * RoamRebuildTerrainScale, MinRoamRebuildDistance);
-        const glm::vec3 buildDelta = cameraPosition - _lastRoamBuildCameraPosition;
+        const glm::vec3 buildDelta = context.CameraPosition - _lastRoamBuildCameraPosition;
         const bool cameraMovedEnough = !_hasRoamBuildCameraPosition ||
                                        glm::dot(buildDelta, buildDelta) >= rebuildDistance * rebuildDistance;
 
@@ -275,7 +276,7 @@ bool TerrainRenderer::UpdateForCamera(const glm::vec3& cameraPosition, std::stri
             return true;
         }
 
-        return RebuildTerrainLod(cameraPosition, errorMessage);
+        return RebuildTerrainLod(context, errorMessage);
     }
 
     return RebuildMesh(errorMessage);
@@ -490,7 +491,7 @@ bool TerrainRenderer::RebuildMesh(std::string* errorMessage)
     // ROAM 类算法都通过统一接口重建 CPU mesh
     if (_settings.UseTerrainLod)
     {
-        return RebuildTerrainLod(_lastCameraPosition, errorMessage);
+        return RebuildTerrainLod(_lastRenderContext, errorMessage);
     }
 
     return RebuildRegularGrid(errorMessage);
@@ -521,7 +522,7 @@ bool TerrainRenderer::RebuildRegularGrid(std::string* errorMessage)
     return UploadMesh(errorMessage);
 }
 
-bool TerrainRenderer::RebuildTerrainLod(const glm::vec3& cameraPosition, std::string* errorMessage)
+bool TerrainRenderer::RebuildTerrainLod(const RenderContext& context, std::string* errorMessage)
 {
     const auto rebuildStart = std::chrono::steady_clock::now();
     _terrainLodTotalMilliseconds = 0.0F;
@@ -560,7 +561,14 @@ bool TerrainRenderer::RebuildTerrainLod(const glm::vec3& cameraPosition, std::st
 
     Algorithms::TerrainLodBuildInput buildInput{};
     buildInput.HeightMap = &_heightMap;
-    buildInput.CameraPosition = cameraPosition;
+    buildInput.View = Algorithms::BuildTerrainLodViewInput(
+        context.View,
+        context.Projection,
+        context.CameraPosition,
+        context.CameraForward,
+        static_cast<std::uint32_t>(std::max(context.DrawableWidth, 1)),
+        static_cast<std::uint32_t>(std::max(context.DrawableHeight, 1)),
+        context.UsesZeroToOneDepth);
     buildInput.Settings = lodSettings;
 
     Algorithms::TerrainLodRenderPacket renderPacket{};
@@ -586,7 +594,7 @@ bool TerrainRenderer::RebuildTerrainLod(const glm::vec3& cameraPosition, std::st
     _terrainLodStatusMessage = renderPacket.StatusMessage;
     // camera rebuild 位置只在算法成功后更新
     // 失败时下一帧仍会尝试基于旧 mesh 状态重建
-    _lastRoamBuildCameraPosition = cameraPosition;
+    _lastRoamBuildCameraPosition = context.CameraPosition;
     _hasRoamBuildCameraPosition = true;
 
     if (renderPacket.Mode == Algorithms::TerrainLodRenderMode::CpuMesh)

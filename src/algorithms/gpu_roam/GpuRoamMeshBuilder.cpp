@@ -566,7 +566,7 @@ bool GpuRoamMeshBuilder::RunGpuComputePipeline(
     errorInput.TerrainSize = input.Settings.TerrainSize;
     errorInput.HeightScale = input.Settings.HeightScale;
     errorInput.DistanceScale = input.Settings.DistanceScale;
-    errorInput.CameraPosition = input.CameraPosition;
+    errorInput.CameraPosition = input.View.CameraPosition;
     RunGpuRoamErrorEvaluationPass(errorInput);
 
     GpuRoamCandidateMarkingPassInput candidateInput{};
@@ -586,7 +586,7 @@ bool GpuRoamMeshBuilder::RunGpuComputePipeline(
     candidateInput.DistanceScale = input.Settings.DistanceScale;
     candidateInput.SplitThreshold = input.Settings.SplitThreshold;
     candidateInput.MergeThreshold = input.Settings.MergeThreshold;
-    candidateInput.CameraPosition = input.CameraPosition;
+    candidateInput.CameraPosition = input.View.CameraPosition;
     RunGpuRoamCandidateMarkingPass(candidateInput);
 
     GpuRoamSplitOnlyTopologyPassInput splitOnlyInput{};

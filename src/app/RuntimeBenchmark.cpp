@@ -402,6 +402,10 @@ std::string RuntimeBenchmarkAlgorithmDisplayName(Algorithms::TerrainLodAlgorithm
         return "Data-Oriented CPU ROAM";
     case Algorithms::TerrainLodAlgorithmId::GpuRoamLike:
         return "GPU ROAM-like";
+    case Algorithms::TerrainLodAlgorithmId::Cbt2024:
+        return "CBT 2024（程序化绘制验证）";
+    case Algorithms::TerrainLodAlgorithmId::Count:
+        break;
     }
 
     return "Unknown ROAM";

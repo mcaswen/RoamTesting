@@ -1,5 +1,7 @@
 #include "app/Application.h"
 
+#include "algorithms/cbt_2024/Cbt2024Support.h"
+
 #if defined(PARALLEL_ROAM_GRAPHICS_API_OPENGL)
 #include "platform/OpenGlCapabilities.h"
 #endif
@@ -95,9 +97,16 @@ Application::~Application()
 
 void Application::EnableGpuSmokeTest()
 {
-    _gpuSmokeTestEnabled = true;
+    _terrainLodSmokeTestEnabled = true;
     _terrainPanelState.UseTerrainLod = true;
     _terrainPanelState.TerrainLodAlgorithm = Algorithms::TerrainLodAlgorithmId::GpuRoamLike;
+}
+
+void Application::EnableCbtProceduralSmokeTest()
+{
+    _terrainLodSmokeTestEnabled = true;
+    _terrainPanelState.UseTerrainLod = true;
+    _terrainPanelState.TerrainLodAlgorithm = Algorithms::TerrainLodAlgorithmId::Cbt2024;
 }
 
 void Application::EnableAutomaticRuntimeBenchmark()
@@ -257,7 +266,7 @@ int Application::Run(int maxFrameCount)
     const bool automaticBenchmarkIncomplete =
         _automaticRuntimeBenchmarkEnabled && !_automaticRuntimeBenchmarkCompleted;
     const int exitCode =
-        (_gpuSmokeTestFailed || _automaticRuntimeBenchmarkFailed || automaticBenchmarkIncomplete) ? 1 : 0;
+        (_terrainLodSmokeTestFailed || _automaticRuntimeBenchmarkFailed || automaticBenchmarkIncomplete) ? 1 : 0;
     Shutdown();
     return exitCode;
 }
@@ -333,13 +342,23 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
     _graphicsBackend->BeginImGuiFrame(_guiLayer);
 
     const glm::vec3 cameraPosition = _camera.Position();
-    if (_gpuSmokeTestEnabled)
+    Render::RenderContext renderContext{};
+    renderContext.View = _camera.GetViewMatrix();
+    renderContext.Projection = _graphicsBackend->UsesZeroToOneDepth()
+        ? glm::perspectiveRH_ZO(glm::radians(60.0F), aspectRatio, 0.05F, 1000.0F)
+        : glm::perspectiveRH_NO(glm::radians(60.0F), aspectRatio, 0.05F, 1000.0F);
+    renderContext.CameraPosition = cameraPosition;
+    renderContext.CameraForward = _camera.Forward();
+    renderContext.DrawableWidth = drawableWidth;
+    renderContext.DrawableHeight = drawableHeight;
+    renderContext.UsesZeroToOneDepth = _graphicsBackend->UsesZeroToOneDepth();
+    if (_terrainLodSmokeTestEnabled)
     {
         _terrainRenderer.RequestMeshRebuild();
     }
 
     std::string meshUpdateError;
-    if (!_terrainRenderer.UpdateForCamera(cameraPosition, &meshUpdateError))
+    if (!_terrainRenderer.UpdateForView(renderContext, &meshUpdateError))
     {
         if (_runtimeBenchmark.Active && !_runtimeBenchmark.Failed)
         {
@@ -347,7 +366,7 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
             _runtimeBenchmark.FailureMessage =
                 meshUpdateError.empty() ? "Terrain rebuild failed during runtime benchmark" : meshUpdateError;
         }
-        _gpuSmokeTestFailed = _gpuSmokeTestEnabled;
+        _terrainLodSmokeTestFailed = _terrainLodSmokeTestEnabled;
         if (meshUpdateError != _lastMeshUpdateError)
         {
             std::cerr << meshUpdateError << '\n';
@@ -379,6 +398,19 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
     debugData.UseTerrainLod = terrainStats.UseTerrainLod;
     debugData.TerrainLodAlgorithm = terrainStats.TerrainLodAlgorithm;
     debugData.TerrainLodStatusMessage = terrainStats.TerrainLodStatusMessage;
+    if (!_graphicsBackend->SupportsGpuRoamLike())
+    {
+        auto& availability = debugData.TerrainLodAvailability[
+            static_cast<std::size_t>(Algorithms::TerrainLodAlgorithmId::GpuRoamLike)];
+        availability.Available = false;
+        availability.UnavailableReason = "GPU ROAM-like 当前图形后端不可用";
+    }
+    const Algorithms::Cbt2024::Cbt2024Availability cbtAvailability =
+        Algorithms::Cbt2024::QueryCbt2024Availability(*_graphicsBackend);
+    auto& cbtOverlayAvailability = debugData.TerrainLodAvailability[
+        static_cast<std::size_t>(Algorithms::TerrainLodAlgorithmId::Cbt2024)];
+    cbtOverlayAvailability.Available = cbtAvailability.Available;
+    cbtOverlayAvailability.UnavailableReason = cbtAvailability.UnavailableReason;
     debugData.RoamNodeCount = terrainStats.RoamNodeCount;
     debugData.RoamOriginalTriangleCount = terrainStats.RoamOriginalTriangleCount;
     debugData.RoamSubdividedTriangleCount = terrainStats.RoamSubdividedTriangleCount;
@@ -451,15 +483,6 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
         _runtimeBenchmark.StartRequested = true;
         _terrainPanelState.StartBenchmarkRequested = false;
     }
-
-    Render::RenderContext renderContext{};
-    renderContext.View = _camera.GetViewMatrix();
-    renderContext.Projection = _graphicsBackend->UsesZeroToOneDepth()
-        ? glm::perspectiveRH_ZO(glm::radians(60.0F), aspectRatio, 0.05F, 1000.0F)
-        : glm::perspectiveRH_NO(glm::radians(60.0F), aspectRatio, 0.05F, 1000.0F);
-    renderContext.CameraPosition = cameraPosition;
-    renderContext.DrawableWidth = drawableWidth;
-    renderContext.DrawableHeight = drawableHeight;
 
     // terrain renderer 消费相机矩阵和 UI 参数，不直接处理输入事件
     _terrainRenderer.Render(renderContext);
@@ -623,6 +646,17 @@ void Application::StartRuntimeBenchmark()
     else
     {
         _runtimeBenchmark.Notes.push_back("GPU ROAM-like skipped: unavailable on the configured DX12 device");
+    }
+    const Algorithms::Cbt2024::Cbt2024Availability cbtAvailability =
+        Algorithms::Cbt2024::QueryCbt2024Availability(*_graphicsBackend);
+    if (cbtAvailability.Available)
+    {
+        _runtimeBenchmark.Notes.push_back(
+            "CBT 2024 procedural validation is available but excluded until topology migration is complete");
+    }
+    else
+    {
+        _runtimeBenchmark.Notes.push_back(cbtAvailability.UnavailableReason);
     }
 #endif
     _runtimeBenchmark.PreviousTerrainPanelState = _terrainPanelState;

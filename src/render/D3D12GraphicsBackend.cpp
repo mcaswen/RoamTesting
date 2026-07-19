@@ -307,6 +307,7 @@ void D3D12GraphicsBackend::Shutdown()
     _lastGpuFrameMilliseconds = 0.0F;
     _lastGpuWaitMilliseconds = 0.0F;
     _adapterName.clear();
+    _deviceCapabilities = {};
     _initialized = false;
 }
 
@@ -548,6 +549,11 @@ bool D3D12GraphicsBackend::SupportsGpuRoamLike() const
     return true;
 }
 
+const GraphicsDeviceCapabilities& D3D12GraphicsBackend::GraphicsCapabilities() const
+{
+    return _deviceCapabilities;
+}
+
 float D3D12GraphicsBackend::LastGpuFrameMilliseconds() const
 {
     return _lastGpuFrameMilliseconds;
@@ -786,6 +792,8 @@ bool D3D12GraphicsBackend::CreateDeviceAndQueue(std::string* errorMessage)
         return false;
     }
 
+    QueryDeviceCapabilities();
+
 #if !defined(NDEBUG)
     // 严重验证错误在开发构建中立即中断
     Microsoft::WRL::ComPtr<ID3D12InfoQueue> infoQueue;
@@ -808,6 +816,41 @@ bool D3D12GraphicsBackend::CreateDeviceAndQueue(std::string* errorMessage)
         return false;
     }
     return true;
+}
+
+void D3D12GraphicsBackend::QueryDeviceCapabilities()
+{
+    _deviceCapabilities = {};
+    D3D12_FEATURE_DATA_SHADER_MODEL shaderModel{};
+    shaderModel.HighestShaderModel = D3D_SHADER_MODEL_6_6;
+    if (SUCCEEDED(_device->CheckFeatureSupport(
+            D3D12_FEATURE_SHADER_MODEL,
+            &shaderModel,
+            sizeof(shaderModel))))
+    {
+        const std::uint32_t encodedShaderModel = static_cast<std::uint32_t>(shaderModel.HighestShaderModel);
+        _deviceCapabilities.ShaderModelMajor = (encodedShaderModel >> 4U) & 0xFU;
+        _deviceCapabilities.ShaderModelMinor = encodedShaderModel & 0xFU;
+    }
+
+    D3D12_FEATURE_DATA_D3D12_OPTIONS1 options1{};
+    if (SUCCEEDED(_device->CheckFeatureSupport(
+            D3D12_FEATURE_D3D12_OPTIONS1,
+            &options1,
+            sizeof(options1))))
+    {
+        _deviceCapabilities.SupportsShaderInt64 = options1.Int64ShaderOps != FALSE;
+    }
+
+    D3D12_FEATURE_DATA_D3D12_OPTIONS9 options9{};
+    if (SUCCEEDED(_device->CheckFeatureSupport(
+            D3D12_FEATURE_D3D12_OPTIONS9,
+            &options9,
+            sizeof(options9))))
+    {
+        _deviceCapabilities.SupportsTypedResourceInt64Atomics =
+            options9.AtomicInt64OnTypedResourceSupported != FALSE;
+    }
 }
 
 bool D3D12GraphicsBackend::CreateSwapChain(std::string* errorMessage)
