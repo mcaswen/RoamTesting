@@ -39,16 +39,16 @@ constexpr std::size_t ConstantBufferSize = 256U;
 struct D3D12MeshFrameResources
 {
     // 每帧独立持有上传缓冲，避免覆盖 GPU 尚未消费的数据
-    Microsoft::WRL::ComPtr<ID3D12Resource> VertexBuffer;
-    Microsoft::WRL::ComPtr<ID3D12Resource> IndexBuffer;
-    std::uint8_t* MappedVertices{nullptr};
-    std::uint8_t* MappedIndices{nullptr};
+    Microsoft::WRL::ComPtr<ID3D12Resource> VertexBuffer; // CPU mesh 顶点上传堆
+    Microsoft::WRL::ComPtr<ID3D12Resource> IndexBuffer; // CPU mesh 索引上传堆
+    std::uint8_t* MappedVertices{nullptr}; // 顶点持久映射地址
+    std::uint8_t* MappedIndices{nullptr}; // 索引持久映射地址
     // 缓冲只在容量不足时增长
-    std::size_t VertexCapacityBytes{0};
-    std::size_t IndexCapacityBytes{0};
-    std::uint64_t MeshGeneration{0};
-    D3D12_VERTEX_BUFFER_VIEW VertexView{};
-    D3D12_INDEX_BUFFER_VIEW IndexView{};
+    std::size_t VertexCapacityBytes{0}; // 顶点上传堆当前容量
+    std::size_t IndexCapacityBytes{0}; // 索引上传堆当前容量
+    std::uint64_t MeshGeneration{0}; // 已复制到该帧槽位的 CPU mesh 版本
+    D3D12_VERTEX_BUFFER_VIEW VertexView{}; // 当前帧 draw 使用的顶点视图
+    D3D12_INDEX_BUFFER_VIEW IndexView{}; // 当前帧 draw 使用的索引视图
 };
 
 /// <summary>
@@ -56,16 +56,16 @@ struct D3D12MeshFrameResources
 /// </summary>
 struct TerrainConstants
 {
-    glm::mat4 View{1.0F};
-    glm::mat4 Projection{1.0F};
-    glm::vec4 CameraPosition{0.0F, 0.0F, 0.0F, 1.0F};
-    glm::vec4 LightDirection{0.0F, -1.0F, 0.0F, 0.0F};
-    glm::vec4 LightColor{1.0F};
+    glm::mat4 View{1.0F}; // 世界空间到观察空间矩阵
+    glm::mat4 Projection{1.0F}; // D3D12 零到一深度投影矩阵
+    glm::vec4 CameraPosition{0.0F, 0.0F, 0.0F, 1.0F}; // 世界空间视点
+    glm::vec4 LightDirection{0.0F, -1.0F, 0.0F, 0.0F}; // 归一化世界空间光向
+    glm::vec4 LightColor{1.0F}; // 线性空间直接光颜色
     // LightingParameters 依次保存环境光、漫反射、高光和调试叠加强度
-    glm::vec4 LightingParameters{0.0F};
-    glm::ivec4 DebugParameters{0};
+    glm::vec4 LightingParameters{0.0F}; // 环境光、漫反射、高光和叠加强度
+    glm::ivec4 DebugParameters{0}; // 调试模式及预留整数参数
     // 补齐 D3D12 常量缓冲的 256 字节对齐
-    std::array<std::uint32_t, 12> Padding{};
+    std::array<std::uint32_t, 12> Padding{}; // 补齐根 CBV 地址对齐单元
 };
 
 // 编译期锁定 CPU 与 HLSL 的常量缓冲布局契约
@@ -260,31 +260,31 @@ D3D12_DEPTH_STENCIL_DESC DepthStencilDescription()
 struct D3D12TerrainRendererState
 {
     // Backend 由 Application 持有，本状态只借用
-    D3D12GraphicsBackend* Backend{nullptr};
-    Microsoft::WRL::ComPtr<ID3D12RootSignature> RootSignature;
-    Microsoft::WRL::ComPtr<ID3D12PipelineState> FillPipelineState;
-    Microsoft::WRL::ComPtr<ID3D12PipelineState> WireframePipelineState;
-    Microsoft::WRL::ComPtr<ID3D12CommandSignature> DrawIndexedCommandSignature;
-    D3D12ProceduralTerrainPipeline ProceduralPipeline;
+    D3D12GraphicsBackend* Backend{nullptr}; // 设备和当前命令列表来源
+    Microsoft::WRL::ComPtr<ID3D12RootSignature> RootSignature; // CPU mesh 绘制根签名
+    Microsoft::WRL::ComPtr<ID3D12PipelineState> FillPipelineState; // CPU mesh 实心 PSO
+    Microsoft::WRL::ComPtr<ID3D12PipelineState> WireframePipelineState; // CPU mesh 线框 PSO
+    Microsoft::WRL::ComPtr<ID3D12CommandSignature> DrawIndexedCommandSignature; // GPU mesh DrawIndexed 间接签名
+    D3D12ProceduralTerrainPipeline ProceduralPipeline; // CBT 程序化三角形绘制管线
     // CPU 网格和常量缓冲按交换链帧隔离
-    std::array<D3D12MeshFrameResources, D3D12GraphicsBackend::FrameCount> MeshFrames;
-    std::array<Microsoft::WRL::ComPtr<ID3D12Resource>, D3D12GraphicsBackend::FrameCount> ConstantBuffers;
-    std::array<std::uint8_t*, D3D12GraphicsBackend::FrameCount> MappedConstants{};
-    Microsoft::WRL::ComPtr<ID3D12Resource> Texture;
-    D3D12DescriptorAllocation TextureSrv;
+    std::array<D3D12MeshFrameResources, D3D12GraphicsBackend::FrameCount> MeshFrames; // fence 隔离的 CPU mesh
+    std::array<Microsoft::WRL::ComPtr<ID3D12Resource>, D3D12GraphicsBackend::FrameCount> ConstantBuffers; // 每帧根 CBV
+    std::array<std::uint8_t*, D3D12GraphicsBackend::FrameCount> MappedConstants{}; // 常量持久映射地址
+    Microsoft::WRL::ComPtr<ID3D12Resource> Texture; // 默认堆地表纹理
+    D3D12DescriptorAllocation TextureSrv; // 跨帧稳定的纹理 SRV
     // GPU LOD 缓冲由算法持有，renderer 只保存当前绘制需要的借用指针
-    ID3D12Resource* GpuVertexBuffer{nullptr};
-    ID3D12Resource* GpuIndexBuffer{nullptr};
-    ID3D12Resource* GpuActiveLeafBuffer{nullptr};
-    ID3D12Resource* GpuIndirectBuffer{nullptr};
-    D3D12_VERTEX_BUFFER_VIEW GpuVertexView{};
-    D3D12_INDEX_BUFFER_VIEW GpuIndexView{};
-    std::size_t GpuVertexCapacityBytes{0};
-    std::size_t GpuVertexStrideBytes{0};
-    std::size_t GpuActiveLeafCapacityBytes{0};
-    std::size_t GpuActiveLeafStrideBytes{0};
-    std::uint64_t GpuResourceGeneration{0};
-    std::uint64_t MeshGeneration{0};
+    ID3D12Resource* GpuVertexBuffer{nullptr}; // GPU ROAM emit 顶点流
+    ID3D12Resource* GpuIndexBuffer{nullptr}; // GPU ROAM emit 索引流
+    ID3D12Resource* GpuActiveLeafBuffer{nullptr}; // CBT 程序化绘制活动元素
+    ID3D12Resource* GpuIndirectBuffer{nullptr}; // 算法生成的间接命令
+    D3D12_VERTEX_BUFFER_VIEW GpuVertexView{}; // GPU ROAM 顶点视图
+    D3D12_INDEX_BUFFER_VIEW GpuIndexView{}; // GPU ROAM 索引视图
+    std::size_t GpuVertexCapacityBytes{0}; // 程序化 SRV 元素范围来源
+    std::size_t GpuVertexStrideBytes{0}; // 程序化顶点结构步长
+    std::size_t GpuActiveLeafCapacityBytes{0}; // 活动元素 SRV 范围来源
+    std::size_t GpuActiveLeafStrideBytes{0}; // 活动元素结构步长
+    std::uint64_t GpuResourceGeneration{0}; // 借用资源的 build 版本
+    std::uint64_t MeshGeneration{0}; // CPU mesh 全局版本
 };
 
 namespace

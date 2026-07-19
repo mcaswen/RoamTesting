@@ -142,4 +142,4 @@ bool Window::IsValid() const
 {
     return _window != nullptr;
 }
-} // 命名空间 ParallelRoam::Platform
+} // namespace ParallelRoam::Platform

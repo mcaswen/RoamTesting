@@ -2,16 +2,15 @@ if(WIN32)
     find_program(PARALLEL_ROAM_POWERSHELL_EXECUTABLE NAMES pwsh powershell)
     if(PARALLEL_ROAM_POWERSHELL_EXECUTABLE)
         add_test(
-            NAME cbt_cpp_comment_coverage
+            NAME cpp_comment_coverage
             COMMAND
                 ${PARALLEL_ROAM_POWERSHELL_EXECUTABLE}
                 -NoProfile
                 -ExecutionPolicy Bypass
-                -File "${CMAKE_CURRENT_SOURCE_DIR}/../tools/check_cbt_comment_coverage.ps1"
-                -MinimumPercent 15
+                -File "${CMAKE_CURRENT_SOURCE_DIR}/../tools/check_cpp_comment_coverage.ps1"
         )
     else()
-        message(WARNING "PowerShell was not found; CBT comment coverage test is disabled.")
+        message(WARNING "PowerShell was not found; C++ comment coverage test is disabled.")
     endif()
 endif()
 

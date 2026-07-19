@@ -94,7 +94,6 @@ enum class TerrainLodFrustumPlane
 
 /// <summary>
 /// renderer 与视点相关 LOD 算法共享的只读视图数据
-/// FrustumPlanes 使用向内法线，点位于平面内侧时 ax + by + cz + d 大于等于零
 /// </summary>
 struct TerrainLodViewInput
 {
@@ -103,7 +102,7 @@ struct TerrainLodViewInput
     glm::mat4 ViewProjection{1.0F};
     glm::vec3 CameraPosition{0.0F};
     glm::vec3 CameraForward{0.0F, 0.0F, -1.0F};
-    std::array<glm::vec4, static_cast<std::size_t>(TerrainLodFrustumPlane::Count)> FrustumPlanes{};
+    std::array<glm::vec4, static_cast<std::size_t>(TerrainLodFrustumPlane::Count)> FrustumPlanes{}; // 向内法线且内侧平面值非负
     std::uint32_t DrawableWidth{1U};
     std::uint32_t DrawableHeight{1U};
 };

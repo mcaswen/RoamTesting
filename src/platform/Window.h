@@ -46,4 +46,4 @@ private:
     // 支持窗口创建失败后的幂等清理
     bool _sdlInitialized{false};
 };
-} // 命名空间 ParallelRoam::Platform
+} // namespace ParallelRoam::Platform

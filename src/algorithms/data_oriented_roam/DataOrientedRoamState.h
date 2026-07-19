@@ -22,12 +22,18 @@ constexpr DataOrientedRoamChunkId InvalidDataOrientedRoamChunkId =
 // 固定分块数避免把内部调度策略暴露成 UI 参数
 constexpr int DataOrientedRoamTopologyChunkGridSize = 8;
 
+/// <summary>
+/// split 提交的来源，用于区分误差驱动和兼容约束传播
+/// </summary>
 enum class DataOrientedRoamSplitReason
 {
     Requested,
     ForcedByBaseNeighbor,
 };
 
+/// <summary>
+/// 活动叶相对当前 build 的生命周期分类
+/// </summary>
 enum class DataOrientedRoamLeafDebugClass
 {
     Original,
@@ -41,10 +47,10 @@ enum class DataOrientedRoamLeafDebugClass
 struct DataOrientedRoamSplitCandidate
 {
     // Score 来自批量 ScreenErrors 缓存
-    float Score{0.0F};
+    float Score{0.0F}; // 大值优先进入拓扑提交
     // Sequence 只用于同分候选的稳定排序
-    std::uint64_t Sequence{0};
-    DataOrientedRoamNodeIndex Node{InvalidDataOrientedRoamNodeIndex};
+    std::uint64_t Sequence{0}; // 保持跨线程收集后的确定性
+    DataOrientedRoamNodeIndex Node{InvalidDataOrientedRoamNodeIndex}; // 快照对应节点索引
 };
 
 /// <summary>
@@ -53,8 +59,8 @@ struct DataOrientedRoamSplitCandidate
 struct DataOrientedRoamMergeCandidate
 {
     // merge 队列按低误差优先回收
-    float Score{0.0F};
-    DataOrientedRoamNodeIndex Node{InvalidDataOrientedRoamNodeIndex};
+    float Score{0.0F}; // 小值优先回收细分
+    DataOrientedRoamNodeIndex Node{InvalidDataOrientedRoamNodeIndex}; // diamond 父节点索引
 };
 
 /// <summary>
@@ -62,24 +68,24 @@ struct DataOrientedRoamMergeCandidate
 /// </summary>
 struct DataOrientedRoamNodeConstRef
 {
-    const TriangleDomain& Domain;
-    const DataOrientedRoamNodeIndex& Parent;
-    const DataOrientedRoamNodeIndex& LeftChild;
-    const DataOrientedRoamNodeIndex& RightChild;
-    const DataOrientedRoamNodeIndex& BaseNeighbor;
-    const DataOrientedRoamNodeIndex& LeftNeighbor;
-    const DataOrientedRoamNodeIndex& RightNeighbor;
-    const DataOrientedRoamChunkId& InteriorChunkId;
-    const float& GeometricError;
-    const float& ScreenError;
-    const std::uint64_t& PathId;
-    const std::uint64_t& CreatedBuildId;
-    const std::uint64_t& ActivatedBuildId;
-    const std::uint64_t& SplitBuildId;
-    const std::uint64_t& MergeBuildId;
-    const int& Depth;
-    const std::uint8_t& ActivatedByForcedSplit;
-    const std::uint8_t& IsSplit;
+    const TriangleDomain& Domain; // UV 空间三角形定义域
+    const DataOrientedRoamNodeIndex& Parent; // 二叉树父节点
+    const DataOrientedRoamNodeIndex& LeftChild; // 左子树入口
+    const DataOrientedRoamNodeIndex& RightChild; // 右子树入口
+    const DataOrientedRoamNodeIndex& BaseNeighbor; // 基边兼容邻居
+    const DataOrientedRoamNodeIndex& LeftNeighbor; // 左边邻接节点
+    const DataOrientedRoamNodeIndex& RightNeighbor; // 右边邻接节点
+    const DataOrientedRoamChunkId& InteriorChunkId; // 并发提交所有权分块
+    const float& GeometricError; // 与相机无关的缓存误差
+    const float& ScreenError; // 最近一次视点相关评分
+    const std::uint64_t& PathId; // 跨帧稳定拓扑身份
+    const std::uint64_t& CreatedBuildId; // 首次分配节点的 build
+    const std::uint64_t& ActivatedBuildId; // 最近恢复活动的 build
+    const std::uint64_t& SplitBuildId; // 最近执行 split 的 build
+    const std::uint64_t& MergeBuildId; // 最近执行 merge 的 build
+    const int& Depth; // 二叉三角树深度
+    const std::uint8_t& ActivatedByForcedSplit; // 是否由兼容约束激活
+    const std::uint8_t& IsSplit; // 是否为活动内部节点
 };
 
 /// <summary>
@@ -87,24 +93,24 @@ struct DataOrientedRoamNodeConstRef
 /// </summary>
 struct DataOrientedRoamNodeRef
 {
-    TriangleDomain& Domain;
-    DataOrientedRoamNodeIndex& Parent;
-    DataOrientedRoamNodeIndex& LeftChild;
-    DataOrientedRoamNodeIndex& RightChild;
-    DataOrientedRoamNodeIndex& BaseNeighbor;
-    DataOrientedRoamNodeIndex& LeftNeighbor;
-    DataOrientedRoamNodeIndex& RightNeighbor;
-    DataOrientedRoamChunkId& InteriorChunkId;
-    float& GeometricError;
-    float& ScreenError;
-    std::uint64_t& PathId;
-    std::uint64_t& CreatedBuildId;
-    std::uint64_t& ActivatedBuildId;
-    std::uint64_t& SplitBuildId;
-    std::uint64_t& MergeBuildId;
-    int& Depth;
-    std::uint8_t& ActivatedByForcedSplit;
-    std::uint8_t& IsSplit;
+    TriangleDomain& Domain; // 写回 Domains 同下标元素
+    DataOrientedRoamNodeIndex& Parent; // 写回 Parents 同下标元素
+    DataOrientedRoamNodeIndex& LeftChild; // 写回 LeftChildren 同下标元素
+    DataOrientedRoamNodeIndex& RightChild; // 写回 RightChildren 同下标元素
+    DataOrientedRoamNodeIndex& BaseNeighbor; // 写回 BaseNeighbors 同下标元素
+    DataOrientedRoamNodeIndex& LeftNeighbor; // 写回 LeftNeighbors 同下标元素
+    DataOrientedRoamNodeIndex& RightNeighbor; // 写回 RightNeighbors 同下标元素
+    DataOrientedRoamChunkId& InteriorChunkId; // 写回分块所有权缓存
+    float& GeometricError; // 写回静态误差缓存
+    float& ScreenError; // 写回当前视点评分
+    std::uint64_t& PathId; // 写回稳定路径身份
+    std::uint64_t& CreatedBuildId; // 写回创建版本
+    std::uint64_t& ActivatedBuildId; // 写回激活版本
+    std::uint64_t& SplitBuildId; // 写回分裂版本
+    std::uint64_t& MergeBuildId; // 写回合并版本
+    int& Depth; // 写回节点深度
+    std::uint8_t& ActivatedByForcedSplit; // 写回强制激活标志
+    std::uint8_t& IsSplit; // 写回内部节点标志
 
     [[nodiscard]] operator DataOrientedRoamNodeConstRef() const;
 };
@@ -310,4 +316,4 @@ void CollectMergeCandidates(DataOrientedRoamState& state, std::vector<DataOrient
 
 // SampleNormal 从 HeightMap 梯度估计，避免依赖 leaf 邻接关系
 [[nodiscard]] glm::vec3 SampleNormal(const DataOrientedRoamState& state, const glm::vec2& uv);
-} // 命名空间 ParallelRoam::Algorithms::DataOrientedRoam
+} // namespace ParallelRoam::Algorithms::DataOrientedRoam

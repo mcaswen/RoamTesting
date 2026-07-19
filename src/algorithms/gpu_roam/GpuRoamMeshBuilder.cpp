@@ -25,7 +25,9 @@ using Clock = std::chrono::steady_clock;
 
 struct GpuRoamUploadMetrics
 {
+    // 只记录 CPU 发起的数据传输时间，不包含 GPU 执行等待
     float CpuUploadMilliseconds{0.0F};
+    // 资源扩容单独计时，避免把偶发分配抖动归入稳定上传成本
     float BufferAllocationMilliseconds{0.0F};
 };
 
@@ -52,9 +54,11 @@ bool EnsureBufferCapacity(
     GpuRoamUploadMetrics& metrics,
     std::string* errorMessage)
 {
+    // OpenGL 不允许创建零大小存储，空输入仍保留一个字节作为合法占位
     const std::size_t safeRequiredCapacityBytes = std::max<std::size_t>(requiredCapacityBytes, 1U);
     if (bufferId == 0U)
     {
+        // bufferId 是 builder 持久状态，首次使用时才创建对象
         GLuint nextBufferId = 0U;
         glGenBuffers(1, &nextBufferId);
         bufferId = nextBufferId;
@@ -71,8 +75,10 @@ bool EnsureBufferCapacity(
 
     if (currentCapacityBytes < safeRequiredCapacityBytes)
     {
+        // 容量只增长不缩小，连续帧拓扑波动不会反复触发重新分配
         const auto allocationStart = Clock::now();
         glBindBuffer(target, bufferId);
+        // 传入空数据只分配存储，实际快照由后续 glBufferSubData 写入
         glBufferData(target, static_cast<GLsizeiptr>(safeRequiredCapacityBytes), nullptr, GL_DYNAMIC_DRAW);
         glBindBuffer(target, 0);
         metrics.BufferAllocationMilliseconds += ElapsedMilliseconds(allocationStart, Clock::now());
@@ -91,6 +97,7 @@ bool UploadBufferRange(
     GpuRoamUploadMetrics& metrics,
     std::string* errorMessage)
 {
+    // 数据字节数和预留容量分开传递，调用点必须先证明上传不会越界
     if (dataByteCount > capacityByteCount)
     {
         if (errorMessage != nullptr)
@@ -107,6 +114,7 @@ bool UploadBufferRange(
 
     if (data != nullptr && dataByteCount > 0U)
     {
+        // 只更新有效前缀，缓冲尾部留给本帧 GPU 分裂产生的新节点
         const auto uploadStart = Clock::now();
         glBindBuffer(target, bufferId);
         glBufferSubData(target, 0, static_cast<GLsizeiptr>(dataByteCount), data);
@@ -118,6 +126,7 @@ bool UploadBufferRange(
 
 bool HeightMapTextureMatches(const GpuRoamState& state, const Terrain::HeightMap& heightMap)
 {
+    // 路径和尺寸共同构成缓存键，避免同名不同尺寸资源被错误复用
     return state.HeightMapTextureUploaded &&
            state.HeightMapTextureId != 0U &&
            state.CachedHeightMapWidth == heightMap.Width() &&
@@ -134,6 +143,7 @@ bool UploadHeightMapTextureIfNeeded(
 {
     if (HeightMapTextureMatches(state, heightMap))
     {
+        // 高度图通常跨多帧不变，命中后完全跳过 CPU 展平和纹理上传
         return true;
     }
 
@@ -154,6 +164,7 @@ bool UploadHeightMapTextureIfNeeded(
     }
 
     const auto uploadStart = Clock::now();
+    // HeightMap 的抽象采样接口不保证底层连续，因此在上传前显式展平
     std::vector<float> heights;
     heights.resize(static_cast<std::size_t>(heightMap.Width()) * static_cast<std::size_t>(heightMap.Height()));
     for (int y = 0; y < heightMap.Height(); ++y)
@@ -167,6 +178,7 @@ bool UploadHeightMapTextureIfNeeded(
     }
 
     glBindTexture(GL_TEXTURE_2D, state.HeightMapTextureId);
+    // 误差评估和法线重建都需要连续采样，使用线性过滤和边缘夹取
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -182,6 +194,7 @@ bool UploadHeightMapTextureIfNeeded(
         GL_FLOAT,
         heights.data());
     glBindTexture(GL_TEXTURE_2D, 0);
+    // 高度图字节数只在缓存失效帧计入上传统计
     uploadBytes += heights.size() * sizeof(float);
     metrics.CpuUploadMilliseconds += ElapsedMilliseconds(uploadStart, Clock::now());
     state.CachedHeightMapPath = heightMap.SourcePath();
@@ -201,15 +214,18 @@ bool ResolveTimingReadbackSlot(
     std::string* errorMessage)
 {
     GpuRoamTimingReadbackSlot& slot = state.TimingReadbackSlots[slotIndex];
+    // 当前槽位尚未完成时继续暴露最近一次可靠的 GPU 时间
     gpuComputeMilliseconds =
         state.HasCompletedTimingReadback ? state.LastCompletedGpuComputeMilliseconds : 0.0F;
 
     if (!slot.Pending)
     {
+        // 首轮使用或已经消费过的槽位没有可读结果
         return true;
     }
 
     GLuint queryAvailable = GL_FALSE;
+    // available 只用于诊断延迟深度是否足够，最终结果读取仍保证正确性
     glGetQueryObjectuiv(slot.TimerQueryId, GL_QUERY_RESULT_AVAILABLE, &queryAvailable);
 
     const auto queryWaitStart = Clock::now();
@@ -219,6 +235,7 @@ bool ResolveTimingReadbackSlot(
     queryWaitMilliseconds += ElapsedMilliseconds(queryWaitStart, Clock::now());
 
     GpuRoamCounters counters{};
+    // counter buffer 与 timer query 使用同一槽位，二者描述的是同一次 dispatch 链
     const auto readbackStart = Clock::now();
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, slot.CounterBufferId);
     glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, static_cast<GLsizeiptr>(sizeof(counters)), &counters);
@@ -228,6 +245,7 @@ bool ResolveTimingReadbackSlot(
 
     const std::size_t expectedActiveLeafCount =
         slot.BaseActiveLeafCount + static_cast<std::size_t>(counters.SplitOnlyCommitCount);
+    // 每次成功 split 消耗一个叶节点并产生两个子节点，净增一个活动叶和两个节点
     const std::size_t expectedAllocatedNodeCount =
         slot.BaseNodeCount + static_cast<std::size_t>(counters.SplitOnlyCommitCount) * 2U;
     if (counters.ActiveLeafCount != expectedActiveLeafCount ||
@@ -250,6 +268,7 @@ bool ResolveTimingReadbackSlot(
     }
 
     state.LastCompletedCounters = counters;
+    // 纳秒转毫秒后缓存，后续未完成槽位可继续使用这一稳定值
     state.LastCompletedGpuComputeMilliseconds =
         static_cast<float>(static_cast<double>(elapsedNanoseconds) / 1'000'000.0);
     state.HasCompletedTimingReadback = true;
@@ -267,6 +286,7 @@ bool EnsureTimingReadbackSlot(
     GpuRoamTimingReadbackSlot& slot = state.TimingReadbackSlots[slotIndex];
     if (slot.TimerQueryId == 0U)
     {
+        // query 与槽位同生命周期，避免每帧创建和销毁计时对象
         GLuint queryId = 0U;
         glGenQueries(1, &queryId);
         slot.TimerQueryId = queryId;
@@ -292,6 +312,7 @@ bool EnsureTimingReadbackSlot(
         return false;
     }
 
+    // 后续 pass 通过统一 CounterBufferId 绑定当前轮转槽位
     state.CounterBufferId = slot.CounterBufferId;
     return true;
 }
@@ -304,6 +325,7 @@ bool GpuRoamMeshBuilder::Build(
     TerrainLodStats& inOutStats,
     std::string* errorMessage)
 {
+    // 最坏情况下每个输入叶节点成功一次 split，因此节点池额外预留两个节点
     const std::size_t gpuNodeCapacity = snapshot.Nodes.size() + snapshot.ActiveLeafIndices.size() * 2U;
     std::size_t uploadBytes = 0U;
     float cpuUploadMilliseconds = 0.0F;
@@ -320,6 +342,7 @@ bool GpuRoamMeshBuilder::Build(
         return false;
     }
 
+    // GPU 数量采用延迟回读，当前帧不会为了统计数据阻塞命令执行
     float gpuComputeMilliseconds = 0.0F;
     std::size_t readbackBytes = 0U;
     float dispatchWallMilliseconds = 0.0F;
@@ -346,6 +369,7 @@ bool GpuRoamMeshBuilder::Build(
         return false;
     }
 
+    // 分项统计保留上传、调度、查询等待和回读等待，便于区分 CPU 与 GPU 瓶颈
     inOutStats.CpuGpuUploadBytes = uploadBytes;
     inOutStats.CpuGpuReadbackBytes = readbackBytes;
     inOutStats.GpuComputeMilliseconds = gpuComputeMilliseconds;
@@ -356,12 +380,14 @@ bool GpuRoamMeshBuilder::Build(
     inOutStats.GpuReadbackWaitMilliseconds = readbackWaitMilliseconds;
     if (gpuSplitOnlyCommitCount > 0U)
     {
+        // 只有已经完成的延迟回读才覆盖 CPU 基线数量
         inOutStats.ActiveTriangleCount = gpuActiveLeafCount;
         inOutStats.ActiveNodeCount = std::max(inOutStats.ActiveNodeCount, gpuNodeCount);
         inOutStats.SplitCount += gpuSplitOnlyCommitCount;
     }
 
     const Platform::OpenGlGpuCapabilities gpuCapabilities = Platform::QueryOpenGlGpuCapabilities();
+    // 间接绘制不可用时仍复用 GPU 生成的 VBO 和 IBO，由 CPU 提供 draw count
     const bool usesIndirectDraw = gpuCapabilities.SupportsIndirectDraw && _state.IndirectDrawBufferId != 0U;
     outPacket.Mode = usesIndirectDraw ? TerrainLodRenderMode::GpuIndirect : TerrainLodRenderMode::GpuBuffers;
     outPacket.StatusMessage = BuildGpuStatusMessage(usesIndirectDraw);
@@ -372,10 +398,12 @@ bool GpuRoamMeshBuilder::Build(
     outPacket.ActiveLeafBufferId = _state.ActiveLeafBufferId;
     outPacket.IndirectDrawBufferId = usesIndirectDraw ? _state.IndirectDrawBufferId : 0U;
     outPacket.GpuResourceLifetime = TerrainLodGpuResourceLifetime::UntilNextBuildOrReset;
+    // generation 绑定 CPU 快照序列，渲染器可据此拒绝跨 build 缓存
     outPacket.GpuResourceGeneration = snapshot.BuildSequence;
     outPacket.ActiveLeafCount = gpuActiveLeafCount;
     outPacket.ActiveTriangleCount = inOutStats.ActiveTriangleCount;
     outPacket.IndexCount = gpuActiveLeafCount * 3U;
+    // 统一边界在返回前同时验证数量和 GPU 资源所有权契约
     return outPacket.ActiveTriangleCount > 0U &&
            outPacket.IndexCount > 0U &&
            outPacket.GpuVertexBufferId != 0U &&
@@ -386,6 +414,7 @@ bool GpuRoamMeshBuilder::Build(
 
 void GpuRoamMeshBuilder::Reset()
 {
+    // Reset 会销毁 OpenGL 对象，调用方必须保证当前上下文仍然有效
     _state.Reset();
 }
 
@@ -399,6 +428,7 @@ bool GpuRoamMeshBuilder::UploadSnapshot(
     std::string* errorMessage)
 {
     GpuRoamUploadMetrics metrics{};
+    // 节点缓冲上传 CPU 快照前缀，剩余容量供 compute shader 原子分配子节点
     if (!UploadBufferRange(
             GL_SHADER_STORAGE_BUFFER,
             _state.NodeBufferId,
@@ -413,6 +443,7 @@ bool GpuRoamMeshBuilder::UploadSnapshot(
     }
     uploadBytes += snapshot.NodeBufferBytes();
 
+    // 活动叶由 compaction pass 生成，CPU 不上传快照中的索引数组
     if (!EnsureBufferCapacity(
             GL_SHADER_STORAGE_BUFFER,
             _state.ActiveLeafBufferId,
@@ -428,6 +459,7 @@ bool GpuRoamMeshBuilder::UploadSnapshot(
     {
         return false;
     }
+    // 调用者把本方法计时与 compute dispatch 和 readback 分开汇总
     cpuUploadMilliseconds = metrics.CpuUploadMilliseconds;
     bufferAllocationMilliseconds = metrics.BufferAllocationMilliseconds;
     return true;
@@ -448,6 +480,7 @@ bool GpuRoamMeshBuilder::RunGpuComputePipeline(
     std::size_t& gpuSplitOnlyCommitCount,
     std::string* errorMessage)
 {
+    // program 对象按需编译并缓存在 state 中，失败时不提交任何 compute 工作
     if (!EnsureGpuRoamActiveLeafCompactionProgram(_state.ActiveLeafCompactionProgramId, errorMessage) ||
         !EnsureGpuRoamErrorEvaluationProgram(_state.ErrorEvaluationProgramId, errorMessage) ||
         !EnsureGpuRoamCandidateMarkingProgram(_state.CandidateMarkingProgramId, errorMessage) ||
@@ -458,10 +491,15 @@ bool GpuRoamMeshBuilder::RunGpuComputePipeline(
 
     const std::size_t nodeCount = snapshot.Nodes.size();
     const std::size_t activeLeafCount = snapshot.ActiveLeafIndices.size();
+    // split-only 每个候选最多追加两个节点，容量模型必须与 shader 的分配步长一致
     const std::size_t nodeCapacity = nodeCount + activeLeafCount * 2U;
+    // 每个成功 split 让活动叶净增一个，因此两倍输入叶数量足够容纳最坏情况
     const std::size_t activeLeafCapacity = std::max<std::size_t>(activeLeafCount * 2U, activeLeafCount);
+    // 误差数组按输入活动叶索引寻址，不按完整节点池寻址
     const std::size_t screenErrorBytes = activeLeafCount * sizeof(float);
+    // 候选缓冲按节点索引存储，至少分配一个元素以满足 OpenGL 资源规则
     const std::size_t candidateBufferBytes = std::max<std::size_t>(nodeCapacity, 1U) * sizeof(std::uint32_t);
+    // emit 为每个最终活动叶写三个不共享顶点，避免跨线程去重同步
     const std::size_t vertexBufferBytes =
         activeLeafCapacity * 3U * sizeof(Terrain::TerrainMeshVertex);
     const std::size_t indexBufferBytes =
@@ -469,6 +507,7 @@ bool GpuRoamMeshBuilder::RunGpuComputePipeline(
     const GpuRoamDrawElementsIndirectCommand emptyIndirectCommand{};
 
     GpuRoamUploadMetrics metrics{};
+    // 先消费即将复用的旧槽位，再把它重置为本帧计时和 counter 目标
     const std::size_t timingSlotIndex = _state.TimingReadbackCursor % GpuRoamTimingReadbackSlotCount;
     if (!ResolveTimingReadbackSlot(
             _state,
@@ -484,7 +523,9 @@ bool GpuRoamMeshBuilder::RunGpuComputePipeline(
     }
 
     GpuRoamCounters zeroCounters{};
+    // 节点池尾指针从 CPU 快照末尾开始，shader 只在该位置之后追加节点
     zeroCounters.AllocatedNodeCount = static_cast<std::uint32_t>(nodeCount);
+    // 所有 pass 输出在 dispatch 前一次性扩容，执行期间不允许资源对象发生变化
     if (!EnsureBufferCapacity(
             GL_SHADER_STORAGE_BUFFER,
             _state.ScreenErrorBufferId,
@@ -543,11 +584,14 @@ bool GpuRoamMeshBuilder::RunGpuComputePipeline(
     }
     uploadBytes += sizeof(zeroCounters);
     uploadBytes += sizeof(emptyIndirectCommand);
+    // 间接命令必须先清零，emit 未产生有效叶时也不会沿用上一帧 draw count
     bufferAllocationMilliseconds += metrics.BufferAllocationMilliseconds;
 
     const auto dispatchWallStart = Clock::now();
+    // timer query 只包围 GPU pass 链，CPU 侧资源准备不计入 compute 时间
     glBeginQuery(GL_TIME_ELAPSED, _state.TimingReadbackSlots[timingSlotIndex].TimerQueryId);
 
+    // 首次压缩只扫描 CPU 快照已有节点，为误差评估建立稠密活动叶列表
     GpuRoamActiveLeafCompactionPassInput compactionInput{};
     compactionInput.ProgramId = _state.ActiveLeafCompactionProgramId;
     compactionInput.NodeBufferId = _state.NodeBufferId;
@@ -556,6 +600,7 @@ bool GpuRoamMeshBuilder::RunGpuComputePipeline(
     compactionInput.NodeCount = nodeCount;
     RunGpuRoamActiveLeafCompactionPass(compactionInput);
 
+    // 误差 pass 只写 screen error，不修改节点拓扑
     GpuRoamErrorEvaluationPassInput errorInput{};
     errorInput.ProgramId = _state.ErrorEvaluationProgramId;
     errorInput.NodeBufferId = _state.NodeBufferId;
@@ -569,6 +614,7 @@ bool GpuRoamMeshBuilder::RunGpuComputePipeline(
     errorInput.CameraPosition = input.View.CameraPosition;
     RunGpuRoamErrorEvaluationPass(errorInput);
 
+    // 候选 pass 读取同一活动叶顺序，使 screen error 与叶索引一一对应
     GpuRoamCandidateMarkingPassInput candidateInput{};
     candidateInput.ProgramId = _state.CandidateMarkingProgramId;
     candidateInput.NodeBufferId = _state.NodeBufferId;
@@ -585,10 +631,12 @@ bool GpuRoamMeshBuilder::RunGpuComputePipeline(
     candidateInput.HeightScale = input.Settings.HeightScale;
     candidateInput.DistanceScale = input.Settings.DistanceScale;
     candidateInput.SplitThreshold = input.Settings.SplitThreshold;
+    // merge 目前只输出统计候选，仍保持与 CPU 基线相同的阈值输入
     candidateInput.MergeThreshold = input.Settings.MergeThreshold;
     candidateInput.CameraPosition = input.View.CameraPosition;
     RunGpuRoamCandidateMarkingPass(candidateInput);
 
+    // 拓扑 pass 通过原子锁和容量检查提交一轮兼容成对分裂
     GpuRoamSplitOnlyTopologyPassInput splitOnlyInput{};
     splitOnlyInput.NodeBufferId = _state.NodeBufferId;
     splitOnlyInput.SplitCandidateBufferId = _state.SplitCandidateBufferId;
@@ -602,6 +650,7 @@ bool GpuRoamMeshBuilder::RunGpuComputePipeline(
         return false;
     }
 
+    // split 改变叶节点集合，第二次 compaction 前只重置活动叶计数
     const std::uint32_t zeroActiveLeafCount = 0U;
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, _state.CounterBufferId);
     glBufferSubData(
@@ -612,9 +661,11 @@ bool GpuRoamMeshBuilder::RunGpuComputePipeline(
     uploadBytes += sizeof(zeroActiveLeafCount);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
+    // 扫描完整预留节点池，但 shader 通过 AllocatedNodeCount 排除未分配尾部
     compactionInput.NodeCount = nodeCapacity;
     RunGpuRoamActiveLeafCompactionPass(compactionInput);
 
+    // emit 消费最终活动叶集合并同时写顶点、索引和间接绘制命令
     GpuRoamMeshEmitPassInput emitInput{};
     emitInput.ProgramId = _state.MeshEmitProgramId;
     emitInput.NodeBufferId = _state.NodeBufferId;
@@ -633,21 +684,24 @@ bool GpuRoamMeshBuilder::RunGpuComputePipeline(
     RunGpuRoamMeshEmitPass(emitInput);
 
     glEndQuery(GL_TIME_ELAPSED);
+    // wall 时间仅表示 CPU 发出 pass 链的耗时，不等同于 GPU 执行时间
     dispatchWallMilliseconds += ElapsedMilliseconds(dispatchWallStart, Clock::now());
 
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
     glBindTexture(GL_TEXTURE_2D, 0);
 
     GpuRoamTimingReadbackSlot& slot = _state.TimingReadbackSlots[timingSlotIndex];
+    // 保存本帧基线数量，延迟回读时才能验证 split 后的计数守恒
     slot.BaseActiveLeafCount = activeLeafCount;
     slot.BaseNodeCount = nodeCount;
     slot.ActiveLeafCapacity = activeLeafCapacity;
     slot.NodeCapacity = nodeCapacity;
     slot.Pending = true;
+    // 轮转槽位让 GPU 有多个帧间隔完成 query 和 counter 写入
     _state.TimingReadbackCursor = (_state.TimingReadbackCursor + 1U) % GpuRoamTimingReadbackSlotCount;
 
-    // 当前帧不再同步等待 GPU counter。Renderer 对 indirect draw 使用 GPU 端 command，
-    // CPU 统计保留 DOD baseline，延迟读回只用于后续 timing 和防御验证。
+    // 当前帧不再同步等待 GPU counter，Renderer 对 indirect draw 使用 GPU 端 command
+    // CPU 统计保留 DOD baseline，延迟读回只用于后续 timing 和防御验证
     gpuActiveLeafCount = activeLeafCount;
     gpuNodeCount = nodeCount;
     gpuSplitOnlyCommitCount = 0U;

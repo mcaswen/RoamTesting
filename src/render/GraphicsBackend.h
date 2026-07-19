@@ -27,10 +27,10 @@ enum class GraphicsApi
 /// </summary>
 struct GraphicsDeviceCapabilities
 {
-    std::uint32_t ShaderModelMajor{0U};
-    std::uint32_t ShaderModelMinor{0U};
-    bool SupportsShaderInt64{false};
-    bool SupportsTypedResourceInt64Atomics{false};
+    std::uint32_t ShaderModelMajor{0U}; // 后端可用 shader model 主版本
+    std::uint32_t ShaderModelMinor{0U}; // 后端可用 shader model 次版本
+    bool SupportsShaderInt64{false}; // shader 是否支持 64 位整数运算
+    bool SupportsTypedResourceInt64Atomics{false}; // typed resource 是否支持 64 位原子操作
 };
 
 /// <summary>
