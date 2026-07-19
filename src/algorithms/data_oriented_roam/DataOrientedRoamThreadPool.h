@@ -37,16 +37,17 @@ private:
 
     void WorkerLoop();
 
-    mutable std::mutex _mutex; // 保护 worker、task 队列和停止状态
+    // mutex 同时保护 worker 集合、任务队列和停止状态
+    mutable std::mutex _mutex;
     // taskAvailable 唤醒正在等待新任务的 worker
     std::condition_variable _taskAvailable;
     // taskFinished 唤醒等待整批任务完成的提交线程
     std::condition_variable _taskFinished;
-    std::vector<std::thread> _workers; // 生命周期内只增长的 worker 集合
-    std::queue<Task> _tasks; // 提交线程批量入队的待执行任务
+    std::vector<std::thread> _workers;
+    std::queue<Task> _tasks;
     // activeTaskCount 记录已经出队但尚未执行完的任务
-    std::size_t _activeTaskCount{0}; // 完成条件必须同时检查队列为空
+    std::size_t _activeTaskCount{0};
     // stopping 置位后不再接受新 worker
-    bool _stopping{false}; // worker 在队列排空后退出
+    bool _stopping{false};
 };
 } // namespace ParallelRoam::Algorithms::DataOrientedRoam

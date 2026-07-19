@@ -23,6 +23,7 @@ groupshared uint CbtTopTree[127];
 [numthreads(64, 1, 1)]
 void CSClear(uint dispatchThreadId : SV_DispatchThreadID)
 {
+    // 同一入口按各自长度清空压缩树和位域
     if (dispatchThreadId < CbtTreeSlotCount)
     {
         CbtTree[dispatchThreadId] = 0;
@@ -36,6 +37,7 @@ void CSClear(uint dispatchThreadId : SV_DispatchThreadID)
 [numthreads(64, 1, 1)]
 void CSApplyUpdates(uint dispatchThreadId : SV_DispatchThreadID)
 {
+    // 批内 bit index 唯一，跨批顺序由命令列表 UAV barrier 保证
     if (dispatchThreadId >= UpdateCount)
     {
         return;
@@ -83,6 +85,7 @@ void CSReduceFirst(uint3 groupId : SV_GroupID, uint groupIndex : SV_GroupIndex)
 
     for (uint width = 64; width > 0; width >>= 1)
     {
+        // 每轮把相邻子计数合并到共享内存的上一层
         if (groupIndex < width)
         {
             const uint parentStart = width - 1;
@@ -109,6 +112,7 @@ void CSReduceFirst(uint3 groupId : SV_GroupID, uint groupIndex : SV_GroupIndex)
 [numthreads(64, 1, 1)]
 void CSReduceSecond(uint groupIndex : SV_GroupIndex)
 {
+    // 子树根数量最大为 64，一组线程即可完成树顶归约
     const uint leafStart = CbtSubtreeCount - 1;
     if (groupIndex < CbtSubtreeCount)
     {
@@ -138,6 +142,7 @@ void CSReduceSecond(uint groupIndex : SV_GroupIndex)
 
     if (groupIndex == 0)
     {
+        // 根计数同时写入验证结果头部，避免额外读回压缩树
         CbtResults[0] = CbtTopTree[0];
     }
 }

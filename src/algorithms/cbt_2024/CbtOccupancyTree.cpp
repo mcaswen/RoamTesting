@@ -9,8 +9,8 @@ namespace ParallelRoam::Algorithms::Cbt2024
 namespace
 {
 constexpr std::uint32_t FullWidthDepthCount = 7U;
-constexpr std::uint32_t BitfieldBlockSize = 128U; // 最深 8 位计数的覆盖范围
-constexpr std::uint32_t ReductionSubtreeSize = 16384U; // 单个中段归约工作组的位范围
+constexpr std::uint32_t BitfieldBlockSize = 128U;
+constexpr std::uint32_t ReductionSubtreeSize = 16384U;
 
 std::uint32_t CapacityValue(CbtOccupancyCapacity capacity)
 {
@@ -19,6 +19,8 @@ std::uint32_t CapacityValue(CbtOccupancyCapacity capacity)
 
 std::uint32_t ComputeTreeDepthOffsetBits(std::uint32_t depth)
 {
+    // 层偏移按实际字段宽度累加，而不是按完整二叉树节点结构寻址
+    // CPU 和 HLSL 必须使用同一公式才能共享压缩缓冲
     if (depth <= FullWidthDepthCount)
     {
         return 32U * ((1U << depth) - 1U);
@@ -34,6 +36,7 @@ void AppendSetBits(
     std::uint32_t baseIndex,
     std::vector<std::uint32_t>& output)
 {
+    // 每次清除最低有效位，枚举成本只与结果数量相关
     while (word != 0U)
     {
         const std::uint32_t localIndex = static_cast<std::uint32_t>(std::countr_zero(word));
@@ -51,19 +54,21 @@ CbtOccupancyLayout BuildCbtOccupancyLayout(CbtOccupancyCapacity capacity)
         throw std::invalid_argument{"CBT occupancy capacity must be a supported power of two"};
     }
 
+    // 官方布局把树顶七层保留为 32 位计数，中段压缩为 16 位
+    // 最深计数层用 8 位统计 128 个占用位，并作为 GPU 分段归约的输入
     CbtOccupancyLayout layout{};
-    layout.Capacity = capacity; // 保存枚举值供 shader 名称和日志复用
-    layout.ElementCount = elementCount; // 物理槽位与叶节点一一对应
-    layout.LeafDepth = static_cast<std::uint32_t>(std::countr_zero(elementCount)); // 容量是二次幂
-    layout.LastTreeDepth = layout.LeafDepth - 7U; // 最后七层由 128 位块和位域承担
-    layout.LastTreeNodeCount = elementCount / BitfieldBlockSize; // 每个节点写入一个 8 位计数
-    layout.BitfieldSlotCount = elementCount / 64U; // 位域使用原生 64 位原子槽位
-    layout.SubtreeRootDepth = layout.LeafDepth - 14U; // 每个中段子树固定覆盖 14 层叶路径
-    layout.SubtreeCount = elementCount / ReductionSubtreeSize; // 容量增大只增加独立工作组
+    layout.Capacity = capacity;
+    layout.ElementCount = elementCount;
+    layout.LeafDepth = static_cast<std::uint32_t>(std::countr_zero(elementCount));
+    layout.LastTreeDepth = layout.LeafDepth - 7U;
+    layout.LastTreeNodeCount = elementCount / BitfieldBlockSize;
+    layout.BitfieldSlotCount = elementCount / 64U;
+    layout.SubtreeRootDepth = layout.LeafDepth - 14U;
+    layout.SubtreeCount = elementCount / ReductionSubtreeSize;
 
     const std::uint32_t treeBits =
         ComputeTreeDepthOffsetBits(layout.LastTreeDepth) + 8U * layout.LastTreeNodeCount;
-    layout.TreeSlotCount = treeBits / 32U; // 所有压缩层均保持 32 位槽位对齐
+    layout.TreeSlotCount = treeBits / 32U;
     return layout;
 }
 
@@ -102,9 +107,10 @@ bool CbtOccupancyTree::SetBit(std::uint32_t bitIndex, bool occupied)
         return false;
     }
 
-    const std::uint32_t slot = bitIndex / 64U; // 选择 64 位原子槽位
-    const std::uint32_t localIndex = bitIndex % 64U; // 选择槽位内 bit
-    const std::uint64_t mask = std::uint64_t{1U} << localIndex; // 避免 32 位移位截断
+    // 位操作只修改原始占用域，计数树由显式 Reduce 统一重建
+    const std::uint32_t slot = bitIndex / 64U;
+    const std::uint32_t localIndex = bitIndex % 64U;
+    const std::uint64_t mask = std::uint64_t{1U} << localIndex;
     if (occupied)
     {
         _bitfield[slot] |= mask;
@@ -136,13 +142,14 @@ void CbtOccupancyTree::Clear()
 
 void CbtOccupancyTree::Reduce()
 {
+    // 每次从位域完整重建计数树，使参考实现不依赖增量更新顺序
     std::fill(_packedTree.begin(), _packedTree.end(), 0U);
 
     // 最深压缩层的每个 8 位计数覆盖两个 64 位位域槽位
-    const std::uint32_t lastLevelHeapStart = 1U << _layout.LastTreeDepth; // 一基完全二叉堆层起点
+    const std::uint32_t lastLevelHeapStart = 1U << _layout.LastTreeDepth;
     for (std::uint32_t blockIndex = 0U; blockIndex < _layout.LastTreeNodeCount; ++blockIndex)
     {
-        const std::uint32_t bitfieldIndex = blockIndex * 2U; // 相邻两个 uint64 组成 128 位块
+        const std::uint32_t bitfieldIndex = blockIndex * 2U;
         const std::uint32_t count =
             static_cast<std::uint32_t>(std::popcount(_bitfield[bitfieldIndex])) +
             static_cast<std::uint32_t>(std::popcount(_bitfield[bitfieldIndex + 1U]));
@@ -152,8 +159,8 @@ void CbtOccupancyTree::Reduce()
     // 上层计数自底向上归约，根计数最终等于全部活动位数量
     for (std::uint32_t depth = _layout.LastTreeDepth; depth-- > 0U;)
     {
-        const std::uint32_t levelStart = 1U << depth; // 一基堆中该层首节点
-        const std::uint32_t levelCount = 1U << depth; // 完整二叉树该层节点数
+        const std::uint32_t levelStart = 1U << depth;
+        const std::uint32_t levelCount = 1U << depth;
         for (std::uint32_t element = 0U; element < levelCount; ++element)
         {
             const std::uint32_t heapId = levelStart + element;
@@ -164,6 +171,7 @@ void CbtOccupancyTree::Reduce()
 
 std::uint32_t CbtOccupancyTree::BitCount() const
 {
+    // Reduce 完成后根计数位于压缩流首槽
     return _packedTree.empty() ? 0U : _packedTree[0];
 }
 
@@ -174,11 +182,12 @@ std::uint32_t CbtOccupancyTree::DecodeBit(std::uint32_t rank) const
         return InvalidCbtBitIndex;
     }
 
-    std::uint32_t heapId = 1U; // rank-select 从根节点开始
+    // 每层用左子树计数判断 rank 落点，进入右子树时扣除整个左子树
+    std::uint32_t heapId = 1U;
     for (std::uint32_t depth = 0U; depth < _layout.LastTreeDepth; ++depth)
     {
         const std::uint32_t leftCount = GetHeapElement(heapId * 2U);
-        const bool selectRight = rank >= leftCount; // 左子树容不下 rank 时进入右子树
+        const bool selectRight = rank >= leftCount;
         heapId = heapId * 2U + static_cast<std::uint32_t>(selectRight);
         if (selectRight)
         {
@@ -186,8 +195,9 @@ std::uint32_t CbtOccupancyTree::DecodeBit(std::uint32_t rank) const
         }
     }
 
-    const std::uint32_t blockIndex = heapId - (1U << _layout.LastTreeDepth); // 转为零基 128 位块
-    const std::uint32_t bitfieldIndex = blockIndex * 2U; // 块内先检查低地址 uint64
+    // 压缩树只定位到 128 位块，最后在两个 64 位 word 中完成选择
+    const std::uint32_t blockIndex = heapId - (1U << _layout.LastTreeDepth);
+    const std::uint32_t bitfieldIndex = blockIndex * 2U;
     const std::uint32_t firstWordCount = static_cast<std::uint32_t>(std::popcount(_bitfield[bitfieldIndex]));
     if (rank < firstWordCount)
     {
@@ -200,17 +210,19 @@ std::uint32_t CbtOccupancyTree::DecodeBit(std::uint32_t rank) const
 
 std::uint32_t CbtOccupancyTree::DecodeBitComplement(std::uint32_t rank) const
 {
-    const std::uint32_t freeCount = _layout.ElementCount - BitCount(); // 根计数的补集
+    // 根节点只保存活动数，空闲总数由固定容量取补集得到
+    const std::uint32_t freeCount = _layout.ElementCount - BitCount();
     if (rank >= freeCount)
     {
         return InvalidCbtBitIndex;
     }
 
-    std::uint32_t heapId = 1U; // 空闲选择与活动选择共享同一压缩树
+    // 空闲 rank-select 不维护第二棵树，而是用节点容量减去活动计数
+    std::uint32_t heapId = 1U;
     for (std::uint32_t depth = 0U; depth < _layout.LastTreeDepth; ++depth)
     {
-        const std::uint32_t childCapacity = _layout.ElementCount >> (depth + 1U); // 当前子节点覆盖位数
-        const std::uint32_t leftFreeCount = childCapacity - GetHeapElement(heapId * 2U); // 活动计数取补集
+        const std::uint32_t childCapacity = _layout.ElementCount >> (depth + 1U);
+        const std::uint32_t leftFreeCount = childCapacity - GetHeapElement(heapId * 2U);
         const bool selectRight = rank >= leftFreeCount;
         heapId = heapId * 2U + static_cast<std::uint32_t>(selectRight);
         if (selectRight)
@@ -219,8 +231,9 @@ std::uint32_t CbtOccupancyTree::DecodeBitComplement(std::uint32_t rank) const
         }
     }
 
-    const std::uint32_t blockIndex = heapId - (1U << _layout.LastTreeDepth); // 选中的 128 位块
-    const std::uint32_t bitfieldIndex = blockIndex * 2U; // 对应两个连续 uint64
+    const std::uint32_t blockIndex = heapId - (1U << _layout.LastTreeDepth);
+    const std::uint32_t bitfieldIndex = blockIndex * 2U;
+    // 支持容量没有尾部无效 bit，word 取反即可直接选择空闲槽位
     const std::uint32_t firstWordCount = static_cast<std::uint32_t>(std::popcount(~_bitfield[bitfieldIndex]));
     if (rank < firstWordCount)
     {
@@ -233,6 +246,7 @@ std::uint32_t CbtOccupancyTree::DecodeBitComplement(std::uint32_t rank) const
 
 std::vector<std::uint32_t> CbtOccupancyTree::ActiveIndices() const
 {
+    // 直接枚举位域作为验证真值，不通过待验证的 rank-select 反推结果
     std::vector<std::uint32_t> result;
     result.reserve(BitCount());
     for (std::uint32_t slot = 0U; slot < _layout.BitfieldSlotCount; ++slot)
@@ -244,6 +258,7 @@ std::vector<std::uint32_t> CbtOccupancyTree::ActiveIndices() const
 
 std::vector<std::uint32_t> CbtOccupancyTree::FreeIndices() const
 {
+    // 支持容量均为 64 的倍数，因此末尾 word 取反后不需要额外屏蔽
     std::vector<std::uint32_t> result;
     result.reserve(_layout.ElementCount - BitCount());
     for (std::uint32_t slot = 0U; slot < _layout.BitfieldSlotCount; ++slot)
@@ -265,6 +280,7 @@ const std::vector<std::uint64_t>& CbtOccupancyTree::Bitfield() const
 
 std::uint32_t CbtOccupancyTree::TreeElementWidth(std::uint32_t depth) const
 {
+    // 根附近需要容纳大计数，越靠近位域越可以使用窄字段
     if (depth < FullWidthDepthCount)
     {
         return 32U;
@@ -284,29 +300,32 @@ std::uint32_t CbtOccupancyTree::GetHeapElement(std::uint32_t heapId) const
         return 0U;
     }
 
-    const std::uint32_t depth = static_cast<std::uint32_t>(std::bit_width(heapId) - 1U); // 一基堆深度
+    const std::uint32_t depth = static_cast<std::uint32_t>(std::bit_width(heapId) - 1U);
     if (depth > _layout.LastTreeDepth)
     {
         return 0U;
     }
 
-    const std::uint32_t width = TreeElementWidth(depth); // 32 位、16 位或 8 位字段
-    const std::uint32_t element = heapId - (1U << depth); // 层内零基索引
-    const std::uint32_t firstBit = TreeDepthOffsetBits(depth) + width * element; // 压缩流偏移
-    const std::uint32_t slot = firstBit / 32U; // 目标 uint 槽位
-    const std::uint32_t localIndex = firstBit % 32U; // 槽位内字段起点
+    // 一基 heap id 先映射到层内索引，再映射到连续压缩位流
+    const std::uint32_t width = TreeElementWidth(depth);
+    const std::uint32_t element = heapId - (1U << depth);
+    const std::uint32_t firstBit = TreeDepthOffsetBits(depth) + width * element;
+    const std::uint32_t slot = firstBit / 32U;
+    const std::uint32_t localIndex = firstBit % 32U;
     const std::uint32_t mask = width == 32U ? 0xffffffffU : ((1U << width) - 1U);
     return (_packedTree[slot] >> localIndex) & mask;
 }
 
 void CbtOccupancyTree::SetHeapElement(std::uint32_t heapId, std::uint32_t value)
 {
-    const std::uint32_t depth = static_cast<std::uint32_t>(std::bit_width(heapId) - 1U); // 一基堆深度
-    const std::uint32_t width = TreeElementWidth(depth); // 当前层计数字段宽度
-    const std::uint32_t element = heapId - (1U << depth); // 当前层零基索引
-    const std::uint32_t firstBit = TreeDepthOffsetBits(depth) + width * element; // 压缩流位置
-    const std::uint32_t slot = firstBit / 32U; // 写入目标 uint
-    const std::uint32_t localIndex = firstBit % 32U; // 写入字段偏移
+    // 各层起点和字段宽度都按 32 位槽对齐，单个计数不会跨槽写入
+    // 先清除旧字段再写入新值，避免相邻压缩计数受到影响
+    const std::uint32_t depth = static_cast<std::uint32_t>(std::bit_width(heapId) - 1U);
+    const std::uint32_t width = TreeElementWidth(depth);
+    const std::uint32_t element = heapId - (1U << depth);
+    const std::uint32_t firstBit = TreeDepthOffsetBits(depth) + width * element;
+    const std::uint32_t slot = firstBit / 32U;
+    const std::uint32_t localIndex = firstBit % 32U;
     const std::uint32_t mask = width == 32U ? 0xffffffffU : ((1U << width) - 1U);
     _packedTree[slot] &= ~(mask << localIndex);
     _packedTree[slot] |= (value & mask) << localIndex;
@@ -314,6 +333,8 @@ void CbtOccupancyTree::SetHeapElement(std::uint32_t heapId, std::uint32_t value)
 
 std::uint32_t CbtOccupancyTree::SelectOne(std::uint64_t word, std::uint32_t rank) const
 {
+    // 调用方已经用树计数选中 word，此处只解析 word 内的局部 rank
+    // 清除最低位可避免逐 bit 扫描空洞区域
     while (word != 0U)
     {
         const std::uint32_t localIndex = static_cast<std::uint32_t>(std::countr_zero(word));

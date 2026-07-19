@@ -46,11 +46,10 @@ enum class DataOrientedRoamLeafDebugClass
 /// </summary>
 struct DataOrientedRoamSplitCandidate
 {
-    // Score 来自批量 ScreenErrors 缓存
-    float Score{0.0F}; // 大值优先进入拓扑提交
-    // Sequence 只用于同分候选的稳定排序
-    std::uint64_t Sequence{0}; // 保持跨线程收集后的确定性
-    DataOrientedRoamNodeIndex Node{InvalidDataOrientedRoamNodeIndex}; // 快照对应节点索引
+    // 高误差优先，Sequence 保证并行收集后的同分候选仍可确定排序
+    float Score{0.0F};
+    std::uint64_t Sequence{0};
+    DataOrientedRoamNodeIndex Node{InvalidDataOrientedRoamNodeIndex};
 };
 
 /// <summary>
@@ -58,9 +57,9 @@ struct DataOrientedRoamSplitCandidate
 /// </summary>
 struct DataOrientedRoamMergeCandidate
 {
-    // merge 队列按低误差优先回收
-    float Score{0.0F}; // 小值优先回收细分
-    DataOrientedRoamNodeIndex Node{InvalidDataOrientedRoamNodeIndex}; // diamond 父节点索引
+    // 低误差 diamond 优先回收
+    float Score{0.0F};
+    DataOrientedRoamNodeIndex Node{InvalidDataOrientedRoamNodeIndex};
 };
 
 /// <summary>
@@ -68,24 +67,24 @@ struct DataOrientedRoamMergeCandidate
 /// </summary>
 struct DataOrientedRoamNodeConstRef
 {
-    const TriangleDomain& Domain; // UV 空间三角形定义域
-    const DataOrientedRoamNodeIndex& Parent; // 二叉树父节点
-    const DataOrientedRoamNodeIndex& LeftChild; // 左子树入口
-    const DataOrientedRoamNodeIndex& RightChild; // 右子树入口
-    const DataOrientedRoamNodeIndex& BaseNeighbor; // 基边兼容邻居
-    const DataOrientedRoamNodeIndex& LeftNeighbor; // 左边邻接节点
-    const DataOrientedRoamNodeIndex& RightNeighbor; // 右边邻接节点
-    const DataOrientedRoamChunkId& InteriorChunkId; // 并发提交所有权分块
-    const float& GeometricError; // 与相机无关的缓存误差
-    const float& ScreenError; // 最近一次视点相关评分
-    const std::uint64_t& PathId; // 跨帧稳定拓扑身份
-    const std::uint64_t& CreatedBuildId; // 首次分配节点的 build
-    const std::uint64_t& ActivatedBuildId; // 最近恢复活动的 build
-    const std::uint64_t& SplitBuildId; // 最近执行 split 的 build
-    const std::uint64_t& MergeBuildId; // 最近执行 merge 的 build
-    const int& Depth; // 二叉三角树深度
-    const std::uint8_t& ActivatedByForcedSplit; // 是否由兼容约束激活
-    const std::uint8_t& IsSplit; // 是否为活动内部节点
+    const TriangleDomain& Domain;
+    const DataOrientedRoamNodeIndex& Parent;
+    const DataOrientedRoamNodeIndex& LeftChild;
+    const DataOrientedRoamNodeIndex& RightChild;
+    const DataOrientedRoamNodeIndex& BaseNeighbor;
+    const DataOrientedRoamNodeIndex& LeftNeighbor;
+    const DataOrientedRoamNodeIndex& RightNeighbor;
+    const DataOrientedRoamChunkId& InteriorChunkId;
+    const float& GeometricError;
+    const float& ScreenError;
+    const std::uint64_t& PathId;
+    const std::uint64_t& CreatedBuildId;
+    const std::uint64_t& ActivatedBuildId;
+    const std::uint64_t& SplitBuildId;
+    const std::uint64_t& MergeBuildId;
+    const int& Depth;
+    const std::uint8_t& ActivatedByForcedSplit;
+    const std::uint8_t& IsSplit;
 };
 
 /// <summary>
@@ -93,24 +92,24 @@ struct DataOrientedRoamNodeConstRef
 /// </summary>
 struct DataOrientedRoamNodeRef
 {
-    TriangleDomain& Domain; // 写回 Domains 同下标元素
-    DataOrientedRoamNodeIndex& Parent; // 写回 Parents 同下标元素
-    DataOrientedRoamNodeIndex& LeftChild; // 写回 LeftChildren 同下标元素
-    DataOrientedRoamNodeIndex& RightChild; // 写回 RightChildren 同下标元素
-    DataOrientedRoamNodeIndex& BaseNeighbor; // 写回 BaseNeighbors 同下标元素
-    DataOrientedRoamNodeIndex& LeftNeighbor; // 写回 LeftNeighbors 同下标元素
-    DataOrientedRoamNodeIndex& RightNeighbor; // 写回 RightNeighbors 同下标元素
-    DataOrientedRoamChunkId& InteriorChunkId; // 写回分块所有权缓存
-    float& GeometricError; // 写回静态误差缓存
-    float& ScreenError; // 写回当前视点评分
-    std::uint64_t& PathId; // 写回稳定路径身份
-    std::uint64_t& CreatedBuildId; // 写回创建版本
-    std::uint64_t& ActivatedBuildId; // 写回激活版本
-    std::uint64_t& SplitBuildId; // 写回分裂版本
-    std::uint64_t& MergeBuildId; // 写回合并版本
-    int& Depth; // 写回节点深度
-    std::uint8_t& ActivatedByForcedSplit; // 写回强制激活标志
-    std::uint8_t& IsSplit; // 写回内部节点标志
+    TriangleDomain& Domain;
+    DataOrientedRoamNodeIndex& Parent;
+    DataOrientedRoamNodeIndex& LeftChild;
+    DataOrientedRoamNodeIndex& RightChild;
+    DataOrientedRoamNodeIndex& BaseNeighbor;
+    DataOrientedRoamNodeIndex& LeftNeighbor;
+    DataOrientedRoamNodeIndex& RightNeighbor;
+    DataOrientedRoamChunkId& InteriorChunkId;
+    float& GeometricError;
+    float& ScreenError;
+    std::uint64_t& PathId;
+    std::uint64_t& CreatedBuildId;
+    std::uint64_t& ActivatedBuildId;
+    std::uint64_t& SplitBuildId;
+    std::uint64_t& MergeBuildId;
+    int& Depth;
+    std::uint8_t& ActivatedByForcedSplit;
+    std::uint8_t& IsSplit;
 
     [[nodiscard]] operator DataOrientedRoamNodeConstRef() const;
 };
@@ -120,35 +119,36 @@ struct DataOrientedRoamNodeRef
 /// </summary>
 struct DataOrientedRoamNodePool
 {
-    // Domain 是节点的 UV 空间三角形，不保存冗余世界坐标
+    // 几何只保存 UV 定义域，世界坐标在评分和 emit 时按需恢复
     std::vector<TriangleDomain> Domains;
-    // Parent 用于 validator 检查持久化 node pool 的树关系
     std::vector<DataOrientedRoamNodeIndex> Parents;
-    // child index 在 merge 后保留，下一次 split 可复用误差缓存
+
+    // merge 后保留 child index，使后续 split 可以复用节点和静态误差
     std::vector<DataOrientedRoamNodeIndex> LeftChildren;
-    // RightChildren 与 LeftChildren 保持同下标写入
     std::vector<DataOrientedRoamNodeIndex> RightChildren;
+
     // 三个 neighbor 对应 base、left、right 三条边
     std::vector<DataOrientedRoamNodeIndex> BaseNeighbors;
     std::vector<DataOrientedRoamNodeIndex> LeftNeighbors;
-    // RightNeighbors 让边向邻接关系不需要临时对象
     std::vector<DataOrientedRoamNodeIndex> RightNeighbors;
+
     // InteriorChunkIds 缓存分块归属，避免 topology pass 反复按 UV 计算
     std::vector<DataOrientedRoamChunkId> InteriorChunkIds;
+
     // GeometricErrors 与相机无关，节点创建后跨帧复用
     std::vector<float> GeometricErrors;
-    // ScreenErrors 缓存最近一次队列评分，供误差评估批量复用
     std::vector<float> ScreenErrors;
+
     // PathIds 是 hysteresis 的稳定键，不能使用 vector index 代替
     std::vector<std::uint64_t> PathIds;
+
     // build id 让 debug overlay 区分新建、激活和合并节点
     std::vector<std::uint64_t> CreatedBuildIds;
     std::vector<std::uint64_t> ActivatedBuildIds;
-    // SplitBuildIds 和 MergeBuildIds 只服务本帧 debug 分类
     std::vector<std::uint64_t> SplitBuildIds;
     std::vector<std::uint64_t> MergeBuildIds;
-    // Depths 直接参与 maxDepth 限制和 debug color 渐变
     std::vector<int> Depths;
+
     // flags 分离保存，避免和 index / float 字段混在同一 cache line
     std::vector<std::uint8_t> ActivatedByForcedSplits;
     std::vector<std::uint8_t> IsSplits;
@@ -156,7 +156,6 @@ struct DataOrientedRoamNodePool
     [[nodiscard]] std::size_t size() const;
     [[nodiscard]] std::size_t capacity() const;
     [[nodiscard]] std::size_t storage_bytes() const;
-    // array_count 用于报告当前 SoA 字段拆分规模
     [[nodiscard]] std::size_t array_count() const;
     [[nodiscard]] bool empty() const;
 
@@ -171,7 +170,7 @@ struct DataOrientedRoamNodePool
         std::uint64_t buildSequence,
         float geometricError);
 
-    // operator[] 返回 proxy，避免 pass 直接依赖具体数组名
+    // proxy 让 pass 保持节点语义，同时底层继续使用 SoA 布局
     [[nodiscard]] DataOrientedRoamNodeRef operator[](DataOrientedRoamNodeIndex node);
     [[nodiscard]] DataOrientedRoamNodeConstRef operator[](DataOrientedRoamNodeIndex node) const;
 };
@@ -181,33 +180,27 @@ struct DataOrientedRoamNodePool
 /// </summary>
 struct DataOrientedRoamState
 {
-    // HeightMap 不归 state 所有，Build 调用期间必须保持有效
+    // HeightMap 和 ThreadPool 只在 Build 调用期间借用
     const Terrain::HeightMap* HeightMap{nullptr};
-    // Settings 是本帧快照，pass 不读取外部 UI 状态
     DataOrientedRoamSettings Settings;
-    // Stats 由各 pass 累积，builder 只负责更新时间桶
     DataOrientedRoamStats Stats;
-    // Nodes 是 SoA node pool
     DataOrientedRoamNodePool Nodes;
-    // PreviousSplitPaths 是 hysteresis 的跨帧记忆
+
+    // 两组稳定 path id 在帧边界交换，为 split/merge 提供 hysteresis 记忆
     std::unordered_set<std::uint64_t> PreviousSplitPaths;
-    // CurrentSplitPaths 在 merge/split 完成后重新收集
     std::unordered_set<std::uint64_t> CurrentSplitPaths;
-    // FinalActiveLeaves 是拓扑稳定后的 leaf 快照，emit 和统计共用
     std::vector<DataOrientedRoamNodeIndex> FinalActiveLeaves;
+
     // RootA 和 RootB 构成初始 diamond
     DataOrientedRoamNodeIndex RootA{InvalidDataOrientedRoamNodeIndex};
     DataOrientedRoamNodeIndex RootB{InvalidDataOrientedRoamNodeIndex};
+
     // CameraPosition 只影响 screen error，不影响 geometric error 缓存
     glm::vec3 CameraPosition{0.0F};
-    // TerrainSize 和 HeightScale 改变时需要保守重建拓扑
     float TerrainSize{1.0F};
     float HeightScale{1.0F};
-    // TopologyMaxDepth 用于判断降低 maxDepth 时是否必须重置
     int TopologyMaxDepth{0};
-    // BuildSequence 为当前帧拓扑变化打时间戳
     std::uint64_t BuildSequence{0};
-    // ThreadPool 由 builder 持有，state 只在单次 Build 中借用调度入口
     DataOrientedRoamThreadPool* ThreadPool{nullptr};
 
     [[nodiscard]] bool IsValidNode(DataOrientedRoamNodeIndex node) const;
@@ -249,39 +242,30 @@ void ResetTopology(DataOrientedRoamState& state);
 // CollectLeafNodes 只遍历 active topology，不返回 inactive child
 void CollectLeafNodes(const DataOrientedRoamState& state, std::vector<DataOrientedRoamNodeIndex>& leafNodes);
 
-// CollectActiveSplitPaths 在 merge/split 后更新 hysteresis 输入
 void CollectActiveSplitPaths(DataOrientedRoamState& state);
 
-// AccumulateLeafStats 聚合当前帧 active leaf 的 debug 分类
 void AccumulateLeafStats(
     DataOrientedRoamState& state,
     const std::vector<DataOrientedRoamNodeIndex>& leafNodes);
 
-// RefineWithSplitQueue 是按 screen error 排序的 split pass
+// merge 先回收低误差 diamond，split 再按高误差顺序消费剩余预算
 void RefineWithSplitQueue(DataOrientedRoamState& state);
-
-// MergeWithDiamondQueue 是 merge pass，先于 split pass 运行
 void MergeWithDiamondQueue(DataOrientedRoamState& state);
 
 // ValidateTopology 是可选 debug pass，不主动修复拓扑
 void ValidateTopology(DataOrientedRoamState& state);
 
-// EmitLeafTriangles 是当前 DOD 路径的 CPU mesh 输出 pass
 void EmitLeafTriangles(
     DataOrientedRoamState& state,
     Terrain::TerrainMeshData& meshData,
     const std::vector<DataOrientedRoamNodeIndex>& leafNodes);
 
-// EvaluateScreenErrorForNode 写回单个节点的 screen error 缓存
 [[nodiscard]] float EvaluateScreenErrorForNode(DataOrientedRoamState& state, DataOrientedRoamNodeIndex node);
 
-// EvaluateScreenErrors 批量刷新 active leaf 的 screen error 缓存
 void EvaluateScreenErrors(DataOrientedRoamState& state, const std::vector<DataOrientedRoamNodeIndex>& leafNodes);
 
-// CollectSplitCandidates 并行收集 active leaf 并标记 split 候选
 void CollectSplitCandidates(DataOrientedRoamState& state, std::vector<DataOrientedRoamSplitCandidate>& candidates);
 
-// CollectMergeCandidates 并行扫描 active internal node 并标记 merge 候选
 void CollectMergeCandidates(DataOrientedRoamState& state, std::vector<DataOrientedRoamMergeCandidate>& candidates);
 
 // CanMergeNode 只检查 diamond merge 前置条件，不修改拓扑
@@ -296,7 +280,6 @@ void CollectMergeCandidates(DataOrientedRoamState& state, std::vector<DataOrient
 // WasSplitLastFrame 只读取上一帧最终 active split path
 [[nodiscard]] bool WasSplitLastFrame(const DataOrientedRoamState& state, DataOrientedRoamNodeConstRef node);
 
-// ClassifyLeafDebug 把节点生命周期映射成 UI 可视化分类
 [[nodiscard]] DataOrientedRoamLeafDebugClass ClassifyLeafDebug(
     const DataOrientedRoamState& state,
     DataOrientedRoamNodeConstRef node);

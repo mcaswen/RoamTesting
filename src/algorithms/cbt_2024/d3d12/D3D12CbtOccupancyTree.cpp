@@ -33,8 +33,8 @@ constexpr std::uint32_t ResultHeaderCount = 1U;
 /// </summary>
 struct CbtBitUpdate
 {
-    std::uint32_t BitIndex{0U}; // 物理槽位索引
-    std::uint32_t Occupied{0U}; // 非零表示置位
+    std::uint32_t BitIndex{0U};
+    std::uint32_t Occupied{0U};
 };
 
 /// <summary>
@@ -42,10 +42,10 @@ struct CbtBitUpdate
 /// </summary>
 struct CbtTestConstants
 {
-    std::uint32_t UpdateOffset{0U}; // 当前批次在上传缓冲中的起点
-    std::uint32_t UpdateCount{0U}; // 当前批次元素数量
-    std::uint32_t DecodeCount{0U}; // 当前 rank-select 数量
-    std::uint32_t ResultOffset{0U}; // 输出缓冲起点
+    std::uint32_t UpdateOffset{0U};
+    std::uint32_t UpdateCount{0U};
+    std::uint32_t DecodeCount{0U};
+    std::uint32_t ResultOffset{0U};
 };
 
 static_assert(sizeof(CbtBitUpdate) == 8U);
@@ -56,7 +56,7 @@ static_assert(sizeof(CbtTestConstants) == 16U);
 /// </summary>
 struct CbtGpuValidationState
 {
-    CbtOccupancyLayout Layout{}; // CPU 与 GPU 共享的容量布局
+    CbtOccupancyLayout Layout{};
     Microsoft::WRL::ComPtr<ID3D12RootSignature> RootSignature;
     Microsoft::WRL::ComPtr<ID3D12PipelineState> ClearPipeline;
     Microsoft::WRL::ComPtr<ID3D12PipelineState> ApplyPipeline;
@@ -70,7 +70,8 @@ struct CbtGpuValidationState
     Microsoft::WRL::ComPtr<ID3D12Resource> Updates;
     Microsoft::WRL::ComPtr<ID3D12Resource> Results;
     Microsoft::WRL::ComPtr<ID3D12Resource> Readback;
-    std::uint8_t* MappedUpdates{nullptr}; // 上传堆生命周期内保持映射
+    // 更新缓冲持久映射，析构时必须在资源释放前 Unmap
+    std::uint8_t* MappedUpdates{nullptr};
     std::size_t ResultBytes{0U};
 
     ~CbtGpuValidationState()
@@ -95,23 +96,23 @@ void SetError(std::string* errorMessage, const std::string& message)
 D3D12_HEAP_PROPERTIES HeapProperties(D3D12_HEAP_TYPE type)
 {
     D3D12_HEAP_PROPERTIES properties{};
-    properties.Type = type; // 调用点决定默认堆、上传堆或回读堆
-    properties.CreationNodeMask = 1U; // 当前后端只创建单节点设备
-    properties.VisibleNodeMask = 1U; // 资源只对节点零可见
+    properties.Type = type;
+    properties.CreationNodeMask = 1U;
+    properties.VisibleNodeMask = 1U;
     return properties;
 }
 
 D3D12_RESOURCE_DESC BufferDescription(std::size_t bytes, D3D12_RESOURCE_FLAGS flags)
 {
     D3D12_RESOURCE_DESC description{};
-    description.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER; // 所有 OCBT 资源都是线性缓冲
-    description.Width = std::max<std::size_t>(bytes, 4U); // D3D12 拒绝零字节资源
-    description.Height = 1U; // buffer 固定字段
-    description.DepthOrArraySize = 1U; // buffer 固定字段
-    description.MipLevels = 1U; // buffer 固定字段
-    description.SampleDesc.Count = 1U; // buffer 固定字段
-    description.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR; // buffer 必需布局
-    description.Flags = flags; // 默认堆按需启用 UAV
+    description.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+    description.Width = std::max<std::size_t>(bytes, 4U);
+    description.Height = 1U;
+    description.DepthOrArraySize = 1U;
+    description.MipLevels = 1U;
+    description.SampleDesc.Count = 1U;
+    description.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+    description.Flags = flags;
     return description;
 }
 
@@ -153,7 +154,7 @@ bool CreateDefaultBuffer(
     Microsoft::WRL::ComPtr<ID3D12Resource>& resource,
     std::string* errorMessage)
 {
-    const D3D12_HEAP_PROPERTIES heap = HeapProperties(D3D12_HEAP_TYPE_DEFAULT); // GPU 本地读写
+    const D3D12_HEAP_PROPERTIES heap = HeapProperties(D3D12_HEAP_TYPE_DEFAULT);
     const D3D12_RESOURCE_DESC description =
         BufferDescription(bytes, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
     if (FAILED(device->CreateCommittedResource(
@@ -177,7 +178,8 @@ bool CreateMappedUploadBuffer(
     std::uint8_t*& mapped,
     std::string* errorMessage)
 {
-    const D3D12_HEAP_PROPERTIES heap = HeapProperties(D3D12_HEAP_TYPE_UPLOAD); // CPU 持久写入更新序列
+    // 更新序列在多个测试 case 间复用同一映射，只有析构时解除映射
+    const D3D12_HEAP_PROPERTIES heap = HeapProperties(D3D12_HEAP_TYPE_UPLOAD);
     const D3D12_RESOURCE_DESC description = BufferDescription(bytes, D3D12_RESOURCE_FLAG_NONE);
     if (FAILED(device->CreateCommittedResource(
             &heap,
@@ -191,7 +193,7 @@ bool CreateMappedUploadBuffer(
         return false;
     }
 
-    const D3D12_RANGE noRead{0U, 0U}; // CPU 不读取上传堆旧内容
+    const D3D12_RANGE noRead{0U, 0U};
     void* memory = nullptr;
     if (FAILED(resource->Map(0U, &noRead, &memory)))
     {
@@ -209,7 +211,7 @@ bool CreateReadbackBuffer(
     Microsoft::WRL::ComPtr<ID3D12Resource>& resource,
     std::string* errorMessage)
 {
-    const D3D12_HEAP_PROPERTIES heap = HeapProperties(D3D12_HEAP_TYPE_READBACK); // GPU 复制后由 CPU 验证
+    const D3D12_HEAP_PROPERTIES heap = HeapProperties(D3D12_HEAP_TYPE_READBACK);
     const D3D12_RESOURCE_DESC description = BufferDescription(bytes, D3D12_RESOURCE_FLAG_NONE);
     if (FAILED(device->CreateCommittedResource(
             &heap,
@@ -227,24 +229,25 @@ bool CreateReadbackBuffer(
 
 bool CreateRootSignature(CbtGpuValidationState& state, ID3D12Device* device, std::string* errorMessage)
 {
-    // 根参数不依赖描述符堆，验证器可以在 renderer 初始化前独立运行
+    // 根描述符让验证器可以在 renderer 初始化前独立运行
+    // 绑定顺序固定为 b0 常量、u0 树、u1 位域、t0 更新和 u2 结果
     std::array<D3D12_ROOT_PARAMETER, 5> parameters{};
-    parameters[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS; // 更新和解码区间
-    parameters[0].Constants.Num32BitValues = 4U; // 与 CbtTestConstants 精确对应
-    parameters[0].Constants.ShaderRegister = 0U; // HLSL b0
-    parameters[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL; // compute 根签名统一可见性
-    parameters[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_UAV; // 压缩树根描述符
-    parameters[1].Descriptor.ShaderRegister = 0U; // HLSL u0
-    parameters[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_UAV; // 64 位位域根描述符
-    parameters[2].Descriptor.ShaderRegister = 1U; // HLSL u1
-    parameters[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV; // 更新上传缓冲
-    parameters[3].Descriptor.ShaderRegister = 0U; // HLSL t0
-    parameters[4].ParameterType = D3D12_ROOT_PARAMETER_TYPE_UAV; // rank-select 输出缓冲
-    parameters[4].Descriptor.ShaderRegister = 2U; // HLSL u2
+    parameters[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+    parameters[0].Constants.Num32BitValues = 4U;
+    parameters[0].Constants.ShaderRegister = 0U;
+    parameters[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+    parameters[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_UAV;
+    parameters[1].Descriptor.ShaderRegister = 0U;
+    parameters[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_UAV;
+    parameters[2].Descriptor.ShaderRegister = 1U;
+    parameters[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
+    parameters[3].Descriptor.ShaderRegister = 0U;
+    parameters[4].ParameterType = D3D12_ROOT_PARAMETER_TYPE_UAV;
+    parameters[4].Descriptor.ShaderRegister = 2U;
 
     D3D12_ROOT_SIGNATURE_DESC description{};
-    description.NumParameters = static_cast<UINT>(parameters.size()); // 不使用静态 sampler
-    description.pParameters = parameters.data(); // 序列化期间借用局部数组
+    description.NumParameters = static_cast<UINT>(parameters.size());
+    description.pParameters = parameters.data();
 
     Microsoft::WRL::ComPtr<ID3DBlob> serialized;
     Microsoft::WRL::ComPtr<ID3DBlob> errors;
@@ -288,8 +291,8 @@ bool CreatePipeline(
     }
 
     D3D12_COMPUTE_PIPELINE_STATE_DESC description{};
-    description.pRootSignature = state.RootSignature.Get(); // 所有入口共享同一绑定协议
-    description.CS = {shader.data(), shader.size()}; // 字节码生命周期覆盖 PSO 创建调用
+    description.pRootSignature = state.RootSignature.Get();
+    description.CS = {shader.data(), shader.size()};
     if (FAILED(device->CreateComputePipelineState(&description, IID_PPV_ARGS(&pipeline))))
     {
         SetError(errorMessage, "Failed to create CBT OCBT pipeline: " + shaderName);
@@ -309,7 +312,9 @@ bool InitializeState(
     CbtOccupancyCapacity capacity,
     std::string* errorMessage)
 {
-    state.Layout = BuildCbtOccupancyLayout(capacity); // 资源大小和 dispatch 形状的唯一来源
+    // 容量布局同时决定资源大小和三段归约的 dispatch 形状
+    // 每个容量单独创建 PSO，避免运行时分支改变官方静态布局
+    state.Layout = BuildCbtOccupancyLayout(capacity);
     if (!CreateRootSignature(state, device, errorMessage))
     {
         return false;
@@ -332,9 +337,11 @@ bool InitializeState(
         return false;
     }
 
-    const std::size_t treeBytes = state.Layout.TreeSlotCount * sizeof(std::uint32_t); // 压缩上层计数
-    const std::size_t bitfieldBytes = state.Layout.BitfieldSlotCount * sizeof(std::uint64_t); // 原子占用位
-    const std::size_t updateBytes = state.Layout.ElementCount * sizeof(CbtBitUpdate); // 满位图批次上限
+    const std::size_t treeBytes = state.Layout.TreeSlotCount * sizeof(std::uint32_t);
+    const std::size_t bitfieldBytes = state.Layout.BitfieldSlotCount * sizeof(std::uint64_t);
+    // 更新缓冲按满容量预留，full case 不需要拆分为多次上传
+    const std::size_t updateBytes = state.Layout.ElementCount * sizeof(CbtBitUpdate);
+    // 结果缓冲恰好容纳根计数以及全部占用和空闲排列
     state.ResultBytes =
         (static_cast<std::size_t>(state.Layout.ElementCount) + ResultHeaderCount) * sizeof(std::uint32_t);
     return CreateDefaultBuffer(device, treeBytes, state.Tree, errorMessage) &&
@@ -346,14 +353,15 @@ bool InitializeState(
 
 std::uint32_t DispatchCount(std::uint32_t itemCount)
 {
-    return (itemCount + WorkGroupSize - 1U) / WorkGroupSize; // 向上取整且调用点保证非零
+    return (itemCount + WorkGroupSize - 1U) / WorkGroupSize;
 }
 
 void UavBarrier(ID3D12GraphicsCommandList* commandList)
 {
     D3D12_RESOURCE_BARRIER barrier{};
-    barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV; // 建立跨入口写后读顺序
-    barrier.UAV.pResource = nullptr; // 同时覆盖树、位域和结果缓冲
+    barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
+    // 空资源指针建立所有 OCBT UAV 的跨 pass 写后读顺序
+    barrier.UAV.pResource = nullptr;
     commandList->ResourceBarrier(1U, &barrier);
 }
 
@@ -364,11 +372,11 @@ void Transition(
     D3D12_RESOURCE_STATES after)
 {
     D3D12_RESOURCE_BARRIER barrier{};
-    barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION; // 结果缓冲在 UAV 和复制源间切换
-    barrier.Transition.pResource = resource; // 仅转换测试结果资源
-    barrier.Transition.StateBefore = before; // 调用方维护的已知前态
-    barrier.Transition.StateAfter = after; // 后续命令要求的状态
-    barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES; // buffer 只有单一子资源
+    barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    barrier.Transition.pResource = resource;
+    barrier.Transition.StateBefore = before;
+    barrier.Transition.StateAfter = after;
+    barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
     commandList->ResourceBarrier(1U, &barrier);
 }
 
@@ -377,8 +385,8 @@ void SetPass(
     ID3D12PipelineState* pipeline,
     const CbtTestConstants& constants)
 {
-    commandList->SetPipelineState(pipeline); // 根参数在不同 compute PSO 间保持有效
-    commandList->SetComputeRoot32BitConstants(0U, 4U, &constants, 0U); // 每次调度发布独立区间
+    commandList->SetPipelineState(pipeline);
+    commandList->SetComputeRoot32BitConstants(0U, 4U, &constants, 0U);
 }
 
 bool ReadResults(
@@ -386,7 +394,7 @@ bool ReadResults(
     std::vector<std::uint32_t>& results,
     std::string* errorMessage)
 {
-    D3D12_RANGE readRange{0U, state.ResultBytes}; // 驱动只需同步当前结果范围
+    D3D12_RANGE readRange{0U, state.ResultBytes};
     void* mapped = nullptr;
     if (FAILED(state.Readback->Map(0U, &readRange, &mapped)))
     {
@@ -394,9 +402,9 @@ bool ReadResults(
         return false;
     }
 
-    results.resize(state.Layout.ElementCount + ResultHeaderCount); // count 加活动和空闲完整排列
+    results.resize(state.Layout.ElementCount + ResultHeaderCount);
     std::memcpy(results.data(), mapped, state.ResultBytes);
-    const D3D12_RANGE noWrite{0U, 0U}; // CPU 不修改回读堆
+    const D3D12_RANGE noWrite{0U, 0U};
     state.Readback->Unmap(0U, &noWrite);
     return true;
 }
@@ -408,8 +416,10 @@ bool CompareResults(
     const std::vector<std::uint32_t>& results,
     std::string* errorMessage)
 {
-    const std::vector<std::uint32_t> active = reference.ActiveIndices(); // CPU 位域升序活动列表
-    const std::vector<std::uint32_t> free = reference.FreeIndices(); // CPU 位域升序空闲列表
+    // GPU 输出按根计数、占用 rank 序列、空闲 rank 序列连续存放
+    // 两类序列都逐 rank 比较，不能只用总数掩盖树内寻址错误
+    const std::vector<std::uint32_t> active = reference.ActiveIndices();
+    const std::vector<std::uint32_t> free = reference.FreeIndices();
     if (results[0] != active.size())
     {
         SetError(
@@ -431,7 +441,7 @@ bool CompareResults(
         }
     }
 
-    const std::size_t freeOffset = ResultHeaderCount + active.size(); // GPU 两类输出紧邻存储
+    const std::size_t freeOffset = ResultHeaderCount + active.size();
     for (std::size_t rank = 0U; rank < free.size(); ++rank)
     {
         if (results[freeOffset + rank] != free[rank])
@@ -453,8 +463,10 @@ bool RunValidationCase(
     const std::vector<UpdateBatch>& batches,
     std::string* errorMessage)
 {
-    CbtOccupancyTree reference{state.Layout.Capacity}; // 每个 case 从空树独立开始
-    std::vector<CbtBitUpdate> flattenedUpdates; // GPU 上传保持批次间的命令顺序
+    // CPU 参考树按批次顺序执行相同更新，避免并行 batch 掩盖跨批依赖
+    // GPU 侧在一条命令列表内执行完整 pass 链，最终只读回一次结果
+    CbtOccupancyTree reference{state.Layout.Capacity};
+    std::vector<CbtBitUpdate> flattenedUpdates;
     for (const UpdateBatch& batch : batches)
     {
         flattenedUpdates.insert(flattenedUpdates.end(), batch.begin(), batch.end());
@@ -482,17 +494,19 @@ bool RunValidationCase(
             flattenedUpdates.size() * sizeof(CbtBitUpdate));
     }
 
-    const std::uint32_t activeCount = reference.BitCount(); // 决定活动 rank 调度宽度
-    const std::uint32_t freeCount = state.Layout.ElementCount - activeCount; // 决定空闲 rank 调度宽度
+    const std::uint32_t activeCount = reference.BitCount();
+    const std::uint32_t freeCount = state.Layout.ElementCount - activeCount;
     if (!backend.ExecuteImmediate(
             [&](ID3D12GraphicsCommandList* commandList, std::string*) {
-                commandList->SetComputeRootSignature(state.RootSignature.Get()); // 后续 PSO 共享根布局
-                commandList->SetComputeRootUnorderedAccessView(1U, state.Tree->GetGPUVirtualAddress()); // u0
-                commandList->SetComputeRootUnorderedAccessView(2U, state.Bitfield->GetGPUVirtualAddress()); // u1
-                commandList->SetComputeRootShaderResourceView(3U, state.Updates->GetGPUVirtualAddress()); // t0
-                commandList->SetComputeRootUnorderedAccessView(4U, state.Results->GetGPUVirtualAddress()); // u2
+                commandList->SetComputeRootSignature(state.RootSignature.Get());
+                commandList->SetComputeRootUnorderedAccessView(1U, state.Tree->GetGPUVirtualAddress());
+                commandList->SetComputeRootUnorderedAccessView(2U, state.Bitfield->GetGPUVirtualAddress());
+                commandList->SetComputeRootShaderResourceView(3U, state.Updates->GetGPUVirtualAddress());
+                commandList->SetComputeRootUnorderedAccessView(4U, state.Results->GetGPUVirtualAddress());
 
-                CbtTestConstants constants{}; // clear 和 reduce 不消费区间字段
+                // 每个 case 从空树开始，批次之间用 UAV barrier 保留更新顺序
+                // 同一批次保证 bit index 唯一，批内原子操作无需定义先后顺序
+                CbtTestConstants constants{};
                 SetPass(commandList, state.ClearPipeline.Get(), constants);
                 commandList->Dispatch(
                     DispatchCount(std::max(state.Layout.TreeSlotCount, state.Layout.BitfieldSlotCount)),
@@ -500,20 +514,22 @@ bool RunValidationCase(
                     1U);
                 UavBarrier(commandList);
 
-                std::uint32_t updateOffset = 0U; // 扁平上传中的当前批次起点
+                std::uint32_t updateOffset = 0U;
                 for (const UpdateBatch& batch : batches)
                 {
                     if (!batch.empty())
                     {
-                        constants.UpdateOffset = updateOffset; // 保持 CPU 批次顺序
-                        constants.UpdateCount = static_cast<std::uint32_t>(batch.size()); // 批内位互不重复
+                        constants.UpdateOffset = updateOffset;
+                        constants.UpdateCount = static_cast<std::uint32_t>(batch.size());
                         SetPass(commandList, state.ApplyPipeline.Get(), constants);
                         commandList->Dispatch(DispatchCount(constants.UpdateCount), 1U, 1U);
                         UavBarrier(commandList);
                     }
-                    updateOffset += static_cast<std::uint32_t>(batch.size()); // 指向下一批上传前缀
+                    updateOffset += static_cast<std::uint32_t>(batch.size());
                 }
 
+                // 归约先统计 128 位块，再合并 16K 子树，最后由单组写出树顶
+                // 每一级读取前一级输出，三级之间都需要显式 UAV 可见性
                 constants = {};
                 SetPass(commandList, state.ReducePrePipeline.Get(), constants);
                 commandList->Dispatch(DispatchCount(state.Layout.LastTreeNodeCount), 1U, 1U);
@@ -529,20 +545,23 @@ bool RunValidationCase(
 
                 if (activeCount > 0U)
                 {
-                    constants.DecodeCount = activeCount; // 每个线程处理一个活动 rank
-                    constants.ResultOffset = ResultHeaderCount; // results[0] 保留根计数
+                    // 每个线程独立解析一个 rank，输出顺序天然与 rank 一致
+                    constants.DecodeCount = activeCount;
+                    constants.ResultOffset = ResultHeaderCount;
                     SetPass(commandList, state.DecodeOccupiedPipeline.Get(), constants);
                     commandList->Dispatch(DispatchCount(activeCount), 1U, 1U);
                 }
                 if (freeCount > 0U)
                 {
-                    constants.DecodeCount = freeCount; // 每个线程处理一个空闲 rank
-                    constants.ResultOffset = ResultHeaderCount + activeCount; // 紧随活动列表
+                    // 空闲序列紧随占用序列，避免为验证再分配第二个结果缓冲
+                    constants.DecodeCount = freeCount;
+                    constants.ResultOffset = ResultHeaderCount + activeCount;
                     SetPass(commandList, state.DecodeFreePipeline.Get(), constants);
                     commandList->Dispatch(DispatchCount(freeCount), 1U, 1U);
                 }
                 UavBarrier(commandList);
 
+                // ExecuteImmediate 在返回前等待 fence，因此回读只需一次复制
                 Transition(
                     commandList,
                     state.Results.Get(),
@@ -580,7 +599,7 @@ bool RunValidationCase(
 
 UpdateBatch BuildFullBatch(std::uint32_t elementCount)
 {
-    UpdateBatch batch(elementCount); // 满树用一次无冲突并行置位
+    UpdateBatch batch(elementCount);
     for (std::uint32_t bit = 0U; bit < elementCount; ++bit)
     {
         batch[bit] = CbtBitUpdate{bit, 1U};
@@ -601,13 +620,14 @@ UpdateBatch BuildAlternatingBatch(std::uint32_t elementCount)
 
 std::vector<UpdateBatch> BuildRandomBatches(std::uint32_t elementCount)
 {
-    std::vector<std::uint32_t> indices(elementCount); // 洗牌后切分互不重复的更新集合
+    // 三个批次依次置位、清除子集和置位新集合，覆盖跨 dispatch 的状态依赖
+    std::vector<std::uint32_t> indices(elementCount);
     std::iota(indices.begin(), indices.end(), 0U);
     std::mt19937 random{0xCB72024U + elementCount};
     std::shuffle(indices.begin(), indices.end(), random);
 
-    const std::uint32_t firstSetCount = std::min<std::uint32_t>(elementCount / 8U, 32768U); // 初始占用集
-    const std::uint32_t secondSetCount = std::min<std::uint32_t>(elementCount / 16U, 16384U); // 后续新增集
+    const std::uint32_t firstSetCount = std::min<std::uint32_t>(elementCount / 8U, 32768U);
+    const std::uint32_t secondSetCount = std::min<std::uint32_t>(elementCount / 16U, 16384U);
     UpdateBatch firstSet;
     UpdateBatch clearSubset;
     UpdateBatch secondSet;
@@ -634,6 +654,8 @@ bool ValidateCapacity(
     CbtOccupancyCapacity capacity,
     std::string* errorMessage)
 {
+    // 边界 case 穿过 64 位 word 和 128 位最深计数节点的分界
+    // 交替和随机 case 继续覆盖稀疏分布及跨批清除后重新归约
     CbtGpuValidationState state{};
     if (!InitializeState(state, backend.Device(), capacity, errorMessage))
     {
@@ -668,6 +690,7 @@ bool RunD3D12CbtOccupancyTreeSmokeTest(
     Render::D3D12GraphicsBackend& backend,
     std::string* errorMessage)
 {
+    // 能力检查先于任何资源创建，失败时不污染后端设备状态
     const Cbt2024Availability availability = QueryCbt2024Availability(backend);
     if (!availability.Available)
     {
@@ -681,6 +704,7 @@ bool RunD3D12CbtOccupancyTreeSmokeTest(
         CbtOccupancyCapacity::Capacity512K,
         CbtOccupancyCapacity::Capacity1M,
     };
+    // 四种容量逐个创建静态特化管线，防止某一组常量偶然通过
     for (const CbtOccupancyCapacity capacity : capacities)
     {
         if (!ValidateCapacity(backend, capacity, errorMessage))

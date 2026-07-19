@@ -64,13 +64,14 @@ private:
     [[nodiscard]] bool CreateCommandSignature(std::string* errorMessage);
     [[nodiscard]] bool AllocateFrameDescriptors(std::string* errorMessage);
 
-    D3D12GraphicsBackend* _backend{nullptr}; // 借用设备和全局 SRV 堆
-    Microsoft::WRL::ComPtr<ID3D12RootSignature> _rootSignature; // 程序化顶点读取的绑定布局
-    Microsoft::WRL::ComPtr<ID3D12PipelineState> _fillPipelineState; // 实心地形 PSO
-    Microsoft::WRL::ComPtr<ID3D12PipelineState> _wireframePipelineState; // 线框地形 PSO
-    Microsoft::WRL::ComPtr<ID3D12CommandSignature> _drawCommandSignature; // 单条 DrawInstanced 间接签名
-    std::array<D3D12DescriptorAllocation, D3D12GraphicsBackend::FrameCount> _activeElementSrvs; // 每帧活动元素视图
-    std::array<D3D12DescriptorAllocation, D3D12GraphicsBackend::FrameCount> _vertexSrvs; // 每帧程序化顶点视图
-    std::array<std::uint64_t, D3D12GraphicsBackend::FrameCount> _descriptorGenerations{}; // 当前槽位资源版本
+    // 后端只借用，管线对象和逐帧描述符槽位由本类持有
+    D3D12GraphicsBackend* _backend{nullptr};
+    Microsoft::WRL::ComPtr<ID3D12RootSignature> _rootSignature;
+    Microsoft::WRL::ComPtr<ID3D12PipelineState> _fillPipelineState;
+    Microsoft::WRL::ComPtr<ID3D12PipelineState> _wireframePipelineState;
+    Microsoft::WRL::ComPtr<ID3D12CommandSignature> _drawCommandSignature;
+    std::array<D3D12DescriptorAllocation, D3D12GraphicsBackend::FrameCount> _activeElementSrvs;
+    std::array<D3D12DescriptorAllocation, D3D12GraphicsBackend::FrameCount> _vertexSrvs;
+    std::array<std::uint64_t, D3D12GraphicsBackend::FrameCount> _descriptorGenerations{};
 };
 } // namespace ParallelRoam::Render

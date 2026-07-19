@@ -9,16 +9,16 @@ namespace ParallelRoam::Algorithms::GpuRoam
 inline constexpr std::size_t GpuRoamTimingReadbackSlotCount = 4U;
 
 /// <summary>
-/// GPU ROAM-like 路径持有的 OpenGL 资源和跨 pass 计数器布局
+/// GPU ROAM-like OpenGL passes 共享的计数器布局
 /// </summary>
 struct GpuRoamCounters
 {
-    std::uint32_t ActiveLeafCount{0}; // compaction 输出长度
-    std::uint32_t SplitCandidateCount{0}; // split 候选稠密长度
-    std::uint32_t MergeCandidateCount{0}; // merge 候选稠密长度
-    std::uint32_t Reserved{0}; // 保持着色器布局稳定
-    std::uint32_t SplitOnlyCommitCount{0}; // 成功提交的 split 数
-    std::uint32_t AllocatedNodeCount{0}; // 节点池原子尾指针
+    std::uint32_t ActiveLeafCount{0};
+    std::uint32_t SplitCandidateCount{0};
+    std::uint32_t MergeCandidateCount{0};
+    std::uint32_t Reserved{0};
+    std::uint32_t SplitOnlyCommitCount{0};
+    std::uint32_t AllocatedNodeCount{0};
 };
 
 /// <summary>
@@ -26,11 +26,11 @@ struct GpuRoamCounters
 /// </summary>
 struct GpuRoamDrawElementsIndirectCommand
 {
-    std::uint32_t Count{0}; // 本帧有效索引数
-    std::uint32_t InstanceCount{1}; // 地形只绘制一个实例
-    std::uint32_t FirstIndex{0}; // 索引缓冲从零开始
-    std::int32_t BaseVertex{0}; // 顶点缓冲不使用基址偏移
-    std::uint32_t BaseInstance{0}; // 不使用实例数据偏移
+    std::uint32_t Count{0};
+    std::uint32_t InstanceCount{1};
+    std::uint32_t FirstIndex{0};
+    std::int32_t BaseVertex{0};
+    std::uint32_t BaseInstance{0};
 };
 
 /// <summary>
@@ -38,14 +38,15 @@ struct GpuRoamDrawElementsIndirectCommand
 /// </summary>
 struct GpuRoamTimingReadbackSlot
 {
-    std::uint32_t TimerQueryId{0}; // 完整 compute 链的耗时查询
-    std::uint32_t CounterBufferId{0}; // 与 query 同帧的计数器
-    std::size_t CounterBufferCapacityBytes{0}; // counter buffer 当前容量
-    std::size_t BaseActiveLeafCount{0}; // split 前的活动叶数量
-    std::size_t BaseNodeCount{0}; // split 前的节点数量
-    std::size_t ActiveLeafCapacity{0}; // 回读验证使用的叶容量
-    std::size_t NodeCapacity{0}; // 回读验证使用的节点容量
-    bool Pending{false}; // 槽位是否等待下一轮消费
+    // query、counter 和容量快照必须来自同一次提交
+    std::uint32_t TimerQueryId{0};
+    std::uint32_t CounterBufferId{0};
+    std::size_t CounterBufferCapacityBytes{0};
+    std::size_t BaseActiveLeafCount{0};
+    std::size_t BaseNodeCount{0};
+    std::size_t ActiveLeafCapacity{0};
+    std::size_t NodeCapacity{0};
+    bool Pending{false};
 };
 
 /// <summary>
@@ -64,37 +65,45 @@ public:
 
     void Reset();
 
-    std::uint32_t NodeBufferId{0}; // CPU 快照和 GPU 新节点共享的池
-    std::uint32_t ActiveLeafBufferId{0}; // compaction 稠密输出
-    std::uint32_t HeightMapTextureId{0}; // 跨帧缓存的 R32F 高度图
-    std::uint32_t ScreenErrorBufferId{0}; // 每个活动叶的评分
-    std::uint32_t CounterBufferId{0}; // 指向当前回读槽位的别名
-    std::uint32_t SplitCandidateBufferId{0}; // split 候选节点索引
-    std::uint32_t MergeCandidateBufferId{0}; // merge 候选父节点索引
-    std::uint32_t GpuVertexBufferId{0}; // emit 顶点输出
-    std::uint32_t GpuIndexBufferId{0}; // emit 索引输出
-    std::uint32_t IndirectDrawBufferId{0}; // GPU 绘制参数输出
-    std::uint32_t ActiveLeafCompactionProgramId{0}; // 活动叶压缩 program
-    std::uint32_t ErrorEvaluationProgramId{0}; // 误差计算 program
-    std::uint32_t CandidateMarkingProgramId{0}; // 候选分类 program
-    std::uint32_t MeshEmitProgramId{0}; // 网格生成 program
-    std::uint32_t SplitOnlyTopologyProgramId{0}; // 拓扑提交 program
-    std::size_t NodeBufferCapacityBytes{0}; // 节点池已分配字节数
-    std::size_t ActiveLeafBufferCapacityBytes{0}; // 活动叶输出容量
-    std::size_t ScreenErrorBufferCapacityBytes{0}; // 误差输出容量
-    std::size_t SplitCandidateBufferCapacityBytes{0}; // split 候选容量
-    std::size_t MergeCandidateBufferCapacityBytes{0}; // merge 候选容量
-    std::size_t GpuVertexBufferCapacityBytes{0}; // 顶点输出容量
-    std::size_t GpuIndexBufferCapacityBytes{0}; // 索引输出容量
-    std::size_t IndirectDrawBufferCapacityBytes{0}; // 间接命令容量
-    std::filesystem::path CachedHeightMapPath; // 高度图缓存键
-    int CachedHeightMapWidth{0}; // 缓存纹理宽度
-    int CachedHeightMapHeight{0}; // 缓存纹理高度
-    bool HeightMapTextureUploaded{false}; // 缓存内容是否完整
-    GpuRoamTimingReadbackSlot TimingReadbackSlots[GpuRoamTimingReadbackSlotCount]{}; // 延迟回读环
-    std::size_t TimingReadbackCursor{0}; // 下一次复用的槽位
-    GpuRoamCounters LastCompletedCounters{}; // 最近一次可靠计数
-    float LastCompletedGpuComputeMilliseconds{0.0F}; // 最近一次可靠 GPU 时间
-    bool HasCompletedTimingReadback{false}; // 最近结果是否可用于统计
+    // 资源 ID 按节点池、工作集、候选和绘制输出分组持有
+    std::uint32_t NodeBufferId{0};
+    std::uint32_t ActiveLeafBufferId{0};
+    std::uint32_t HeightMapTextureId{0};
+    std::uint32_t ScreenErrorBufferId{0};
+    std::uint32_t CounterBufferId{0};
+    std::uint32_t SplitCandidateBufferId{0};
+    std::uint32_t MergeCandidateBufferId{0};
+    std::uint32_t GpuVertexBufferId{0};
+    std::uint32_t GpuIndexBufferId{0};
+    std::uint32_t IndirectDrawBufferId{0};
+
+    std::uint32_t ActiveLeafCompactionProgramId{0};
+    std::uint32_t ErrorEvaluationProgramId{0};
+    std::uint32_t CandidateMarkingProgramId{0};
+    std::uint32_t MeshEmitProgramId{0};
+    std::uint32_t SplitOnlyTopologyProgramId{0};
+
+    // 容量只控制是否扩容，不能作为当前有效元素数量
+    std::size_t NodeBufferCapacityBytes{0};
+    std::size_t ActiveLeafBufferCapacityBytes{0};
+    std::size_t ScreenErrorBufferCapacityBytes{0};
+    std::size_t SplitCandidateBufferCapacityBytes{0};
+    std::size_t MergeCandidateBufferCapacityBytes{0};
+    std::size_t GpuVertexBufferCapacityBytes{0};
+    std::size_t GpuIndexBufferCapacityBytes{0};
+    std::size_t IndirectDrawBufferCapacityBytes{0};
+
+    // 高度图纹理只在资源路径或尺寸变化时重新上传
+    std::filesystem::path CachedHeightMapPath;
+    int CachedHeightMapWidth{0};
+    int CachedHeightMapHeight{0};
+    bool HeightMapTextureUploaded{false};
+
+    // 延迟环只公开最近完成的结果，避免统计路径强制等待 GPU
+    GpuRoamTimingReadbackSlot TimingReadbackSlots[GpuRoamTimingReadbackSlotCount]{};
+    std::size_t TimingReadbackCursor{0};
+    GpuRoamCounters LastCompletedCounters{};
+    float LastCompletedGpuComputeMilliseconds{0.0F};
+    bool HasCompletedTimingReadback{false};
 };
 } // namespace ParallelRoam::Algorithms::GpuRoam

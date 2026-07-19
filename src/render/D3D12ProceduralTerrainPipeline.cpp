@@ -186,11 +186,11 @@ bool D3D12ProceduralTerrainPipeline::ConfigureResourceDescriptors(
 
     // t1 保存活动序号到物理槽位的映射，元素格式由 StructureByteStride 定义
     D3D12_SHADER_RESOURCE_VIEW_DESC activeElementDescription{};
-    activeElementDescription.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING; // 保持标量读取默认映射
-    activeElementDescription.Format = DXGI_FORMAT_UNKNOWN; // StructuredBuffer 由 stride 定义格式
-    activeElementDescription.ViewDimension = D3D12_SRV_DIMENSION_BUFFER; // 活动表是一维结构化缓冲
-    activeElementDescription.Buffer.NumElements = static_cast<UINT>(activeElementCount); // 覆盖完整预留容量
-    activeElementDescription.Buffer.StructureByteStride = static_cast<UINT>(activeElementStrideBytes); // 当前为 uint 槽位
+    activeElementDescription.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    activeElementDescription.Format = DXGI_FORMAT_UNKNOWN;
+    activeElementDescription.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+    activeElementDescription.Buffer.NumElements = static_cast<UINT>(activeElementCount);
+    activeElementDescription.Buffer.StructureByteStride = static_cast<UINT>(activeElementStrideBytes);
     _backend->Device()->CreateShaderResourceView(
         activeElementBuffer,
         &activeElementDescription,
@@ -198,11 +198,11 @@ bool D3D12ProceduralTerrainPipeline::ConfigureResourceDescriptors(
 
     // t2 保存按物理槽位连续排列的三顶点数据，不能复用 t1 的元素跨度
     D3D12_SHADER_RESOURCE_VIEW_DESC vertexDescription{};
-    vertexDescription.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING; // 保持结构化字段原始分量
-    vertexDescription.Format = DXGI_FORMAT_UNKNOWN; // 顶点记录由 HLSL 结构解释
-    vertexDescription.ViewDimension = D3D12_SRV_DIMENSION_BUFFER; // 无 IA 的顶点数据源
-    vertexDescription.Buffer.NumElements = static_cast<UINT>(vertexCount); // 三顶点物理槽位总数
-    vertexDescription.Buffer.StructureByteStride = static_cast<UINT>(vertexStrideBytes); // TerrainMeshVertex 步长
+    vertexDescription.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    vertexDescription.Format = DXGI_FORMAT_UNKNOWN;
+    vertexDescription.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+    vertexDescription.Buffer.NumElements = static_cast<UINT>(vertexCount);
+    vertexDescription.Buffer.StructureByteStride = static_cast<UINT>(vertexStrideBytes);
     _backend->Device()->CreateShaderResourceView(
         vertexBuffer,
         &vertexDescription,
@@ -253,23 +253,23 @@ bool D3D12ProceduralTerrainPipeline::CreateRootSignature(std::string* errorMessa
     std::array<D3D12_DESCRIPTOR_RANGE, 3> srvRanges{};
     for (std::size_t index = 0; index < srvRanges.size(); ++index)
     {
-        srvRanges[index].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV; // t0 到 t2 均为只读资源
-        srvRanges[index].NumDescriptors = 1; // 每个根表只暴露一个稳定槽位
-        srvRanges[index].BaseShaderRegister = static_cast<UINT>(index); // 数组索引直接映射 shader register
-        srvRanges[index].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND; // 表内从零开始
+        srvRanges[index].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+        srvRanges[index].NumDescriptors = 1;
+        srvRanges[index].BaseShaderRegister = static_cast<UINT>(index);
+        srvRanges[index].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
     }
 
     // range 指针只在当前函数序列化期间使用，局部数组生命周期覆盖调用
     std::array<D3D12_ROOT_PARAMETER, 4> parameters{};
-    parameters[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV; // b0 直接使用 GPU 虚拟地址
-    parameters[0].Descriptor.ShaderRegister = 0; // TerrainConstants 固定寄存器
-    parameters[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL; // VS 和 PS 共用帧常量
+    parameters[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+    parameters[0].Descriptor.ShaderRegister = 0;
+    parameters[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
     for (std::size_t index = 0; index < srvRanges.size(); ++index)
     {
         D3D12_ROOT_PARAMETER& parameter = parameters[index + 1U];
-        parameter.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE; // 引用后端共享可见堆
-        parameter.DescriptorTable.NumDescriptorRanges = 1; // 每个参数保持单资源协议
-        parameter.DescriptorTable.pDescriptorRanges = &srvRanges[index]; // 局部 range 在序列化前有效
+        parameter.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+        parameter.DescriptorTable.NumDescriptorRanges = 1;
+        parameter.DescriptorTable.pDescriptorRanges = &srvRanges[index];
         // 限制 shader visibility 可缩小驱动验证范围并暴露错误阶段绑定
         parameter.ShaderVisibility = index == 0U
             ? D3D12_SHADER_VISIBILITY_PIXEL
@@ -278,20 +278,20 @@ bool D3D12ProceduralTerrainPipeline::CreateRootSignature(std::string* errorMessa
 
     // 地形纹理沿用线性 wrap sampler，确保像素着色器与普通 terrain 表现一致
     D3D12_STATIC_SAMPLER_DESC sampler{};
-    sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR; // 与普通地形材质过滤一致
-    sampler.AddressU = D3D12_TEXTURE_ADDRESS_MODE_WRAP; // 地表纹理横向重复
-    sampler.AddressV = D3D12_TEXTURE_ADDRESS_MODE_WRAP; // 地表纹理纵向重复
-    sampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP; // 完整初始化静态 sampler
-    sampler.ComparisonFunc = D3D12_COMPARISON_FUNC_ALWAYS; // 非比较采样器
-    sampler.MaxLOD = D3D12_FLOAT32_MAX; // 允许完整 mip 范围
-    sampler.ShaderRegister = 0; // 对应 TerrainPS 的 s0
-    sampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL; // 顶点阶段不采样材质
+    sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+    sampler.AddressU = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+    sampler.AddressV = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+    sampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+    sampler.ComparisonFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+    sampler.MaxLOD = D3D12_FLOAT32_MAX;
+    sampler.ShaderRegister = 0;
+    sampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
     D3D12_ROOT_SIGNATURE_DESC description{};
-    description.NumParameters = static_cast<UINT>(parameters.size()); // b0 加三个 SRV 表
-    description.pParameters = parameters.data(); // 序列化期间借用局部数组
-    description.NumStaticSamplers = 1; // 仅地表纹理需要采样器
-    description.pStaticSamplers = &sampler; // 静态 sampler 不占描述符堆
+    description.NumParameters = static_cast<UINT>(parameters.size());
+    description.pParameters = parameters.data();
+    description.NumStaticSamplers = 1;
+    description.pStaticSamplers = &sampler;
     // 当前路径不使用曲面细分和几何阶段，显式拒绝无关根访问
     description.Flags = D3D12_ROOT_SIGNATURE_FLAG_DENY_HULL_SHADER_ROOT_ACCESS |
                         D3D12_ROOT_SIGNATURE_FLAG_DENY_DOMAIN_SHADER_ROOT_ACCESS |
@@ -349,18 +349,18 @@ bool D3D12ProceduralTerrainPipeline::CreatePipelineStates(std::string* errorMess
 
     // 顶点数据完全由 SRV 和 SV_VertexID 提供，因此 PSO 不声明 IA 输入布局
     D3D12_GRAPHICS_PIPELINE_STATE_DESC description{};
-    description.pRootSignature = _rootSignature.Get(); // 与 shader 寄存器布局配套
-    description.VS = {vertexShader.data(), vertexShader.size()}; // SV_VertexID 程序化顶点入口
-    description.PS = {pixelShader.data(), pixelShader.size()}; // 与普通地形共享材质入口
-    description.BlendState = OpaqueBlendDescription(); // 地形完全覆盖颜色目标
-    description.SampleMask = std::numeric_limits<UINT>::max(); // 单采样全部启用
-    description.RasterizerState = RasterizerDescription(D3D12_FILL_MODE_SOLID); // 首个 PSO 为实心模式
-    description.DepthStencilState = DepthStencilDescription(); // 与主深度缓冲约定一致
-    description.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE; // DRAW 输出三角形列表
-    description.NumRenderTargets = 1; // 仅交换链颜色目标
-    description.RTVFormats[0] = _backend->RenderTargetFormat(); // 必须匹配当前 back buffer
-    description.DSVFormat = _backend->DepthStencilFormat(); // 必须匹配共享深度资源
-    description.SampleDesc.Count = 1; // 与交换链和深度目标一致
+    description.pRootSignature = _rootSignature.Get();
+    description.VS = {vertexShader.data(), vertexShader.size()};
+    description.PS = {pixelShader.data(), pixelShader.size()};
+    description.BlendState = OpaqueBlendDescription();
+    description.SampleMask = std::numeric_limits<UINT>::max();
+    description.RasterizerState = RasterizerDescription(D3D12_FILL_MODE_SOLID);
+    description.DepthStencilState = DepthStencilDescription();
+    description.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+    description.NumRenderTargets = 1;
+    description.RTVFormats[0] = _backend->RenderTargetFormat();
+    description.DSVFormat = _backend->DepthStencilFormat();
+    description.SampleDesc.Count = 1;
     HRESULT result = _backend->Device()->CreateGraphicsPipelineState(
         &description,
         IID_PPV_ARGS(&_fillPipelineState));
@@ -388,11 +388,11 @@ bool D3D12ProceduralTerrainPipeline::CreateCommandSignature(std::string* errorMe
 {
     // 参数缓冲由算法写入 D3D12_DRAW_ARGUMENTS，ByteStride 必须精确匹配
     D3D12_INDIRECT_ARGUMENT_DESC argument{};
-    argument.Type = D3D12_INDIRECT_ARGUMENT_TYPE_DRAW; // CBT 输出非索引绘制参数
+    argument.Type = D3D12_INDIRECT_ARGUMENT_TYPE_DRAW;
     D3D12_COMMAND_SIGNATURE_DESC signature{};
-    signature.ByteStride = sizeof(D3D12_DRAW_ARGUMENTS); // 与算法写入结构精确一致
-    signature.NumArgumentDescs = 1; // 每条命令只执行一次 DRAW
-    signature.pArgumentDescs = &argument; // 创建期间借用局部描述
+    signature.ByteStride = sizeof(D3D12_DRAW_ARGUMENTS);
+    signature.NumArgumentDescs = 1;
+    signature.pArgumentDescs = &argument;
     if (FAILED(_backend->Device()->CreateCommandSignature(
             &signature,
             nullptr,

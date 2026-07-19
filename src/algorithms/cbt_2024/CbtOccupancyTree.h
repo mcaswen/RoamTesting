@@ -21,19 +21,19 @@ enum class CbtOccupancyCapacity : std::uint32_t
 };
 
 /// <summary>
-/// OCBT 压缩计数树和 64 位位域的容量特化布局
+/// CPU 参考实现和 GPU dispatch 共享的 OCBT 容量特化压缩布局
 /// </summary>
 struct CbtOccupancyLayout
 {
-    CbtOccupancyCapacity Capacity{CbtOccupancyCapacity::Capacity128K}; // 对外容量标识
-    std::uint32_t ElementCount{0U}; // 动态物理槽位数量
-    std::uint32_t LeafDepth{0U}; // 完整二叉树叶深度
-    std::uint32_t LastTreeDepth{0U}; // 压缩计数树保存的最深层
-    std::uint32_t TreeSlotCount{0U}; // 32 位压缩树槽位数量
-    std::uint32_t BitfieldSlotCount{0U}; // 64 位占用位域槽位数量
-    std::uint32_t LastTreeNodeCount{0U}; // 每个节点覆盖 128 个物理槽位
-    std::uint32_t SubtreeRootDepth{0U}; // 中段归约的独立子树根深度
-    std::uint32_t SubtreeCount{0U}; // 中段归约工作组数量
+    CbtOccupancyCapacity Capacity{CbtOccupancyCapacity::Capacity128K};
+    std::uint32_t ElementCount{0U};
+    std::uint32_t LeafDepth{0U};
+    std::uint32_t LastTreeDepth{0U};
+    std::uint32_t TreeSlotCount{0U};
+    std::uint32_t BitfieldSlotCount{0U};
+    std::uint32_t LastTreeNodeCount{0U};
+    std::uint32_t SubtreeRootDepth{0U};
+    std::uint32_t SubtreeCount{0U};
 };
 
 /// <summary>

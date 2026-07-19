@@ -37,11 +37,11 @@ struct GpuRoamNodeRecord
 /// </summary>
 struct GpuRoamBufferSnapshot
 {
-    std::vector<GpuRoamNodeRecord> Nodes; // DOD 节点池的 std430 镜像
-    std::vector<std::uint32_t> ActiveLeafIndices; // CPU 基线活动叶快照
-    std::uint64_t BuildSequence{0}; // 本次拓扑更新版本
-    int MaxDepth{0}; // 配置允许的最大深度
-    int MaxDepthReached{0}; // CPU 快照实际达到的深度
+    std::vector<GpuRoamNodeRecord> Nodes;
+    std::vector<std::uint32_t> ActiveLeafIndices;
+    std::uint64_t BuildSequence{0};
+    int MaxDepth{0};
+    int MaxDepthReached{0};
 
     [[nodiscard]] std::size_t NodeBufferBytes() const;
     [[nodiscard]] std::size_t ActiveLeafBufferBytes() const;

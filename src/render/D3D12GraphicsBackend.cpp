@@ -219,16 +219,17 @@ bool D3D12GraphicsBackend::InitializeImGui(Gui::ImGuiLayer& guiLayer, std::strin
         return false;
     }
 
+    // ImGui 使用后端现有队列和共享 SRV 堆，帧数必须与交换链一致
     const Gui::ImGuiD3D12BackendConfig config{
-        .Window = _window, // ImGui 平台后端借用 SDL 窗口
-        .Device = _device.Get(), // ImGui 创建字体和绘制资源的设备
-        .CommandQueue = _commandQueue.Get(), // viewport 资源提交使用的 direct queue
-        .SrvDescriptorHeap = _srvHeap.Get(), // 字体 SRV 所属 shader-visible 堆
-        .FontSrvCpuDescriptor = _imguiFontDescriptor.Cpu, // 字体视图写入句柄
-        .FontSrvGpuDescriptor = _imguiFontDescriptor.Gpu, // 字体视图绑定句柄
-        .RenderTargetFormat = BackBufferFormat, // ImGui PSO 颜色格式
-        .DepthStencilFormat = DepthBufferFormat, // ImGui PSO 深度格式
-        .FramesInFlight = static_cast<int>(FrameCount), // 与交换链帧数一致
+        .Window = _window,
+        .Device = _device.Get(),
+        .CommandQueue = _commandQueue.Get(),
+        .SrvDescriptorHeap = _srvHeap.Get(),
+        .FontSrvCpuDescriptor = _imguiFontDescriptor.Cpu,
+        .FontSrvGpuDescriptor = _imguiFontDescriptor.Gpu,
+        .RenderTargetFormat = BackBufferFormat,
+        .DepthStencilFormat = DepthBufferFormat,
+        .FramesInFlight = static_cast<int>(FrameCount),
     };
     if (guiLayer.Initialize(config))
     {
@@ -822,7 +823,8 @@ void D3D12GraphicsBackend::QueryDeviceCapabilities()
 {
     _deviceCapabilities = {};
     D3D12_FEATURE_DATA_SHADER_MODEL shaderModel{};
-    shaderModel.HighestShaderModel = D3D_SHADER_MODEL_6_6; // 查询上限与固定 DXC 目标一致
+    // 查询上限与项目固定的 DXC shader model 目标一致
+    shaderModel.HighestShaderModel = D3D_SHADER_MODEL_6_6;
     if (SUCCEEDED(_device->CheckFeatureSupport(
             D3D12_FEATURE_SHADER_MODEL,
             &shaderModel,
@@ -856,13 +858,13 @@ void D3D12GraphicsBackend::QueryDeviceCapabilities()
 bool D3D12GraphicsBackend::CreateSwapChain(std::string* errorMessage)
 {
     DXGI_SWAP_CHAIN_DESC1 description{};
-    description.Width = _swapChainWidth; // 当前 drawable 宽度
-    description.Height = _swapChainHeight; // 当前 drawable 高度
-    description.Format = BackBufferFormat; // renderer PSO 固定颜色格式
-    description.SampleDesc.Count = 1; // 当前管线不启用 MSAA
-    description.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT; // back buffer 仅作为颜色目标
-    description.BufferCount = FrameCount; // 与 FrameResource 数量一致
-    // flip discard 是现代 DXGI 的低开销呈现模型
+    description.Width = _swapChainWidth;
+    description.Height = _swapChainHeight;
+    description.Format = BackBufferFormat;
+    description.SampleDesc.Count = 1;
+    description.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+    // 缓冲数量必须与 FrameResource 数量一致
+    description.BufferCount = FrameCount;
     description.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
     description.Flags = _tearingSupported ? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0U;
 
@@ -895,8 +897,8 @@ bool D3D12GraphicsBackend::CreateDescriptorHeaps(std::string* errorMessage)
 {
     // 每个交换链缓冲占用一个 RTV 槽位
     D3D12_DESCRIPTOR_HEAP_DESC rtvDescription{};
-    rtvDescription.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV; // CPU 可见颜色视图堆
-    rtvDescription.NumDescriptors = FrameCount; // 每个 back buffer 一个槽位
+    rtvDescription.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+    rtvDescription.NumDescriptors = FrameCount;
     HRESULT result = _device->CreateDescriptorHeap(&rtvDescription, IID_PPV_ARGS(&_rtvHeap));
     if (FAILED(result))
     {
@@ -906,8 +908,8 @@ bool D3D12GraphicsBackend::CreateDescriptorHeaps(std::string* errorMessage)
 
     D3D12_DESCRIPTOR_HEAP_DESC dsvDescription{};
     // 所有帧共享一个随交换链尺寸重建的深度缓冲
-    dsvDescription.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV; // CPU 可见深度视图堆
-    dsvDescription.NumDescriptors = 1; // 所有帧共享单一深度目标
+    dsvDescription.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
+    dsvDescription.NumDescriptors = 1;
     result = _device->CreateDescriptorHeap(&dsvDescription, IID_PPV_ARGS(&_dsvHeap));
     if (FAILED(result))
     {
@@ -917,9 +919,9 @@ bool D3D12GraphicsBackend::CreateDescriptorHeaps(std::string* errorMessage)
 
     D3D12_DESCRIPTOR_HEAP_DESC srvDescription{};
     // renderer 和算法从同一可见堆分配稳定资源视图
-    srvDescription.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV; // 业务资源统一视图类型
-    srvDescription.NumDescriptors = SrvDescriptorCount; // 固定容量空闲表上限
-    srvDescription.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE; // 根描述符表直接引用
+    srvDescription.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+    srvDescription.NumDescriptors = SrvDescriptorCount;
+    srvDescription.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
     result = _device->CreateDescriptorHeap(&srvDescription, IID_PPV_ARGS(&_srvHeap));
     if (FAILED(result))
     {
@@ -1009,15 +1011,15 @@ bool D3D12GraphicsBackend::CreateRenderTargets(std::string* errorMessage)
 
     // 深度资源尺寸必须始终与交换链一致
     D3D12_RESOURCE_DESC depthDescription{};
-    depthDescription.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D; // 与 back buffer 同维度
-    depthDescription.Width = _swapChainWidth; // 已分配交换链宽度
-    depthDescription.Height = _swapChainHeight; // 已分配交换链高度
-    depthDescription.DepthOrArraySize = 1; // 非数组纹理
-    depthDescription.MipLevels = 1; // 深度目标不需要 mip
-    depthDescription.Format = DepthBufferFormat; // 与 PSO 深度格式一致
-    depthDescription.SampleDesc.Count = 1; // 与颜色目标采样数一致
-    depthDescription.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN; // 允许驱动选择纹理布局
-    depthDescription.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL; // 启用 DSV 写入
+    depthDescription.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    depthDescription.Width = _swapChainWidth;
+    depthDescription.Height = _swapChainHeight;
+    depthDescription.DepthOrArraySize = 1;
+    depthDescription.MipLevels = 1;
+    depthDescription.Format = DepthBufferFormat;
+    depthDescription.SampleDesc.Count = 1;
+    depthDescription.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+    depthDescription.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
     const D3D12_HEAP_PROPERTIES heapProperties = HeapProperties(D3D12_HEAP_TYPE_DEFAULT);
     D3D12_CLEAR_VALUE clearValue{};
     // 优化清除值与每帧 ClearDepthStencilView 保持一致
@@ -1043,8 +1045,8 @@ bool D3D12GraphicsBackend::CreateTimestampResources(std::string* errorMessage)
 {
     // 每个帧槽位保存开始和结束两个时间戳
     D3D12_QUERY_HEAP_DESC queryDescription{};
-    queryDescription.Type = D3D12_QUERY_HEAP_TYPE_TIMESTAMP; // direct queue 时间戳类型
-    queryDescription.Count = FrameCount * 2U; // 每个帧槽位保存起止两个 tick
+    queryDescription.Type = D3D12_QUERY_HEAP_TYPE_TIMESTAMP;
+    queryDescription.Count = FrameCount * 2U;
     HRESULT result = _device->CreateQueryHeap(&queryDescription, IID_PPV_ARGS(&_timestampQueryHeap));
     if (FAILED(result))
     {
@@ -1054,13 +1056,13 @@ bool D3D12GraphicsBackend::CreateTimestampResources(std::string* errorMessage)
 
     // 共享读回缓冲按 frameIndex 划分互不覆盖的区域
     D3D12_RESOURCE_DESC readbackDescription{};
-    readbackDescription.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER; // query resolve 目标必须是 buffer
-    readbackDescription.Width = FrameCount * 2U * sizeof(std::uint64_t); // 完整时间戳环字节数
-    readbackDescription.Height = 1; // buffer 固定字段
-    readbackDescription.DepthOrArraySize = 1; // buffer 固定字段
-    readbackDescription.MipLevels = 1; // buffer 固定字段
-    readbackDescription.SampleDesc.Count = 1; // buffer 固定字段
-    readbackDescription.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR; // buffer 必需布局
+    readbackDescription.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+    readbackDescription.Width = FrameCount * 2U * sizeof(std::uint64_t);
+    readbackDescription.Height = 1;
+    readbackDescription.DepthOrArraySize = 1;
+    readbackDescription.MipLevels = 1;
+    readbackDescription.SampleDesc.Count = 1;
+    readbackDescription.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
     const D3D12_HEAP_PROPERTIES heapProperties = HeapProperties(D3D12_HEAP_TYPE_READBACK);
     result = _device->CreateCommittedResource(
         &heapProperties,

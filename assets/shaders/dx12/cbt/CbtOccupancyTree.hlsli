@@ -56,6 +56,7 @@ uint CbtTreeDepthOffsetBits(uint depth)
 
 uint CbtReadTreeCount(uint heapId)
 {
+    // heap id 先解出深度和层内位置，再映射到压缩位流
     const uint depth = uint(firstbithigh(heapId));
     const uint width = CbtTreeElementWidth(depth);
     const uint element = heapId - (1u << depth);
@@ -68,6 +69,7 @@ uint CbtReadTreeCount(uint heapId)
 
 void CbtWriteTreeCountAtomic(uint heapId, uint value)
 {
+    // 16 位和 8 位计数共享 uint 槽位，写入必须保护相邻字段
     const uint depth = uint(firstbithigh(heapId));
     const uint width = CbtTreeElementWidth(depth);
     const uint element = heapId - (1u << depth);
@@ -90,6 +92,7 @@ void CbtWriteTreeCountAtomic(uint heapId, uint value)
 
 void CbtSetBitAtomic(uint bitIndex, bool occupied)
 {
+    // 并行更新只触碰原始位域，计数树由后续归约统一发布
     const uint slot = bitIndex / 64;
     const uint localBit = bitIndex % 64;
     const uint64_t mask = uint64_t(1) << localBit;
@@ -122,6 +125,7 @@ uint CbtSelectOne(uint64_t word, uint rank)
 
 uint CbtDecodeBit(uint rank)
 {
+    // 每层比较左子树计数，选择右侧时扣除整棵左子树
     uint heapId = 1;
     for (uint depth = 0; depth < CbtLastTreeDepth; ++depth)
     {
@@ -133,6 +137,7 @@ uint CbtDecodeBit(uint rank)
 
     const uint blockIndex = heapId - (1u << CbtLastTreeDepth);
     const uint bitfieldIndex = blockIndex * 2;
+    // 树只定位到 128 位块，最终 rank 在两个 64 位 word 中解析
     const uint firstWordCount = countbits(CbtBitfield[bitfieldIndex]);
     if (rank < firstWordCount)
     {
@@ -143,6 +148,7 @@ uint CbtDecodeBit(uint rank)
 
 uint CbtDecodeBitComplement(uint rank)
 {
+    // 空闲选择复用活动计数树，通过节点容量减活动数得到补集计数
     uint heapId = 1;
     for (uint depth = 0; depth < CbtLastTreeDepth; ++depth)
     {
