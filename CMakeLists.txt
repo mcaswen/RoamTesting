@@ -69,6 +69,7 @@ if(PARALLEL_ROAM_BUILD_APP)
                 src/app/RuntimeBenchmark.cpp
                 src/algorithms/TerrainLodView.cpp
                 src/algorithms/cbt_2024/Cbt2024Support.cpp
+                src/algorithms/cbt_2024/CbtOccupancyTree.cpp
                 src/algorithms/classic_roam/ClassicRoamTerrainLodAlgorithm.cpp
                 src/algorithms/classic_roam/ClassicRoamMeshBuilder.cpp
                 src/algorithms/classic_roam/ClassicRoamMeshEmit.cpp
@@ -125,6 +126,8 @@ if(PARALLEL_ROAM_BUILD_APP)
                 src/app/RuntimeBenchmark.cpp
                 src/algorithms/TerrainLodView.cpp
                 src/algorithms/cbt_2024/Cbt2024Support.cpp
+                src/algorithms/cbt_2024/CbtOccupancyTree.cpp
+                src/algorithms/cbt_2024/d3d12/D3D12CbtOccupancyTree.cpp
                 src/algorithms/cbt_2024/d3d12/D3D12CbtTerrainLodAlgorithm.cpp
                 src/algorithms/classic_roam/ClassicRoamTerrainLodAlgorithm.cpp
                 src/algorithms/classic_roam/ClassicRoamMeshBuilder.cpp
@@ -254,7 +257,76 @@ if(PARALLEL_ROAM_BUILD_APP)
                 ${PARALLEL_ROAM_DX12_PIXEL_SHADER}
                 ${PARALLEL_ROAM_DX12_CBT_PROCEDURAL_VERTEX_SHADER}
                 ${PARALLEL_ROAM_DX12_GPU_ROAM_SHADERS})
-        add_dependencies(parallel_roam parallel_roam_dx12_shaders)
+
+        set(PARALLEL_ROAM_CBT_OCBT_CAPACITY_NAMES 128K 256K 512K 1M)
+        set(PARALLEL_ROAM_CBT_OCBT_CAPACITY_VALUES 131072 262144 524288 1048576)
+        set(
+            PARALLEL_ROAM_CBT_OCBT_ENTRIES
+            CSClear
+            CSApplyUpdates
+            CSReducePre
+            CSReduceFirst
+            CSReduceSecond
+            CSDecodeOccupied
+            CSDecodeFree)
+        set(
+            PARALLEL_ROAM_CBT_OCBT_SUFFIXES
+            Clear
+            ApplyUpdates
+            ReducePre
+            ReduceFirst
+            ReduceSecond
+            DecodeOccupied
+            DecodeFree)
+        set(PARALLEL_ROAM_DX12_CBT_OCBT_SHADERS)
+        foreach(PARALLEL_ROAM_CBT_CAPACITY_INDEX RANGE 0 3)
+            list(
+                GET
+                PARALLEL_ROAM_CBT_OCBT_CAPACITY_NAMES
+                ${PARALLEL_ROAM_CBT_CAPACITY_INDEX}
+                PARALLEL_ROAM_CBT_CAPACITY_NAME)
+            list(
+                GET
+                PARALLEL_ROAM_CBT_OCBT_CAPACITY_VALUES
+                ${PARALLEL_ROAM_CBT_CAPACITY_INDEX}
+                PARALLEL_ROAM_CBT_CAPACITY_VALUE)
+            foreach(PARALLEL_ROAM_CBT_ENTRY_INDEX RANGE 0 6)
+                list(
+                    GET
+                    PARALLEL_ROAM_CBT_OCBT_ENTRIES
+                    ${PARALLEL_ROAM_CBT_ENTRY_INDEX}
+                    PARALLEL_ROAM_CBT_ENTRY)
+                list(
+                    GET
+                    PARALLEL_ROAM_CBT_OCBT_SUFFIXES
+                    ${PARALLEL_ROAM_CBT_ENTRY_INDEX}
+                    PARALLEL_ROAM_CBT_SUFFIX)
+                set(
+                    PARALLEL_ROAM_CBT_OCBT_SHADER
+                    "${PARALLEL_ROAM_DX12_SHADER_DIR}/CbtOcbt${PARALLEL_ROAM_CBT_CAPACITY_NAME}${PARALLEL_ROAM_CBT_SUFFIX}.cso")
+                list(APPEND PARALLEL_ROAM_DX12_CBT_OCBT_SHADERS ${PARALLEL_ROAM_CBT_OCBT_SHADER})
+                add_custom_command(
+                    OUTPUT ${PARALLEL_ROAM_CBT_OCBT_SHADER}
+                    COMMAND ${PARALLEL_ROAM_DXC_EXECUTABLE}
+                        -T cs_6_6
+                        -E ${PARALLEL_ROAM_CBT_ENTRY}
+                        -D CBT_CAPACITY=${PARALLEL_ROAM_CBT_CAPACITY_VALUE}
+                        -I "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/dx12/cbt"
+                        -Fo ${PARALLEL_ROAM_CBT_OCBT_SHADER}
+                        "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/dx12/cbt/CbtOccupancyTreeTests.hlsl"
+                    DEPENDS
+                        "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/dx12/cbt/CbtOccupancyTree.hlsli"
+                        "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/dx12/cbt/CbtOccupancyTreeTests.hlsl"
+                    VERBATIM)
+            endforeach()
+        endforeach()
+        add_custom_target(
+            parallel_roam_dx12_cbt_ocbt_shaders
+            DEPENDS ${PARALLEL_ROAM_DX12_CBT_OCBT_SHADERS})
+        add_dependencies(
+            parallel_roam
+            parallel_roam_dx12_shaders
+            parallel_roam_dx12_cbt_ocbt_shaders)
         add_custom_command(
             TARGET parallel_roam
             POST_BUILD

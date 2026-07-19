@@ -2,6 +2,11 @@
 
 #include "algorithms/cbt_2024/Cbt2024Support.h"
 
+#if defined(PARALLEL_ROAM_GRAPHICS_API_D3D12)
+#include "algorithms/cbt_2024/d3d12/D3D12CbtOccupancyTree.h"
+#include "render/D3D12GraphicsBackend.h"
+#endif
+
 #if defined(PARALLEL_ROAM_GRAPHICS_API_OPENGL)
 #include "platform/OpenGlCapabilities.h"
 #endif
@@ -109,6 +114,11 @@ void Application::EnableCbtProceduralSmokeTest()
     _terrainPanelState.TerrainLodAlgorithm = Algorithms::TerrainLodAlgorithmId::Cbt2024;
 }
 
+void Application::EnableCbtOccupancyTreeSmokeTest()
+{
+    _cbtOccupancyTreeSmokeTestEnabled = true;
+}
+
 void Application::EnableAutomaticRuntimeBenchmark()
 {
     _automaticRuntimeBenchmarkEnabled = true;
@@ -166,6 +176,24 @@ bool Application::Initialize()
         return false;
     }
 
+#if defined(PARALLEL_ROAM_GRAPHICS_API_D3D12)
+    if (_cbtOccupancyTreeSmokeTestEnabled)
+    {
+        // OCBT 验证只依赖设备和 direct queue，不初始化 terrain renderer 或 GUI
+        auto& d3d12Backend = static_cast<Render::D3D12GraphicsBackend&>(*_graphicsBackend);
+        if (!Algorithms::Cbt2024::D3D12::RunD3D12CbtOccupancyTreeSmokeTest(
+                d3d12Backend,
+                &graphicsError))
+        {
+            std::cerr << graphicsError << '\n';
+            Shutdown();
+            return false;
+        }
+        _initialized = true;
+        return true;
+    }
+#endif
+
     // 输入使用逻辑窗口尺寸，渲染尺寸由后端单独维护
     _input.SetWindowSize(_window.Width(), _window.Height());
     _terrainPanelState.VSyncEnabled = _graphicsBackend->VSyncEnabled();
@@ -207,6 +235,12 @@ int Application::Run(int maxFrameCount)
     if (!_initialized)
     {
         return 1;
+    }
+
+    if (_cbtOccupancyTreeSmokeTestEnabled)
+    {
+        Shutdown();
+        return 0;
     }
 
     int frameCount = 0;

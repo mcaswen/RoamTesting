@@ -164,6 +164,12 @@ scripts\run_relwithdebinfo_fetch.bat --smoke-test
 scripts\run_relwithdebinfo_fetch.bat --gpu-smoke-test
 ```
 
+D3D12 构建可以独立验证 CBT OCBT 的四种容量特化。该入口不会初始化 terrain renderer 和 GUI，会检查空树、满树、边界位、交替位图和随机更新：
+
+```powershell
+.\build\debug-d3d12-fetch\bin\ParallelROAM.exe --cbt-ocbt-smoke-test
+```
+
 运行完整的 Classic、Data-Oriented、GPU 三算法 runtime benchmark：
 
 ```bat

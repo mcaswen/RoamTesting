@@ -26,6 +26,7 @@ int main(int argc, char** argv)
     bool fixedFrameSmokeTest = false;
     bool gpuSmokeTest = false;
     bool cbtProceduralSmokeTest = false;
+    bool cbtOccupancyTreeSmokeTest = false;
     bool automaticRuntimeBenchmark = false;
     ParallelRoam::App::RuntimeBenchmarkOverrides runtimeBenchmarkOverrides{};
     bool hasRuntimeBenchmarkOverrides = false;
@@ -125,6 +126,16 @@ int main(int argc, char** argv)
             maxFrameCount = 32;
 #else
             parseError = "--cbt-procedural-smoke-test requires PARALLEL_ROAM_GRAPHICS_API=D3D12";
+            break;
+#endif
+        }
+
+        if (argument == "--cbt-ocbt-smoke-test")
+        {
+#if defined(PARALLEL_ROAM_GRAPHICS_API_D3D12)
+            cbtOccupancyTreeSmokeTest = true;
+#else
+            parseError = "--cbt-ocbt-smoke-test requires PARALLEL_ROAM_GRAPHICS_API=D3D12";
             break;
 #endif
         }
@@ -285,13 +296,18 @@ int main(int argc, char** argv)
         return 2;
     }
 
-    if (gpuSmokeTest && cbtProceduralSmokeTest)
+    const int specializedSmokeTestCount =
+        static_cast<int>(gpuSmokeTest) +
+        static_cast<int>(cbtProceduralSmokeTest) +
+        static_cast<int>(cbtOccupancyTreeSmokeTest);
+    if (specializedSmokeTestCount > 1)
     {
-        std::cerr << "--gpu-smoke-test cannot be combined with --cbt-procedural-smoke-test.\n";
+        std::cerr << "GPU and CBT smoke-test options cannot be combined.\n";
         return 2;
     }
 
-    if (automaticRuntimeBenchmark && (fixedFrameSmokeTest || gpuSmokeTest || cbtProceduralSmokeTest))
+    if (automaticRuntimeBenchmark &&
+        (fixedFrameSmokeTest || gpuSmokeTest || cbtProceduralSmokeTest || cbtOccupancyTreeSmokeTest))
     {
         std::cerr << "--runtime-benchmark cannot be combined with a smoke-test option.\n";
         return 2;
@@ -309,6 +325,10 @@ int main(int argc, char** argv)
     if (cbtProceduralSmokeTest)
     {
         application.EnableCbtProceduralSmokeTest();
+    }
+    if (cbtOccupancyTreeSmokeTest)
+    {
+        application.EnableCbtOccupancyTreeSmokeTest();
     }
     if (automaticRuntimeBenchmark)
     {
