@@ -1,7 +1,7 @@
 # CBT 2024 接入与复现计划
 
 > 日期：2026-07-16  
-> 状态：实施计划 v0.2
+> 状态：实施计划 v0.3；阶段 B、C、D 已完成，当前进入阶段 E
 > 前置条件：DX12 迁移阶段已完成  
 > 上游参考：`third_party/large_cbt`，提交 `7351e6fc603b9b2c2ab4da399b13a9ab0f327398`
 > 本机兼容基线：提交 `7ae736d179528a0996449c0cc2db7f3279edc8ee`，仅替换 NVIDIA 64 位 `firstbithigh` 实现
@@ -117,11 +117,11 @@ Application
 
 以上名称是建议边界，不要求提前创建过多公开类。实现时可将内部状态和辅助函数保留在 CBT 算法模块中，只有确实需要跨文件共享时再拆分。
 
-## 5. 与现有接口的必要改动
+## 5. 目标接口与当前完成状态
 
 ### 5.1 算法标识和能力
 
-在 `TerrainLodAlgorithmId` 中增加 CBT 2024 模式，并声明：
+`TerrainLodAlgorithmId::Cbt2024` 已增加。完整忠实基线的目标能力是：
 
 - 支持 GPU 驱动渲染；
 - 支持 split；
@@ -130,9 +130,11 @@ Application
 - 支持拓扑验证；
 - 不输出 CPU 网格作为普通运行路径。
 
+当前基础拓扑 adapter 已支持 GPU driven 和程序化间接绘制，但尚未执行动态 split、merge、兼容修复或完整拓扑验证，因此这些 capability 当前保持 `false`，将在对应阶段完成后逐项启用。
+
 ### 5.2 视图输入
 
-当前 `TerrainLodBuildInput` 只有相机位置，不能忠实计算官方屏幕面积。建议增加只读视图输入：
+该接口改动已完成。`TerrainLodBuildInput` 已包含以下只读视图输入：
 
 ```text
 TerrainLodViewInput
@@ -160,7 +162,7 @@ SV_VertexID
   → currentVertexBuffer[slot * 3 + localVertex]
 ```
 
-现有 renderer 只支持 `D3D12_DRAW_INDEXED_ARGUMENTS`。需要增加 CBT 专用的程序化间接路径，推荐扩展：
+该接口改动已完成。renderer 保留 GPU ROAM-like 的 `D3D12_DRAW_INDEXED_ARGUMENTS`，并为 CBT 增加：
 
 - `TerrainLodRenderMode::GpuProceduralIndirect`；
 - `TerrainLodRenderPacket` 中的活动二分器索引资源；
@@ -168,11 +170,11 @@ SV_VertexID
 - 顶点着色器所需的 SRV 资源描述；
 - 对应的命令签名和根参数。
 
-第一版不应为了适配现有 `DRAW_INDEXED` 契约而额外生成完整索引缓冲，否则会引入官方实现不存在的 mesh emit 阶段。
+当前 CBT 基础拓扑不生成传统索引缓冲，直接使用 `D3D12_DRAW_ARGUMENTS` 和活动二分器索引资源。
 
 ### 5.4 设备能力
 
-在启用 CBT 前检查：
+能力检查已接入 `QueryCbt2024Availability`。在启用 CBT 前检查：
 
 - Direct3D 12 基础功能；
 - Shader Model 6.6；
@@ -183,30 +185,28 @@ SV_VertexID
 
 能力不足时应在算法列表、日志和 benchmark 说明中给出明确原因，不允许静默退回另一算法。
 
-## 6. 计划中的代码布局
+## 6. 当前代码布局与后续扩展
 
-建议新增：
+当前已经落地：
 
 ```text
 src/algorithms/cbt_2024/
-├── CbtTerrainLodAlgorithm.h/.cpp
-├── CbtGpuState.h/.cpp                 仅在状态明显过大时拆分
-├── CbtBaseMeshBuilder.h/.cpp          规则地形半边基础网格
-└── CbtValidation.h/.cpp               CPU 侧初始化与调试验证
+├── Cbt2024Support.h/.cpp              D3D12 与设备能力 gate
+├── CbtOccupancyTree.h/.cpp            CPU OCBT 参考结构
+├── CbtBisectorTopology.h/.cpp         基础二分器和 buffer layout
+└── d3d12/
+    ├── D3D12CbtOccupancyTree.h/.cpp   GPU OCBT 验证
+    ├── D3D12CbtBaseTopology.h/.cpp    GPU 常驻基础资源
+    └── D3D12CbtTerrainLodAlgorithm.h/.cpp
 
-assets/shaders/dx12/cbt_2024/
-├── CbtUpdate.hlsl                     分类、split、merge 和传播入口
-├── CbtUtilities.hlsli                 拓扑模板和任务操作
-├── OptimizedCbtCommon.hlsli           通用 rank-select 和位操作
-├── OptimizedCbt128K.hlsli
-├── OptimizedCbt256K.hlsli
-├── OptimizedCbt512K.hlsli
-├── OptimizedCbt1M.hlsli
-├── CbtTerrainGeometry.hlsl            高度图地形几何求值
-└── CbtTerrainRender.hlsl              程序化间接绘制
+assets/shaders/dx12/
+├── CbtProceduralTerrain.hlsl          当前基础拓扑程序化绘制
+└── cbt/
+    ├── CbtOccupancyTree.hlsli         OCBT 位域、归约和 rank-select
+    └── CbtOccupancyTreeTests.hlsl     四档容量验证入口
 ```
 
-命名可以调整，但应保持“官方基线”和后续“预算感知变体”的着色器文件分离。
+阶段 E-G 将在 `assets/shaders/dx12/cbt/` 下继续增加分类、split、merge、传播和高度图几何求值入口。必须保持“官方基线”和后续“预算感知变体”的着色器文件分离。
 
 ## 7. GPU 常驻资源规划
 
@@ -381,17 +381,18 @@ assets/shaders/dx12/cbt_2024/
 
 ### 阶段 H：应用、界面与 benchmark 接入
 
-状态：待实施。
+状态：部分完成。算法选择、可用性提示和专用 smoke test 已接入；完整参数、统计和 runtime benchmark 待动态拓扑完成后补齐。
 
 任务：
 
-- 将 CBT 2024 加入算法选择；
+- [x] 将 CBT 2024 加入算法选择；
 - 增加面积阈值、最大深度和 CBT 容量设置；
 - 增加占用量、剩余容量、候选、拒绝和传播统计；
 - 增加各计算阶段 GPU 时间；
-- 接入固定相机路径、烟雾测试和运行时 benchmark；
-- 支持高度图重载、算法重置和容量切换；
-- 在设备能力不足时自动跳过并记录原因。
+- [x] 接入 OCBT、基础拓扑和程序化绘制专用烟雾测试；
+- 接入固定相机路径和运行时 benchmark；
+- 支持高度图重载、算法重置和 UI 容量切换；
+- [x] 在设备能力不足时自动跳过并记录原因。
 
 完成条件：CBT 可以通过界面和命令行稳定运行，自动测试可无人值守完成并输出完整统计。
 
@@ -529,14 +530,23 @@ assets/shaders/dx12/cbt_2024/
 
 这些内容属于 CBT 官方基线冻结后的研究实现，对应 [研究假设与验证计划](12-research-hypothesis-validation-plan.md)。
 
-## 13. 第一实施批次
+## 13. 实施批次
 
-计划批准后，第一批工作按以下顺序执行：
+第一批工程接入已经完成：
 
-1. 构建并运行 `third_party/large_cbt` 官方程序；
-2. 记录设备能力和官方 128K 基线；
-3. 扩展 RoamTesting 的视图输入和 Shader Model 6.6 检查；
-4. 增加不依赖 CBT 的程序化间接绘制烟雾测试；
-5. 迁移并单独验证 128K OCBT 数据结构。
+1. [x] 构建并运行 `third_party/large_cbt` 官方程序；
+2. [x] 记录设备能力并建立官方程序的本机兼容基线；
+3. [x] 扩展 RoamTesting 的视图输入和 Shader Model 6.6 检查；
+4. [x] 增加不依赖动态 CBT 拓扑的程序化间接绘制烟雾测试；
+5. [x] 迁移并验证 128K、256K、512K、1M OCBT；
+6. [x] 建立规则地形基础二分器和完整 GPU 常驻资源初值。
 
-在这五项完成之前，不开始高度图几何适配，也不修改官方候选分配策略。
+当前第二批工作对应阶段 E，按以下顺序执行：
+
+1. 面积分类、背面剔除和视锥剔除；
+2. split 候选与兼容链规划；
+3. 保守容量预留、空闲 rank-select 和子槽位分配；
+4. `heapID`、邻接、占用位和传播任务提交；
+5. OCBT 归约、活动索引重建和 CPU/GPU 不变量验证。
+
+在忠实 split/merge、高度图几何和官方基线冻结完成之前，不修改官方候选分配策略。

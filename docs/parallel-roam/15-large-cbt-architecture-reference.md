@@ -1,7 +1,7 @@
 # large_cbt 总体架构与关键算法路径参考
 
 > 日期：2026-07-16  
-> 文档状态：源码架构参考 v0.1  
+> 文档状态：源码架构参考 v0.2；RoamTesting 映射更新于 2026-07-20
 > 分析对象：`third_party/large_cbt`，提交 `7351e6fc603b9b2c2ab4da399b13a9ab0f327398`  
 > 对应论文：*Concurrent Binary Trees for Large-Scale Game Components*，HPG 2024
 
@@ -345,7 +345,7 @@ split 和 merge 只修改底层占用位。之后必须执行三段归约：
 
 官方实现不生成传统索引缓冲。顶点着色器使用 `SV_VertexID / 3` 得到活动三角形序号，再通过 `indexedBisectorBuffer` 找到真实物理槽位，最后读取该槽位对应的三个顶点。
 
-这条路径使用 `D3D12_INDIRECT_ARGUMENT_TYPE_DRAW`，而当前 RoamTesting 的 GPU 路径使用 `D3D12_INDIRECT_ARGUMENT_TYPE_DRAW_INDEXED`。这是桥接时最重要的接口差异之一。
+这条路径使用 `D3D12_INDIRECT_ARGUMENT_TYPE_DRAW`。RoamTesting 的 GPU ROAM-like 继续使用 `D3D12_INDIRECT_ARGUMENT_TYPE_DRAW_INDEXED`，CBT 接入已经新增独立的程序化 `DRAW` 模式，因此桥接差异已经由双契约解决。
 
 ## 10. 并发与正确性机制
 
@@ -399,7 +399,7 @@ split 和 merge 只修改底层占用位。之后必须执行三段归约：
 | large_cbt | RoamTesting 对应位置 | 处理建议 |
 |---|---|---|
 | `SpaceRenderer` | `Application`、`D3D12GraphicsBackend`、`TerrainRenderer` | 不迁移，沿用现有主循环和后端 |
-| 自研 DX12 backend | `D3D12GraphicsBackend` | 不迁移，仅补足缺失的程序化间接绘制和资源接口 |
+| 自研 DX12 backend | `D3D12GraphicsBackend` | 不迁移；程序化间接绘制和原生资源借用接口已补齐 |
 | `Planet` | `TerrainRenderer` + `ITerrainLodAlgorithm` 实例 | 拆分拓扑算法与几何/渲染职责 |
 | `MeshUpdater` | 新的 CBT 算法内部命令编排器 | 迁移核心阶段和屏障顺序 |
 | `CBTMesh` | CBT 算法持有的 GPU 常驻状态 | 作为算法私有状态，不暴露所有权 |
@@ -407,17 +407,18 @@ split 和 merge 只修改底层占用位。之后必须执行三段归约：
 | `UpdateMesh.compute` | `assets/shaders/dx12/cbt/` | 先忠实迁移，后续研究另建调度变体 |
 | `PlanetGeometry.compute` | 高度图几何求值着色器 | 不直接照搬球面逻辑，替换为地形基网格求值 |
 | 水体/月球形变 | 高度图采样和法线生成 | 不迁移演示效果 |
-| 程序化间接绘制 | 当前仅支持索引间接绘制 | 增加 CBT 专用程序化绘制数据包或渲染模式 |
+| 程序化间接绘制 | `GpuProceduralIndirect` + `D3D12_DRAW_ARGUMENTS` | 已接入，继续与 GPU ROAM-like 的索引间接模式并存 |
 
 ### 12.1 建议的算法边界
 
-新增实现应遵循现有统一接口：
+当前实现遵循统一接口，并先把基础状态拆成 CPU 参考拓扑和 D3D12 资源状态：
 
 ```text
-CbtTerrainLodAlgorithm : ITerrainLodAlgorithm
-├── CbtGpuState                 持有 CBT、heapID、邻接、任务和索引缓冲
-├── CbtTopologyPipeline         记录 Classify 到 Reduce 的命令
-├── CbtGeometryEvaluator        将 heapID 转换为高度图地形顶点
+D3D12CbtTerrainLodAlgorithm : ITerrainLodAlgorithm
+├── CbtOccupancyTree            CPU OCBT 参考结构
+├── CbtBaseTopology             CPU 基础二分器与 buffer layout
+├── D3D12CbtBaseTopologyState   GPU 常驻拓扑、任务、索引和命令资源
+├── 后续 CbtTopologyPipeline    Classify、Split、Merge、Propagate 和 Reduce
 └── TerrainLodRenderPacket      借用 GPU 资源，不转移所有权
 ```
 
@@ -425,14 +426,14 @@ CbtTerrainLodAlgorithm : ITerrainLodAlgorithm
 
 ### 12.2 渲染数据包需要补足的语义
 
-当前 [`TerrainLodRenderPacket`](../../src/algorithms/ITerrainLodAlgorithm.h) 假设 GPU 间接路径提供顶点缓冲、索引缓冲和 `DRAW_INDEXED` 参数。忠实 CBT 复现更适合增加程序化间接模式，至少携带：
+当前 [`TerrainLodRenderPacket`](../../src/algorithms/ITerrainLodAlgorithm.h) 已支持 `GpuProceduralIndirect`，并携带：
 
 - 最终顶点缓冲；
 - 活动二分器索引缓冲；
 - `D3D12_DRAW_ARGUMENTS` 间接命令缓冲；
 - 活动三角形数和资源生命周期代次。
 
-也可以额外生成传统索引缓冲以适配现有 renderer，但这会增加官方实现不存在的 mesh emit 阶段，只适合作为适配实验，不应充当忠实复现基线。
+CBT 忠实基线不额外生成传统索引缓冲；传统索引间接路径只服务现有 GPU ROAM-like。
 
 ### 12.3 参数映射
 
@@ -444,7 +445,7 @@ CbtTerrainLodAlgorithm : ITerrainLodAlgorithm
 | 视图投影与屏幕大小 | 现有 `RenderContext` | 应进入算法输入或 GPU 常量缓冲 |
 | 基础网格 | 当前高度图根三角形/规则网格 | 需要显式半边邻接和基础 `heapID` 构建 |
 
-当前 `TerrainLodBuildInput` 只有相机位置，没有视图投影矩阵、视锥和平面尺寸。CBT 面积分类需要扩展算法输入，或由后端提供只读帧上下文；不建议在算法中自行重建与 renderer 不一致的相机矩阵。
+`TerrainLodBuildInput` 已包含 View、Projection、ViewProjection、相机方向、六个视锥平面和 drawable 尺寸。后续 CBT 分类 pass 应直接使用这份与 renderer 同源的输入，不在算法中重建相机矩阵。
 
 ### 12.4 建议新增统计字段
 
@@ -465,12 +466,16 @@ CbtTerrainLodAlgorithm : ITerrainLodAlgorithm
 
 ### 阶段 A：冻结官方参考程序
 
+状态：官方程序和本机兼容基线已运行，完整动态实验冻结仍待阶段 I。
+
 - 在 `third_party/large_cbt` 独立生成并运行 `outer_space`；
 - 固定提交、适配器、驱动、分辨率、CBT 类型和相机路径；
 - 记录官方界面中的占用量、各阶段时间和截图；
 - 不修改算法着色器。
 
 ### 阶段 B：桥接官方拓扑，不改算法语义
+
+状态：程序化绘制、OCBT 和基础 GPU 状态已完成；完整 split/merge 尚未完成。
 
 - 在 RoamTesting 中增加 CBT 算法实例和 GPU 常驻状态；
 - 迁移 OCBT、`UpdateMesh.compute` 和命令阶段顺序；
@@ -479,6 +484,8 @@ CbtTerrainLodAlgorithm : ITerrainLodAlgorithm
 - 对照官方相同输入的活动位和拓扑验证结果。
 
 ### 阶段 C：适配高度图地形
+
+状态：规则地形基础半边拓扑已完成，高度图几何求值待实施。
 
 - 为规则地形构建半边基础网格；
 - 用高度图求值替换球面 `PlanetGeometry.compute`；
@@ -495,12 +502,12 @@ CbtTerrainLodAlgorithm : ITerrainLodAlgorithm
 ## 14. 已知风险与待确认问题
 
 1. **许可证缺失。** 在使用或发布衍生代码前需要联系作者或确认授权。
-2. **程序化绘制接口不匹配。** 当前 renderer 的 `DRAW_INDEXED` 契约需要扩展。
-3. **相机输入不足。** 当前算法接口缺少视图投影、视锥和屏幕尺寸。
-4. **基础网格不同。** 官方以一般半边网格和行星几何为目标，地形适配必须重新生成基础邻接。
+2. **程序化绘制接口不匹配，已解决。** renderer 已增加独立 `DRAW` 契约。
+3. **相机输入不足，已解决。** 算法输入已包含视图投影、视锥和屏幕尺寸。
+4. **基础网格不同，部分解决。** 规则地形基础邻接已生成，高度图几何求值仍待实施。
 5. **每帧全队列等待。** 官方演示的 `flush` 不可直接作为性能实现迁移。
 6. **容量静态特化。** 四种 OCBT 规模对应不同 HLSL 布局，运行时切换需要重新创建资源和管线。
-7. **Shader Model 6.6。** 64 位位域原子操作和官方 DX12 路径需要在设备初始化阶段显式检查。
+7. **Shader Model 6.6，已解决。** CBT 可用性入口会显式检查 Shader Model 6.6、shader int64 和 64 位资源原子能力。
 8. **调度非确定性。** 容量饱和时获批候选可能随 GPU 执行顺序变化，应建立重复运行稳定性实验。
 9. **验证覆盖有限。** 官方验证主要覆盖邻接对称性，需要补充位域、heapID、活动列表和间接命令一致性检查。
 

@@ -1,5 +1,9 @@
 # Milestones
 
+> 当前说明（2026-07-20）：本文件记录课程阶段从工程初始化到三算法实验完成的演进过程。带日期的“实现状态”和 4A-4I 的“阶段完成记录”是历史快照，不代表后续 D3D12 / CBT 2024 现状。当前 CBT 主线见 [16-cbt-2024-integration-plan.md](16-cbt-2024-integration-plan.md)。
+
+当前课程阶段结果：阶段 0-5 已完成；Classic、Data-Oriented 和 GPU ROAM-like 已进入固定相机 runtime benchmark；OpenGL/D3D12 迁移与 CBT 后续工作分别由文档 13 和 16 跟踪。
+
 核心原则：每一步都应有一个可运行、可截图、可录制、可验证的阶段成果。
 
 ## 阶段 0：工程初始化与最小渲染闭环
@@ -327,7 +331,7 @@ assets/textures/Tex_Terrain_Debug_Diffuse.ppm
 
 GPU 版不强求原样复刻 Classic 的全局优先队列。推荐项目表述为：保留二叉三角域、视点相关 screen error、split / merge 阈值和无裂缝约束思想，用 GPU-friendly 的批量阈值决策与分块提交替代严格串行队列。
 
-### 现有前置条件（2026-07-06）
+### 历史前置条件（2026-07-06）
 
 - 已有统一 `ITerrainLodAlgorithm`、`TerrainLodRenderPacket` 和 `TerrainLodStats`，枚举中已预留 `GpuRoamLike`；
 - `TerrainLodRenderPacket` 已预留 `GpuBuffers`、`GpuIndirect`、GPU buffer id 和 indirect draw buffer 字段；
@@ -367,14 +371,14 @@ Level E：GPU split-only 或 split/merge topology update
 - `GpuRoamLike` 的 `Info()`、`Capabilities()`、`Stats()` 和 `Reset()` 路径完整；
 - 不支持 compute 的机器上也能通过 smoke test。
 
-当前实现记录：
+阶段完成记录：
 
 - 已新增 `GpuRoamLike` 算法壳并接入 renderer、UI 下拉框和 CLI benchmark；
 - 已新增 OpenGL GPU capability 查询，记录 context、OpenGL version、renderer、compute shader、SSBO、atomic counter、indirect draw 和 timer query 能力；
 - 无窗口 benchmark 没有 OpenGL context 时，`--algorithm all` 会把 GPU 明确标为 skip，`--algorithm gpu` 会返回失败并输出原因；
 - macOS OpenGL 4.1 环境下，UI 选择 GPU ROAM-like 时会显示 OpenGL 4.3 / compute shader 不可用原因，不会静默回退成 CPU 成绩；
 - 运行时 benchmark CSV 和汇总表已预留 `gpuComputeMs`、CPU-GPU upload bytes 和 readback bytes；
-- 当前 GPU 版仍处于 Level A，尚未执行 compute shader、GPU mesh emit 或 GPU buffer rendering。
+- 4A 完成时 GPU 版处于 Level A，尚未执行 compute shader、GPU mesh emit 或 GPU buffer rendering；后续 4C-4G 已补齐这些路径。
 
 4B：GPU buffer schema 与 DOD 快照对齐
 
@@ -392,7 +396,7 @@ Level E：GPU split-only 或 split/merge topology update
 - 支持 debug readback 少量 node 做字段一致性抽样；
 - 不引入额外 UI 参数，沿用三版本统一核心参数。
 
-当前实现记录：
+阶段完成记录：
 
 - 已定义 `GpuRoamNodeRecord`，按 16 字节组打包 domain、geometric/screen error、parent/child/neighbor、chunk、flag、path id、build id 和 depth；
 - 已定义 `GpuRoamBufferSnapshot`，从 DOD `DataOrientedRoamState` 导出 node buffer 与 active leaf index buffer；
@@ -417,13 +421,13 @@ Level E：GPU split-only 或 split/merge topology update
 - GPU 不可用时该阶段保持 skip，不破坏 CPU benchmark；
 - 文档记录浮点误差、采样方式和 OpenGL 版本要求。
 
-当前实现记录：
+阶段完成记录：
 
 - 已新增 GPU error evaluation compute shader，读取 R32F height map texture、node SSBO 和 GPU compact 后的 active leaf buffer；
 - shader 侧按 DOD `ComputeScreenErrorScore` 的同一公式计算 height error score 与 projected edge score，并写入 screen error SSBO；
 - GPU compute pass 已用 OpenGL timer query 包住，结果写入 `GpuComputeMilliseconds`；
 - 默认只 readback 少量 active leaf 和 error 样本，避免全量 screen error 回读污染性能口径；
-- 当前 error evaluation 是 shadow pass，尚未反向驱动 CPU topology commit。
+- 4C 完成时 error evaluation 是 shadow pass，尚未反向驱动 CPU topology commit；后续 GPU split-only 实验仍与 CPU DOD 基线保持独立。
 
 4D：GPU Candidate Marking 与候选压缩
 
@@ -440,12 +444,12 @@ Level E：GPU split-only 或 split/merge topology update
 - topology commit 后 active triangle count 与 Classic / DOD 对齐；
 - benchmark 可展示 CPU collect / mark 时间下降，或说明瓶颈转移到 readback / topology commit。
 
-当前实现记录：
+阶段完成记录：
 
 - 已新增 GPU candidate marking compute shader，基于 GPU screen error 生成 split candidate buffer；
 - merge candidate 目前作为 shadow 预筛选，扫描 split node 并按 merge threshold 标记候选，不参与真正拓扑提交；
 - split / merge candidate count 通过小 counter buffer readback，用于后续和 DOD candidate marking 对齐；
-- 当前 CPU topology commit 仍完全由 DOD builder 负责，GPU candidate list 还不改变三角形结果。
+- 4D 完成时 CPU topology commit 仍完全由 DOD builder 负责，GPU candidate list 还不改变三角形结果。
 
 4E：GPU Active Leaf Compaction
 
@@ -461,7 +465,7 @@ Level E：GPU split-only 或 split/merge topology update
 - readback 口径清楚，只读计数时不影响主要性能结论；
 - debug 模式可选择全量 readback 以定位错误，但 benchmark 默认关闭。
 
-当前实现记录：
+阶段完成记录：
 
 - 已新增 GPU active leaf compaction compute shader，从 node flag 扫描 active leaf 并写入 active leaf SSBO；
 - CPU 上传的 DOD active leaf list 已改为 GPU 端重新压缩，CPU 只保留 expected active leaf count 做校验；
@@ -483,7 +487,7 @@ Level E：GPU split-only 或 split/merge topology update
 - CPU mesh build 和 CPU-GPU mesh upload 在 GPU 路径中接近 0 或只剩 fallback/debug 成本；
 - renderer 对 `CpuMesh` 为空但 GPU buffer 有效的 packet 不再报错。
 
-当前实现记录：
+阶段完成记录：
 
 - 已新增 DOD topology-only 更新入口，GPU ROAM-like 复用 DOD 拓扑提交但不再生成 CPU mesh；
 - 已新增 GPU mesh emit compute shader，根据 GPU active leaf buffer 写出 terrain vertex buffer、index buffer 和 draw command；
@@ -506,7 +510,7 @@ Level E：GPU split-only 或 split/merge topology update
 - `RenderMilliseconds` 与 `GpuComputeMilliseconds` 分开记录；
 - GPU unavailable 或 indirect draw unsupported 时可回退 `GpuBuffers`。
 
-当前实现记录：
+阶段完成记录：
 
 - GPU mesh emit pass 会在 GPU 端写出 `DrawElementsIndirect` command；
 - `TerrainRenderer` 已支持 `TerrainLodRenderMode::GpuIndirect`，GPU 支持 indirect draw 时走 `glDrawElementsIndirect`，否则回退 `GpuBuffers`；
@@ -530,7 +534,7 @@ Level E：GPU split-only 或 split/merge topology update
 - validator 在固定 smoke 场景中无 T-junction 和 invalid neighbor；
 - 若出现约束无法收敛，必须记录失败案例和回退策略。
 
-当前实现记录：
+阶段完成记录：
 
 - 已新增 `GpuRoamSplitOnlyTopology` 独立 pass 文件，将 GPU 拓扑扩展逻辑从 adapter 中拆出；
 - GPU node buffer 会按当前 DOD 节点数加 active leaf 的一层子节点容量预留，split-only pass 通过 `allocatedNodeCount` atomic counter 分配 child record；
@@ -567,6 +571,8 @@ Level E：GPU split-only 或 split/merge topology update
 - 任何 GPU 结果和 DOD/Classic 输出不一致时，都按 bug 处理，修复后写入 bug 修复记录。
 
 ## 阶段 5：实验、可视化与报告材料整理
+
+状态：已完成（2026-07-08）。课程阶段报告和实验数据已冻结到历史文档；CBT 2024 将建立独立基线和统计口径。
 
 ### 目标
 

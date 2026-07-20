@@ -1,5 +1,8 @@
 # Theory and Architecture
 
+> 历史快照：本文件记录项目初始理论与架构提案，其中目录、接口和 OpenGL 技术基线不代表当前实现。
+
+
 ## Height Map 与二维参数域
 
 Height Map 是二维数组或纹理：

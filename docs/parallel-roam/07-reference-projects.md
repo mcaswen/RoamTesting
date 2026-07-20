@@ -1,5 +1,7 @@
 # Reference Projects
 
+> CBT 2024 官方实现的专项源码分析已独立整理到 [15-large-cbt-architecture-reference.md](15-large-cbt-architecture-reference.md)。本文件保留早期 ROAM 和引擎工程参考。
+
 检索日期：2026-07-03（Asia/Shanghai）  
 数据来源：GitHub Search API 与项目 README。Star 数会变化，后续引用报告时需要重新确认。
 

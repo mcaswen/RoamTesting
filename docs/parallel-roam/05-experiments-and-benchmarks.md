@@ -42,6 +42,8 @@ Debug View 的价值不只是展示效果，也用于定位算法问题。比如
 
 ## 主实验：三版本对比
 
+> 当前边界：本实验继续用于 Classic CPU、Data-Oriented CPU 和 GPU ROAM-like 的成熟路径对比。CBT 2024 在完整 split/merge、高度图几何和统计接入完成前只运行专用正确性验证，不进入本表性能排名。
+
 统一控制变量：
 
 ```text

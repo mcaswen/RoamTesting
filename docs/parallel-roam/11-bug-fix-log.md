@@ -27,7 +27,7 @@
 - 每条记录都要写清楚发生阶段，尤其是阶段性实现过程中引入的回归，便于回看里程碑风险
 - 性能 bug 必须写清楚 Debug / RelWithDebInfo / Release 构建类型、关键参数和场景规模
 
-## 当前问题清单
+## 已修复问题记录
 
 ### BUG-001：RelWithDebInfo preset 构建成 bootstrap
 

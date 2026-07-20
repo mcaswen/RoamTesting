@@ -35,27 +35,28 @@ ParallelROAM/
 ├── CMakeLists.txt
 ├── CMakePresets.json
 ├── cmake/                  CMake helper modules
+├── scripts/                configure、build、run 和报告生成脚本
+├── tools/                  portable CMake 与项目检查工具
 ├── src/                    C++ source code
 │   ├── app/                Application、main loop、input、camera
-│   ├── platform/           SDL2、OpenGL context、filesystem
-│   ├── render/             Shader、buffer、texture、renderer
-│   ├── terrain/            HeightMap、TerrainConfig、sampling
-│   ├── algorithms/         Terrain LOD algorithm interface and implementations
+│   ├── platform/           SDL2 window 和 OpenGL capability 查询
+│   ├── render/             OpenGL/D3D12 backend、shader 和 terrain renderer
+│   ├── terrain/            HeightMap、mesh data 和基础网格
+│   ├── algorithms/         统一 LOD 接口与各算法实现
+│   │   ├── classic_roam/
+│   │   ├── data_oriented_roam/
+│   │   ├── gpu_roam/
+│   │   └── cbt_2024/
 │   ├── gui/                ImGui layer and panels
-│   ├── profiling/          CPU/GPU timers, stats, CSV export
-│   ├── benchmark/          benchmark scenarios and camera paths
-│   ├── resources/          runtime resource loading
-│   └── util/               logger, assertions, math helpers
+│   └── benchmark/          algorithm benchmark 和 probe
 ├── assets/                 project runtime assets
+│   ├── fonts/
 │   ├── heightmaps/
 │   ├── textures/
-│   ├── shaders/
-│   ├── materials/
-│   └── benchmark_paths/
-├── docs/                   project documentation
-├── scenarios/              benchmark scenario definitions
-├── tests/                  unit / integration tests
-├── external/               manually managed third-party dependencies
+│   └── shaders/dx12/       D3D12 terrain、GPU ROAM 和 CBT shader
+├── benchmark-output/       Git 忽略的 runtime benchmark 和实验输出
+├── docs/parallel-roam/     当前文档、历史文档和报告资源
+├── tests/                  CTest 单元与结构验证
 └── third_party/            vendored third-party source or assets
 ```
 
@@ -64,9 +65,9 @@ ParallelROAM/
 1. C++ 业务源码统一放在 `src/`。
 2. Shader 统一放在 `assets/shaders/`。
 3. Height Map 统一放在 `assets/heightmaps/`。
-4. Benchmark path 统一放在 `assets/benchmark_paths/` 或 `scenarios/`。
-5. 项目文档统一放在 `docs/`。
-6. 第三方依赖必须放在 `external/` 或 `third_party/`，并保留来源和许可证说明。
+4. 固定相机路径和 benchmark 参数由 `Application`、命令行覆盖项或专用实验脚本统一管理；新增外部 scenario 格式前不要创建临时目录约定。
+5. 项目主题文档统一放在 `docs/`；根目录只保留总入口 `Parallel_ROAM_Project_Plan.md`。
+6. 第三方依赖统一放在 `third_party/`，并保留来源和许可证说明。
 7. 新增文件时优先加入已有模块目录；确实没有合适目录时再新建，并使用有意义的模块名。
 8. 不确定文件应该放在哪个文件夹时，先查本文档，仍不确定再让 AI 基于本文档给建议。
 
@@ -275,7 +276,7 @@ src/app/Application.h                  -> ParallelRoam::App
 src/render/TerrainRenderer.h           -> ParallelRoam::Render
 src/terrain/HeightMap.h                -> ParallelRoam::Terrain
 src/algorithms/classic_roam/...        -> ParallelRoam::Algorithms::ClassicRoam
-src/profiling/FrameProfiler.h          -> ParallelRoam::Profiling
+src/algorithms/cbt_2024/...            -> ParallelRoam::Algorithms::Cbt2024
 ```
 
 ### 5.6 编码规范
@@ -359,10 +360,10 @@ frames.resize(FrameCount);
 
 项目开发中，尽量区分以下层：
 
-1. 平台层：SDL2、OpenGL context、filesystem、时间等平台细节。
+1. 平台层：SDL2 window、OpenGL capability、filesystem 和时间等平台细节。
 2. 数据层：Height Map、TerrainConfig、BenchmarkScenario、CameraPath。
-3. 算法层：Classic ROAM、Data-Oriented ROAM、GPU ROAM-like 等 LOD 决策。
-4. 渲染层：shader、buffer、texture、terrain renderer、debug renderer。
+3. 算法层：Classic ROAM、Data-Oriented ROAM、GPU ROAM-like 和 CBT 2024 等 LOD 决策。
+4. 渲染层：OpenGL/D3D12 backend、shader、buffer、texture 和 terrain renderer。
 5. 表现与控制层：GUI、debug view、benchmark 控制面板。
 6. 观测层：CPU/GPU profiler、stats history、CSV export。
 
@@ -380,11 +381,11 @@ frames.resize(FrameCount);
 
 ### 7.1 Benchmark scenario 规范
 
-1. Benchmark scenario 统一放在 `scenarios/`。
-2. Scenario 文件名使用 `Scenario_模块_场景名`，例如 `Scenario_Roam_Mountain_Flythrough.json`。
-3. Scenario 应记录 Height Map、相机路径、分辨率、算法参数、记录时长和 warm-up 时长。
-4. 不直接覆盖已经用于正式 benchmark 记录的 scenario；需要实验变体时复制一份并改名。
-5. 提交前清理临时 scenario 和无效路径文件。
+1. 当前 runtime benchmark 使用程序内固定相机路径，并通过 `--runtime-benchmark-*` 参数覆盖高度图、地形尺度、深度、阈值、距离权重、时长和标签。
+2. 正式实验命令必须记录完整参数、构建 preset、图形后端、适配器、分辨率和 VSync 状态。
+3. 输出统一写入 Git 忽略的 `benchmark-output/`；需要进入报告的聚合数据和图表应保留生成脚本与来源说明。
+4. 不覆盖已经用于报告结论的原始 CSV；实验变体使用独立标签和输出目录。
+5. 如果后续引入外部 scenario 文件，再单独建立 schema、版本和目录规范，不提前维护不存在的 `scenarios/` 约定。
 
 ### 7.2 资源规范
 
@@ -399,7 +400,7 @@ frames.resize(FrameCount);
 1. 导入资源时记录来源、许可证和用途。
 2. 不清楚许可证的资源不要进入正式仓库。
 3. 大体积资源提交前先确认是否必须纳入版本管理。
-4. 贴图、Height Map、shader、benchmark path 都应放入对应目录。
+4. 贴图、Height Map 和 shader 放入对应资源目录；benchmark 参数和路径按第 7 节管理。
 5. 第三方资源不混入项目自制资源目录。
 
 ## 9. 个人开发流程

@@ -1,4 +1,7 @@
 # Project Scope and Goals
+
+> 历史快照：本文件记录课程项目第一阶段的 OpenGL 三算法范围，不代表当前 D3D12 / CBT 2024 开发阶段。
+
 ## 项目定位
 
 本项目实现一个基于 Height Map 的实时自适应地形渲染系统，并围绕同一套 ROAM（Real-time Optimally Adapting Meshes）思想，比较三种计算架构下的实现方式：

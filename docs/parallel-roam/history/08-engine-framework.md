@@ -1,5 +1,8 @@
 # Engine Framework
 
+> 历史快照：本文件记录初始框架提案，部分目录、AlgorithmRegistry 和 AlgorithmController 未按该方案实现。
+
+
 本项目底层框架的核心目标是：稳定外壳、可替换算法内核、统一观察与控制层。这样后续添加 Classic ROAM、Data-Oriented ROAM、GPU ROAM-like、CDLOD、geometry clipmap 等算法时，不需要重写 GUI、渲染、benchmark 和性能统计。
 
 ## 设计原则

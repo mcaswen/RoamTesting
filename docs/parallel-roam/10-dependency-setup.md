@@ -20,7 +20,7 @@
 | GLM | 数学库 | 系统包优先，缺失时使用 `third_party/glm` | vcpkg / FetchContent | header-only |
 | GLAD | OpenGL function loader | `third_party/glad` | vcpkg / FetchContent 生成 | 已提交 OpenGL core 4.3 loader |
 | stb | Height Map / image loading | `third_party/stb` | system headers / FetchContent | header-only |
-| Dear ImGui | GUI/debug panels | `third_party/imgui` | vcpkg / FetchContent | 本地构建 SDL2 + OpenGL3 backend |
+| Dear ImGui | GUI/debug panels | `third_party/imgui` | vcpkg / FetchContent | 按构建后端选择 SDL2 + OpenGL3 或 SDL2 + DX12 backend |
 | D3D12 Agility SDK | 固定 CBT 运行时和 Shader Model 6.6 能力 | `third_party/microsoft/d3d12-agility-sdk/1.614.1` | Microsoft NuGet | 与 CBT 2024 官方实现保持一致 |
 | DirectX Shader Compiler | 编译 DX12/HLSL 着色器 | `third_party/microsoft/dxc/1.7.2308.12` | Microsoft NuGet | `dxcompiler.dll` 版本为 1.7.2308.7 |
 
@@ -114,6 +114,13 @@ cmake --preset debug-fetch
 cmake --build --preset debug-fetch
 ```
 
+D3D12 使用独立 preset。固定 Agility SDK 和 DXC 已准备完成后，可运行：
+
+```powershell
+.\tools\cmake\bin\cmake.exe --preset relwithdebinfo-d3d12-fetch
+.\tools\cmake\bin\cmake.exe --build --preset relwithdebinfo-d3d12-fetch --parallel
+```
+
 ## 快捷构建脚本
 
 仓库提供 `scripts/` 下的快捷脚本，脚本会自动执行 configure、build 和 run。macOS / Linux 使用 `.sh`，Windows 可使用 PowerShell `.ps1` 或 CMD `.bat`。
@@ -182,13 +189,13 @@ D3D12 构建可以独立验证 CBT OCBT 的四种容量特化。该入口不会�
 .\build\debug-d3d12-fetch\bin\ParallelROAM.exe --cbt-procedural-smoke-test
 ```
 
-运行完整的 Classic、Data-Oriented、GPU 三算法 runtime benchmark：
+运行完整的 Classic、Data-Oriented、GPU ROAM-like 三算法 runtime benchmark：
 
 ```bat
 scripts\run_relwithdebinfo_fetch.bat --runtime-benchmark
 ```
 
-该命令会为每种可用算法运行同一条 10 秒相机路径，生成 `benchmark-output/runtime-benchmark-*.md` 和对应逐帧 CSV 后自动退出。GPU capability 不满足时，报告会保留 CPU 结果并写明 GPU skip 原因。
+该命令会为每种可用算法运行同一条 10 秒相机路径，生成 `benchmark-output/runtime-benchmark-*.md` 和对应逐帧 CSV 后自动退出。GPU capability 不满足时，报告会保留 CPU 结果并写明 GPU skip 原因。CBT 2024 在完整 split/merge 和高度图路径完成前仅参与专用验证，不进入这组三算法性能排名。
 
 当前 pin 的版本：
 
@@ -207,27 +214,21 @@ GLAD 已经使用官方生成器生成 OpenGL core 4.3 loader，并放在 `third
 
 ## 当前验证状态
 
-在当前 macOS 环境中：
+截至 2026-07-20，当前 Windows / NVIDIA GeForce RTX 5090 D 环境已验证：
 
 ```text
-default debug:
-- OpenGL linked
-- SDL2 linked through CMake config on this machine
-- GLAD linked from `third_party/glad`
-- GLM linked from `third_party/glm`
-- stb linked from `third_party/stb`
-- Dear ImGui linked from `third_party/imgui`
+relwithdebinfo-fetch:
+- OpenGL 4.3 application smoke test passed
+- SDL2、GLAD、GLM、stb 和 Dear ImGui local dependency path passed
+- CTest: cpp_comment_coverage、cbt_occupancy_tree、cbt_bisector_topology、terrain_lod_view passed
 
-debug-fetch:
-- OpenGL linked
-- SDL2 linked through CMake config on this machine
-- GLM linked
-- GLAD linked from `third_party/glad`
-- stb linked
-- Dear ImGui linked
+relwithdebinfo-d3d12-fetch:
+- D3D12 application and adapter initialization passed
+- CBT OCBT 128K、256K、512K、1M CPU/GPU validation passed
+- CBT base topology resource creation、readback validation and capacity switching passed
 ```
 
-`debug-vcpkg` 尚未在当前机器验证，因为当前环境没有设置 `VCPKG_ROOT`。
+`debug-vcpkg` 和 `debug-d3d12-vcpkg` 尚未在当前机器验证，因为当前环境没有设置 `VCPKG_ROOT`。macOS OpenGL 4.1 的历史验证仅用于 capability skip 回归，不再代表当前主要开发环境。
 
 ## 平台注意事项
 

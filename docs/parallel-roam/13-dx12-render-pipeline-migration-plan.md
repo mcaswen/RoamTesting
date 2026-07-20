@@ -4,6 +4,7 @@
 > 完成日期：2026-07-16  
 > 状态：阶段 0 至阶段 6 已完成，迁移阶段关闭  
 > 后续工作：见 [CBT 2024 接入与复现计划](16-cbt-2024-integration-plan.md)
+> 后续状态更新：CBT 阶段 B-D 已完成，迁移总结中原有的程序化绘制和设备能力技术债务已经关闭
 
 ## 1. 完成结论
 
@@ -112,13 +113,15 @@ OpenGL 不再是 CBT 2024 的目标实现后端，但仍保留用于：
 PARALLEL_ROAM_GRAPHICS_API=OpenGL|D3D12
 ```
 
-DX12 路径使用 Windows SDK 中的 DXC 在构建阶段编译外部 HLSL。当前生成：
+DX12 路径使用项目固定版本的 DXC 在构建阶段编译外部 HLSL。当前生成：
 
 - 地形顶点和像素着色器；
 - GPU ROAM-like 活动叶节点压缩；
 - 误差评估和候选标记；
 - split-only 拓扑更新；
 - 网格生成和间接命令。
+- CBT 程序化地形顶点着色器；
+- CBT OCBT 128K、256K、512K、1M 的清空、更新、归约和 rank-select 容量特化。
 
 编译产物复制到应用运行目录，避免运行时依赖源码工作目录。
 
@@ -191,6 +194,9 @@ DX12 路径使用 Windows SDK 中的 DXC 在构建阶段编译外部 HLSL。当�
 - DX12 窗口创建、固定帧自动退出和 ImGui 初始化；
 - Classic、DOD 和 GPU ROAM-like 算法切换；
 - DX12 GPU ROAM-like 计算和间接绘制；
+- CBT 程序化 `DRAW` 间接绘制；
+- CBT OCBT 四档容量 CPU/GPU 对照；
+- CBT 基础半边拓扑资源上传、选择性读回和容量切换；
 - 自动运行时 benchmark 和 CSV/Markdown 输出；
 - 固定窗口截图和 GPU 算法截图。
 
@@ -203,15 +209,15 @@ DX12 路径使用 Windows SDK 中的 DXC 在构建阶段编译外部 HLSL。当�
 
 ## 7. 迁移阶段关闭后的技术边界
 
-以下事项不再属于 DX12 迁移，而属于 CBT 2024 接入：
+以下事项不再属于 DX12 迁移，而由 CBT 2024 接入单独跟踪。状态更新至 2026-07-20：
 
-- Shader Model 6.6 和 64 位原子操作能力检查；
-- OCBT 位域、压缩求和树和容量特化；
-- 二分器槽位池、逻辑 `heapID` 和半边邻接；
-- 完整 split、merge 和兼容关系传播；
-- 程序化 `DRAW` 间接绘制；
-- CBT 专用统计、验证和容量饱和测试；
-- 官方场景复现和高度图地形适配。
+- [x] Shader Model 6.6、64 位整数和原子操作能力检查；
+- [x] OCBT 位域、压缩求和树和四档容量特化；
+- [x] 基础二分器槽位、逻辑 `heapID` 和半边邻接初始状态；
+- [x] 程序化 `DRAW` 间接绘制；
+- [ ] 完整 split、merge、槽位回收和兼容关系传播；
+- [ ] 完整 CBT 专用统计、动态拓扑验证和容量饱和测试；
+- [ ] 官方动态基线冻结和高度图几何适配。
 
 这些任务统一转入 [CBT 2024 接入与复现计划](16-cbt-2024-integration-plan.md)。
 
@@ -221,13 +227,13 @@ DX12 路径使用 Windows SDK 中的 DXC 在构建阶段编译外部 HLSL。当�
 
 当前 DX12 GPU ROAM-like 的主要角色是验证计算着色器、跨阶段屏障、GPU 网格生成、计时和间接绘制。它不具备 CBT 的 OCBT 空闲槽位选择、一般半边邻接和完整 split/merge 传播协议，不能作为 CBT 拓扑实现的替代品。
 
-### 8.2 当前间接绘制契约只支持 `DRAW_INDEXED`
+### 8.2 程序化 `DRAW` 契约已补齐
 
-官方 CBT 使用程序化 `D3D12_DRAW_ARGUMENTS`，顶点着色器通过活动二分器索引读取物理槽位。接入阶段需要扩展 renderer 和渲染数据包，而不是强迫官方实现先生成传统索引网格。
+`TerrainLodRenderMode::GpuProceduralIndirect`、原生活动索引资源、`D3D12_DRAW_ARGUMENTS` 命令资源和对应命令签名已经接入。GPU ROAM-like 继续使用 `DRAW_INDEXED`，CBT 基础拓扑使用程序化 `DRAW`，两条契约并存。
 
-### 8.3 设备能力检查需要扩展
+### 8.3 CBT 设备能力检查已补齐
 
-基础 DX12 路径当前以 Feature Level 12_0 为最低要求。CBT 路径还需要单独检查 Shader Model 6.6、64 位 UAV 原子操作和相关资源能力。
+基础 DX12 路径仍以 Feature Level 12_0 为最低要求。CBT 可用性入口会额外检查 Shader Model 6.6、64 位 shader 整数运算和 64 位 typed resource 原子操作，并向 GUI、日志和自动测试返回完整缺失原因。
 
 ### 8.4 OpenGL 清理暂缓
 

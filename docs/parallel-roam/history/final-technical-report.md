@@ -1,5 +1,8 @@
 # 基于现代 CPU / GPU 的 ROAM 地形 LOD 算法实现与性能分析报告
 
+> 历史快照：本报告冻结于课程项目的 OpenGL 三算法阶段，不包含后续 D3D12 迁移与 CBT 2024 接入。
+
+
 ## 第一章 绪论
 
 ### 1.1 项目背景
@@ -540,21 +543,21 @@ C=C_a k_a + C_d k_d\max(n\cdot l,0)+C_s k_s\max(n\cdot h,0)^\gamma
 
 图3-1 是项目总体架构图。它从上到下展示了应用主循环如何协调 SDL2、输入相机、Dear ImGui、地形渲染器、高度图、三种 LOD 算法和运行时基准测试。
 
-![图3-1：项目总体架构图](report-assets/architecture-overview.svg)
+![图3-1：项目总体架构图](../report-assets/architecture-overview.svg)
 
 ### 3.2 三种算法子架构
 
 经典 CPU ROAM 的子架构如图3-2 所示。这个版本最接近传统 ROAM 语义，核心是持久化二叉三角树、分裂优先队列、合并菱形队列、强制分裂和拓扑验证。我把它作为正确性基准版本，因为后面的 DOD 和 GPU 都需要知道自己有没有偏离 ROAM 的基本语义。
 
-![图3-2：经典 CPU ROAM 子架构](report-assets/architecture-classic-roam.svg)
+![图3-2：经典 CPU ROAM 子架构](../report-assets/architecture-classic-roam.svg)
 
 DOD ROAM 的子架构如图3-3 所示。这个版本把节点组织成基于索引的节点池，尽量把可批处理阶段改成并行阶段。误差评估、活跃叶节点收集、候选标记和网格输出都可以比较自然地并行；拓扑提交则采用保守策略，能安全分块的内部候选项并行处理，不能保证安全的部分回到串行路径。
 
-![图3-3：数据导向 CPU ROAM 子架构](report-assets/architecture-dod-roam.svg)
+![图3-3：数据导向 CPU ROAM 子架构](../report-assets/architecture-dod-roam.svg)
 
 GPU 类 ROAM 的子架构如图3-4 所示。这个版本目前仍然保留 DOD CPU 拓扑基准版本，然后把活跃叶节点压缩、误差评估、候选标记、仅分裂实验和网格输出放到 GPU 上。这样做不是最终理想形态，但它让我能一步一步验证 ROAM 哪些阶段适合 GPU，哪些阶段仍然卡在拓扑同步和数据交界上。
 
-![图3-4：GPU 类 ROAM 子架构](report-assets/architecture-gpu-roam.svg)
+![图3-4：GPU 类 ROAM 子架构](../report-assets/architecture-gpu-roam.svg)
 
 ### 3.3 模块划分
 
@@ -1384,13 +1387,13 @@ void Application::RecordRuntimeBenchmarkSample(
 | Data-Oriented CPU ROAM | 10.43 | 14.09 | 31426 | 323.52% | 3.32 |
 | GPU ROAM-like | 13.38 | 17.08 | 31449 | 230.13% | 4.25 |
 
-![图4-4：实验1平均 LOD 耗时对比](../../benchmark-output/report-experiments/experiment-01-baseline/chart_avg_lod_ms.svg)
+![图4-4：实验1平均 LOD 耗时对比](../../../benchmark-output/report-experiments/experiment-01-baseline/chart_avg_lod_ms.svg)
 
-![图4-5：实验1平均三角形数对比](../../benchmark-output/report-experiments/experiment-01-baseline/chart_avg_triangles.svg)
+![图4-5：实验1平均三角形数对比](../../../benchmark-output/report-experiments/experiment-01-baseline/chart_avg_triangles.svg)
 
-![图4-6：实验1 LOD 时间组成](../../benchmark-output/report-experiments/experiment-01-baseline/chart_exp01_lod_composition.svg)
+![图4-6：实验1 LOD 时间组成](../../../benchmark-output/report-experiments/experiment-01-baseline/chart_exp01_lod_composition.svg)
 
-![图4-7：实验1 ROAM 阶段耗时组成](../../benchmark-output/report-experiments/experiment-01-baseline/chart_exp01_roam_stage_composition.svg)
+![图4-7：实验1 ROAM 阶段耗时组成](../../../benchmark-output/report-experiments/experiment-01-baseline/chart_exp01_roam_stage_composition.svg)
 
 从总耗时看，DOD 的平均 LOD 为 10.43 ms，比经典版本低 57.68%；GPU 类版本为 13.38 ms，比经典版本低 45.71%，但比 DOD 高 28.28%。这个排序和 CPU 利用率能对应起来：经典版本约 96.75%，基本是单核主导；DOD 达到 323.52%，说明多线程阶段确实吃到了并行；GPU 类版本为 230.13%，说明它并不是 CPU 完全退出，而是仍然保留了 CPU 拓扑和 CPU-GPU 交界工作。
 
@@ -1402,9 +1405,9 @@ GPU 类版本的 CPU `emitMilliseconds` 为 0，这是因为网格输出转移�
 
 实验 2 将最大深度设为 12、14、16、18、20，其余参数保持默认。这个实验最重要的不是“深度越高越慢”这句话，而是观察深度上限何时真正限制了工作量，何时已经不再是主导因素。
 
-![图4-8：实验2最大深度对平均 LOD 耗时的影响](../../benchmark-output/report-experiments/experiment-02-max-depth/chart_exp02_depth_lod_lines.svg)
+![图4-8：实验2最大深度对平均 LOD 耗时的影响](../../../benchmark-output/report-experiments/experiment-02-max-depth/chart_exp02_depth_lod_lines.svg)
 
-![图4-9：实验2最大深度对平均三角形数的影响](../../benchmark-output/report-experiments/experiment-02-max-depth/chart_exp02_depth_triangles_lines.svg)
+![图4-9：实验2最大深度对平均三角形数的影响](../../../benchmark-output/report-experiments/experiment-02-max-depth/chart_exp02_depth_triangles_lines.svg)
 
 深度 12 到 14 是最明显的跳变区间。平均三角形数从约 8116 个增加到约 26100 个，约为 3.2 倍；经典版本 LOD 从 3.65 ms 增加到 16.88 ms，DOD 从 2.24 ms 增加到 7.54 ms，GPU 类版本从 3.11 ms 增加到 10.09 ms。这里三角形数和耗时同时大幅上升，说明深度上限确实限制了可细分层级。
 
@@ -1418,9 +1421,9 @@ GPU 类版本的 CPU `emitMilliseconds` 为 0，这是因为网格输出转移�
 
 实验 3 将距离权重设为 20、40、60、80。和最大深度不同，距离权重直接改变误差函数对近处和中距离区域的敏感程度，所以它更像是主动调节实际工作量。
 
-![图4-10：实验3距离权重对平均三角形数的影响](../../benchmark-output/report-experiments/experiment-03-distance-scale/chart_exp03_distance_triangles_lines.svg)
+![图4-10：实验3距离权重对平均三角形数的影响](../../../benchmark-output/report-experiments/experiment-03-distance-scale/chart_exp03_distance_triangles_lines.svg)
 
-![图4-11：实验3距离权重对平均 LOD 耗时的影响](../../benchmark-output/report-experiments/experiment-03-distance-scale/chart_exp03_distance_lod_lines.svg)
+![图4-11：实验3距离权重对平均 LOD 耗时的影响](../../../benchmark-output/report-experiments/experiment-03-distance-scale/chart_exp03_distance_lod_lines.svg)
 
 距离权重从 20 增加到 80 时，经典版本平均三角形数从 7336 增加到 31251，约为 4.26 倍；DOD 从 7293 增加到 31463，约为 4.31 倍；GPU 类版本从 7409 增加到 31352，约为 4.23 倍。三种算法的几何规模增长非常接近，说明这一组可以用于比较算法对负载增长的响应。
 
@@ -1434,9 +1437,9 @@ DOD 的增长更接近三角形规模本身。它的 emit 从 0.58 ms 增加到 
 
 实验 4 对比 `Hm_Terrain_Test_129.pgm` 和 `Hm_Terrain_Peking_513.png`。需要注意的是，`summary.csv` 中记录的 Peking 文件实际宽高为 547×547，而 Test 文件为 129×129。单看输入分辨率，Peking 文件更大；但 ROAM 的运行负载取决于误差函数在当前路径上实际触发了多少活跃三角形。
 
-![图4-12：实验4不同高度图的平均三角形数](../../benchmark-output/report-experiments/experiment-04-heightmap/chart_exp04_heightmap_triangles.svg)
+![图4-12：实验4不同高度图的平均三角形数](../../../benchmark-output/report-experiments/experiment-04-heightmap/chart_exp04_heightmap_triangles.svg)
 
-![图4-13：实验4不同高度图的平均 LOD 耗时](../../benchmark-output/report-experiments/experiment-04-heightmap/chart_exp04_heightmap_lod_percentiles.svg)
+![图4-13：实验4不同高度图的平均 LOD 耗时](../../../benchmark-output/report-experiments/experiment-04-heightmap/chart_exp04_heightmap_lod_percentiles.svg)
 
 数据结果和输入分辨率直觉相反。Peking 文件下三种算法的平均三角形数约为 1.08 万，而 Test129 下约为 3.13 万，Peking 只有 Test129 的约 34.5%。对应地，经典版本 LOD 从 Test129 的 25.85 ms 降到 Peking 的 6.17 ms，DOD 从 9.75 ms 降到 3.35 ms，GPU 类版本从 13.22 ms 降到 4.27 ms。
 
@@ -1450,13 +1453,13 @@ DOD 的增长更接近三角形规模本身。它的 emit 从 0.58 ms 增加到 
 
 实验 5 使用默认参数专门拆分 GPU 类 ROAM 的管线耗时。该组数据中，GPU 类版本平均 LOD 为 13.43 ms，平均三角形数为 31301，和实验 1 的默认组规模一致，因此可以用来解释 GPU 类版本为什么快于经典版本但慢于 DOD。
 
-![图4-14：实验5 GPU 类 ROAM 的 LOD 时间占比](../../benchmark-output/report-experiments/experiment-05-gpu-breakdown/chart_exp05_gpu_pipeline_share.svg)
+![图4-14：实验5 GPU 类 ROAM 的 LOD 时间占比](../../../benchmark-output/report-experiments/experiment-05-gpu-breakdown/chart_exp05_gpu_pipeline_share.svg)
 
-![图4-15：实验5 GPU 类 ROAM 沿相机路径的耗时变化](../../benchmark-output/report-experiments/experiment-05-gpu-breakdown/chart_exp05_gpu_timing_over_time.svg)
+![图4-15：实验5 GPU 类 ROAM 沿相机路径的耗时变化](../../../benchmark-output/report-experiments/experiment-05-gpu-breakdown/chart_exp05_gpu_timing_over_time.svg)
 
-![图4-16：实验5 GPU 类 ROAM 的 ROAM 阶段占比](../../benchmark-output/report-experiments/experiment-05-gpu-breakdown/chart_exp05_roam_stage_share.svg)
+![图4-16：实验5 GPU 类 ROAM 的 ROAM 阶段占比](../../../benchmark-output/report-experiments/experiment-05-gpu-breakdown/chart_exp05_roam_stage_share.svg)
 
-![图4-17：实验5 GPU 类 ROAM 阶段耗时变化](../../benchmark-output/report-experiments/experiment-05-gpu-breakdown/chart_exp05_roam_stage_timing_over_time.svg)
+![图4-17：实验5 GPU 类 ROAM 阶段耗时变化](../../../benchmark-output/report-experiments/experiment-05-gpu-breakdown/chart_exp05_roam_stage_timing_over_time.svg)
 
 | GPU 类 ROAM 分项 | 平均耗时/ms | 占 LOD 比例 |
 | --- | ---: | ---: |

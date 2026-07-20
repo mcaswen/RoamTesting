@@ -1,5 +1,8 @@
 # Implementation Strategies
 
+> 历史快照：本文件记录 Classic、Data-Oriented 和 OpenGL GPU ROAM-like 三条初始实施路线，不包含后续 D3D12 / CBT 2024 主线。
+
+
 ## Classic CPU ROAM
 
 ### 目标
