@@ -27,6 +27,7 @@ int main(int argc, char** argv)
     bool gpuSmokeTest = false;
     bool cbtProceduralSmokeTest = false;
     bool cbtOccupancyTreeSmokeTest = false;
+    bool cbtBaseTopologySmokeTest = false;
     bool automaticRuntimeBenchmark = false;
     ParallelRoam::App::RuntimeBenchmarkOverrides runtimeBenchmarkOverrides{};
     bool hasRuntimeBenchmarkOverrides = false;
@@ -136,6 +137,16 @@ int main(int argc, char** argv)
             cbtOccupancyTreeSmokeTest = true;
 #else
             parseError = "--cbt-ocbt-smoke-test requires PARALLEL_ROAM_GRAPHICS_API=D3D12";
+            break;
+#endif
+        }
+
+        if (argument == "--cbt-base-topology-smoke-test")
+        {
+#if defined(PARALLEL_ROAM_GRAPHICS_API_D3D12)
+            cbtBaseTopologySmokeTest = true;
+#else
+            parseError = "--cbt-base-topology-smoke-test requires PARALLEL_ROAM_GRAPHICS_API=D3D12";
             break;
 #endif
         }
@@ -299,7 +310,8 @@ int main(int argc, char** argv)
     const int specializedSmokeTestCount =
         static_cast<int>(gpuSmokeTest) +
         static_cast<int>(cbtProceduralSmokeTest) +
-        static_cast<int>(cbtOccupancyTreeSmokeTest);
+        static_cast<int>(cbtOccupancyTreeSmokeTest) +
+        static_cast<int>(cbtBaseTopologySmokeTest);
     if (specializedSmokeTestCount > 1)
     {
         std::cerr << "GPU and CBT smoke-test options cannot be combined.\n";
@@ -307,7 +319,8 @@ int main(int argc, char** argv)
     }
 
     if (automaticRuntimeBenchmark &&
-        (fixedFrameSmokeTest || gpuSmokeTest || cbtProceduralSmokeTest || cbtOccupancyTreeSmokeTest))
+        (fixedFrameSmokeTest || gpuSmokeTest || cbtProceduralSmokeTest || cbtOccupancyTreeSmokeTest ||
+         cbtBaseTopologySmokeTest))
     {
         std::cerr << "--runtime-benchmark cannot be combined with a smoke-test option.\n";
         return 2;
@@ -329,6 +342,10 @@ int main(int argc, char** argv)
     if (cbtOccupancyTreeSmokeTest)
     {
         application.EnableCbtOccupancyTreeSmokeTest();
+    }
+    if (cbtBaseTopologySmokeTest)
+    {
+        application.EnableCbtBaseTopologySmokeTest();
     }
     if (automaticRuntimeBenchmark)
     {

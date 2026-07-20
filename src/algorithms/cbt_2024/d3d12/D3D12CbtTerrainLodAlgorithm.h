@@ -11,10 +11,10 @@ class D3D12GraphicsBackend;
 
 namespace ParallelRoam::Algorithms::Cbt2024::D3D12
 {
-struct D3D12CbtProceduralState;
+struct D3D12CbtTerrainState;
 
 /// <summary>
-/// 使用人工活动列表验证 CBT 程序化间接绘制边界
+/// 使用 CBT 基础二分器状态生成程序化间接地形绘制
 /// </summary>
 class D3D12CbtTerrainLodAlgorithm final : public ITerrainLodAlgorithm
 {
@@ -34,7 +34,7 @@ public:
 private:
     // 后端由 Application 持有，算法仅借用设备和同步入口
     Render::D3D12GraphicsBackend* _backend{nullptr};
-    std::unique_ptr<D3D12CbtProceduralState> _state;
+    std::unique_ptr<D3D12CbtTerrainState> _state;
     TerrainLodStats _stats{};
 };
 } // namespace ParallelRoam::Algorithms::Cbt2024::D3D12

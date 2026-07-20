@@ -60,6 +60,7 @@ public:
     void EnableGpuSmokeTest();
     void EnableCbtProceduralSmokeTest();
     void EnableCbtOccupancyTreeSmokeTest();
+    void EnableCbtBaseTopologySmokeTest();
     void EnableAutomaticRuntimeBenchmark();
     void ConfigureRuntimeBenchmark(const RuntimeBenchmarkOverrides& overrides);
     bool Initialize();
@@ -202,6 +203,7 @@ private:
     bool _terrainLodSmokeTestEnabled{false};
     bool _terrainLodSmokeTestFailed{false};
     bool _cbtOccupancyTreeSmokeTestEnabled{false};
+    bool _cbtBaseTopologySmokeTestEnabled{false};
     bool _automaticRuntimeBenchmarkEnabled{false};
     bool _automaticRuntimeBenchmarkCompleted{false};
     bool _automaticRuntimeBenchmarkFailed{false};

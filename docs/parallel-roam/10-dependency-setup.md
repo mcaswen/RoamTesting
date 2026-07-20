@@ -170,6 +170,18 @@ D3D12 构建可以独立验证 CBT OCBT 的四种容量特化。该入口不会�
 .\build\debug-d3d12-fetch\bin\ParallelROAM.exe --cbt-ocbt-smoke-test
 ```
 
+基础二分器资源入口会创建完整拓扑、任务、索引和命令缓冲，验证四档容量的初值上传、选择性读回，并从 1M 切回 128K 检查资源重建：
+
+```powershell
+.\build\debug-d3d12-fetch\bin\ParallelROAM.exe --cbt-base-topology-smoke-test
+```
+
+下面的短窗口入口会使用 128K 容量尾部的六个基础二分器提交 32 帧程序化间接绘制：
+
+```powershell
+.\build\debug-d3d12-fetch\bin\ParallelROAM.exe --cbt-procedural-smoke-test
+```
+
 运行完整的 Classic、Data-Oriented、GPU 三算法 runtime benchmark：
 
 ```bat

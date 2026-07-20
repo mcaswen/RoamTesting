@@ -69,6 +69,7 @@ if(PARALLEL_ROAM_BUILD_APP)
                 src/app/RuntimeBenchmark.cpp
                 src/algorithms/TerrainLodView.cpp
                 src/algorithms/cbt_2024/Cbt2024Support.cpp
+                src/algorithms/cbt_2024/CbtBisectorTopology.cpp
                 src/algorithms/cbt_2024/CbtOccupancyTree.cpp
                 src/algorithms/classic_roam/ClassicRoamTerrainLodAlgorithm.cpp
                 src/algorithms/classic_roam/ClassicRoamMeshBuilder.cpp
@@ -126,7 +127,9 @@ if(PARALLEL_ROAM_BUILD_APP)
                 src/app/RuntimeBenchmark.cpp
                 src/algorithms/TerrainLodView.cpp
                 src/algorithms/cbt_2024/Cbt2024Support.cpp
+                src/algorithms/cbt_2024/CbtBisectorTopology.cpp
                 src/algorithms/cbt_2024/CbtOccupancyTree.cpp
+                src/algorithms/cbt_2024/d3d12/D3D12CbtBaseTopology.cpp
                 src/algorithms/cbt_2024/d3d12/D3D12CbtOccupancyTree.cpp
                 src/algorithms/cbt_2024/d3d12/D3D12CbtTerrainLodAlgorithm.cpp
                 src/algorithms/classic_roam/ClassicRoamTerrainLodAlgorithm.cpp

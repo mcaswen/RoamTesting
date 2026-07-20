@@ -34,6 +34,27 @@ target_link_libraries(
 
 add_test(NAME cbt_occupancy_tree COMMAND parallel_roam_cbt_occupancy_tree_tests)
 
+add_executable(
+    parallel_roam_cbt_bisector_topology_tests
+    CbtBisectorTopologyTests.cpp
+    ../src/algorithms/cbt_2024/CbtBisectorTopology.cpp
+    ../src/algorithms/cbt_2024/CbtOccupancyTree.cpp
+)
+
+target_include_directories(
+    parallel_roam_cbt_bisector_topology_tests
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+)
+
+target_link_libraries(
+    parallel_roam_cbt_bisector_topology_tests
+    PRIVATE
+        parallel_roam_project_options
+        parallel_roam_project_warnings
+)
+
+add_test(NAME cbt_bisector_topology COMMAND parallel_roam_cbt_bisector_topology_tests)
+
 if(NOT TARGET ParallelROAM::GLM)
     message(STATUS "Skipping terrain LOD view tests because GLM is unavailable.")
     return()

@@ -3,6 +3,7 @@
 #include "algorithms/cbt_2024/Cbt2024Support.h"
 
 #if defined(PARALLEL_ROAM_GRAPHICS_API_D3D12)
+#include "algorithms/cbt_2024/d3d12/D3D12CbtBaseTopology.h"
 #include "algorithms/cbt_2024/d3d12/D3D12CbtOccupancyTree.h"
 #include "render/D3D12GraphicsBackend.h"
 #endif
@@ -119,6 +120,11 @@ void Application::EnableCbtOccupancyTreeSmokeTest()
     _cbtOccupancyTreeSmokeTestEnabled = true;
 }
 
+void Application::EnableCbtBaseTopologySmokeTest()
+{
+    _cbtBaseTopologySmokeTestEnabled = true;
+}
+
 void Application::EnableAutomaticRuntimeBenchmark()
 {
     _automaticRuntimeBenchmarkEnabled = true;
@@ -177,13 +183,14 @@ bool Application::Initialize()
     }
 
 #if defined(PARALLEL_ROAM_GRAPHICS_API_D3D12)
-    if (_cbtOccupancyTreeSmokeTestEnabled)
+    if (_cbtOccupancyTreeSmokeTestEnabled || _cbtBaseTopologySmokeTestEnabled)
     {
-        // OCBT 验证只依赖设备和 direct queue，不初始化 terrain renderer 或 GUI
+        // CBT 资源验证只依赖设备和 direct queue，不初始化 terrain renderer 或 GUI
         auto& d3d12Backend = static_cast<Render::D3D12GraphicsBackend&>(*_graphicsBackend);
-        if (!Algorithms::Cbt2024::D3D12::RunD3D12CbtOccupancyTreeSmokeTest(
-                d3d12Backend,
-                &graphicsError))
+        const bool passed = _cbtOccupancyTreeSmokeTestEnabled
+            ? Algorithms::Cbt2024::D3D12::RunD3D12CbtOccupancyTreeSmokeTest(d3d12Backend, &graphicsError)
+            : Algorithms::Cbt2024::D3D12::RunD3D12CbtBaseTopologySmokeTest(d3d12Backend, &graphicsError);
+        if (!passed)
         {
             std::cerr << graphicsError << '\n';
             Shutdown();
@@ -237,7 +244,7 @@ int Application::Run(int maxFrameCount)
         return 1;
     }
 
-    if (_cbtOccupancyTreeSmokeTestEnabled)
+    if (_cbtOccupancyTreeSmokeTestEnabled || _cbtBaseTopologySmokeTestEnabled)
     {
         Shutdown();
         return 0;
