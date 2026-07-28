@@ -9,20 +9,6 @@ namespace ParallelRoam::Algorithms::ClassicRoam
 {
 namespace
 {
-struct SplitEdge
-{
-    // Start 和 End 是本次 split 的边，Apex 是该边对面的顶点
-    glm::vec2 Start{0.0F};
-    glm::vec2 End{0.0F};
-    glm::vec2 Apex{0.0F};
-};
-
-SplitEdge ChooseBaseEdge(const TriangleDomain& domain)
-{
-    // Classic ROAM 固定沿 base edge split，A/B 是 base 两端
-    return SplitEdge{domain.A, domain.B, domain.C};
-}
-
 std::uint64_t LeftChildPathId(std::uint64_t parentPathId)
 {
     // child path 保持二叉堆编码，便于跨帧 hysteresis 复用
@@ -290,16 +276,24 @@ bool ClassicRoamMeshBuilder::SplitNode(
     if (node->LeftChild == nullptr || node->RightChild == nullptr)
     {
         // 首次 split 创建 child，后续 merge 后再次 split 会复用旧 child
-        const TriangleDomain domain = node->Domain;
         const int childDepth = node->Depth + 1;
-        const SplitEdge edge = ChooseBaseEdge(domain);
-        const glm::vec2 midpoint = (edge.Start + edge.End) * 0.5F;
-
-        // 子节点继续把 A/B 作为 base edge，保留经典 bintree 递归语义
-        const TriangleDomain leftDomain{edge.Apex, edge.Start, midpoint};
-        const TriangleDomain rightDomain{edge.End, edge.Apex, midpoint};
-        node->LeftChild = AddNode(leftDomain, node, childDepth, LeftChildPathId(parentPathId));
-        node->RightChild = AddNode(rightDomain, node, childDepth, RightChildPathId(parentPathId));
+        const TriangleDomainChildren childDomains = SplitTriangleDomain(node->Domain);
+        const std::size_t leftVarianceIndex = node->VarianceIndex * 2U + 1U;
+        const std::size_t rightVarianceIndex = node->VarianceIndex * 2U + 2U;
+        node->LeftChild = AddNode(
+            childDomains.Left,
+            node,
+            childDepth,
+            LeftChildPathId(parentPathId),
+            node->VarianceTreeIndex,
+            leftVarianceIndex);
+        node->RightChild = AddNode(
+            childDomains.Right,
+            node,
+            childDepth,
+            RightChildPathId(parentPathId),
+            node->VarianceTreeIndex,
+            rightVarianceIndex);
     }
 
     node->IsSplit = true;

@@ -21,18 +21,22 @@ ClassicRoamMeshBuilder::ClassicRoamNode* ClassicRoamMeshBuilder::AddNode(
     const TriangleDomain& domain,
     ClassicRoamNode* parent,
     int depth,
-    std::uint64_t pathId)
+    std::uint64_t pathId,
+    std::uint8_t varianceTreeIndex,
+    std::size_t varianceIndex)
 {
     std::unique_ptr<ClassicRoamNode> node = std::make_unique<ClassicRoamNode>();
     node->Domain = domain;
     node->Parent = parent;
     node->Depth = depth;
     node->PathId = pathId;
+    node->VarianceTreeIndex = varianceTreeIndex;
+    node->VarianceIndex = varianceIndex;
     // CreatedBuildId 记录节点第一次进入持久化池的帧
     node->CreatedBuildId = _buildSequence;
     node->ActivatedBuildId = _buildSequence;
-    // geometric error 不依赖相机，节点复用时不需要重算
-    node->GeometricError = ComputeGeometricError(domain);
+    // 方差树已包含当前节点以下所有局部误差，节点创建时只复制稳定索引对应值
+    node->GeometricError = VarianceError(varianceTreeIndex, varianceIndex);
     // 创建时更新一次，后续最终统计会按 active leaf 重算
     _stats.MaxDepthReached = std::max(_stats.MaxDepthReached, depth);
 
@@ -56,12 +60,16 @@ void ClassicRoamMeshBuilder::ResetTopology()
         TriangleDomain{glm::vec2{0.0F, 1.0F}, glm::vec2{1.0F, 0.0F}, glm::vec2{0.0F, 0.0F}},
         nullptr,
         0,
-        RootAPathId);
+        RootAPathId,
+        0,
+        0);
     _rootB = AddNode(
         TriangleDomain{glm::vec2{1.0F, 0.0F}, glm::vec2{0.0F, 1.0F}, glm::vec2{1.0F, 1.0F}},
         nullptr,
         0,
-        RootBPathId);
+        RootBPathId,
+        1,
+        0);
 
     // 根节点跨共享 base edge 互为 base neighbor
     _rootA->BaseNeighbor = _rootB;

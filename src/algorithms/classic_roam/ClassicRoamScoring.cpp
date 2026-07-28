@@ -20,6 +20,16 @@ float ComputeDistanceWeight(float distance, float distanceScale)
 }
 } // namespace
 
+TriangleDomainChildren SplitTriangleDomain(const TriangleDomain& domain)
+{
+    // A/B 始终是 base edge，C 是 apex；两个 child 继续保持逆时针绕序
+    const glm::vec2 midpoint = (domain.A + domain.B) * 0.5F;
+    return TriangleDomainChildren{
+        TriangleDomain{domain.C, domain.A, midpoint},
+        TriangleDomain{domain.B, domain.C, midpoint},
+    };
+}
+
 bool ClassicRoamMeshBuilder::ShouldSplit(const ClassicRoamNode& node) const
 {
     // 最大深度限制优先于误差判断，避免相机贴近时无限细分
@@ -118,7 +128,7 @@ float ClassicRoamMeshBuilder::DebugHighlightForLeaf(const ClassicRoamNode& node)
     return 0.35F;
 }
 
-float ClassicRoamMeshBuilder::ComputeGeometricError(const TriangleDomain& domain) const
+float ClassicRoamMeshBuilder::ComputeLocalGeometricError(const TriangleDomain& domain) const
 {
     const float heightA = _heightMap->SampleBilinear(domain.A.x, domain.A.y);
     const float heightB = _heightMap->SampleBilinear(domain.B.x, domain.B.y);
@@ -144,6 +154,69 @@ float ClassicRoamMeshBuilder::ComputeGeometricError(const TriangleDomain& domain
         edgeMidpointError(domain.C, domain.A, heightC, heightA),
         std::abs(centroidHeight - centroidInterpolatedHeight),
     });
+}
+
+void ClassicRoamMeshBuilder::RebuildVarianceTrees()
+{
+    const std::size_t nodeCountPerTree = (std::size_t{1} << static_cast<unsigned>(_settings.MaxDepth + 1)) - 1U;
+    for (std::vector<float>& tree : _varianceTrees)
+    {
+        tree.assign(nodeCountPerTree, 0.0F);
+    }
+
+    const TriangleDomain rootA{
+        glm::vec2{0.0F, 1.0F},
+        glm::vec2{1.0F, 0.0F},
+        glm::vec2{0.0F, 0.0F},
+    };
+    const TriangleDomain rootB{
+        glm::vec2{1.0F, 0.0F},
+        glm::vec2{0.0F, 1.0F},
+        glm::vec2{1.0F, 1.0F},
+    };
+    static_cast<void>(BuildVarianceSubtree(rootA, 0, 0, _varianceTrees[0]));
+    static_cast<void>(BuildVarianceSubtree(rootB, 0, 0, _varianceTrees[1]));
+    _varianceHeightMap = _heightMap;
+    _varianceTreeMaxDepth = _settings.MaxDepth;
+}
+
+float ClassicRoamMeshBuilder::BuildVarianceSubtree(
+    const TriangleDomain& domain,
+    int depth,
+    std::size_t varianceIndex,
+    std::vector<float>& varianceTree)
+{
+    const float localError = ComputeLocalGeometricError(domain);
+    float subtreeError = localError;
+    if (depth < _settings.MaxDepth)
+    {
+        const TriangleDomainChildren children = SplitTriangleDomain(domain);
+        const float leftError = BuildVarianceSubtree(children.Left, depth + 1, varianceIndex * 2U + 1U, varianceTree);
+        const float rightError = BuildVarianceSubtree(children.Right, depth + 1, varianceIndex * 2U + 2U, varianceTree);
+        subtreeError = std::max({localError, leftError, rightError});
+    }
+
+    varianceTree[varianceIndex] = subtreeError;
+    return subtreeError;
+}
+
+void ClassicRoamMeshBuilder::RefreshNodeVarianceErrors()
+{
+    for (const std::unique_ptr<ClassicRoamNode>& node : _nodes)
+    {
+        node->GeometricError = VarianceError(node->VarianceTreeIndex, node->VarianceIndex);
+    }
+}
+
+float ClassicRoamMeshBuilder::VarianceError(std::uint8_t varianceTreeIndex, std::size_t varianceIndex) const
+{
+    const std::size_t treeIndex = static_cast<std::size_t>(varianceTreeIndex);
+    if (treeIndex >= _varianceTrees.size() || varianceIndex >= _varianceTrees[treeIndex].size())
+    {
+        return 0.0F;
+    }
+
+    return _varianceTrees[treeIndex][varianceIndex];
 }
 
 float ClassicRoamMeshBuilder::ComputeScreenErrorScore(const ClassicRoamNode& node) const

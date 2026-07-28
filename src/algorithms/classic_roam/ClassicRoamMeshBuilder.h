@@ -5,6 +5,7 @@
 
 #include <glm/glm.hpp>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -23,6 +24,15 @@ struct TriangleDomain
     glm::vec2 B{0.0F};
     glm::vec2 C{0.0F};
 };
+
+struct TriangleDomainChildren
+{
+    TriangleDomain Left;
+    TriangleDomain Right;
+};
+
+// 按 Classic ROAM 的 base edge 规则生成两个 child domain
+[[nodiscard]] TriangleDomainChildren SplitTriangleDomain(const TriangleDomain& domain);
 
 /// <summary>
 /// Classic CPU ROAM 的单帧细分、合并和拓扑验证参数
@@ -169,14 +179,16 @@ private:
         ClassicRoamNode* LeftNeighbor{nullptr};
         ClassicRoamNode* RightNeighbor{nullptr};
 
-        // GeometricError 是当前节点边中点和重心的最大高度误差
+        // GeometricError 是完整方差子树的最大高度误差
         float GeometricError{0.0F};
+        std::size_t VarianceIndex{0};
         std::uint64_t PathId{0};
         std::uint64_t CreatedBuildId{0};
         std::uint64_t ActivatedBuildId{0};
         std::uint64_t SplitBuildId{0};
         std::uint64_t MergeBuildId{0};
         int Depth{0};
+        std::uint8_t VarianceTreeIndex{0};
         bool ActivatedByForcedSplit{false};
 
         // IsSplit 决定 child 当前是否参与 active topology
@@ -187,7 +199,19 @@ private:
         const TriangleDomain& domain,
         ClassicRoamNode* parent,
         int depth,
-        std::uint64_t pathId);
+        std::uint64_t pathId,
+        std::uint8_t varianceTreeIndex,
+        std::size_t varianceIndex);
+
+    // 完整方差树会在 topology 创建前预计算，并把子树最大误差传播到父节点
+    void RebuildVarianceTrees();
+    [[nodiscard]] float BuildVarianceSubtree(
+        const TriangleDomain& domain,
+        int depth,
+        std::size_t varianceIndex,
+        std::vector<float>& varianceTree);
+    void RefreshNodeVarianceErrors();
+    [[nodiscard]] float VarianceError(std::uint8_t varianceTreeIndex, std::size_t varianceIndex) const;
 
     // 初始化或重置持久化根 diamond
     void ResetTopology();
@@ -275,8 +299,8 @@ private:
     [[nodiscard]] glm::vec3 DebugColorForLeaf(const ClassicRoamNode& node) const;
     [[nodiscard]] float DebugHighlightForLeaf(const ClassicRoamNode& node) const;
 
-    // 用边中点和重心高度差估算该三角形的几何误差
-    [[nodiscard]] float ComputeGeometricError(const TriangleDomain& domain) const;
+    // 用边中点和重心高度差估算当前 domain 的局部几何误差
+    [[nodiscard]] float ComputeLocalGeometricError(const TriangleDomain& domain) const;
 
     // 简化后的 screen-space error，足够展示近细远粗
     [[nodiscard]] float ComputeScreenErrorScore(const ClassicRoamNode& node) const;
@@ -292,6 +316,11 @@ private:
     const Terrain::HeightMap* _heightMap{nullptr};
     ClassicRoamSettings _settings;
     ClassicRoamStats _stats;
+
+    // 两棵完整方差树分别对应两个根三角形，使用二叉堆索引存储
+    std::array<std::vector<float>, 2> _varianceTrees;
+    const Terrain::HeightMap* _varianceHeightMap{nullptr};
+    int _varianceTreeMaxDepth{-1};
 
     // _nodes 只负责生命周期，算法拓扑通过 ClassicRoamNode* 表达
     std::vector<std::unique_ptr<ClassicRoamNode>> _nodes;

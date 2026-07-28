@@ -7,6 +7,8 @@ namespace ParallelRoam::Algorithms::ClassicRoam
 {
 namespace
 {
+constexpr int MaximumSupportedDepth = 20;
+
 float ElapsedMilliseconds(std::chrono::steady_clock::time_point start, std::chrono::steady_clock::time_point end)
 {
     const std::chrono::duration<float, std::milli> elapsed = end - start;
@@ -23,10 +25,15 @@ Terrain::TerrainMeshData ClassicRoamMeshBuilder::Build(
 {
     const auto updateStart = std::chrono::steady_clock::now();
     ++_buildSequence;
+    ClassicRoamSettings normalizedSettings = settings;
+    // 完整方差树的容量随深度指数增长，和现有 UI 的上限保持一致
+    normalizedSettings.MaxDepth = std::clamp(normalizedSettings.MaxDepth, 0, MaximumSupportedDepth);
     // reset 判定必须在写入本帧输入前完成
-    const bool resetTopology = NeedsTopologyReset(heightMap, terrainSize, heightScale, settings);
+    const bool resetTopology = NeedsTopologyReset(heightMap, terrainSize, heightScale, normalizedSettings);
+    const bool rebuildVarianceTrees =
+        _varianceHeightMap != &heightMap || _varianceTreeMaxDepth != normalizedSettings.MaxDepth;
     _heightMap = &heightMap;
-    _settings = settings;
+    _settings = normalizedSettings;
     // 持久化 bintree 只在输入不兼容时重置
     // 普通相机移动复用旧 child 和 geometric error
     // merge 阈值不能高于 split 阈值，否则同一帧可能反复 split / merge
@@ -51,10 +58,21 @@ Terrain::TerrainMeshData ClassicRoamMeshBuilder::Build(
         return meshData;
     }
 
+    if (rebuildVarianceTrees)
+    {
+        // topology 节点只缓存方差树结果，因此方差树必须先于节点创建或刷新
+        RebuildVarianceTrees();
+    }
+
     if (resetTopology)
     {
         // 高度图或最大深度不兼容时才清空拓扑，普通相机移动保留树结构
         ResetTopology();
+    }
+    else if (rebuildVarianceTrees)
+    {
+        // 增大 MaxDepth 不需要丢弃拓扑，但已有节点必须读取新的子树最大误差
+        RefreshNodeVarianceErrors();
     }
 
     const auto mergeStart = std::chrono::steady_clock::now();
