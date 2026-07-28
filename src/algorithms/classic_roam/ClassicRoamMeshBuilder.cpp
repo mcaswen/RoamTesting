@@ -1,5 +1,7 @@
 #include "algorithms/classic_roam/ClassicRoamMeshBuilder.h"
 
+#include "algorithms/ITerrainLodAlgorithm.h"
+
 #include <algorithm>
 #include <chrono>
 
@@ -20,7 +22,7 @@ Terrain::TerrainMeshData ClassicRoamMeshBuilder::Build(
     const Terrain::HeightMap& heightMap,
     float terrainSize,
     float heightScale,
-    const glm::vec3& cameraPosition,
+    const TerrainLodViewInput& view,
     const ClassicRoamSettings& settings)
 {
     const auto updateStart = std::chrono::steady_clock::now();
@@ -41,7 +43,9 @@ Terrain::TerrainMeshData ClassicRoamMeshBuilder::Build(
     _stats = {};
     _currentSplitPaths.clear();
     _activeLeaves.clear();
-    _cameraPosition = cameraPosition;
+    _view = view.View;
+    _projection = view.Projection;
+    _drawableHeight = std::max(view.DrawableHeight, 1U);
     _terrainSize = terrainSize;
     _heightScale = heightScale;
 

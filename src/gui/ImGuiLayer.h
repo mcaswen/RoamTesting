@@ -168,6 +168,8 @@ struct TerrainPanelState
     // Split 和 Merge 使用双阈值减少相机移动时的抖动
     float RoamSplitThreshold{0.04F};
     float RoamMergeThreshold{0.02F};
+    float ClassicScreenSpaceSplitThresholdPixels{4.0F};
+    float ClassicScreenSpaceMergeThresholdPixels{2.0F};
     float RoamDistanceScale{24.0F};
 
     // 局部约束是 ROAM 消除裂缝的默认路径

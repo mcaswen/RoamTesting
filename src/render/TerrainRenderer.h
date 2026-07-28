@@ -63,6 +63,9 @@ struct TerrainRenderSettings
 
     // MergeThreshold 是回落粗网格的低水位阈值
     float RoamMergeThreshold{0.02F};
+    // Classic CPU ROAM 单独使用像素误差阈值，避免改变其他算法的评分单位
+    float ClassicScreenSpaceSplitThresholdPixels{4.0F};
+    float ClassicScreenSpaceMergeThresholdPixels{2.0F};
     float RoamDistanceScale{24.0F};
 
     // 局部约束只做 baseNeighbor forced split，不执行全局 repair
@@ -103,6 +106,8 @@ struct TerrainRenderStats
     int RoamMaxDepthSetting{0};
     float RoamSplitThreshold{0.0F};
     float RoamMergeThreshold{0.0F};
+    float ClassicScreenSpaceSplitThresholdPixels{0.0F};
+    float ClassicScreenSpaceMergeThresholdPixels{0.0F};
     float RoamDistanceScale{0.0F};
     std::size_t RoamNodeCount{0};
 
@@ -226,7 +231,7 @@ private:
     std::filesystem::path _heightMapPath;
     std::filesystem::path _texturePath;
     RenderContext _lastRenderContext{};
-    glm::vec3 _lastRoamBuildCameraPosition{0.0F};
+    RenderContext _lastRoamBuildContext{};
 #if defined(PARALLEL_ROAM_GRAPHICS_API_OPENGL)
     // CPU mesh 缓冲由 renderer 拥有，GPU mesh 缓冲只借用算法输出
     unsigned int _vertexArrayId{0};
@@ -245,6 +250,6 @@ private:
     std::size_t _drawTriangleCount{0};
     bool _initialized{false};
     bool _meshDirty{true};
-    bool _hasRoamBuildCameraPosition{false};
+    bool _hasRoamBuildView{false};
 };
 } // namespace ParallelRoam::Render

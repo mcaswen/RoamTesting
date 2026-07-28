@@ -84,6 +84,8 @@ Render::TerrainRenderSettings ToRenderSettings(const Gui::TerrainPanelState& sta
     settings.RoamMaxDepth = state.RoamMaxDepth;
     settings.RoamSplitThreshold = state.RoamSplitThreshold;
     settings.RoamMergeThreshold = state.RoamMergeThreshold;
+    settings.ClassicScreenSpaceSplitThresholdPixels = state.ClassicScreenSpaceSplitThresholdPixels;
+    settings.ClassicScreenSpaceMergeThresholdPixels = state.ClassicScreenSpaceMergeThresholdPixels;
     settings.RoamDistanceScale = state.RoamDistanceScale;
     settings.RoamEnableLocalConstraints = state.RoamEnableLocalConstraints;
     settings.RoamEnableTopologyValidation = state.RoamEnableTopologyValidation;

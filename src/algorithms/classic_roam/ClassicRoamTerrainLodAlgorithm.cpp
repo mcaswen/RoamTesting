@@ -56,7 +56,7 @@ bool ClassicRoamTerrainLodAlgorithm::BuildRenderData(
         *input.HeightMap,
         input.Settings.TerrainSize,
         input.Settings.HeightScale,
-        input.View.CameraPosition,
+        input.View,
         ToClassicSettings(input.Settings));
     const TerrainLodCpuSample cpuSampleEnd = CaptureTerrainLodCpuSample();
     _stats = ToTerrainLodStats(_builder.Stats());
@@ -85,9 +85,8 @@ ClassicRoamSettings ClassicRoamTerrainLodAlgorithm::ToClassicSettings(const Terr
     // TerrainLodSettings 中的 GPU 统计字段不进入此层
     ClassicRoamSettings classicSettings{};
     classicSettings.MaxDepth = settings.MaxDepth;
-    classicSettings.SplitThreshold = settings.SplitThreshold;
-    classicSettings.MergeThreshold = settings.MergeThreshold;
-    classicSettings.DistanceScale = settings.DistanceScale;
+    classicSettings.SplitThreshold = settings.ScreenSpaceSplitThresholdPixels;
+    classicSettings.MergeThreshold = settings.ScreenSpaceMergeThresholdPixels;
     classicSettings.EnableLocalConstraints = settings.EnableLocalConstraints;
     classicSettings.EnableTopologyValidation = settings.EnableTopologyValidation;
     return classicSettings;

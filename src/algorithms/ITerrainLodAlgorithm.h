@@ -72,6 +72,9 @@ struct TerrainLodSettings
     int MaxDepth{14};
     float SplitThreshold{0.04F};
     float MergeThreshold{0.02F};
+    // Classic CPU ROAM 使用像素单位；其他实现暂时沿用上面的无量纲阈值
+    float ScreenSpaceSplitThresholdPixels{4.0F};
+    float ScreenSpaceMergeThresholdPixels{2.0F};
     // 距离权重作为细节中性距离，近处会更细，远处会更快变粗
     float DistanceScale{24.0F};
     bool EnableLocalConstraints{true};

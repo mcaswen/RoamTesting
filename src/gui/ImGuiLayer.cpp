@@ -723,13 +723,31 @@ bool ImGuiLayer::DrawDebugOverlay(const DebugOverlayData& data, TerrainPanelStat
     changed |= ImGui::Checkbox("局部约束", &terrainState.RoamEnableLocalConstraints);
     changed |= ImGui::Checkbox("拓扑验证", &terrainState.RoamEnableTopologyValidation);
     changed |= ImGui::SliderInt("最大深度", &terrainState.RoamMaxDepth, 1, 20);
-    changed |= ImGui::SliderFloat("Split 阈值", &terrainState.RoamSplitThreshold, 0.005F, 1.0F, "%.3f");
-    changed |= ImGui::SliderFloat("Merge 阈值", &terrainState.RoamMergeThreshold, 0.001F, 1.0F, "%.3f");
-    changed |= ImGui::SliderFloat("距离权重", &terrainState.RoamDistanceScale, 1.0F, 80.0F, "%.1f");
-    // merge 阈值不能超过 split 阈值
-    // UI 层先限制一次
-    // 算法层仍会再次做防御性 clamp
-    terrainState.RoamMergeThreshold = std::min(terrainState.RoamMergeThreshold, terrainState.RoamSplitThreshold);
+    if (terrainState.TerrainLodAlgorithm == Algorithms::TerrainLodAlgorithmId::ClassicCpuRoam)
+    {
+        changed |= ImGui::SliderFloat(
+            "Split 误差 (px)",
+            &terrainState.ClassicScreenSpaceSplitThresholdPixels,
+            0.25F,
+            32.0F,
+            "%.2f");
+        changed |= ImGui::SliderFloat(
+            "Merge 误差 (px)",
+            &terrainState.ClassicScreenSpaceMergeThresholdPixels,
+            0.1F,
+            32.0F,
+            "%.2f");
+        terrainState.ClassicScreenSpaceMergeThresholdPixels = std::min(
+            terrainState.ClassicScreenSpaceMergeThresholdPixels,
+            terrainState.ClassicScreenSpaceSplitThresholdPixels);
+    }
+    else
+    {
+        changed |= ImGui::SliderFloat("Split 阈值", &terrainState.RoamSplitThreshold, 0.005F, 1.0F, "%.3f");
+        changed |= ImGui::SliderFloat("Merge 阈值", &terrainState.RoamMergeThreshold, 0.001F, 1.0F, "%.3f");
+        changed |= ImGui::SliderFloat("距离权重", &terrainState.RoamDistanceScale, 1.0F, 80.0F, "%.1f");
+        terrainState.RoamMergeThreshold = std::min(terrainState.RoamMergeThreshold, terrainState.RoamSplitThreshold);
+    }
 
     DrawSectionHeader("光照");
     changed |= ImGui::SliderFloat3("方向", &terrainState.LightDirection.x, -1.0F, 1.0F, "%.2f");

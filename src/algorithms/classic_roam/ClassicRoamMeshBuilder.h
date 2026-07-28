@@ -12,6 +12,11 @@
 #include <unordered_set>
 #include <vector>
 
+namespace ParallelRoam::Algorithms
+{
+struct TerrainLodViewInput;
+}
+
 namespace ParallelRoam::Algorithms::ClassicRoam
 {
 /// <summary>
@@ -42,14 +47,11 @@ struct ClassicRoamSettings
     // MaxDepth 控制 bintree 最细层级，129 高度图需要 14 才接近规则网格间距
     int MaxDepth{14};
 
-    // 简化 screen-space error 超过该阈值时触发 split
-    float SplitThreshold{0.04F};
+    // 像素单位的 screen-space error 超过该阈值时触发 split
+    float SplitThreshold{4.0F};
 
-    // 简化 screen-space error 低于该阈值时允许 merge
-    float MergeThreshold{0.02F};
-
-    // 距离权重作为细节中性距离，近处会更细，远处会更快变粗
-    float DistanceScale{24.0F};
+    // 像素单位的 screen-space error 低于该阈值时允许 merge
+    float MergeThreshold{2.0F};
 
     // 开启后会基于 baseNeighbor 执行局部 diamond forced split
     bool EnableLocalConstraints{true};
@@ -140,13 +142,13 @@ class ClassicRoamMeshBuilder
 {
 public:
     /// <summary>
-    /// 根据相机位置和误差阈值生成当前 active leaf triangle mesh
+    /// 根据完整视图输入和像素误差阈值生成当前 active leaf triangle mesh
     /// </summary>
     [[nodiscard]] Terrain::TerrainMeshData Build(
         const Terrain::HeightMap& heightMap,
         float terrainSize,
         float heightScale,
-        const glm::vec3& cameraPosition,
+        const TerrainLodViewInput& view,
         const ClassicRoamSettings& settings);
 
     [[nodiscard]] const ClassicRoamStats& Stats() const;
@@ -302,7 +304,7 @@ private:
     // 用边中点和重心高度差估算当前 domain 的局部几何误差
     [[nodiscard]] float ComputeLocalGeometricError(const TriangleDomain& domain) const;
 
-    // 简化后的 screen-space error，足够展示近细远粗
+    // 使用投影矩阵、drawable 高度和 view-space 深度计算像素误差
     [[nodiscard]] float ComputeScreenErrorScore(const ClassicRoamNode& node) const;
 
     // UV 到世界坐标的映射必须和规则网格 baseline 保持一致
@@ -330,7 +332,9 @@ private:
     std::vector<ClassicRoamNode*> _activeLeaves;
     ClassicRoamNode* _rootA{nullptr};
     ClassicRoamNode* _rootB{nullptr};
-    glm::vec3 _cameraPosition{0.0F};
+    glm::mat4 _view{1.0F};
+    glm::mat4 _projection{1.0F};
+    std::uint32_t _drawableHeight{1U};
     float _terrainSize{1.0F};
     float _heightScale{1.0F};
     int _topologyMaxDepth{0};

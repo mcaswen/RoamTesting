@@ -1,6 +1,7 @@
 #include "benchmark/TerrainLodBenchmark.h"
 
 #include "algorithms/ITerrainLodAlgorithm.h"
+#include "algorithms/TerrainLodView.h"
 #include "algorithms/classic_roam/ClassicRoamTerrainLodAlgorithm.h"
 #include "algorithms/data_oriented_roam/DataOrientedRoamTerrainLodAlgorithm.h"
 #if defined(PARALLEL_ROAM_GRAPHICS_API_OPENGL)
@@ -9,6 +10,7 @@
 #include "terrain/HeightMap.h"
 
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 
 #include <algorithm>
 #include <array>
@@ -151,6 +153,40 @@ std::vector<BenchmarkCameraKeyframe> MakeStandardCameraPath()
     return path;
 }
 
+Algorithms::TerrainLodViewInput BuildBenchmarkView(const BenchmarkCameraKeyframe& camera)
+{
+    constexpr std::uint32_t DrawableWidth = 1280U;
+    constexpr std::uint32_t DrawableHeight = 720U;
+    const glm::vec3 target{0.0F};
+    glm::vec3 forward = target - camera.Position;
+    if (glm::dot(forward, forward) <= 0.000001F)
+    {
+        forward = glm::vec3{0.0F, -1.0F, 0.0F};
+    }
+    else
+    {
+        forward = glm::normalize(forward);
+    }
+    // 正上方视点需要改用 Z 轴 up，避免 lookAt 的 forward/up 共线
+    const glm::vec3 worldUp = std::abs(glm::dot(forward, glm::vec3{0.0F, 1.0F, 0.0F})) > 0.99F
+        ? glm::vec3{0.0F, 0.0F, -1.0F}
+        : glm::vec3{0.0F, 1.0F, 0.0F};
+    const glm::mat4 view = glm::lookAtRH(camera.Position, camera.Position + forward, worldUp);
+    const glm::mat4 projection = glm::perspectiveRH_NO(
+        glm::radians(60.0F),
+        static_cast<float>(DrawableWidth) / static_cast<float>(DrawableHeight),
+        0.1F,
+        500.0F);
+    return Algorithms::BuildTerrainLodViewInput(
+        view,
+        projection,
+        camera.Position,
+        forward,
+        DrawableWidth,
+        DrawableHeight,
+        false);
+}
+
 BenchmarkScenario MakeScenario(BenchmarkProfile profile)
 {
     BenchmarkScenario scenario{};
@@ -163,6 +199,8 @@ BenchmarkScenario MakeScenario(BenchmarkProfile profile)
     scenario.Settings.MaxDepth = 14;
     scenario.Settings.SplitThreshold = 0.04F;
     scenario.Settings.MergeThreshold = 0.02F;
+    scenario.Settings.ScreenSpaceSplitThresholdPixels = 4.0F;
+    scenario.Settings.ScreenSpaceMergeThresholdPixels = 2.0F;
     scenario.Settings.DistanceScale = 24.0F;
     scenario.Settings.EnableLocalConstraints = true;
 
@@ -373,7 +411,7 @@ BenchmarkAlgorithmRun RunAlgorithm(
         const BenchmarkCameraKeyframe& camera = scenario.CameraPath[index];
         Algorithms::TerrainLodBuildInput buildInput{};
         buildInput.HeightMap = &heightMap;
-        buildInput.View.CameraPosition = camera.Position;
+        buildInput.View = BuildBenchmarkView(camera);
         buildInput.Settings = scenario.Settings;
 
         Algorithms::TerrainLodRenderPacket renderPacket{};
@@ -528,6 +566,7 @@ bool WriteCsv(
     // GPU 字段现在可为 0，后续实现后不需要改 CSV 契约
     csv << "profile,algorithm,frameIndex,timeSeconds,cameraName,cameraX,cameraY,cameraZ,"
            "heightMapWidth,heightMapHeight,terrainSize,heightScale,maxDepth,splitThreshold,mergeThreshold,"
+           "screenSpaceSplitThresholdPixels,screenSpaceMergeThresholdPixels,"
            "activeTriangleCount,activeNodeCount,splitCount,forcedSplitCount,mergeCount,candidatePeakCount,"
            "tjunctionCount,invalidNeighborCount,invalidTopologyCount,cpuWorkerCount,cpuUtilizationPercent,"
            "cpuUpdateMs,cpuErrorEvalMs,"
@@ -562,6 +601,8 @@ bool WriteCsv(
                 << scenario.Settings.MaxDepth << ','
                 << scenario.Settings.SplitThreshold << ','
                 << scenario.Settings.MergeThreshold << ','
+                << scenario.Settings.ScreenSpaceSplitThresholdPixels << ','
+                << scenario.Settings.ScreenSpaceMergeThresholdPixels << ','
                 << frame.TriangleCount << ','
                 << frame.Stats.ActiveNodeCount << ','
                 << frame.Stats.SplitCount << ','
@@ -667,6 +708,8 @@ int RunTerrainLodBenchmark(const BenchmarkOptions& options)
               << " maxDepth=" << scenario.Settings.MaxDepth
               << " splitThreshold=" << scenario.Settings.SplitThreshold
               << " mergeThreshold=" << scenario.Settings.MergeThreshold
+              << " screenSpaceSplitPixels=" << scenario.Settings.ScreenSpaceSplitThresholdPixels
+              << " screenSpaceMergePixels=" << scenario.Settings.ScreenSpaceMergeThresholdPixels
               << '\n';
 
     std::vector<BenchmarkAlgorithmRun> runs;

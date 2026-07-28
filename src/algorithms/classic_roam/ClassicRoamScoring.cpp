@@ -8,16 +8,8 @@ namespace ParallelRoam::Algorithms::ClassicRoam
 {
 namespace
 {
-constexpr float MinimumCameraDistance = 0.05F;
-constexpr float MinimumDistanceScale = 0.01F;
+constexpr float MinimumViewDepth = 0.05F;
 constexpr float ProjectedEdgeWeight = 0.20F;
-
-float ComputeDistanceWeight(float distance, float distanceScale)
-{
-    const float safeDistanceScale = std::max(distanceScale, MinimumDistanceScale);
-    const float normalizedDistance = safeDistanceScale / distance;
-    return normalizedDistance * normalizedDistance;
-}
 } // namespace
 
 TriangleDomainChildren SplitTriangleDomain(const TriangleDomain& domain)
@@ -224,25 +216,24 @@ float ClassicRoamMeshBuilder::ComputeScreenErrorScore(const ClassicRoamNode& nod
     const glm::vec3 a = DomainToWorld(node.Domain.A);
     const glm::vec3 b = DomainToWorld(node.Domain.B);
     const glm::vec3 c = DomainToWorld(node.Domain.C);
-    // 使用三角形中心估算视距，足够支撑当前 LOD 展示
     const glm::vec3 center = (a + b + c) / 3.0F;
-    const float distance = std::max(glm::length(center - _cameraPosition), MinimumCameraDistance);
     const float worldError = node.GeometricError * _heightScale;
     const float longestEdgeLength = std::max({
         glm::length(a - b),
         glm::length(b - c),
         glm::length(c - a),
     });
-    const float distanceScale = std::max(_settings.DistanceScale, MinimumDistanceScale);
-    // 平方距离权重拉开近远差异，避免只把全图细分数量整体抬高
-    const float distanceWeight = ComputeDistanceWeight(distance, distanceScale);
-    const float heightErrorScore = worldError * distanceWeight;
-    // edge length 项让近处平坦区域也继续细分出足够网格密度
-    const float edgeLengthScore = longestEdgeLength * ProjectedEdgeWeight / distanceScale * distanceWeight;
-
-    // 高度误差负责地形起伏，边长项保证近处平缓地形也会继续细分
-    // 两者取最大值，避免平地近处被过早 merge
-    return std::max(heightErrorScore, edgeLengthScore);
+    const glm::vec4 viewCenter = _view * glm::vec4{center, 1.0F};
+    const float projectionScaleY = std::abs(_projection[1][1]);
+    const float halfDrawableHeight = static_cast<float>(_drawableHeight) * 0.5F;
+    const bool isOrthographic = std::abs(_projection[3][3] - 1.0F) <= std::numeric_limits<float>::epsilon();
+    const float depthScale = isOrthographic ? 1.0F : std::max(std::abs(viewCenter.z), MinimumViewDepth);
+    // 标准透视投影中 Projection[1][1] = cot(FovY / 2)，因此结果单位是像素
+    const float pixelsPerWorldUnit = halfDrawableHeight * projectionScaleY / depthScale;
+    const float heightErrorPixels = worldError * pixelsPerWorldUnit;
+    // edge 项同样使用像素单位，让平坦近景仍保有足够几何密度
+    const float edgeLengthPixels = longestEdgeLength * pixelsPerWorldUnit * ProjectedEdgeWeight;
+    return std::max(heightErrorPixels, edgeLengthPixels);
 }
 
 glm::vec3 ClassicRoamMeshBuilder::DomainToWorld(const glm::vec2& uv) const

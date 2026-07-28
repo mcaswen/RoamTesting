@@ -112,9 +112,43 @@ bool NeedsMeshRebuild(const TerrainRenderSettings& previous, const TerrainRender
            previous.RoamMaxDepth != next.RoamMaxDepth ||
            previous.RoamSplitThreshold != next.RoamSplitThreshold ||
            previous.RoamMergeThreshold != next.RoamMergeThreshold ||
+           previous.ClassicScreenSpaceSplitThresholdPixels != next.ClassicScreenSpaceSplitThresholdPixels ||
+           previous.ClassicScreenSpaceMergeThresholdPixels != next.ClassicScreenSpaceMergeThresholdPixels ||
            previous.RoamDistanceScale != next.RoamDistanceScale ||
            previous.RoamEnableLocalConstraints != next.RoamEnableLocalConstraints ||
            previous.RoamEnableTopologyValidation != next.RoamEnableTopologyValidation;
+}
+
+bool ClassicViewInputsChanged(const RenderContext& previous, const RenderContext& next)
+{
+    if (previous.DrawableWidth != next.DrawableWidth ||
+        previous.DrawableHeight != next.DrawableHeight ||
+        previous.UsesZeroToOneDepth != next.UsesZeroToOneDepth)
+    {
+        return true;
+    }
+
+    for (glm::length_t column = 0; column < 4; ++column)
+    {
+        for (glm::length_t row = 0; row < 4; ++row)
+        {
+            if (previous.Projection[column][row] != next.Projection[column][row])
+            {
+                return true;
+            }
+        }
+    }
+    for (glm::length_t column = 0; column < 3; ++column)
+    {
+        for (glm::length_t row = 0; row < 3; ++row)
+        {
+            if (previous.View[column][row] != next.View[column][row])
+            {
+                return true;
+            }
+        }
+    }
+    return false;
 }
 
 glm::vec3 NormalizeLightDirection(const glm::vec3& lightDirection)
@@ -666,11 +700,14 @@ bool TerrainRenderer::UpdateForView(const RenderContext& context, std::string* e
         const float rebuildDistance = std::max(
             _settings.TerrainSize * RoamRebuildTerrainScale,
             MinRoamRebuildDistance);
-        const glm::vec3 buildDelta = context.CameraPosition - _lastRoamBuildCameraPosition;
+        const glm::vec3 buildDelta = context.CameraPosition - _lastRoamBuildContext.CameraPosition;
         // 使用平方距离避免每帧为判定执行开方
-        const bool cameraMovedEnough = !_hasRoamBuildCameraPosition ||
+        const bool cameraMovedEnough = !_hasRoamBuildView ||
             glm::dot(buildDelta, buildDelta) >= rebuildDistance * rebuildDistance;
-        if (!_meshDirty && !cameraMovedEnough)
+        const bool classicViewChanged =
+            _settings.TerrainLodAlgorithm == Algorithms::TerrainLodAlgorithmId::ClassicCpuRoam &&
+            (!_hasRoamBuildView || ClassicViewInputsChanged(_lastRoamBuildContext, context));
+        if (!_meshDirty && !cameraMovedEnough && !classicViewChanged)
         {
             return true;
         }
@@ -707,7 +744,7 @@ void TerrainRenderer::ResetTerrainLodAlgorithm()
     {
         ClearBorrowedGpuResources(*_d3d12State);
     }
-    _hasRoamBuildCameraPosition = false;
+    _hasRoamBuildView = false;
     _meshDirty = true;
 }
 
@@ -864,6 +901,8 @@ TerrainRenderStats TerrainRenderer::Stats() const
     stats.RoamMaxDepthSetting = _settings.RoamMaxDepth;
     stats.RoamSplitThreshold = _settings.RoamSplitThreshold;
     stats.RoamMergeThreshold = _settings.RoamMergeThreshold;
+    stats.ClassicScreenSpaceSplitThresholdPixels = _settings.ClassicScreenSpaceSplitThresholdPixels;
+    stats.ClassicScreenSpaceMergeThresholdPixels = _settings.ClassicScreenSpaceMergeThresholdPixels;
     stats.RoamDistanceScale = _settings.RoamDistanceScale;
     stats.RoamNodeCount = _terrainLodStats.ActiveNodeCount;
     stats.RoamOriginalTriangleCount = _terrainLodStats.OriginalTriangleCount;
@@ -938,7 +977,7 @@ bool TerrainRenderer::RebuildRegularGrid(std::string* errorMessage)
     _terrainLodTotalMilliseconds = 0.0F;
     _terrainLodCpuUploadMilliseconds = 0.0F;
     _terrainLodAlgorithm.reset();
-    _hasRoamBuildCameraPosition = false;
+    _hasRoamBuildView = false;
     if (_meshData.Vertices.empty() || _meshData.Indices.empty())
     {
         SetError(errorMessage, "Terrain mesh build failed: invalid height map or grid size");
@@ -972,7 +1011,7 @@ bool TerrainRenderer::RebuildTerrainLod(const RenderContext& context, std::strin
         _terrainLodAlgorithm = CreateTerrainLodAlgorithm(
             _settings.TerrainLodAlgorithm,
             *_d3d12State->Backend);
-        _hasRoamBuildCameraPosition = false;
+        _hasRoamBuildView = false;
     }
     if (_terrainLodAlgorithm == nullptr)
     {
@@ -988,6 +1027,8 @@ bool TerrainRenderer::RebuildTerrainLod(const RenderContext& context, std::strin
     lodSettings.MaxDepth = _settings.RoamMaxDepth;
     lodSettings.SplitThreshold = _settings.RoamSplitThreshold;
     lodSettings.MergeThreshold = _settings.RoamMergeThreshold;
+    lodSettings.ScreenSpaceSplitThresholdPixels = _settings.ClassicScreenSpaceSplitThresholdPixels;
+    lodSettings.ScreenSpaceMergeThresholdPixels = _settings.ClassicScreenSpaceMergeThresholdPixels;
     lodSettings.DistanceScale = _settings.RoamDistanceScale;
     lodSettings.EnableLocalConstraints = _settings.RoamEnableLocalConstraints;
     lodSettings.EnableTopologyValidation = _settings.RoamEnableTopologyValidation;
@@ -1021,8 +1062,8 @@ bool TerrainRenderer::RebuildTerrainLod(const RenderContext& context, std::strin
 
     _terrainLodStats = _terrainLodAlgorithm->Stats();
     _terrainLodStatusMessage = renderPacket.StatusMessage;
-    _lastRoamBuildCameraPosition = context.CameraPosition;
-    _hasRoamBuildCameraPosition = true;
+    _lastRoamBuildContext = context;
+    _hasRoamBuildView = true;
     if (renderPacket.Mode == Algorithms::TerrainLodRenderMode::GpuIndirect &&
         renderPacket.NativeResourceApi == Algorithms::TerrainLodNativeResourceApi::Direct3D12)
     {

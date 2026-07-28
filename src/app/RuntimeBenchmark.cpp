@@ -217,7 +217,8 @@ void WriteDetailedCsv(
     // 配置字段放在时间序列前，方便按高度图和参数筛选
     csv << "algorithm,buildConfiguration,graphicsBackend,graphicsAdapter,graphicsVersion,vSyncEnabled,"
         << "heightMapPath,heightMapWidth,heightMapHeight,terrainSize,heightScale,"
-        << "maxDepthSetting,splitThreshold,mergeThreshold,distanceScale,"
+        << "maxDepthSetting,splitThreshold,mergeThreshold,screenSpaceSplitThresholdPixels,"
+        << "screenSpaceMergeThresholdPixels,distanceScale,"
         << "timeSeconds,cameraX,cameraY,cameraZ,frameMilliseconds,triangles,nodes,"
         << "activeSplits,splits,forcedSplits,merges,candidatePeak,tjunctions,invalidNeighbors,"
         << "invalidTopology,cpuWorkers,cpuUtilizationPercent,lodTotalMilliseconds,"
@@ -249,6 +250,8 @@ void WriteDetailedCsv(
                 << stats.RoamMaxDepthSetting << ','
                 << stats.RoamSplitThreshold << ','
                 << stats.RoamMergeThreshold << ','
+                << stats.ClassicScreenSpaceSplitThresholdPixels << ','
+                << stats.ClassicScreenSpaceMergeThresholdPixels << ','
                 << stats.RoamDistanceScale << ','
                 << sample.TimeSeconds << ','
                 << sample.CameraPosition.x << ','
@@ -334,7 +337,10 @@ void WriteSummaryMarkdown(
         markdown << "- Max depth setting: " << stats->RoamMaxDepthSetting << "\n";
         markdown << "- Distance scale: " << stats->RoamDistanceScale << "\n";
         markdown << "- Split/Merge thresholds: "
-                 << stats->RoamSplitThreshold << " / " << stats->RoamMergeThreshold << "\n\n";
+                 << stats->RoamSplitThreshold << " / " << stats->RoamMergeThreshold << "\n";
+        markdown << "- Classic screen-space split/merge thresholds: "
+                 << stats->ClassicScreenSpaceSplitThresholdPixels << " px / "
+                 << stats->ClassicScreenSpaceMergeThresholdPixels << " px\n\n";
     }
     markdown << "| Algorithm | Samples | Avg Frame ms | Max Frame ms | Avg LOD ms | Max LOD ms | "
              << "Avg CPU Update ms | Avg CPU Upload ms | Avg GPU ms | Max GPU ms | "
