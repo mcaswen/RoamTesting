@@ -84,8 +84,8 @@ Render::TerrainRenderSettings ToRenderSettings(const Gui::TerrainPanelState& sta
     settings.RoamMaxDepth = state.RoamMaxDepth;
     settings.RoamSplitThreshold = state.RoamSplitThreshold;
     settings.RoamMergeThreshold = state.RoamMergeThreshold;
-    settings.ClassicScreenSpaceSplitThresholdPixels = state.ClassicScreenSpaceSplitThresholdPixels;
-    settings.ClassicScreenSpaceMergeThresholdPixels = state.ClassicScreenSpaceMergeThresholdPixels;
+    settings.CpuRoamScreenSpaceSplitThresholdPixels = state.CpuRoamScreenSpaceSplitThresholdPixels;
+    settings.CpuRoamScreenSpaceMergeThresholdPixels = state.CpuRoamScreenSpaceMergeThresholdPixels;
     settings.RoamTriangleBudget = static_cast<std::size_t>(std::max(state.RoamTriangleBudget, 2));
     settings.RoamDistanceScale = state.RoamDistanceScale;
     settings.RoamEnableLocalConstraints = state.RoamEnableLocalConstraints;

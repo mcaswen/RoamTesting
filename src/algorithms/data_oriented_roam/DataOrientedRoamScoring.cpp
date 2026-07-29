@@ -8,17 +8,77 @@ namespace ParallelRoam::Algorithms::DataOrientedRoam
 {
 namespace
 {
-constexpr float MinimumCameraDistance = 0.05F;
-constexpr float MinimumDistanceScale = 0.01F;
+constexpr float MinimumViewDepth = 0.05F;
 constexpr float ProjectedEdgeWeight = 0.20F;
 
-float ComputeDistanceWeight(float distance, float distanceScale)
+float BuildVarianceSubtree(
+    DataOrientedRoamState& state,
+    const TriangleDomain& domain,
+    int depth,
+    std::size_t varianceIndex,
+    std::vector<float>& varianceTree)
 {
-    const float safeDistanceScale = std::max(distanceScale, MinimumDistanceScale);
-    const float normalizedDistance = safeDistanceScale / distance;
-    return normalizedDistance * normalizedDistance;
+    const float localError = ComputeLocalGeometricError(state, domain);
+    float subtreeError = localError;
+    if (depth < state.Settings.MaxDepth)
+    {
+        const TriangleDomainChildren children = SplitTriangleDomain(domain);
+        const float leftError = BuildVarianceSubtree(
+            state,
+            children.Left,
+            depth + 1,
+            varianceIndex * 2U + 1U,
+            varianceTree);
+        const float rightError = BuildVarianceSubtree(
+            state,
+            children.Right,
+            depth + 1,
+            varianceIndex * 2U + 2U,
+            varianceTree);
+        subtreeError = std::max({localError, leftError, rightError});
+    }
+
+    varianceTree[varianceIndex] = subtreeError;
+    return subtreeError;
+}
+
+bool IsNodeVisible(
+    const DataOrientedRoamState& state,
+    DataOrientedRoamNodeConstRef node,
+    const glm::vec3& a,
+    const glm::vec3& b,
+    const glm::vec3& c)
+{
+    glm::vec3 minimum = glm::min(a, glm::min(b, c));
+    glm::vec3 maximum = glm::max(a, glm::max(b, c));
+    const float worldError = node.GeometricError * state.HeightScale;
+    minimum.y -= worldError;
+    maximum.y += worldError;
+    const glm::vec3 center = (minimum + maximum) * 0.5F;
+    const glm::vec3 extents = (maximum - minimum) * 0.5F;
+
+    for (const glm::vec4& plane : state.FrustumPlanes)
+    {
+        const glm::vec3 normal{plane};
+        const float centerDistance = glm::dot(normal, center) + plane.w;
+        const float projectedRadius = glm::dot(glm::abs(normal), extents);
+        if (centerDistance + projectedRadius < 0.0F)
+        {
+            return false;
+        }
+    }
+    return true;
 }
 } // namespace
+
+TriangleDomainChildren SplitTriangleDomain(const TriangleDomain& domain)
+{
+    const glm::vec2 midpoint = (domain.A + domain.B) * 0.5F;
+    return TriangleDomainChildren{
+        TriangleDomain{domain.C, domain.A, midpoint},
+        TriangleDomain{domain.B, domain.C, midpoint},
+    };
+}
 
 bool ShouldSplitWithScore(
     const DataOrientedRoamState& state,
@@ -116,7 +176,7 @@ float DebugHighlightForLeaf(const DataOrientedRoamState& state, DataOrientedRoam
     return 0.35F;
 }
 
-float ComputeGeometricError(const DataOrientedRoamState& state, const TriangleDomain& domain)
+float ComputeLocalGeometricError(const DataOrientedRoamState& state, const TriangleDomain& domain)
 {
     // 误差缓存只看 domain 对应的高度变化
     // 因此 node 创建后可以跨帧复用
@@ -148,29 +208,82 @@ float ComputeGeometricError(const DataOrientedRoamState& state, const TriangleDo
     });
 }
 
+void RebuildVarianceTrees(DataOrientedRoamState& state)
+{
+    const std::size_t nodeCountPerTree =
+        (std::size_t{1} << static_cast<unsigned>(state.Settings.MaxDepth + 1)) - 1U;
+    for (std::vector<float>& tree : state.VarianceTrees)
+    {
+        tree.assign(nodeCountPerTree, 0.0F);
+    }
+
+    const TriangleDomain rootA{
+        glm::vec2{0.0F, 1.0F},
+        glm::vec2{1.0F, 0.0F},
+        glm::vec2{0.0F, 0.0F},
+    };
+    const TriangleDomain rootB{
+        glm::vec2{1.0F, 0.0F},
+        glm::vec2{0.0F, 1.0F},
+        glm::vec2{1.0F, 1.0F},
+    };
+    static_cast<void>(BuildVarianceSubtree(state, rootA, 0, 0U, state.VarianceTrees[0]));
+    static_cast<void>(BuildVarianceSubtree(state, rootB, 0, 0U, state.VarianceTrees[1]));
+    state.VarianceHeightMap = state.HeightMap;
+    state.VarianceTreeMaxDepth = state.Settings.MaxDepth;
+}
+
+void RefreshNodeVarianceErrors(DataOrientedRoamState& state)
+{
+    for (std::size_t node = 0U; node < state.Nodes.size(); ++node)
+    {
+        state.Nodes.GeometricErrors[node] = VarianceError(
+            state,
+            state.Nodes.VarianceTreeIndices[node],
+            state.Nodes.VarianceIndices[node]);
+    }
+}
+
+float VarianceError(
+    const DataOrientedRoamState& state,
+    std::uint8_t varianceTreeIndex,
+    std::size_t varianceIndex)
+{
+    const std::size_t treeIndex = static_cast<std::size_t>(varianceTreeIndex);
+    if (treeIndex >= state.VarianceTrees.size() || varianceIndex >= state.VarianceTrees[treeIndex].size())
+    {
+        return 0.0F;
+    }
+    return state.VarianceTrees[treeIndex][varianceIndex];
+}
+
 float ComputeScreenErrorScore(const DataOrientedRoamState& state, DataOrientedRoamNodeConstRef node)
 {
-    // 高度误差负责山体起伏，边长项保证近处平坦区域仍能细分
     const glm::vec3 a = DomainToWorld(state, node.Domain.A);
     const glm::vec3 b = DomainToWorld(state, node.Domain.B);
     const glm::vec3 c = DomainToWorld(state, node.Domain.C);
+    if (!IsNodeVisible(state, node, a, b, c))
+    {
+        // 视锥外节点不主动细分，forced split 仍可维持边界拓扑
+        return 0.0F;
+    }
+
     const glm::vec3 center = (a + b + c) / 3.0F;
-    // distance 下限避免相机贴近三角形中心时分数爆炸
-    const float distance = std::max(glm::length(center - state.CameraPosition), MinimumCameraDistance);
     const float worldError = node.GeometricError * state.HeightScale;
-    // longestEdgeLength 让近处平坦区域也能继续细分
     const float longestEdgeLength = std::max({
         glm::length(a - b),
         glm::length(b - c),
         glm::length(c - a),
     });
-    const float distanceScale = std::max(state.Settings.DistanceScale, MinimumDistanceScale);
-    // 平方距离权重拉开近远差异，避免只把全图细分数量整体抬高
-    const float distanceWeight = ComputeDistanceWeight(distance, distanceScale);
-    const float heightErrorScore = worldError * distanceWeight;
-    const float edgeLengthScore = longestEdgeLength * ProjectedEdgeWeight / distanceScale * distanceWeight;
-    // 两项取最大值，避免高频地形和近处平地互相掩盖
-    return std::max(heightErrorScore, edgeLengthScore);
+    const glm::vec4 viewCenter = state.View * glm::vec4{center, 1.0F};
+    const float projectionScaleY = std::abs(state.Projection[1][1]);
+    const float halfDrawableHeight = static_cast<float>(state.DrawableHeight) * 0.5F;
+    const bool isOrthographic = std::abs(state.Projection[3][3] - 1.0F) <= std::numeric_limits<float>::epsilon();
+    const float depthScale = isOrthographic ? 1.0F : std::max(std::abs(viewCenter.z), MinimumViewDepth);
+    const float pixelsPerWorldUnit = halfDrawableHeight * projectionScaleY / depthScale;
+    const float heightErrorPixels = worldError * pixelsPerWorldUnit;
+    const float edgeLengthPixels = longestEdgeLength * pixelsPerWorldUnit * ProjectedEdgeWeight;
+    return std::max(heightErrorPixels, edgeLengthPixels);
 }
 
 glm::vec3 DomainToWorld(const DataOrientedRoamState& state, const glm::vec2& uv)

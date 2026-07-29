@@ -250,8 +250,8 @@ void WriteDetailedCsv(
                 << stats.RoamMaxDepthSetting << ','
                 << stats.RoamSplitThreshold << ','
                 << stats.RoamMergeThreshold << ','
-                << stats.ClassicScreenSpaceSplitThresholdPixels << ','
-                << stats.ClassicScreenSpaceMergeThresholdPixels << ','
+                << stats.CpuRoamScreenSpaceSplitThresholdPixels << ','
+                << stats.CpuRoamScreenSpaceMergeThresholdPixels << ','
                 << stats.RoamTriangleBudgetSetting << ','
                 << stats.RoamDistanceScale << ','
                 << sample.TimeSeconds << ','
@@ -340,10 +340,10 @@ void WriteSummaryMarkdown(
         markdown << "- Distance scale: " << stats->RoamDistanceScale << "\n";
         markdown << "- Split/Merge thresholds: "
                  << stats->RoamSplitThreshold << " / " << stats->RoamMergeThreshold << "\n";
-        markdown << "- Classic screen-space split/merge thresholds: "
-                 << stats->ClassicScreenSpaceSplitThresholdPixels << " px / "
-                 << stats->ClassicScreenSpaceMergeThresholdPixels << " px\n";
-        markdown << "- Classic triangle budget: " << stats->RoamTriangleBudgetSetting << "\n\n";
+        markdown << "- CPU ROAM screen-space split/merge thresholds: "
+                 << stats->CpuRoamScreenSpaceSplitThresholdPixels << " px / "
+                 << stats->CpuRoamScreenSpaceMergeThresholdPixels << " px\n";
+        markdown << "- CPU ROAM triangle budget: " << stats->RoamTriangleBudgetSetting << "\n\n";
     }
     markdown << "| Algorithm | Samples | Avg Frame ms | Max Frame ms | Avg LOD ms | Max LOD ms | "
              << "Avg CPU Update ms | Avg CPU Upload ms | Avg GPU ms | Max GPU ms | "

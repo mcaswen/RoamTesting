@@ -5,8 +5,13 @@
 
 #include <glm/glm.hpp>
 
-#include <memory>
 #include <cstddef>
+#include <memory>
+
+namespace ParallelRoam::Algorithms
+{
+struct TerrainLodViewInput;
+}
 
 namespace ParallelRoam::Algorithms::DataOrientedRoam
 {
@@ -23,16 +28,25 @@ struct TriangleDomain
     glm::vec2 C{0.0F};
 };
 
+struct TriangleDomainChildren
+{
+    TriangleDomain Left;
+    TriangleDomain Right;
+};
+
+[[nodiscard]] TriangleDomainChildren SplitTriangleDomain(const TriangleDomain& domain);
+
 /// <summary>
 /// Data-Oriented CPU ROAM 的单帧细分、合并和拓扑验证参数
 /// </summary>
 struct DataOrientedRoamSettings
 {
     int MaxDepth{14};
-    float SplitThreshold{0.04F};
-    float MergeThreshold{0.02F};
-    // 距离权重作为细节中性距离，近处会更细，远处会更快变粗
-    float DistanceScale{24.0F};
+    // split 和 merge 阈值统一使用像素误差
+    float SplitThreshold{4.0F};
+    float MergeThreshold{2.0F};
+    // 活动 leaf triangle 的硬上限
+    std::size_t TriangleBudget{20000U};
     // 0 自动选择 worker 数 1 保持串行评估
     // 候选扫描也复用这个并行宽度设置
     std::size_t ErrorEvaluationWorkerCount{0};
@@ -61,6 +75,7 @@ struct DataOrientedRoamStats
     std::size_t ConstraintPassCount{0};
     std::size_t CandidatePeakCount{0};
     std::size_t RejectedSplitCount{0};
+    std::size_t BudgetRejectedSplitCount{0};
     std::size_t RejectedMergeCount{0};
     std::size_t TjunctionCount{0};
     std::size_t InvalidNeighborCount{0};
@@ -126,14 +141,14 @@ public:
         const Terrain::HeightMap& heightMap,
         float terrainSize,
         float heightScale,
-        const glm::vec3& cameraPosition,
+        const TerrainLodViewInput& view,
         const DataOrientedRoamSettings& settings);
 
     void UpdateTopology(
         const Terrain::HeightMap& heightMap,
         float terrainSize,
         float heightScale,
-        const glm::vec3& cameraPosition,
+        const TerrainLodViewInput& view,
         const DataOrientedRoamSettings& settings);
 
     [[nodiscard]] const DataOrientedRoamStats& Stats() const;
@@ -144,7 +159,7 @@ private:
         const Terrain::HeightMap& heightMap,
         float terrainSize,
         float heightScale,
-        const glm::vec3& cameraPosition,
+        const TerrainLodViewInput& view,
         const DataOrientedRoamSettings& settings,
         bool emitCpuMesh);
 

@@ -381,7 +381,7 @@ frames.resize(FrameCount);
 
 ### 7.1 Benchmark scenario 规范
 
-1. 当前 runtime benchmark 使用程序内固定相机路径，并通过 `--runtime-benchmark-*` 参数覆盖高度图、地形尺度、深度、时长和标签；现有 split/merge/distance CLI override 只影响 DOD/GPU ROAM-like 的旧式评分器，Classic 使用独立的像素阈值和三角形预算，当前尚无对应 runtime CLI override。
+1. 当前 runtime benchmark 使用程序内固定相机路径，并通过 `--runtime-benchmark-*` 参数覆盖高度图、地形尺度、深度、时长和标签；Classic/DOD 共用像素 split/merge 阈值和三角形预算，当前尚无对应 runtime CLI override。现有 split/merge/distance CLI override 只影响 GPU ROAM-like 的原生旧式评分 pass，不应写成 CPU ROAM 质量参数。
 2. 正式实验命令必须记录完整参数、构建 preset、图形后端、适配器、分辨率和 VSync 状态。
 3. 输出统一写入 Git 忽略的 `benchmark-output/`；需要进入报告的聚合数据和图表应保留生成脚本与来源说明。
 4. 不覆盖已经用于报告结论的原始 CSV；实验变体使用独立标签和输出目录。

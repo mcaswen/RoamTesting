@@ -11,11 +11,11 @@ Parallel ROAM 已完成 Classic CPU、Data-Oriented CPU 和 GPU ROAM-like 三条
 ## 当前状态
 
 - Classic CPU ROAM：已完成完整方差树、像素 SSE、活动三角形预算、视锥感知、单 Build 级联合并、邻接约束和拓扑验证；
-- Data-Oriented CPU ROAM：已完成索引节点池、SoA、多线程扫描、候选标记、网格输出和保守并发拓扑提交；
+- Data-Oriented CPU ROAM：已完成索引节点池、SoA、多线程扫描、候选标记和保守并发拓扑提交，并与 Classic 对齐完整方差树、像素 SSE、视锥感知、20,000 活动 leaf 硬预算和单 Build 级联合并；
 - GPU ROAM-like：OpenGL 与 D3D12 均已有计算、GPU 网格生成和间接绘制验证路径；
 - D3D12 渲染迁移：阶段 0 至阶段 6 已关闭；
 - CBT 2024：阶段 B、C、D 已完成，阶段 E split 待实施；
-- 自动验证：包含注释覆盖率、OCBT、CBT 基础拓扑、视锥输入、Classic 六视点预算/视锥/级联 smoke 和多条 GPU smoke test；
+- 自动验证：包含注释覆盖率、OCBT、CBT 基础拓扑、视锥输入、Classic/DOD 六视点预算/视锥/级联 smoke 和多条 GPU smoke test；
 - 性能基线：正式 runtime benchmark 当前仍比较 Classic、DOD 和 GPU ROAM-like，CBT 在完整拓扑迁移前不进入性能排名。
 
 ## 当前文档

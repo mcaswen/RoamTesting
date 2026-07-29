@@ -168,7 +168,7 @@ assets/textures/Tex_Terrain_Debug_Diffuse.ppm
 - merge 使用动态最小堆，成功后立即检查两侧 parent，可在一次 Build 内从深层向上级联；
 - `PathId`、split/merge 双阈值和最终 active path 共同提供跨 Build 迟滞；
 - CPU Mesh 仍按活动 leaf 全量生成，每个 leaf 输出三个独立顶点；OpenGL/D3D12 renderer 负责上传和绘制；
-- ImGui 已区分 Classic 像素阈值/预算与其他算法的旧式阈值/距离权重，并显示预算拒绝、拓扑和阶段耗时统计；
+- ImGui 已让 Classic/DOD 共用像素阈值与预算，并与 GPU ROAM-like 的旧式阈值/距离权重区分；同时显示预算拒绝、拓扑和阶段耗时统计；
 - Classic smoke 使用 6 个视点验证预算、视锥方向变化、单 Build 级联合并和 topology issue；当前 OpenGL/D3D12 构建与 smoke 均通过；
 - 阶段 2 的算法基线已封版。diamond/score heatmap 等更完整 debug draw 是后续可视化增强，不作为阶段完成阻塞项。
 
@@ -234,7 +234,16 @@ assets/textures/Tex_Terrain_Debug_Diffuse.ppm
 
 ### 目标
 
-阶段实施时在相同旧式误差阈值、Height Map 和相机路径下，以数据导向方式重构 ROAM，验证 CPU 多核与数据布局收益。2026-07-29 起 Classic 已改用像素 SSE 和硬预算，因此当前跨算法实验不能再用相同数值阈值代表相同质量，具体口径见 `05-experiments-and-benchmarks.md`。
+在相同 Height Map、相机路径、完整方差树、像素 SSE、视锥规则和活动三角形预算下，以数据导向方式重构 ROAM，验证 CPU 多核与数据布局收益。GPU ROAM-like 的原生 compute 评分仍是独立旧式启发式，具体比较口径见 `05-experiments-and-benchmarks.md`。
+
+### 当前实现状态（2026-07-29）
+
+- 两个根分别预计算 heap-indexed 完整方差树，节点用 `VarianceTreeIndex/VarianceIndex` 从 SoA 缓存对应子树最大误差；
+- `ComputeScreenErrorScore` 与 Classic 同样消费 View、Projection、drawable height 和六个 inward frustum planes，输出像素误差并抑制视锥外主动 split；
+- `TriangleBudget` 默认 20,000，活动 leaf 每次 split 原子领取一个 token；并行 interior commit 与 forced split closure 共用同一硬上限；
+- merge 保留安全 interior chunk 并行预提交，成功后把新满足条件的 parent 放回动态最小堆，可在同一 Build 向上级联；
+- UI 对 Classic/DOD 显示同一组像素 split/merge 阈值和预算；renderer 在 FOV、朝向或 drawable 尺寸变化时触发两种 CPU ROAM 重建；
+- DOD 六视点 smoke 与 Classic 使用相同的预算、视锥、级联和拓扑正确性断言。
 
 ### 子阶段
 
@@ -260,7 +269,7 @@ assets/textures/Tex_Terrain_Debug_Diffuse.ppm
 
 当前状态：
 
-- `DataOrientedRoamNodePool` 已改为 SoA 数组，domain、parent/child、neighbor、error、depth、build id 和 flag 分离存储；
+- `DataOrientedRoamNodePool` 已改为 SoA 数组，domain、parent/child、neighbor、error、方差索引、depth、build id 和 flag 分离存储；
 - `ScreenErrors` 缓存最近一次 split / merge 队列评分，为 3C 并行误差评估保留连续写入目标；
 - DOD 私有统计记录 SoA 数组数量和容量估算，统一 benchmark 接口保持不变。
 
@@ -290,7 +299,7 @@ assets/textures/Tex_Terrain_Debug_Diffuse.ppm
 
 - DOD split pass 已改为按 node index 分块扫描 active topology，并用 thread-local buffer 收集 active leaves；
 - split candidate 标记读取批量 `ScreenErrors` 缓存并行过滤，合并后统一分配稳定 sequence 再进入 priority queue；
-- merge candidate 标记并行扫描 active internal node，真正 diamond merge 和拓扑提交仍保持串行；
+- merge candidate 标记并行扫描 active internal node；安全 interior diamond 可并行预提交，其余候选和新出现的父层候选由动态串行队列收敛；
 - `CpuCollectMilliseconds` 已汇总 active leaf 收集、split candidate 标记和 merge candidate 标记耗时。
 
 3E：拓扑提交策略
@@ -304,6 +313,8 @@ assets/textures/Tex_Terrain_Debug_Diffuse.ppm
 - DOD topology commit 已加入固定 `8x8` terrain chunk 分区，只有完整落在同一 chunk 的候选会进入并发提交；
 - split 并发提交只处理已有 child 可复用、且不会触发 forced split 的内部候选，fresh child 分配和跨 chunk 邻接继续串行回退；
 - merge 并发提交只处理影响节点全集都在同一 chunk 内的候选，diamond merge 跨 chunk 时仍由串行路径保证 neighbor 一致性；
+- 所有 split 路径共用原子预算 token；并行提交不会让活动 leaf 超过 `TriangleBudget`，forced chain 失败会归还尚未提交的 caller token；
+- 并行 merge 返回新可检查的父节点，主线程动态最小堆继续级联，避免父层固定等待下一个 Build；
 - 统一 `CpuWorkerCount` 已纳入 topology commit worker 数，`CpuTopologyMilliseconds` 继续覆盖并发 batch 与串行回退的总拓扑提交耗时。
 
 ### 验收标准
@@ -399,14 +410,14 @@ Level E：GPU split-only 或 split/merge topology update
 4C：GPU Error Evaluation
 
 - Compute shader 读取 height map texture、node buffer、camera/settings UBO；
-- 对 active leaf 计算与 DOD `ComputeScreenErrorScore` 对齐的 screen error；
+- 对 active leaf 计算 GPU ROAM-like 自己的旧式视点加权 error；当前不再声称与已升级的 DOD 像素 SSE 对齐；
 - 输出 `screenError` buffer；
 - CPU 只抽样 readback 少量 error 值做验证，默认 benchmark 不全量 readback；
 - 用 timer query 记录 compute 时间，用 CPU 计时记录 upload / readback 时间。
 
 验收标准：
 
-- 抽样 GPU error 与 DOD CPU error 的误差在可解释范围内；
+- 抽样 GPU error 与同一 GPU 公式的 CPU 参考值误差在可解释范围内；
 - CSV 同时记录 `CpuErrorEvalMilliseconds`、`GpuComputeMilliseconds`、upload/readback bytes；
 - GPU 不可用时该阶段保持 skip，不破坏 CPU benchmark；
 - 文档记录浮点误差、采样方式和 OpenGL 版本要求。
@@ -414,7 +425,7 @@ Level E：GPU split-only 或 split/merge topology update
 阶段完成记录：
 
 - 已新增 GPU error evaluation compute shader，读取 R32F height map texture、node SSBO 和 GPU compact 后的 active leaf buffer；
-- shader 侧按 DOD `ComputeScreenErrorScore` 的同一公式计算 height error score 与 projected edge score，并写入 screen error SSBO；
+- shader 侧计算旧式 height/distance/edge 启发式并写入 screen error SSBO；DOD 后续升级为完整方差与像素 SSE 后，两者评分单位已经分离；
 - GPU compute pass 已用 OpenGL timer query 包住，结果写入 `GpuComputeMilliseconds`；
 - 默认只 readback 少量 active leaf 和 error 样本，避免全量 screen error 回读污染性能口径；
 - 4C 完成时 error evaluation 是 shadow pass，尚未反向驱动 CPU topology commit；后续 GPU split-only 实验仍与 CPU DOD 基线保持独立。

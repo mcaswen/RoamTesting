@@ -190,10 +190,12 @@ std::uint32_t High32(std::uint64_t value)
 DataOrientedRoam::DataOrientedRoamSettings ToDataSettings(const TerrainLodSettings& settings)
 {
     DataOrientedRoam::DataOrientedRoamSettings result{};
+    // CPU topology baseline follows the shared CPU ROAM pixel-SSE and budget contract.
+    // D3D12 compute constants below intentionally retain the native GPU scoring fields.
     result.MaxDepth = settings.MaxDepth;
-    result.SplitThreshold = settings.SplitThreshold;
-    result.MergeThreshold = settings.MergeThreshold;
-    result.DistanceScale = settings.DistanceScale;
+    result.SplitThreshold = settings.ScreenSpaceSplitThresholdPixels;
+    result.MergeThreshold = settings.ScreenSpaceMergeThresholdPixels;
+    result.TriangleBudget = settings.TriangleBudget;
     result.ErrorEvaluationWorkerCount = 0U;
     result.EnableLocalConstraints = settings.EnableLocalConstraints;
     result.EnableTopologyValidation = settings.EnableTopologyValidation;
@@ -216,6 +218,7 @@ TerrainLodStats ToLodStats(const DataOrientedRoam::DataOrientedRoamStats& stats)
     result.ConstraintPassCount = stats.ConstraintPassCount;
     result.CandidatePeakCount = stats.CandidatePeakCount;
     result.RejectedSplitCount = stats.RejectedSplitCount;
+    result.BudgetRejectedSplitCount = stats.BudgetRejectedSplitCount;
     result.RejectedMergeCount = stats.RejectedMergeCount;
     result.TjunctionCount = stats.TjunctionCount;
     result.InvalidNeighborCount = stats.InvalidNeighborCount;
@@ -881,7 +884,7 @@ bool D3D12GpuRoamTerrainLodAlgorithm::BuildRenderData(
         *input.HeightMap,
         input.Settings.TerrainSize,
         input.Settings.HeightScale,
-        input.View.CameraPosition,
+        input.View,
         ToDataSettings(input.Settings));
     _stats = ToLodStats(_cpuTopologyBuilder.Stats());
     // 将 SoA CPU 状态打包为与 HLSL NodeRecord 一致的结构化快照

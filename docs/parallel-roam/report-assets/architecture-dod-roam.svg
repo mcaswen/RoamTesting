@@ -44,12 +44,12 @@
   <text x="205" y="397" text-anchor="middle" class="code">DataOrientedRoamNodePool Nodes</text>
   <text x="205" y="421" text-anchor="middle" class="small">Domains / Parents / LeftChildren / RightChildren</text>
   <text x="205" y="444" text-anchor="middle" class="small">BaseNeighbors / LeftNeighbors / RightNeighbors</text>
-  <text x="205" y="467" text-anchor="middle" class="small">ScreenErrors / Depths / IsSplits / PathIds</text>
+  <text x="205" y="467" text-anchor="middle" class="small">Errors / VarianceIndices / Depths / PathIds</text>
   <line x1="70" y1="490" x2="340" y2="490" stroke="#bbf7d0"/>
   <text x="205" y="517" text-anchor="middle" class="code">PreviousSplitPaths</text>
   <text x="205" y="540" text-anchor="middle" class="code">CurrentSplitPaths</text>
   <text x="205" y="563" text-anchor="middle" class="code">FinalActiveLeaves</text>
-  <text x="205" y="586" text-anchor="middle" class="code">RootA / RootB</text>
+  <text x="205" y="586" text-anchor="middle" class="code">RootA / RootB / VarianceTrees</text>
   <line x1="70" y1="609" x2="340" y2="609" stroke="#bbf7d0"/>
   <text x="205" y="636" text-anchor="middle" class="code">DataOrientedRoamStats</text>
   <text x="205" y="660" text-anchor="middle" class="small">Error / Collect / Topology / Emit 耗时桶</text>
@@ -57,7 +57,7 @@
 
   <rect x="400" y="340" width="300" height="64" rx="8" class="pass"/>
   <text x="550" y="366" text-anchor="middle" class="code">状态初始化与叶节点收集</text>
-  <text x="550" y="388" text-anchor="middle" class="small">初始化 SoA node pool，并收集 active leaf</text>
+  <text x="550" y="388" text-anchor="middle" class="small">预计算完整方差树并初始化 SoA roots</text>
   <path d="M550 404 L550 424" class="line"/>
 
   <rect x="400" y="424" width="300" height="64" rx="8" class="pass"/>
@@ -73,8 +73,8 @@
 
   <rect x="400" y="604" width="300" height="84" rx="8" class="pass"/>
   <text x="550" y="631" text-anchor="middle" class="code">Split / Merge 拓扑提交</text>
-  <text x="550" y="654" text-anchor="middle" class="small">Merge 阶段按 diamond 约束回收节点</text>
-  <text x="550" y="675" text-anchor="middle" class="small">Split 阶段按 chunk 提交可并行候选</text>
+  <text x="550" y="654" text-anchor="middle" class="small">并行预提交 + 动态父层级联合并</text>
+  <text x="550" y="675" text-anchor="middle" class="small">原子预算内按 chunk 提交 split</text>
   <path d="M550 688 L550 710" class="line"/>
 
   <rect x="400" y="710" width="300" height="64" rx="8" class="pass"/>
@@ -92,8 +92,8 @@
   <text x="895" y="544" text-anchor="middle" class="small">只在 EnableTopologyValidation 开启时运行</text>
   <line x1="760" y1="568" x2="1030" y2="568" stroke="#bfdbfe"/>
   <text x="895" y="595" text-anchor="middle" class="code">误差评分函数</text>
-  <text x="895" y="619" text-anchor="middle" class="small">ComputeScreenErrorScore() 供多个 pass 复用</text>
-  <text x="895" y="642" text-anchor="middle" class="small">统一 screen error 与队列排序口径</text>
+  <text x="895" y="619" text-anchor="middle" class="small">完整方差 + 像素 SSE + 六平面视锥</text>
+  <text x="895" y="642" text-anchor="middle" class="small">与 Classic 共用质量和预算口径</text>
   <line x1="760" y1="666" x2="1030" y2="666" stroke="#bfdbfe"/>
   <text x="895" y="693" text-anchor="middle" class="caption">Topology commit 使用 chunk 统计区分 interior / boundary 候选</text>
 

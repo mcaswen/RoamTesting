@@ -1,5 +1,6 @@
 #include "algorithms/data_oriented_roam/DataOrientedRoamMeshBuilder.h"
 
+#include "algorithms/ITerrainLodAlgorithm.h"
 #include "algorithms/data_oriented_roam/DataOrientedRoamState.h"
 #include "algorithms/data_oriented_roam/DataOrientedRoamThreadPool.h"
 
@@ -9,6 +10,11 @@
 
 namespace ParallelRoam::Algorithms::DataOrientedRoam
 {
+namespace
+{
+constexpr int MaximumSupportedDepth = 20;
+}
+
 DataOrientedRoamMeshBuilder::DataOrientedRoamMeshBuilder()
     : _state(std::make_unique<DataOrientedRoamState>())
     , _threadPool(std::make_unique<DataOrientedRoamThreadPool>())
@@ -51,27 +57,27 @@ Terrain::TerrainMeshData DataOrientedRoamMeshBuilder::Build(
     const Terrain::HeightMap& heightMap,
     float terrainSize,
     float heightScale,
-    const glm::vec3& cameraPosition,
+    const TerrainLodViewInput& view,
     const DataOrientedRoamSettings& settings)
 {
-    return BuildInternal(heightMap, terrainSize, heightScale, cameraPosition, settings, true);
+    return BuildInternal(heightMap, terrainSize, heightScale, view, settings, true);
 }
 
 void DataOrientedRoamMeshBuilder::UpdateTopology(
     const Terrain::HeightMap& heightMap,
     float terrainSize,
     float heightScale,
-    const glm::vec3& cameraPosition,
+    const TerrainLodViewInput& view,
     const DataOrientedRoamSettings& settings)
 {
-    (void)BuildInternal(heightMap, terrainSize, heightScale, cameraPosition, settings, false);
+    (void)BuildInternal(heightMap, terrainSize, heightScale, view, settings, false);
 }
 
 Terrain::TerrainMeshData DataOrientedRoamMeshBuilder::BuildInternal(
     const Terrain::HeightMap& heightMap,
     float terrainSize,
     float heightScale,
-    const glm::vec3& cameraPosition,
+    const TerrainLodViewInput& view,
     const DataOrientedRoamSettings& settings,
     bool emitCpuMesh)
 {
@@ -79,16 +85,24 @@ Terrain::TerrainMeshData DataOrientedRoamMeshBuilder::BuildInternal(
     const auto updateStart = std::chrono::steady_clock::now();
     ++state.BuildSequence;
 
-    const bool resetTopology = NeedsTopologyReset(state, heightMap, terrainSize, heightScale, settings);
+    DataOrientedRoamSettings normalizedSettings = settings;
+    normalizedSettings.MaxDepth = std::clamp(normalizedSettings.MaxDepth, 0, MaximumSupportedDepth);
+    normalizedSettings.TriangleBudget = std::max<std::size_t>(normalizedSettings.TriangleBudget, 2U);
+    const bool resetTopology = NeedsTopologyReset(state, heightMap, terrainSize, heightScale, normalizedSettings);
+    const bool rebuildVarianceTrees =
+        state.VarianceHeightMap != &heightMap || state.VarianceTreeMaxDepth != normalizedSettings.MaxDepth;
     state.HeightMap = &heightMap;
-    state.Settings = settings;
+    state.Settings = normalizedSettings;
     // merge 阈值不能高于 split 阈值
     // 否则同一帧可能在 hysteresis 区间反复展开和回收
     state.Settings.MergeThreshold = std::min(state.Settings.MergeThreshold, state.Settings.SplitThreshold);
     state.Stats = {};
     state.CurrentSplitPaths.clear();
     state.FinalActiveLeaves.clear();
-    state.CameraPosition = cameraPosition;
+    state.View = view.View;
+    state.Projection = view.Projection;
+    state.FrustumPlanes = view.FrustumPlanes;
+    state.DrawableHeight = std::max(view.DrawableHeight, 1U);
     state.TerrainSize = terrainSize;
     state.HeightScale = heightScale;
 
@@ -104,17 +118,35 @@ Terrain::TerrainMeshData DataOrientedRoamMeshBuilder::BuildInternal(
         return meshData;
     }
 
+    if (rebuildVarianceTrees)
+    {
+        RebuildVarianceTrees(state);
+    }
+
     ReserveNodePool(state);
     if (resetTopology)
     {
         // reset 只发生在缓存误差或深度上限不再兼容时
         ResetTopology(state);
     }
+    else if (rebuildVarianceTrees)
+    {
+        // 提高深度时保留拓扑，但已有节点必须刷新子树最大误差
+        RefreshNodeVarianceErrors(state);
+    }
 
     const auto mergeStart = std::chrono::steady_clock::now();
     // merge pass 先运行，远处旧细节先回收
     MergeWithDiamondQueue(state);
     const auto mergeEnd = std::chrono::steady_clock::now();
+
+    // 每次 leaf split 净增一个活动三角形，原子 token 供并行 commit 共同消费
+    CollectLeafNodes(state, state.FinalActiveLeaves);
+    const std::size_t remainingBudget = state.Settings.TriangleBudget > state.FinalActiveLeaves.size()
+        ? state.Settings.TriangleBudget - state.FinalActiveLeaves.size()
+        : 0U;
+    state.RemainingSplitBudget.store(remainingBudget, std::memory_order_relaxed);
+    state.FinalActiveLeaves.clear();
 
     const auto splitStart = std::chrono::steady_clock::now();
     // split pass 再按当前相机重新分配细节

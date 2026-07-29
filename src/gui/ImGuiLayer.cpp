@@ -724,24 +724,25 @@ bool ImGuiLayer::DrawDebugOverlay(const DebugOverlayData& data, TerrainPanelStat
     changed |= ImGui::Checkbox("局部约束", &terrainState.RoamEnableLocalConstraints);
     changed |= ImGui::Checkbox("拓扑验证", &terrainState.RoamEnableTopologyValidation);
     changed |= ImGui::SliderInt("最大深度", &terrainState.RoamMaxDepth, 1, 20);
-    if (terrainState.TerrainLodAlgorithm == Algorithms::TerrainLodAlgorithmId::ClassicCpuRoam)
+    if (terrainState.TerrainLodAlgorithm == Algorithms::TerrainLodAlgorithmId::ClassicCpuRoam ||
+        terrainState.TerrainLodAlgorithm == Algorithms::TerrainLodAlgorithmId::DataOrientedCpuRoam)
     {
         changed |= ImGui::SliderFloat(
             "Split 误差 (px)",
-            &terrainState.ClassicScreenSpaceSplitThresholdPixels,
+            &terrainState.CpuRoamScreenSpaceSplitThresholdPixels,
             0.25F,
             32.0F,
             "%.2f");
         changed |= ImGui::SliderFloat(
             "Merge 误差 (px)",
-            &terrainState.ClassicScreenSpaceMergeThresholdPixels,
+            &terrainState.CpuRoamScreenSpaceMergeThresholdPixels,
             0.1F,
             32.0F,
             "%.2f");
         changed |= ImGui::SliderInt("Triangle Budget", &terrainState.RoamTriangleBudget, 2, 200000);
-        terrainState.ClassicScreenSpaceMergeThresholdPixels = std::min(
-            terrainState.ClassicScreenSpaceMergeThresholdPixels,
-            terrainState.ClassicScreenSpaceSplitThresholdPixels);
+        terrainState.CpuRoamScreenSpaceMergeThresholdPixels = std::min(
+            terrainState.CpuRoamScreenSpaceMergeThresholdPixels,
+            terrainState.CpuRoamScreenSpaceSplitThresholdPixels);
     }
     else
     {

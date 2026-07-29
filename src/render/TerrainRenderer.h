@@ -63,9 +63,9 @@ struct TerrainRenderSettings
 
     // MergeThreshold 是回落粗网格的低水位阈值
     float RoamMergeThreshold{0.02F};
-    // Classic CPU ROAM 单独使用像素误差阈值，避免改变其他算法的评分单位
-    float ClassicScreenSpaceSplitThresholdPixels{4.0F};
-    float ClassicScreenSpaceMergeThresholdPixels{2.0F};
+    // 两种 CPU ROAM 共享像素误差阈值；GPU ROAM-like 仍使用其原生评分参数
+    float CpuRoamScreenSpaceSplitThresholdPixels{4.0F};
+    float CpuRoamScreenSpaceMergeThresholdPixels{2.0F};
     std::size_t RoamTriangleBudget{20000U};
     float RoamDistanceScale{24.0F};
 
@@ -107,8 +107,8 @@ struct TerrainRenderStats
     int RoamMaxDepthSetting{0};
     float RoamSplitThreshold{0.0F};
     float RoamMergeThreshold{0.0F};
-    float ClassicScreenSpaceSplitThresholdPixels{0.0F};
-    float ClassicScreenSpaceMergeThresholdPixels{0.0F};
+    float CpuRoamScreenSpaceSplitThresholdPixels{0.0F};
+    float CpuRoamScreenSpaceMergeThresholdPixels{0.0F};
     std::size_t RoamTriangleBudgetSetting{0U};
     float RoamDistanceScale{0.0F};
     std::size_t RoamNodeCount{0};

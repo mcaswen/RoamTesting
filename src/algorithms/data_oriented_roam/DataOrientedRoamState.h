@@ -2,6 +2,8 @@
 
 #include "algorithms/data_oriented_roam/DataOrientedRoamMeshBuilder.h"
 
+#include <array>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <limits>
@@ -77,12 +79,14 @@ struct DataOrientedRoamNodeConstRef
     const DataOrientedRoamChunkId& InteriorChunkId;
     const float& GeometricError;
     const float& ScreenError;
+    const std::size_t& VarianceIndex;
     const std::uint64_t& PathId;
     const std::uint64_t& CreatedBuildId;
     const std::uint64_t& ActivatedBuildId;
     const std::uint64_t& SplitBuildId;
     const std::uint64_t& MergeBuildId;
     const int& Depth;
+    const std::uint8_t& VarianceTreeIndex;
     const std::uint8_t& ActivatedByForcedSplit;
     const std::uint8_t& IsSplit;
 };
@@ -102,12 +106,14 @@ struct DataOrientedRoamNodeRef
     DataOrientedRoamChunkId& InteriorChunkId;
     float& GeometricError;
     float& ScreenError;
+    std::size_t& VarianceIndex;
     std::uint64_t& PathId;
     std::uint64_t& CreatedBuildId;
     std::uint64_t& ActivatedBuildId;
     std::uint64_t& SplitBuildId;
     std::uint64_t& MergeBuildId;
     int& Depth;
+    std::uint8_t& VarianceTreeIndex;
     std::uint8_t& ActivatedByForcedSplit;
     std::uint8_t& IsSplit;
 
@@ -138,6 +144,7 @@ struct DataOrientedRoamNodePool
     // GeometricErrors 与相机无关，节点创建后跨帧复用
     std::vector<float> GeometricErrors;
     std::vector<float> ScreenErrors;
+    std::vector<std::size_t> VarianceIndices;
 
     // PathIds 是 hysteresis 的稳定键，不能使用 vector index 代替
     std::vector<std::uint64_t> PathIds;
@@ -148,6 +155,7 @@ struct DataOrientedRoamNodePool
     std::vector<std::uint64_t> SplitBuildIds;
     std::vector<std::uint64_t> MergeBuildIds;
     std::vector<int> Depths;
+    std::vector<std::uint8_t> VarianceTreeIndices;
 
     // flags 分离保存，避免和 index / float 字段混在同一 cache line
     std::vector<std::uint8_t> ActivatedByForcedSplits;
@@ -168,7 +176,9 @@ struct DataOrientedRoamNodePool
         int depth,
         std::uint64_t pathId,
         std::uint64_t buildSequence,
-        float geometricError);
+        float geometricError,
+        std::uint8_t varianceTreeIndex,
+        std::size_t varianceIndex);
 
     // proxy 让 pass 保持节点语义，同时底层继续使用 SoA 布局
     [[nodiscard]] DataOrientedRoamNodeRef operator[](DataOrientedRoamNodeIndex node);
@@ -186,6 +196,11 @@ struct DataOrientedRoamState
     DataOrientedRoamStats Stats;
     DataOrientedRoamNodePool Nodes;
 
+    // 两棵完整方差树分别对应两个根三角形
+    std::array<std::vector<float>, 2> VarianceTrees;
+    const Terrain::HeightMap* VarianceHeightMap{nullptr};
+    int VarianceTreeMaxDepth{-1};
+
     // 两组稳定 path id 在帧边界交换，为 split/merge 提供 hysteresis 记忆
     std::unordered_set<std::uint64_t> PreviousSplitPaths;
     std::unordered_set<std::uint64_t> CurrentSplitPaths;
@@ -195,8 +210,12 @@ struct DataOrientedRoamState
     DataOrientedRoamNodeIndex RootA{InvalidDataOrientedRoamNodeIndex};
     DataOrientedRoamNodeIndex RootB{InvalidDataOrientedRoamNodeIndex};
 
-    // CameraPosition 只影响 screen error，不影响 geometric error 缓存
-    glm::vec3 CameraPosition{0.0F};
+    glm::mat4 View{1.0F};
+    glm::mat4 Projection{1.0F};
+    std::array<glm::vec4, 6> FrustumPlanes{};
+    std::uint32_t DrawableHeight{1U};
+    // 并行 split commit 通过原子 token 共享同一硬预算
+    std::atomic<std::size_t> RemainingSplitBudget{0U};
     float TerrainSize{1.0F};
     float HeightScale{1.0F};
     int TopologyMaxDepth{0};
@@ -223,7 +242,16 @@ struct DataOrientedRoamState
     const TriangleDomain& domain,
     DataOrientedRoamNodeIndex parent,
     int depth,
-    std::uint64_t pathId);
+    std::uint64_t pathId,
+    std::uint8_t varianceTreeIndex,
+    std::size_t varianceIndex);
+
+void RebuildVarianceTrees(DataOrientedRoamState& state);
+void RefreshNodeVarianceErrors(DataOrientedRoamState& state);
+[[nodiscard]] float VarianceError(
+    const DataOrientedRoamState& state,
+    std::uint8_t varianceTreeIndex,
+    std::size_t varianceIndex);
 
 // ReserveNodePool 只优化扩容频率，算法正确性不能依赖地址稳定
 void ReserveNodePool(DataOrientedRoamState& state);
@@ -288,8 +316,8 @@ void CollectMergeCandidates(DataOrientedRoamState& state, std::vector<DataOrient
 [[nodiscard]] glm::vec3 DebugColorForLeaf(const DataOrientedRoamState& state, DataOrientedRoamNodeConstRef node);
 [[nodiscard]] float DebugHighlightForLeaf(const DataOrientedRoamState& state, DataOrientedRoamNodeConstRef node);
 
-// ComputeGeometricError 只依赖 HeightMap 与 TriangleDomain
-[[nodiscard]] float ComputeGeometricError(const DataOrientedRoamState& state, const TriangleDomain& domain);
+// 局部误差由完整方差树向父节点传播
+[[nodiscard]] float ComputeLocalGeometricError(const DataOrientedRoamState& state, const TriangleDomain& domain);
 
 // ComputeScreenErrorScore 是当前 split/merge 队列排序的统一评分
 [[nodiscard]] float ComputeScreenErrorScore(const DataOrientedRoamState& state, DataOrientedRoamNodeConstRef node);

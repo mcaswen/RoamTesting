@@ -356,15 +356,17 @@ bool ValidateRunShape(const BenchmarkScenario& scenario, std::vector<BenchmarkFr
     if (scenario.RequireNearDetailIncrease && frames.size() >= 4U)
     {
         const std::size_t farTriangles = frames[0].TriangleCount;
-        const bool frustumAwareClassic = frames[0].AlgorithmName == "classic_cpu_roam";
+        const bool frustumAwareCpuRoam =
+            frames[0].AlgorithmName == "classic_cpu_roam" ||
+            frames[0].AlgorithmName == "data_oriented_cpu_roam";
         // 视锥感知后，近景只覆盖小块地形，总三角形数可以低于能看到全图的远景
-        const bool centerHasMoreDetail = frustumAwareClassic
+        const bool centerHasMoreDetail = frustumAwareCpuRoam
             ? frames[1].Stats.MaxActiveDepth == scenario.Settings.MaxDepth
             : frames[1].TriangleCount > farTriangles * 2U;
-        const bool cornerHasMoreDetail = frustumAwareClassic
+        const bool cornerHasMoreDetail = frustumAwareCpuRoam
             ? frames[3].Stats.MaxActiveDepth == scenario.Settings.MaxDepth
             : frames[3].TriangleCount > farTriangles * 2U;
-        const bool returnHasMoreDetail = frustumAwareClassic
+        const bool returnHasMoreDetail = frustumAwareCpuRoam
             ? frames.back().Stats.MaxActiveDepth == scenario.Settings.MaxDepth
             : frames.back().TriangleCount > farTriangles * 2U;
         frames[1].Passed = frames[1].Passed && centerHasMoreDetail;
@@ -454,10 +456,13 @@ BenchmarkAlgorithmRun RunAlgorithm(
         // BuildWallMilliseconds 包括接口调用外层开销
         // Stats.CpuUpdateMilliseconds 则由算法自己报告
         frame.BuildWallMilliseconds = std::chrono::duration<float, std::milli>(end - start).count();
+        const bool usesCpuRoamBudget =
+            selection == BenchmarkAlgorithmSelection::Classic ||
+            selection == BenchmarkAlgorithmSelection::DataOriented;
         frame.Passed = ValidateFrame(scenario, renderPacket, stats, buildSucceeded) &&
-            (selection != BenchmarkAlgorithmSelection::Classic ||
+            (!usesCpuRoamBudget ||
              stats.ActiveTriangleCount <= scenario.Settings.TriangleBudget);
-        if (selection == BenchmarkAlgorithmSelection::Classic && camera.Name == "away" && !run.Frames.empty())
+        if (usesCpuRoamBudget && camera.Name == "away" && !run.Frames.empty())
         {
             // 同一位置转向后背离地形，视锥感知应在单次 Build 中回收活动拓扑
             frame.Passed = frame.Passed && frame.TriangleCount < run.Frames.back().TriangleCount;

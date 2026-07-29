@@ -75,7 +75,7 @@ bool DataOrientedRoamTerrainLodAlgorithm::BuildRenderData(
         *input.HeightMap,
         input.Settings.TerrainSize,
         input.Settings.HeightScale,
-        input.View.CameraPosition,
+        input.View,
         ToDataOrientedSettings(input.Settings));
     const TerrainLodCpuSample cpuSampleEnd = CaptureTerrainLodCpuSample();
     _stats = ToTerrainLodStats(_builder.Stats());
@@ -105,9 +105,9 @@ DataOrientedRoamSettings DataOrientedRoamTerrainLodAlgorithm::ToDataOrientedSett
     // 这是三版本 benchmark 可比性的前提
     DataOrientedRoamSettings dataSettings{};
     dataSettings.MaxDepth = settings.MaxDepth;
-    dataSettings.SplitThreshold = settings.SplitThreshold;
-    dataSettings.MergeThreshold = settings.MergeThreshold;
-    dataSettings.DistanceScale = settings.DistanceScale;
+    dataSettings.SplitThreshold = settings.ScreenSpaceSplitThresholdPixels;
+    dataSettings.MergeThreshold = settings.ScreenSpaceMergeThresholdPixels;
+    dataSettings.TriangleBudget = settings.TriangleBudget;
     // worker 数保持 DOD 内部策略  避免扩大统一参数面
     dataSettings.ErrorEvaluationWorkerCount = 0U;
     dataSettings.EnableLocalConstraints = settings.EnableLocalConstraints;
@@ -133,6 +133,7 @@ TerrainLodStats DataOrientedRoamTerrainLodAlgorithm::ToTerrainLodStats(const Dat
     lodStats.ConstraintPassCount = stats.ConstraintPassCount;
     lodStats.CandidatePeakCount = stats.CandidatePeakCount;
     lodStats.RejectedSplitCount = stats.RejectedSplitCount;
+    lodStats.BudgetRejectedSplitCount = stats.BudgetRejectedSplitCount;
     lodStats.RejectedMergeCount = stats.RejectedMergeCount;
     lodStats.TjunctionCount = stats.TjunctionCount;
     lodStats.InvalidNeighborCount = stats.InvalidNeighborCount;

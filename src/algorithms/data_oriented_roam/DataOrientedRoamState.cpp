@@ -1,6 +1,7 @@
 #include "algorithms/data_oriented_roam/DataOrientedRoamState.h"
 
 #include <algorithm>
+#include <limits>
 
 namespace ParallelRoam::Algorithms::DataOrientedRoam
 {
@@ -86,12 +87,14 @@ DataOrientedRoamNodeRef::operator DataOrientedRoamNodeConstRef() const
         InteriorChunkId,
         GeometricError,
         ScreenError,
+        VarianceIndex,
         PathId,
         CreatedBuildId,
         ActivatedBuildId,
         SplitBuildId,
         MergeBuildId,
         Depth,
+        VarianceTreeIndex,
         ActivatedByForcedSplit,
         IsSplit,
     };
@@ -124,6 +127,7 @@ std::size_t DataOrientedRoamNodePool::storage_bytes() const
            // error arrays 与拓扑 index 分离，方便后续批量评估
            GeometricErrors.capacity() * sizeof(float) +
            ScreenErrors.capacity() * sizeof(float) +
+           VarianceIndices.capacity() * sizeof(std::size_t) +
            // build id arrays 服务 debug 分类，不参与 split 队列热路径
            PathIds.capacity() * sizeof(std::uint64_t) +
            CreatedBuildIds.capacity() * sizeof(std::uint64_t) +
@@ -132,6 +136,7 @@ std::size_t DataOrientedRoamNodePool::storage_bytes() const
            MergeBuildIds.capacity() * sizeof(std::uint64_t) +
            // byte flags 独立存储，避免 vector<bool> bit proxy
            Depths.capacity() * sizeof(int) +
+           VarianceTreeIndices.capacity() * sizeof(std::uint8_t) +
            ActivatedByForcedSplits.capacity() * sizeof(std::uint8_t) +
            IsSplits.capacity() * sizeof(std::uint8_t);
 }
@@ -139,7 +144,7 @@ std::size_t DataOrientedRoamNodePool::storage_bytes() const
 std::size_t DataOrientedRoamNodePool::array_count() const
 {
     // array_count 用数组数量描述 SoA 字段拆分程度
-    return 18U;
+    return 20U;
 }
 
 bool DataOrientedRoamNodePool::empty() const
@@ -161,6 +166,7 @@ void DataOrientedRoamNodePool::clear()
     InteriorChunkIds.clear();
     GeometricErrors.clear();
     ScreenErrors.clear();
+    VarianceIndices.clear();
     PathIds.clear();
     CreatedBuildIds.clear();
     ActivatedBuildIds.clear();
@@ -168,6 +174,7 @@ void DataOrientedRoamNodePool::clear()
     MergeBuildIds.clear();
     // 所有数组一起清空，避免同 index 指向错位字段
     Depths.clear();
+    VarianceTreeIndices.clear();
     ActivatedByForcedSplits.clear();
     IsSplits.clear();
 }
@@ -186,6 +193,7 @@ void DataOrientedRoamNodePool::reserve(std::size_t capacity)
     // error 数组单独连续，可批量写入 ScreenErrors
     GeometricErrors.reserve(capacity);
     ScreenErrors.reserve(capacity);
+    VarianceIndices.reserve(capacity);
     // build id 数组服务 debug 和本帧重建分类
     PathIds.reserve(capacity);
     CreatedBuildIds.reserve(capacity);
@@ -194,6 +202,7 @@ void DataOrientedRoamNodePool::reserve(std::size_t capacity)
     MergeBuildIds.reserve(capacity);
     // depth 和 flag 分离，避免访问拓扑 index 时带入不需要的状态字节
     Depths.reserve(capacity);
+    VarianceTreeIndices.reserve(capacity);
     ActivatedByForcedSplits.reserve(capacity);
     IsSplits.reserve(capacity);
 }
@@ -204,7 +213,9 @@ DataOrientedRoamNodeIndex DataOrientedRoamNodePool::Add(
     int depth,
     std::uint64_t pathId,
     std::uint64_t buildSequence,
-    float geometricError)
+    float geometricError,
+    std::uint8_t varianceTreeIndex,
+    std::size_t varianceIndex)
 {
     const auto index = static_cast<DataOrientedRoamNodeIndex>(Domains.size());
     // 每个 push 顺序必须完全一致，保证 index 能跨数组对齐
@@ -221,6 +232,7 @@ DataOrientedRoamNodeIndex DataOrientedRoamNodePool::Add(
     GeometricErrors.push_back(geometricError);
     // 新节点还没有经过 screen error pass
     ScreenErrors.push_back(0.0F);
+    VarianceIndices.push_back(varianceIndex);
     // PathId 独立于 SoA 下标，用于跨帧 hysteresis
     PathIds.push_back(pathId);
     CreatedBuildIds.push_back(buildSequence);
@@ -229,6 +241,7 @@ DataOrientedRoamNodeIndex DataOrientedRoamNodePool::Add(
     SplitBuildIds.push_back(0);
     MergeBuildIds.push_back(0);
     Depths.push_back(depth);
+    VarianceTreeIndices.push_back(varianceTreeIndex);
     // flag 使用 byte 数组，避免 vector<bool> 的代理语义干扰 pass 代码
     ActivatedByForcedSplits.push_back(0);
     IsSplits.push_back(0);
@@ -249,12 +262,14 @@ DataOrientedRoamNodeRef DataOrientedRoamNodePool::operator[](DataOrientedRoamNod
         InteriorChunkIds[node],
         GeometricErrors[node],
         ScreenErrors[node],
+        VarianceIndices[node],
         PathIds[node],
         CreatedBuildIds[node],
         ActivatedBuildIds[node],
         SplitBuildIds[node],
         MergeBuildIds[node],
         Depths[node],
+        VarianceTreeIndices[node],
         ActivatedByForcedSplits[node],
         IsSplits[node],
     };
@@ -274,12 +289,14 @@ DataOrientedRoamNodeConstRef DataOrientedRoamNodePool::operator[](DataOrientedRo
         InteriorChunkIds[node],
         GeometricErrors[node],
         ScreenErrors[node],
+        VarianceIndices[node],
         PathIds[node],
         CreatedBuildIds[node],
         ActivatedBuildIds[node],
         SplitBuildIds[node],
         MergeBuildIds[node],
         Depths[node],
+        VarianceTreeIndices[node],
         ActivatedByForcedSplits[node],
         IsSplits[node],
     };
@@ -337,15 +354,23 @@ DataOrientedRoamNodeIndex AddNode(
     const TriangleDomain& domain,
     DataOrientedRoamNodeIndex parent,
     int depth,
-    std::uint64_t pathId)
+    std::uint64_t pathId,
+    std::uint8_t varianceTreeIndex,
+    std::size_t varianceIndex)
 {
-    // geometric error 只依赖 HeightMap 和 domain
-    // 节点创建后可跨帧复用
-    const float geometricError = ComputeGeometricError(state, domain);
+    const float geometricError = VarianceError(state, varianceTreeIndex, varianceIndex);
     state.Stats.MaxDepthReached = std::max(state.Stats.MaxDepthReached, depth);
 
     // SoA 数组 index 是持久 node pool 的稳定节点引用
-    return state.Nodes.Add(domain, parent, depth, pathId, state.BuildSequence, geometricError);
+    return state.Nodes.Add(
+        domain,
+        parent,
+        depth,
+        pathId,
+        state.BuildSequence,
+        geometricError,
+        varianceTreeIndex,
+        varianceIndex);
 }
 
 void ReserveNodePool(DataOrientedRoamState& state)
@@ -359,6 +384,14 @@ void ReserveNodePool(DataOrientedRoamState& state)
         targetCapacity = ExactBintreeNodeCapacity(state.Settings.MaxDepth);
     }
     // 超过精确移位范围时使用固定 fallback，避免一次性巨大预分配
+
+    // The active budget bounds the useful initial working set. Historical inactive
+    // nodes may grow past it later, and index-based references remain valid on resize.
+    const std::size_t budgetCapacity = state.Settings.TriangleBudget <=
+            std::numeric_limits<std::size_t>::max() / 2U
+        ? state.Settings.TriangleBudget * 2U
+        : std::numeric_limits<std::size_t>::max();
+    targetCapacity = std::min(targetCapacity, std::max<std::size_t>(budgetCapacity, 2U));
 
     if (state.Nodes.capacity() < targetCapacity)
     {
@@ -382,13 +415,17 @@ void ResetTopology(DataOrientedRoamState& state)
         TriangleDomain{glm::vec2{0.0F, 1.0F}, glm::vec2{1.0F, 0.0F}, glm::vec2{0.0F, 0.0F}},
         InvalidDataOrientedRoamNodeIndex,
         0,
-        RootAPathId);
+        RootAPathId,
+        0U,
+        0U);
     state.RootB = AddNode(
         state,
         TriangleDomain{glm::vec2{1.0F, 0.0F}, glm::vec2{0.0F, 1.0F}, glm::vec2{1.0F, 1.0F}},
         InvalidDataOrientedRoamNodeIndex,
         0,
-        RootBPathId);
+        RootBPathId,
+        1U,
+        0U);
 
     // 两个 root 的 path id 位于不同区间，避免 hysteresis 键碰撞
     // 两个根三角形跨共享对角线互为 base neighbor
@@ -420,6 +457,12 @@ bool NeedsTopologyReset(
     if (settings.MaxDepth < state.TopologyMaxDepth)
     {
         // 降低深度时历史节点可能超过新上限
+        return true;
+    }
+
+    if (settings.TriangleBudget != state.Settings.TriangleBudget)
+    {
+        // 预算变化后从根重新分配，保证降低上限立即生效
         return true;
     }
 

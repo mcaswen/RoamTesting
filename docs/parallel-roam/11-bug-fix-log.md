@@ -247,6 +247,17 @@
 - 验证：OpenGL 与 D3D12 RelWithDebInfo 构建通过；CTest 4/4 通过；Classic 六视点 smoke PASS，所有 topology issue 为 0。`center -> away` 在相机位置不变时从 528 个活动三角形回收到 2，验证方向/视锥生效；所有帧均未超过 20,000 预算；`far-return` 单次 Build 可从深层拓扑回收到 376 个活动三角形。DOD smoke 同样 PASS，确认统一 benchmark 视图扩展没有破坏对照算法。
 - 后续：为方差父子单调性、预算 closure、动态 merge queue 和 frustum AABB 增加 Classic 专用单元/属性测试；用 profiler 区分首次方差预计算、稳态 SSE/frustum、queue、emit 和上传成本。
 
+### BUG-020：DOD 与 Classic 的 LOD 质量和预算口径发生分叉
+
+- 状态：`Fixed`
+- 严重级别：`高`
+- 发生阶段：阶段 3 Data-Oriented CPU ROAM 对照基线复核
+- 现象：Classic 升级完整方差、像素 SSE、视锥感知、硬预算和同帧级联合并后，DOD 仍只缓存节点局部误差、只接收相机位置、使用 unitless 距离启发式、无活动 leaf 上限，merge 也依赖 pass 开始时的固定候选。两者虽然共享接口，但已无法在同一质量与资源约束下比较数据布局和并行化收益。
+- 定位：`DataOrientedRoamMeshBuilder` 的 view 输入退化为 `CameraPosition`；SoA 节点没有方差树归属/索引；`ComputeScreenErrorScore` 不读取 Projection、drawable height 或 frustum planes；并行 topology commit 没有跨 worker 的统一预算；`CommitInteriorMergeChunks` 不返回新满足条件的父层候选。
+- 解决方案：为两个根预计算完整方差树，并在 SoA 中加入 `VarianceTreeIndex/VarianceIndex`；builder 改为接收完整 `TerrainLodViewInput`，使用与 Classic 相同的像素 SSE 和方差扩张 AABB 六平面测试；加入默认 20,000 活动 leaf 预算，所有串行、并行和 forced split 通过同一原子 token 消费上限；保留安全 chunk merge 并行预提交，同时把成功回收后新可合并的 parent 放入动态最小堆，单次 Build 内持续向上级联；UI、renderer 重建判定和 benchmark 断言同步覆盖 Classic/DOD。
+- 验证：OpenGL 与 D3D12 RelWithDebInfo 构建通过；CTest 4/4 通过；Classic/DOD 六视点 smoke 均通过并得到相同活动三角形序列 `7072/528/2/2110/376/528`，所有 topology issue 为 0 且未超过 20,000 预算；`center -> away` 单次 Build 从 528 回收到 2。DOD standard 64 帧也通过，活动三角形范围为 `12906..20000`，实际触达硬上限但没有越界。
+- 后续：GPU ROAM-like 的原生 compute split 仍使用旧式 unitless threshold/`DistanceScale`，且 DOD 快照后还能追加 GPU split-only；它不应被描述为已具备相同像素评分或最终硬预算。后续若统一 GPU 口径，需要单独迁移 shader 公式、frustum 输入、预算计数与 GPU topology 状态持久化。
+
 ## 模板
 
 ```text

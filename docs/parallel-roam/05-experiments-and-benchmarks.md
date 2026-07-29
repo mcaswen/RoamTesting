@@ -46,7 +46,7 @@ Debug View 的价值不只是展示效果，也用于定位算法问题。比如
 
 > 当前边界：本实验继续用于 Classic CPU、Data-Oriented CPU 和 GPU ROAM-like 的成熟路径对比。CBT 2024 在完整 split/merge、高度图几何和统计接入完成前只运行专用正确性验证，不进入本表性能排名。
 
-> Classic 口径更新（2026-07-29）：Classic 使用完整方差树、像素 SSE、六平面视锥感知和活动 leaf 硬预算；DOD/GPU ROAM-like 仍使用旧式 unitless threshold 与 `DistanceScale`。不同算法的相同数值阈值不再代表相同质量，跨算法比较必须用最终网格的公共离线质量指标或匹配活动三角形数。
+> CPU ROAM 口径更新（2026-07-29）：Classic 与 DOD 都使用完整方差树、像素 SSE、六平面视锥感知、活动 leaf 硬预算和单 Build 级联合并。GPU ROAM-like 的原生 compute split 仍使用 unitless threshold 与 `DistanceScale`，因此 GPU 与 CPU ROAM 的相同数值阈值不代表相同质量；跨评分器比较必须使用最终网格的公共离线质量指标或匹配活动三角形数。
 
 统一控制变量：
 
@@ -60,7 +60,7 @@ Debug View 的价值不只是展示效果，也用于定位算法问题。比如
 - 同一活动三角形预算或离线质量目标
 ```
 
-Classic 的 `TriangleBudget` 是硬上限；现有 DOD/GPU ROAM-like 没有等价的同一实现语义。需要固定预算比较时，应在实验驱动层匹配最终 `ActiveTriangleCount`，不能仅复制 Classic 的设置字段。
+Classic 与 DOD 的 `TriangleBudget` 都是活动 leaf 硬上限，forced split 也消费同一预算；DOD 的并行 chunk commit 使用原子 token 保证不越界。GPU ROAM-like 会在 DOD CPU 快照后执行额外 GPU split-only pass，目前最终 GPU 输出不受同一硬预算语义约束。固定预算实验可以直接比较两个 CPU ROAM；纳入 GPU 时仍应在实验驱动层匹配最终 `ActiveTriangleCount`。
 
 主要对比指标：
 
@@ -164,7 +164,7 @@ cpuGpuReadbackBytes
 
 `cpuUtilizationPercent` 使用进程 CPU time / build wall time 的口径，单个逻辑核心满载约为 100%，多线程算法可以超过 100%。
 
-无窗口 Classic smoke 另包含 `center -> away` 同位置转向和 `far-return` 关键帧，用于回归视锥感知与单 Build 级联合并；这类正确性帧不替代 30-60 秒 runtime 性能采样。
+无窗口 Classic/DOD smoke 都包含 `center -> away` 同位置转向和 `far-return` 关键帧，并检查活动 leaf 不超过预算，用于回归视锥感知、单 Build 级联合并和并行预算安全；这类正确性帧不替代 30-60 秒 runtime 性能采样。
 
 ## 结论写法
 

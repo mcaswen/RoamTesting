@@ -124,15 +124,15 @@ bool NeedsMeshRebuild(const TerrainRenderSettings& previous, const TerrainRender
            previous.RoamMaxDepth != next.RoamMaxDepth ||
            previous.RoamSplitThreshold != next.RoamSplitThreshold ||
            previous.RoamMergeThreshold != next.RoamMergeThreshold ||
-           previous.ClassicScreenSpaceSplitThresholdPixels != next.ClassicScreenSpaceSplitThresholdPixels ||
-           previous.ClassicScreenSpaceMergeThresholdPixels != next.ClassicScreenSpaceMergeThresholdPixels ||
+           previous.CpuRoamScreenSpaceSplitThresholdPixels != next.CpuRoamScreenSpaceSplitThresholdPixels ||
+           previous.CpuRoamScreenSpaceMergeThresholdPixels != next.CpuRoamScreenSpaceMergeThresholdPixels ||
            previous.RoamTriangleBudget != next.RoamTriangleBudget ||
            previous.RoamDistanceScale != next.RoamDistanceScale ||
            previous.RoamEnableLocalConstraints != next.RoamEnableLocalConstraints ||
            previous.RoamEnableTopologyValidation != next.RoamEnableTopologyValidation;
 }
 
-bool ClassicViewInputsChanged(const RenderContext& previous, const RenderContext& next)
+bool CpuRoamViewInputsChanged(const RenderContext& previous, const RenderContext& next)
 {
     if (previous.DrawableWidth != next.DrawableWidth ||
         previous.DrawableHeight != next.DrawableHeight ||
@@ -305,12 +305,15 @@ bool TerrainRenderer::UpdateForView(const RenderContext& context, std::string* e
         const glm::vec3 buildDelta = context.CameraPosition - _lastRoamBuildContext.CameraPosition;
         const bool cameraMovedEnough = !_hasRoamBuildView ||
                                        glm::dot(buildDelta, buildDelta) >= rebuildDistance * rebuildDistance;
-        const bool classicViewChanged =
-            _settings.TerrainLodAlgorithm == Algorithms::TerrainLodAlgorithmId::ClassicCpuRoam &&
-            (!_hasRoamBuildView || ClassicViewInputsChanged(_lastRoamBuildContext, context));
+        const bool usesCpuRoamView =
+            _settings.TerrainLodAlgorithm == Algorithms::TerrainLodAlgorithmId::ClassicCpuRoam ||
+            _settings.TerrainLodAlgorithm == Algorithms::TerrainLodAlgorithmId::DataOrientedCpuRoam ||
+            _settings.TerrainLodAlgorithm == Algorithms::TerrainLodAlgorithmId::GpuRoamLike;
+        const bool cpuRoamViewChanged = usesCpuRoamView &&
+            (!_hasRoamBuildView || CpuRoamViewInputsChanged(_lastRoamBuildContext, context));
 
         // 拓扑维护较重，静止或微小移动时复用上一帧 mesh
-        if (!_meshDirty && !cameraMovedEnough && !classicViewChanged)
+        if (!_meshDirty && !cameraMovedEnough && !cpuRoamViewChanged)
         {
             return true;
         }
@@ -475,8 +478,8 @@ TerrainRenderStats TerrainRenderer::Stats() const
     stats.RoamMaxDepthSetting = _settings.RoamMaxDepth;
     stats.RoamSplitThreshold = _settings.RoamSplitThreshold;
     stats.RoamMergeThreshold = _settings.RoamMergeThreshold;
-    stats.ClassicScreenSpaceSplitThresholdPixels = _settings.ClassicScreenSpaceSplitThresholdPixels;
-    stats.ClassicScreenSpaceMergeThresholdPixels = _settings.ClassicScreenSpaceMergeThresholdPixels;
+    stats.CpuRoamScreenSpaceSplitThresholdPixels = _settings.CpuRoamScreenSpaceSplitThresholdPixels;
+    stats.CpuRoamScreenSpaceMergeThresholdPixels = _settings.CpuRoamScreenSpaceMergeThresholdPixels;
     stats.RoamTriangleBudgetSetting = _settings.RoamTriangleBudget;
     stats.RoamDistanceScale = _settings.RoamDistanceScale;
     stats.RoamNodeCount = _terrainLodStats.ActiveNodeCount;
@@ -598,8 +601,8 @@ bool TerrainRenderer::RebuildTerrainLod(const RenderContext& context, std::strin
     lodSettings.MaxDepth = _settings.RoamMaxDepth;
     lodSettings.SplitThreshold = _settings.RoamSplitThreshold;
     lodSettings.MergeThreshold = _settings.RoamMergeThreshold;
-    lodSettings.ScreenSpaceSplitThresholdPixels = _settings.ClassicScreenSpaceSplitThresholdPixels;
-    lodSettings.ScreenSpaceMergeThresholdPixels = _settings.ClassicScreenSpaceMergeThresholdPixels;
+    lodSettings.ScreenSpaceSplitThresholdPixels = _settings.CpuRoamScreenSpaceSplitThresholdPixels;
+    lodSettings.ScreenSpaceMergeThresholdPixels = _settings.CpuRoamScreenSpaceMergeThresholdPixels;
     lodSettings.TriangleBudget = _settings.RoamTriangleBudget;
     lodSettings.DistanceScale = _settings.RoamDistanceScale;
     lodSettings.EnableLocalConstraints = _settings.RoamEnableLocalConstraints;

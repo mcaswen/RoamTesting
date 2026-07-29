@@ -26,6 +26,7 @@ struct TopologyCommitCounters
     std::size_t SplitCount{0};
     std::size_t ForcedSplitCount{0};
     std::size_t RejectedSplitCount{0};
+    std::size_t BudgetRejectedSplitCount{0};
     // 约束传播理论上不会出现在并发 split，但计数器仍保留防御口径
     std::size_t ConstraintPassCount{0};
     std::size_t MergeCount{0};
@@ -42,13 +43,10 @@ struct CommittedSplit
     DataOrientedRoamNodeIndex BaseNeighborBeforeSplit{InvalidDataOrientedRoamNodeIndex};
 };
 
-struct SplitEdge
+struct CommittedMerge
 {
-    // Start 和 End 是 base edge 两端
-    glm::vec2 Start{0.0F};
-    glm::vec2 End{0.0F};
-    // Apex 是 base edge 对侧顶点
-    glm::vec2 Apex{0.0F};
+    DataOrientedRoamNodeIndex Parent{InvalidDataOrientedRoamNodeIndex};
+    DataOrientedRoamNodeIndex BaseParent{InvalidDataOrientedRoamNodeIndex};
 };
 
 DataOrientedRoamChunkId InteriorChunkIdForNode(const DataOrientedRoamState& state, DataOrientedRoamNodeIndex node)
@@ -112,6 +110,7 @@ void MergeCountersIntoStats(DataOrientedRoamState& state, const TopologyCommitCo
     state.Stats.SplitCount += counters.SplitCount;
     state.Stats.ForcedSplitCount += counters.ForcedSplitCount;
     state.Stats.RejectedSplitCount += counters.RejectedSplitCount;
+    state.Stats.BudgetRejectedSplitCount += counters.BudgetRejectedSplitCount;
     state.Stats.ConstraintPassCount += counters.ConstraintPassCount;
     state.Stats.MergeCount += counters.MergeCount;
 }
@@ -138,6 +137,42 @@ void RecordRejectedSplit(DataOrientedRoamState& state, TopologyCommitCounters* c
     }
 
     ++state.Stats.RejectedSplitCount;
+}
+
+void RecordBudgetRejectedSplit(DataOrientedRoamState& state, TopologyCommitCounters* counters)
+{
+    RecordRejectedSplit(state, counters);
+    if (counters != nullptr)
+    {
+        ++counters->BudgetRejectedSplitCount;
+        return;
+    }
+
+    ++state.Stats.BudgetRejectedSplitCount;
+}
+
+bool TryAcquireSplitBudget(DataOrientedRoamState& state, TopologyCommitCounters* counters)
+{
+    std::size_t remaining = state.RemainingSplitBudget.load(std::memory_order_relaxed);
+    while (remaining > 0U)
+    {
+        if (state.RemainingSplitBudget.compare_exchange_weak(
+                remaining,
+                remaining - 1U,
+                std::memory_order_relaxed,
+                std::memory_order_relaxed))
+        {
+            return true;
+        }
+    }
+
+    RecordBudgetRejectedSplit(state, counters);
+    return false;
+}
+
+void ReleaseSplitBudget(DataOrientedRoamState& state)
+{
+    state.RemainingSplitBudget.fetch_add(1U, std::memory_order_relaxed);
 }
 
 void RecordSplit(
@@ -175,13 +210,6 @@ void RecordMerge(DataOrientedRoamState& state, TopologyCommitCounters* counters)
     }
 
     ++state.Stats.MergeCount;
-}
-
-SplitEdge ChooseBaseEdge(const TriangleDomain& domain)
-{
-    // Classic ROAM 固定把 A-B 作为 base edge
-    // DOD 版必须保留这个约定才能和 Classic benchmark 对齐
-    return SplitEdge{domain.A, domain.B, domain.C};
 }
 
 void ReplaceNeighborReference(
@@ -282,6 +310,13 @@ bool SplitNode(
         return false;
     }
 
+    // One leaf split adds exactly one active triangle. Reserve the token before
+    // forced propagation so the complete constraint closure stays inside the cap.
+    if (!TryAcquireSplitBudget(state, counters))
+    {
+        return false;
+    }
+
     DataOrientedRoamNodeIndex baseNeighbor = state.Nodes[node].BaseNeighbor;
     if (state.Settings.EnableLocalConstraints)
     {
@@ -298,6 +333,7 @@ bool SplitNode(
             if (!SplitNode(state, baseNeighbor, DataOrientedRoamSplitReason::ForcedByBaseNeighbor, node, counters))
             {
                 // 约束传播失败时当前 split 也必须失败
+                ReleaseSplitBudget(state);
                 return false;
             }
 
@@ -317,6 +353,7 @@ bool SplitNode(
         if (!SplitNode(state, baseNeighbor, DataOrientedRoamSplitReason::ForcedByBaseNeighbor, node, counters))
         {
             // 对侧 leaf 无法补齐时不能单侧 split
+            ReleaseSplitBudget(state);
             return false;
         }
 
@@ -329,15 +366,27 @@ bool SplitNode(
         // 首次 split 创建 child，merge 后再次 split 时复用同一 child index
         const TriangleDomain domain = state.Nodes[node].Domain;
         const int childDepth = state.Nodes[node].Depth + 1;
-        const SplitEdge edge = ChooseBaseEdge(domain);
-        const glm::vec2 midpoint = (edge.Start + edge.End) * 0.5F;
-
-        const TriangleDomain leftDomain{edge.Apex, edge.Start, midpoint};
-        const TriangleDomain rightDomain{edge.End, edge.Apex, midpoint};
+        const TriangleDomainChildren childDomains = SplitTriangleDomain(domain);
+        const std::uint8_t varianceTreeIndex = state.Nodes[node].VarianceTreeIndex;
+        const std::size_t varianceIndex = state.Nodes[node].VarianceIndex;
         const DataOrientedRoamNodeIndex leftChild =
-            AddNode(state, leftDomain, node, childDepth, LeftChildPathId(parentPathId));
+            AddNode(
+                state,
+                childDomains.Left,
+                node,
+                childDepth,
+                LeftChildPathId(parentPathId),
+                varianceTreeIndex,
+                varianceIndex * 2U + 1U);
         const DataOrientedRoamNodeIndex rightChild =
-            AddNode(state, rightDomain, node, childDepth, RightChildPathId(parentPathId));
+            AddNode(
+                state,
+                childDomains.Right,
+                node,
+                childDepth,
+                RightChildPathId(parentPathId),
+                varianceTreeIndex,
+                varianceIndex * 2U + 2U);
         state.Nodes[node].LeftChild = leftChild;
         state.Nodes[node].RightChild = rightChild;
     }
@@ -750,10 +799,11 @@ std::vector<CommittedSplit> CommitInteriorSplitChunks(
     return committedSplits;
 }
 
-void CommitInteriorMergeChunks(
+std::vector<CommittedMerge> CommitInteriorMergeChunks(
     DataOrientedRoamState& state,
     std::vector<std::vector<DataOrientedRoamMergeCandidate>>& chunks)
 {
+    std::vector<CommittedMerge> committedMerges;
     const std::size_t nonEmptyChunkCount = CountNonEmptyChunks(chunks);
     const std::size_t candidateCount = CountChunkCandidates(chunks);
     const std::size_t workerCount = ResolveTopologyCommitWorkerCount(state, candidateCount, nonEmptyChunkCount);
@@ -762,10 +812,11 @@ void CommitInteriorMergeChunks(
     if (workerCount <= 1U)
     {
         // 小批量 merge 直接交给原串行路径
-        return;
+        return committedMerges;
     }
 
     std::vector<TopologyCommitCounters> localCounters(workerCount);
+    std::vector<std::vector<CommittedMerge>> localCommittedMerges(workerCount);
 
     RunDataOrientedRoamWorkers(state, workerCount, [&](std::size_t workerIndex) {
         // chunk ownership 保证不同 worker 不写同一组 neighbor
@@ -782,7 +833,15 @@ void CommitInteriorMergeChunks(
                 }
 
                 // 真正提交前仍复用原 diamond merge 逻辑
-                MergeNodeOrDiamond(state, node, &localCounters[workerIndex]);
+                const DataOrientedRoamNodeIndex baseNeighbor = state.Nodes[node].BaseNeighbor;
+                const DataOrientedRoamNodeIndex parent = state.Nodes[node].Parent;
+                const DataOrientedRoamNodeIndex baseParent = state.IsValidNode(baseNeighbor)
+                    ? state.Nodes[baseNeighbor].Parent
+                    : InvalidDataOrientedRoamNodeIndex;
+                if (MergeNodeOrDiamond(state, node, &localCounters[workerIndex]))
+                {
+                    localCommittedMerges[workerIndex].push_back(CommittedMerge{parent, baseParent});
+                }
             }
         }
     });
@@ -796,6 +855,12 @@ void CommitInteriorMergeChunks(
     }
 
     state.Stats.ParallelMergeCommitCount += totalCommittedCount;
+    for (const std::vector<CommittedMerge>& localMerges : localCommittedMerges)
+    {
+        committedMerges.insert(committedMerges.end(), localMerges.begin(), localMerges.end());
+    }
+
+    return committedMerges;
 }
 } // 匿名命名空间
 
@@ -911,8 +976,7 @@ void RefineWithSplitQueue(DataOrientedRoamState& state)
         const DataOrientedRoamNodeIndex baseNeighborBeforeSplit = state.Nodes[node].BaseNeighbor;
         if (!SplitNode(state, node, DataOrientedRoamSplitReason::Requested, InvalidDataOrientedRoamNodeIndex))
         {
-            // 失败通常来自 maxDepth 或 forced split 传播
-            ++state.Stats.RejectedSplitCount;
+            // SplitNode records max-depth, budget, and forced-propagation rejection details.
             continue;
         }
 
@@ -937,34 +1001,84 @@ void MergeWithDiamondQueue(DataOrientedRoamState& state)
         DataOrientedRoamTopologyChunkGridSize * DataOrientedRoamTopologyChunkGridSize);
     std::vector<DataOrientedRoamMergeCandidate> candidates;
     CollectMergeCandidates(state, candidates);
-
-    // merge 仍按低 error 优先，但 interior chunk 可先并发提交
     std::sort(
         candidates.begin(),
         candidates.end(),
         [](const DataOrientedRoamMergeCandidate& left, const DataOrientedRoamMergeCandidate& right) {
-            // 低误差优先回收  尽量先减少远处细节
             return left.Score < right.Score;
         });
 
+    struct MergeQueueEntry
+    {
+        float Score{0.0F};
+        std::uint64_t Sequence{0U};
+        DataOrientedRoamNodeIndex Node{InvalidDataOrientedRoamNodeIndex};
+    };
+    struct CandidateCompare
+    {
+        bool operator()(const MergeQueueEntry& left, const MergeQueueEntry& right) const
+        {
+            if (left.Score == right.Score)
+            {
+                return left.Sequence > right.Sequence;
+            }
+
+            return left.Score > right.Score;
+        }
+    };
+
+    std::priority_queue<MergeQueueEntry, std::vector<MergeQueueEntry>, CandidateCompare> queue;
+    std::uint64_t sequence = 0U;
+    const auto enqueueCandidate = [&state, &queue, &sequence](DataOrientedRoamNodeIndex node) {
+        if (!CanMergeNode(state, node))
+        {
+            return;
+        }
+
+        const float score = EvaluateScreenErrorForNode(state, node);
+        queue.push(MergeQueueEntry{score, sequence++, node});
+        state.Stats.CandidatePeakCount = std::max(state.Stats.CandidatePeakCount, queue.size());
+    };
+
     std::vector<std::vector<DataOrientedRoamMergeCandidate>> interiorChunks =
         BuildInteriorMergeChunks(state, candidates);
-    CommitInteriorMergeChunks(state, interiorChunks);
+    const std::vector<CommittedMerge> committedMerges = CommitInteriorMergeChunks(state, interiorChunks);
 
     for (const DataOrientedRoamMergeCandidate& candidate : candidates)
     {
-        // 并发 merge 已处理的 candidate 会在这里自然失效
+        enqueueCandidate(candidate.Node);
+    }
+
+    for (const CommittedMerge& committedMerge : committedMerges)
+    {
+        enqueueCandidate(committedMerge.Parent);
+        enqueueCandidate(committedMerge.BaseParent);
+    }
+
+    while (!queue.empty())
+    {
+        const MergeQueueEntry candidate = queue.top();
+        queue.pop();
         if (!CanMergeNode(state, candidate.Node))
         {
-            // 前面的 merge 可能改变后面候选的 active 状态
             continue;
         }
 
+        const DataOrientedRoamNodeIndex baseNeighbor = state.Nodes[candidate.Node].BaseNeighbor;
+        const DataOrientedRoamNodeIndex parent = state.Nodes[candidate.Node].Parent;
+        const DataOrientedRoamNodeIndex baseParent = state.IsValidNode(baseNeighbor)
+            ? state.Nodes[baseNeighbor].Parent
+            : InvalidDataOrientedRoamNodeIndex;
+
         if (!MergeNodeOrDiamond(state, candidate.Node))
         {
-            // 串行回退仍记录无法提交的边界候选
             ++state.Stats.RejectedMergeCount;
+            continue;
         }
+
+        // A successful merge can make its parent eligible in the same Build.
+        enqueueCandidate(parent);
+        enqueueCandidate(baseParent);
     }
 }
 } // 命名空间 ParallelRoam::Algorithms::DataOrientedRoam

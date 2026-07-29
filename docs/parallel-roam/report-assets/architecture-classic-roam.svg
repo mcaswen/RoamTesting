@@ -43,17 +43,17 @@
   <text x="205" y="397" text-anchor="middle" class="code">struct ClassicRoamNode</text>
   <text x="205" y="421" text-anchor="middle" class="small">Parent / LeftChild / RightChild</text>
   <text x="205" y="444" text-anchor="middle" class="small">BaseNeighbor / LeftNeighbor / RightNeighbor</text>
-  <text x="205" y="467" text-anchor="middle" class="small">PathId / Depth / IsSplit / GeometricError</text>
+  <text x="205" y="467" text-anchor="middle" class="small">PathId / Depth / VarianceIndex / GeometricError</text>
   <line x1="75" y1="489" x2="335" y2="489" stroke="#cbd5e1"/>
   <text x="205" y="515" text-anchor="middle" class="code">_nodes</text>
   <text x="205" y="538" text-anchor="middle" class="code">_rootA / _rootB</text>
-  <text x="205" y="561" text-anchor="middle" class="code">_activeLeaves / _previousSplitPaths</text>
+  <text x="205" y="561" text-anchor="middle" class="code">_varianceTrees / _previousSplitPaths</text>
 
   <rect x="735" y="340" width="320" height="242" rx="8" class="state"/>
   <text x="895" y="370" text-anchor="middle" class="section">输入配置与统计映射</text>
   <text x="895" y="398" text-anchor="middle" class="code">ClassicRoamSettings</text>
-  <text x="895" y="422" text-anchor="middle" class="small">MaxDepth / SplitThreshold / MergeThreshold</text>
-  <text x="895" y="445" text-anchor="middle" class="small">DistanceScale / EnableLocalConstraints</text>
+  <text x="895" y="422" text-anchor="middle" class="small">MaxDepth / Pixel Split / Pixel Merge</text>
+  <text x="895" y="445" text-anchor="middle" class="small">TriangleBudget / View / FrustumPlanes</text>
   <line x1="765" y1="469" x2="1025" y2="469" stroke="#cbd5e1"/>
   <text x="895" y="496" text-anchor="middle" class="code">ClassicRoamStats</text>
   <text x="895" y="520" text-anchor="middle" class="small">Split / Merge / Emit / Validate 毫秒桶</text>
@@ -67,14 +67,14 @@
 
   <rect x="395" y="428" width="310" height="64" rx="8" class="pass"/>
   <text x="550" y="454" text-anchor="middle" class="code">误差评分 pass</text>
-  <text x="550" y="473" text-anchor="middle" class="small">ComputeScreenErrorScore() 计算相机相关误差</text>
-  <text x="550" y="489" text-anchor="middle" class="small">ShouldSplit() 用阈值筛选 split 候选</text>
+  <text x="550" y="473" text-anchor="middle" class="small">完整方差树 + 像素 SSE + 视锥测试</text>
+  <text x="550" y="489" text-anchor="middle" class="small">ShouldSplit() 用像素阈值筛选候选</text>
   <path d="M550 492 L550 516" class="line"/>
 
   <rect x="395" y="516" width="310" height="86" rx="8" class="pass"/>
   <text x="550" y="543" text-anchor="middle" class="code">Split / Merge 拓扑 pass</text>
-  <text x="550" y="564" text-anchor="middle" class="small">先按 diamond 条件处理 merge 回收</text>
-  <text x="550" y="583" text-anchor="middle" class="small">再按误差队列执行 split 提交</text>
+  <text x="550" y="564" text-anchor="middle" class="small">动态队列级联 diamond merge</text>
+  <text x="550" y="583" text-anchor="middle" class="small">预算 token 内按误差队列 split</text>
   <text x="550" y="599" text-anchor="middle" class="small">同步邻接关系，降低 T-junction 风险</text>
   <path d="M550 602 L550 626" class="line"/>
 

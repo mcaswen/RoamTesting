@@ -28,10 +28,12 @@ float CandidateCollectMilliseconds(const DataOrientedRoam::DataOrientedRoamStats
 DataOrientedRoam::DataOrientedRoamSettings ToDataOrientedSettings(const TerrainLodSettings& settings)
 {
     DataOrientedRoam::DataOrientedRoamSettings dataSettings{};
+    // CPU topology baseline follows the shared CPU ROAM pixel-SSE and budget contract.
+    // The native GPU split-only pass still consumes the legacy fields independently.
     dataSettings.MaxDepth = settings.MaxDepth;
-    dataSettings.SplitThreshold = settings.SplitThreshold;
-    dataSettings.MergeThreshold = settings.MergeThreshold;
-    dataSettings.DistanceScale = settings.DistanceScale;
+    dataSettings.SplitThreshold = settings.ScreenSpaceSplitThresholdPixels;
+    dataSettings.MergeThreshold = settings.ScreenSpaceMergeThresholdPixels;
+    dataSettings.TriangleBudget = settings.TriangleBudget;
     dataSettings.ErrorEvaluationWorkerCount = 0U;
     dataSettings.EnableLocalConstraints = settings.EnableLocalConstraints;
     dataSettings.EnableTopologyValidation = settings.EnableTopologyValidation;
@@ -54,6 +56,7 @@ TerrainLodStats ToTerrainLodStats(const DataOrientedRoam::DataOrientedRoamStats&
     lodStats.ConstraintPassCount = stats.ConstraintPassCount;
     lodStats.CandidatePeakCount = stats.CandidatePeakCount;
     lodStats.RejectedSplitCount = stats.RejectedSplitCount;
+    lodStats.BudgetRejectedSplitCount = stats.BudgetRejectedSplitCount;
     lodStats.RejectedMergeCount = stats.RejectedMergeCount;
     lodStats.TjunctionCount = stats.TjunctionCount;
     lodStats.InvalidNeighborCount = stats.InvalidNeighborCount;
@@ -142,7 +145,7 @@ bool GpuRoamTerrainLodAlgorithm::BuildRenderData(
         *input.HeightMap,
         input.Settings.TerrainSize,
         input.Settings.HeightScale,
-        input.View.CameraPosition,
+        input.View,
         ToDataOrientedSettings(input.Settings));
 
     _stats = ToTerrainLodStats(_cpuTopologyBuilder.Stats());
