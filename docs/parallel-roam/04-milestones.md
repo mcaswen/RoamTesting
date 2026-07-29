@@ -157,32 +157,22 @@ assets/textures/Tex_Terrain_Debug_Diffuse.ppm
 - 能输出 active triangle count；
 - 可作为三版本视觉一致性的 baseline。
 
-### 当前实现状态（2026-07-05）
+### 当前实现状态（2026-07-29）
 
-- 已新增 `algorithms/classic_roam/ClassicRoamMeshBuilder`，实现 Classic CPU ROAM 的可运行原型；
-- Classic 节点已经采用裸指针结构，包含 parent、child 和 base/left/right neighbor 指针；
-- 已使用两个根三角形覆盖完整 Height Map domain，并以二叉三角树方式沿 base edge 递归 split；
-- 当前 split 决策基于边中点和重心最大几何误差、近距投影边长、相机距离、`SplitThreshold`、`MergeThreshold` 和 `DistanceScale`；
-- `PathId` 已按两棵 root tree 分区，避免 hysteresis 和 merge 统计发生路径碰撞；
-- 新生成的 split 顶点会从 Height Map 双线性采样高度，并用 Height Map 梯度估算法线；
-- ROAM 输出三角绕序会统一修正到正 Y 方向，与规则网格 baseline 保持一致；
-- 已接入一部分基于 `baseNeighbor` 的 forced split 传播，右侧面板显示强制 split、约束传播次数和裂缝风险；
-- 当前 T-junction 主要依赖全局 repair pass 兜底，这不是完整经典 ROAM 的正确实现方式；
-- 当前 merge / hysteresis 已改为基于持久化拓扑和严格 diamond merge 的基础实现；
-- `TerrainRenderer` 支持在规则网格 baseline 和 Classic ROAM mesh 之间切换；
-- Classic ROAM rebuild 已加入相机位移阈值缓存，避免静止或微小移动时每帧重建和上传 mesh；
-- 默认交互路径已移除全局 T-junction repair，不再依赖 `O(L^2)` repair pass 修裂缝；
-- 已新增局部 baseNeighbor 约束，split 前会追踪到互为 base 的合法 diamond；
-- 已新增 priority queue split candidate 策略，避免纯递归遍历顺序影响细分分布；
-- 已新增拓扑验证开关，开启后可统计 T-junction、邻接错误和 validate 耗时；
-- 已将 Classic ROAM builder 改为持久化拓扑，不再每次 build 都清空整棵树；
-- 已新增严格 diamond merge，只有 sibling leaf 和互为 base 的 diamond 满足条件时才回收；
-- merge 会恢复 parent 的 left/right neighbor，并保持 base neighbor 互指；
-- 右侧 ImGui 面板已加入 Classic ROAM 开关、局部约束开关、拓扑验证开关、节点数、split/merge 统计、实际深度、最大深度、split/merge 阈值、候选队列峰值、merge 拒绝和阶段耗时；
-- 当前覆盖 2A、2B、2C，并已推进 2F、2G、2H、2I、2J、2K、2L 的基础实现；
-- 阶段 2 尚未完全封版，后续重点是更完整的 debug draw、固定测试入口和报告用可视化。
+- `ClassicRoamMeshBuilder` 使用两个根三角形、裸指针 parent/child/neighbor 和持久化 binary triangle tree；
+- 默认防裂缝路径是局部 `baseNeighbor` forced split；全局 validator 只检查并计数，不参与修复；
+- 两个根各有一棵完整方差树，按二叉堆索引预计算到 `MaxDepth`，父值为局部、左子树、右子树误差最大值；
+- `ComputeScreenErrorScore` 使用 View、Projection、drawable height 和 view-space depth 输出像素误差，FOV 与分辨率会影响 LOD；
+- 六个 inward frustum planes 用于方差扩张 AABB 测试；视锥外节点不主动 split，但仍允许 forced split 维持邻接约束；
+- split 使用像素误差最大堆，并受默认 20,000 活动 leaf 硬预算限制；forced split 为调用链预留预算 token；
+- merge 使用动态最小堆，成功后立即检查两侧 parent，可在一次 Build 内从深层向上级联；
+- `PathId`、split/merge 双阈值和最终 active path 共同提供跨 Build 迟滞；
+- CPU Mesh 仍按活动 leaf 全量生成，每个 leaf 输出三个独立顶点；OpenGL/D3D12 renderer 负责上传和绘制；
+- ImGui 已区分 Classic 像素阈值/预算与其他算法的旧式阈值/距离权重，并显示预算拒绝、拓扑和阶段耗时统计；
+- Classic smoke 使用 6 个视点验证预算、视锥方向变化、单 Build 级联合并和 topology issue；当前 OpenGL/D3D12 构建与 smoke 均通过；
+- 阶段 2 的算法基线已封版。diamond/score heatmap 等更完整 debug draw 是后续可视化增强，不作为阶段完成阻塞项。
 
-### 完整 Classic ROAM 补完计划
+### 完整 Classic ROAM 完成记录
 
 2F：关闭默认全局 repair
 
@@ -208,43 +198,43 @@ assets/textures/Tex_Terrain_Debug_Diffuse.ppm
 - 分裂后更新左邻、右邻和 base neighbor child 对当前 child 的反向引用；
 - forced split 只沿局部 neighbor 链传播，不扫描全局 leaf 集合。
 
-2I：误差队列与 split 策略
+2I：误差队列与 split 策略（已完成）
 
-- 预计算或缓存 geometric variance，避免每帧重复高成本采样；
-- 使用 screen-space error 计算当前 split priority；
-- 使用 max heap 管理 split candidate；
-- 使用最大深度和 split / merge 阈值限制细分规模；
-- 记录 split queue size、实际 split 次数和 forced split 次数。
+- 完整方差树预计算并向父节点传播子树最大误差；
+- 以像素为单位的 screen-space error 纳入 FOV、drawable height 和 view depth；
+- max heap 管理 split candidate，六平面视锥测试抑制不可见区域的主动细分；
+- 最大深度、双阈值和活动三角形硬预算共同限制细分规模；
+- 记录候选峰值、实际/forced split、普通拒绝和预算拒绝。
 
-2J：完整 diamond merge
+2J：完整 diamond merge（已完成）
 
-- 已使用候选列表管理 merge candidate；
+- 使用动态最小堆管理 merge candidate；每次成功回收后重新检查 parent，支持单 Build 向上级联；
 - 已限制 merge 只能回收 sibling leaf，不能只回收单侧 child；
 - 若 base neighbor 也 split，则必须互为 base 并且两侧 child 都是 leaf，才允许成对 merge；
 - merge 后会把外部 neighbor 指回 parent，并保持 diamond parent 互为 base neighbor；
 - hysteresis 通过持久化拓扑、split / merge 双阈值和当前拓扑保持实现，不再只依赖路径 ID 假装 merge。
 
-2K：验证与调试可视化
+2K：验证与调试可视化（自动回归已完成，可视化可继续增强）
 
 - 已增加拓扑验证开关，输出 active leaf 数、T-junction 数、非法 neighbor 数、最大深度和 validate 耗时；
 - 已通过临时 probe 对比规则网格和 Classic ROAM 的高度范围、三角绕序、坐标范围、退化三角形和索引越界；
 - wireframe 模式用于观察 Classic ROAM 细分结果；
-- 尚未完成正式 debug draw，后续补按 depth 着色、forced split 高亮和 diamond 对高亮；
-- 每次修改 topology 后必须运行 smoke test 和 topology validator。
+- 已有按 leaf 状态/depth 着色和 forced split 高亮；diamond 对与 score heatmap 仍是可选增强；
+- smoke 固定检查六个关键帧、预算上限和 topology validator。
 
-2L：阶段 2 完成标准
+2L：阶段 2 完成标准（已满足）
 
 - 默认交互路径已无全局 `O(L^2)` repair；
 - 开启 Classic ROAM 后，近处细分和远处 merge 会随相机位置变化；
-- validator 在临时 probe 的近处 / 远处切换中报告 T-junction 为 0、invalid neighbor 为 0；
-- split / merge 已具备局部 diamond 约束，但还需要更长时间交互验证；
-- 当前输出已经可作为阶段 3 DOD 重构的第一版行为标准。
+- validator 在正式 smoke 的六个视点中报告 T-junction、invalid neighbor、invalid topology 均为 0；
+- 相机同位置转向能回收视锥外细节，远距跳转能在单次 Build 级联合并；
+- 活动 leaf 不超过 `TriangleBudget`，当前输出可作为对象式 CPU 正确性与性能基线。
 
 ## 阶段 3：Data-Oriented CPU 版本
 
 ### 目标
 
-在相同误差阈值、Height Map 和相机路径下，以数据导向方式重构 ROAM，验证 CPU 多核与数据布局收益。
+阶段实施时在相同旧式误差阈值、Height Map 和相机路径下，以数据导向方式重构 ROAM，验证 CPU 多核与数据布局收益。2026-07-29 起 Classic 已改用像素 SSE 和硬预算，因此当前跨算法实验不能再用相同数值阈值代表相同质量，具体口径见 `05-experiments-and-benchmarks.md`。
 
 ### 子阶段
 

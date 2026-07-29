@@ -40,9 +40,13 @@
 
 Debug View 的价值不只是展示效果，也用于定位算法问题。比如 forced split 高亮可以直接解释为什么某些远处三角形被连带细分。
 
+当前 Classic 已输出 Original/Subdivided/Rebuilt/depth 颜色和 forced split 高亮，并可显示拓扑验证统计；score heatmap、diamond pair overlay 和 chunk 边界仍是建议项，不应写成已完成能力。
+
 ## 主实验：三版本对比
 
 > 当前边界：本实验继续用于 Classic CPU、Data-Oriented CPU 和 GPU ROAM-like 的成熟路径对比。CBT 2024 在完整 split/merge、高度图几何和统计接入完成前只运行专用正确性验证，不进入本表性能排名。
+
+> Classic 口径更新（2026-07-29）：Classic 使用完整方差树、像素 SSE、六平面视锥感知和活动 leaf 硬预算；DOD/GPU ROAM-like 仍使用旧式 unitless threshold 与 `DistanceScale`。不同算法的相同数值阈值不再代表相同质量，跨算法比较必须用最终网格的公共离线质量指标或匹配活动三角形数。
 
 统一控制变量：
 
@@ -50,11 +54,13 @@ Debug View 的价值不只是展示效果，也用于定位算法问题。比如
 - 同一 Height Map
 - 同一 terrain size
 - 同一 max depth
-- 同一 split/merge threshold
+- 各算法记录自己的评分器、阈值数值和单位
 - 同一相机路径
 - 同一渲染分辨率
-- 同一质量目标
+- 同一活动三角形预算或离线质量目标
 ```
+
+Classic 的 `TriangleBudget` 是硬上限；现有 DOD/GPU ROAM-like 没有等价的同一实现语义。需要固定预算比较时，应在实验驱动层匹配最终 `ActiveTriangleCount`，不能仅复制 Classic 的设置字段。
 
 主要对比指标：
 
@@ -126,6 +132,14 @@ heightMapSize
 maxDepth
 splitThreshold
 mergeThreshold
+thresholdUnit
+screenSpaceSplitThresholdPixels
+screenSpaceMergeThresholdPixels
+triangleBudget
+budgetRejectedSplitCount
+verticalFovDegrees
+drawableWidth
+drawableHeight
 workerThreadCount
 cpuUtilizationPercent
 activeTriangleCount
@@ -149,6 +163,8 @@ cpuGpuReadbackBytes
 ```
 
 `cpuUtilizationPercent` 使用进程 CPU time / build wall time 的口径，单个逻辑核心满载约为 100%，多线程算法可以超过 100%。
+
+无窗口 Classic smoke 另包含 `center -> away` 同位置转向和 `far-return` 关键帧，用于回归视锥感知与单 Build 级联合并；这类正确性帧不替代 30-60 秒 runtime 性能采样。
 
 ## 结论写法
 

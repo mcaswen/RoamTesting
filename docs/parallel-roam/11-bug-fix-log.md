@@ -2,6 +2,8 @@
 
 本文档记录 Parallel ROAM 开发过程中已经完成确认的 bug、易误判现象、定位过程、解决方案和验证方式。正在调查、尚未修复或用户未确认修复完成的问题，不写入正式记录。
 
+> 各条记录保留问题发生时的实现语境；较早条目中的“当前”“后续”和旧 benchmark 数值不代表仓库现状。Classic ROAM 的最新基线以 BUG-019 和 `docs/source_analysis/classic_roam_context.md` 为准。
+
 ## 记录规范
 
 每条记录应包含：
@@ -233,6 +235,17 @@
 - 解决方案：将 `TerrainLodCpuSample` 中的 `std::clock_t ProcessCpuTime` 改为毫秒单位的 `ProcessCpuMilliseconds`。Windows 路径使用 `GetProcessTimes(GetCurrentProcess(), ...)` 读取 process kernel + user time，并按 FILETIME 的 100ns tick 转成毫秒；macOS / Linux 路径使用 `getrusage(RUSAGE_SELF)` 读取 `ru_utime + ru_stime`。`ComputeCpuUtilizationPercent()` 保持原有公式不变，仍按“一个逻辑核心满载等于 100%，多线程可超过 100%”输出。
 - 验证：`cmake --build --preset relwithdebinfo-fetch --parallel` 通过。未自动运行新的 runtime benchmark；修复效果需要用户下次手动运行 benchmark 后，从 CSV / Markdown 中观察 DOD 的 `Avg CPU %` 是否能在 Windows 上超过 100%。
 - 后续：如果后续需要更细的 CPU profiling，可进一步拆分每个 pass 的 CPU 利用率，或记录 thread pool active task 时间；当前修复只保证跨平台总进程 CPU 时间口径一致。
+
+### BUG-019：Classic ROAM 的误差、预算、可见性和远距回收语义不完整
+
+- 状态：`Fixed`
+- 严重级别：`高`
+- 发生阶段：阶段 2 Classic CPU ROAM 基线复核
+- 现象：旧实现只在节点创建时采样三边中点和重心，没有把深层最大误差传播给父节点；名为 `ComputeScreenErrorScore` 的分数不读取 FOV、投影或 drawable 尺寸；没有活动三角形硬预算和视锥感知；merge 候选只按 pass 开始时的快照处理，深层回收后新满足条件的 parent 要等下一个 Build。
+- 定位：误差缓存位于 node 局部值，Classic adapter 只转发相机位置；split queue 没有预算 token；merge 使用固定候选集合；统一视图中的 frustum planes 未进入 Classic scoring。
+- 解决方案：`dde13e5` 为两个根预计算完整方差树并传播子树最大误差；`fa83153` 使用 View、Projection 和 drawable height 计算像素 SSE；`77a9b6f` 加入默认 20,000 活动 leaf 硬预算和 forced-chain token 预留；`54e8915` 把 merge 改为成功后动态入队 parent 的最小堆；`57ce3cb` 使用方差扩张 AABB 对六个 inward plane 做视锥测试。
+- 验证：OpenGL 与 D3D12 RelWithDebInfo 构建通过；CTest 4/4 通过；Classic 六视点 smoke PASS，所有 topology issue 为 0。`center -> away` 在相机位置不变时从 528 个活动三角形回收到 2，验证方向/视锥生效；所有帧均未超过 20,000 预算；`far-return` 单次 Build 可从深层拓扑回收到 376 个活动三角形。DOD smoke 同样 PASS，确认统一 benchmark 视图扩展没有破坏对照算法。
+- 后续：为方差父子单调性、预算 closure、动态 merge queue 和 frustum AABB 增加 Classic 专用单元/属性测试；用 profiler 区分首次方差预计算、稳态 SSE/frustum、queue、emit 和上传成本。
 
 ## 模板
 
