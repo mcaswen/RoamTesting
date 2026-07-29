@@ -41,6 +41,7 @@ struct BenchmarkCameraKeyframe
     std::string Name;
     glm::vec3 Position{0.0F};
     float TimeSeconds{0.0F};
+    glm::vec3 Target{0.0F};
 };
 
 // HeightMap、terrain size、LOD 阈值和相机路径都由这里固定
@@ -157,8 +158,7 @@ Algorithms::TerrainLodViewInput BuildBenchmarkView(const BenchmarkCameraKeyframe
 {
     constexpr std::uint32_t DrawableWidth = 1280U;
     constexpr std::uint32_t DrawableHeight = 720U;
-    const glm::vec3 target{0.0F};
-    glm::vec3 forward = target - camera.Position;
+    glm::vec3 forward = camera.Target - camera.Position;
     if (glm::dot(forward, forward) <= 0.000001F)
     {
         forward = glm::vec3{0.0F, -1.0F, 0.0F};
@@ -207,7 +207,7 @@ BenchmarkScenario MakeScenario(BenchmarkProfile profile)
 
     if (profile == BenchmarkProfile::Smoke)
     {
-        // Smoke 使用小高度图和 4 个代表性视点
+        // Smoke 使用小高度图和代表性视点
         // 拓扑验证开启
         // 适合提交前快速发现裂缝和近细远粗退化
         scenario.HeightMapPath = "assets/heightmaps/Hm_Terrain_Test_129.pgm";
@@ -219,12 +219,14 @@ BenchmarkScenario MakeScenario(BenchmarkProfile profile)
             BenchmarkCameraKeyframe{"far", glm::vec3{0.0F, 14.0F, 28.0F}, 0.0F},
             // center 要显著增加 active triangles
             BenchmarkCameraKeyframe{"center", glm::vec3{0.0F, 4.0F, 0.0F}, 1.0F},
+            // away 与 center 位置相同但向上看，检查相机背后的地形能否立即回收
+            BenchmarkCameraKeyframe{"away", glm::vec3{0.0F, 4.0F, 0.0F}, 2.0F, glm::vec3{0.0F, 8.0F, 0.0F}},
             // near-corner 检查非中心区域也能触发局部细分
-            BenchmarkCameraKeyframe{"near-corner", glm::vec3{-13.0F, 2.5F, -13.0F}, 2.0F},
+            BenchmarkCameraKeyframe{"near-corner", glm::vec3{-13.0F, 2.5F, -13.0F}, 3.0F},
             // far-return 检查一次 Build 是否可以从深层 leaf 向 parent 连续 merge
-            BenchmarkCameraKeyframe{"far-return", glm::vec3{0.0F, 60.0F, 120.0F}, 3.0F},
+            BenchmarkCameraKeyframe{"far-return", glm::vec3{0.0F, 60.0F, 120.0F}, 4.0F},
             // center-return 检查持久拓扑和 merge 后的再次细分稳定性
-            BenchmarkCameraKeyframe{"center-return", glm::vec3{0.0F, 4.0F, 0.0F}, 4.0F},
+            BenchmarkCameraKeyframe{"center-return", glm::vec3{0.0F, 4.0F, 0.0F}, 5.0F},
         };
         return scenario;
     }
@@ -353,16 +355,20 @@ bool ValidateRunShape(const BenchmarkScenario& scenario, std::vector<BenchmarkFr
 
     if (scenario.RequireNearDetailIncrease && frames.size() >= 4U)
     {
-        // Smoke 不比较绝对三角形数
-        // 只要求近处视点相对 far 有明显细节增长
         const std::size_t farTriangles = frames[0].TriangleCount;
-        // 这样 Classic 和 DOD 可在细节数完全一致时通过
-        // GPU 初期实现也能在合理接近时扩展校验口径
-        const bool centerHasMoreDetail = frames[1].TriangleCount > farTriangles * 2U;
-        const bool cornerHasMoreDetail = frames[2].TriangleCount > farTriangles * 2U;
-        const bool returnHasMoreDetail = frames.back().TriangleCount > farTriangles * 2U;
+        const bool frustumAwareClassic = frames[0].AlgorithmName == "classic_cpu_roam";
+        // 视锥感知后，近景只覆盖小块地形，总三角形数可以低于能看到全图的远景
+        const bool centerHasMoreDetail = frustumAwareClassic
+            ? frames[1].Stats.MaxActiveDepth == scenario.Settings.MaxDepth
+            : frames[1].TriangleCount > farTriangles * 2U;
+        const bool cornerHasMoreDetail = frustumAwareClassic
+            ? frames[3].Stats.MaxActiveDepth == scenario.Settings.MaxDepth
+            : frames[3].TriangleCount > farTriangles * 2U;
+        const bool returnHasMoreDetail = frustumAwareClassic
+            ? frames.back().Stats.MaxActiveDepth == scenario.Settings.MaxDepth
+            : frames.back().TriangleCount > farTriangles * 2U;
         frames[1].Passed = frames[1].Passed && centerHasMoreDetail;
-        frames[2].Passed = frames[2].Passed && cornerHasMoreDetail;
+        frames[3].Passed = frames[3].Passed && cornerHasMoreDetail;
         frames.back().Passed = frames.back().Passed && returnHasMoreDetail;
         passed = passed && centerHasMoreDetail && cornerHasMoreDetail && returnHasMoreDetail;
     }
@@ -451,6 +457,11 @@ BenchmarkAlgorithmRun RunAlgorithm(
         frame.Passed = ValidateFrame(scenario, renderPacket, stats, buildSucceeded) &&
             (selection != BenchmarkAlgorithmSelection::Classic ||
              stats.ActiveTriangleCount <= scenario.Settings.TriangleBudget);
+        if (selection == BenchmarkAlgorithmSelection::Classic && camera.Name == "away" && !run.Frames.empty())
+        {
+            // 同一位置转向后背离地形，视锥感知应在单次 Build 中回收活动拓扑
+            frame.Passed = frame.Passed && frame.TriangleCount < run.Frames.back().TriangleCount;
+        }
         run.Frames.push_back(frame);
     }
 

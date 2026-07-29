@@ -46,6 +46,7 @@ Terrain::TerrainMeshData ClassicRoamMeshBuilder::Build(
     _activeLeaves.clear();
     _view = view.View;
     _projection = view.Projection;
+    _frustumPlanes = view.FrustumPlanes;
     _drawableHeight = std::max(view.DrawableHeight, 1U);
     _terrainSize = terrainSize;
     _heightScale = heightScale;

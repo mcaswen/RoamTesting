@@ -314,6 +314,13 @@ private:
     // 使用投影矩阵、drawable 高度和 view-space 深度计算像素误差
     [[nodiscard]] float ComputeScreenErrorScore(const ClassicRoamNode& node) const;
 
+    // 使用完整方差误差扩张后的世界 AABB 做保守视锥相交测试
+    [[nodiscard]] bool IsNodeVisible(
+        const ClassicRoamNode& node,
+        const glm::vec3& a,
+        const glm::vec3& b,
+        const glm::vec3& c) const;
+
     // UV 到世界坐标的映射必须和规则网格 baseline 保持一致
     [[nodiscard]] glm::vec3 DomainToWorld(const glm::vec2& uv) const;
 
@@ -341,6 +348,7 @@ private:
     ClassicRoamNode* _rootB{nullptr};
     glm::mat4 _view{1.0F};
     glm::mat4 _projection{1.0F};
+    std::array<glm::vec4, 6> _frustumPlanes{};
     std::uint32_t _drawableHeight{1U};
     std::size_t _remainingSplitBudget{0U};
     float _terrainSize{1.0F};

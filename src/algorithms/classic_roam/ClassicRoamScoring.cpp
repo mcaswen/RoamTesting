@@ -216,6 +216,12 @@ float ClassicRoamMeshBuilder::ComputeScreenErrorScore(const ClassicRoamNode& nod
     const glm::vec3 a = DomainToWorld(node.Domain.A);
     const glm::vec3 b = DomainToWorld(node.Domain.B);
     const glm::vec3 c = DomainToWorld(node.Domain.C);
+    if (!IsNodeVisible(node, a, b, c))
+    {
+        // 视锥外节点不主动占用细分预算；forced split 仍可为可见边界维持无裂缝拓扑
+        return 0.0F;
+    }
+
     const glm::vec3 center = (a + b + c) / 3.0F;
     const float worldError = node.GeometricError * _heightScale;
     const float longestEdgeLength = std::max({
@@ -234,6 +240,35 @@ float ClassicRoamMeshBuilder::ComputeScreenErrorScore(const ClassicRoamNode& nod
     // edge 项同样使用像素单位，让平坦近景仍保有足够几何密度
     const float edgeLengthPixels = longestEdgeLength * pixelsPerWorldUnit * ProjectedEdgeWeight;
     return std::max(heightErrorPixels, edgeLengthPixels);
+}
+
+bool ClassicRoamMeshBuilder::IsNodeVisible(
+    const ClassicRoamNode& node,
+    const glm::vec3& a,
+    const glm::vec3& b,
+    const glm::vec3& c) const
+{
+    glm::vec3 minimum = glm::min(a, glm::min(b, c));
+    glm::vec3 maximum = glm::max(a, glm::max(b, c));
+    // 子树最大误差界定实际曲面相对三角形平面的高度偏差，扩张后测试保持保守
+    const float worldError = node.GeometricError * _heightScale;
+    minimum.y -= worldError;
+    maximum.y += worldError;
+    const glm::vec3 center = (minimum + maximum) * 0.5F;
+    const glm::vec3 extents = (maximum - minimum) * 0.5F;
+
+    for (const glm::vec4& plane : _frustumPlanes)
+    {
+        const glm::vec3 normal{plane};
+        const float centerDistance = glm::dot(normal, center) + plane.w;
+        const float projectedRadius = glm::dot(glm::abs(normal), extents);
+        if (centerDistance + projectedRadius < 0.0F)
+        {
+            // inward plane 的最大 AABB 支撑点仍在外侧，整个节点都不可见
+            return false;
+        }
+    }
+    return true;
 }
 
 glm::vec3 ClassicRoamMeshBuilder::DomainToWorld(const glm::vec2& uv) const
