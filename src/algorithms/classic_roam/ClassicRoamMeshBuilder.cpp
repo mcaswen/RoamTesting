@@ -30,6 +30,7 @@ Terrain::TerrainMeshData ClassicRoamMeshBuilder::Build(
     ClassicRoamSettings normalizedSettings = settings;
     // 完整方差树的容量随深度指数增长，和现有 UI 的上限保持一致
     normalizedSettings.MaxDepth = std::clamp(normalizedSettings.MaxDepth, 0, MaximumSupportedDepth);
+    normalizedSettings.TriangleBudget = std::max<std::size_t>(normalizedSettings.TriangleBudget, 2U);
     // reset 判定必须在写入本帧输入前完成
     const bool resetTopology = NeedsTopologyReset(heightMap, terrainSize, heightScale, normalizedSettings);
     const bool rebuildVarianceTrees =
@@ -83,6 +84,13 @@ Terrain::TerrainMeshData ClassicRoamMeshBuilder::Build(
     // merge 先运行，避免刚 split 的 child 在同一帧被低阈值立即回收
     MergeWithDiamondQueue();
     const auto mergeEnd = std::chrono::steady_clock::now();
+
+    // 每次 leaf split 会让活动三角形数量增加 1，剩余预算由 split 递归共同消费
+    CollectLeafNodes(_activeLeaves);
+    _remainingSplitBudget = _settings.TriangleBudget > _activeLeaves.size()
+        ? _settings.TriangleBudget - _activeLeaves.size()
+        : 0U;
+    _activeLeaves.clear();
 
     const auto splitStart = std::chrono::steady_clock::now();
     // 候选队列驱动 split，避免纯递归一次展开过多节点

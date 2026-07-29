@@ -359,6 +359,7 @@ void DrawDetailedPerformanceMetrics(const DebugOverlayData& data)
     DrawMetricSize("约束传播", data.RoamConstraintPassCount);
     DrawMetricSize("队列峰值", data.RoamCandidatePeakCount);
     DrawMetricSize("Split 拒绝", data.RoamRejectedSplitCount);
+    DrawMetricSize("预算拒绝", data.RoamBudgetRejectedSplitCount);
     DrawMetricSize("Merge 拒绝", data.RoamRejectedMergeCount);
     DrawMetricSize("T-junction", data.RoamTjunctionCount);
     DrawMetricSize("邻接错误", data.RoamInvalidNeighborCount);
@@ -737,6 +738,7 @@ bool ImGuiLayer::DrawDebugOverlay(const DebugOverlayData& data, TerrainPanelStat
             0.1F,
             32.0F,
             "%.2f");
+        changed |= ImGui::SliderInt("Triangle Budget", &terrainState.RoamTriangleBudget, 2, 200000);
         terrainState.ClassicScreenSpaceMergeThresholdPixels = std::min(
             terrainState.ClassicScreenSpaceMergeThresholdPixels,
             terrainState.ClassicScreenSpaceSplitThresholdPixels);

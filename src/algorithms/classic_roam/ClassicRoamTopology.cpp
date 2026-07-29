@@ -41,7 +41,7 @@ void ClassicRoamMeshBuilder::RefineNode(ClassicRoamNode* node)
         return;
     }
 
-    if (!SplitNode(node, SplitReason::Requested, nullptr))
+    if (!SplitNode(node, SplitReason::Requested, nullptr, 0U))
     {
         return;
     }
@@ -142,7 +142,7 @@ void ClassicRoamMeshBuilder::RefineWithSplitQueue(ClassicRoamNode* rootA, Classi
         }
 
         ClassicRoamNode* baseNeighborBeforeSplit = node->BaseNeighbor;
-        if (!SplitNode(node, SplitReason::Requested, nullptr))
+        if (!SplitNode(node, SplitReason::Requested, nullptr, 0U))
         {
             // forced split 传播失败时，该候选不能继续展开
             ++_stats.RejectedSplitCount;
@@ -221,7 +221,8 @@ void ClassicRoamMeshBuilder::MergeWithDiamondQueue()
 bool ClassicRoamMeshBuilder::SplitNode(
     ClassicRoamNode* node,
     SplitReason reason,
-    ClassicRoamNode* forcedFrom)
+    ClassicRoamNode* forcedFrom,
+    std::size_t reservedSplitSlots)
 {
     if (!IsLeaf(node))
     {
@@ -232,6 +233,13 @@ bool ClassicRoamMeshBuilder::SplitNode(
     if (node->Depth >= _settings.MaxDepth)
     {
         ++_stats.RejectedSplitCount;
+        return false;
+    }
+
+    if (_remainingSplitBudget <= reservedSplitSlots)
+    {
+        // forced 调用必须为所有尚未 split 的调用者各保留一个 token
+        ++_stats.BudgetRejectedSplitCount;
         return false;
     }
 
@@ -248,7 +256,7 @@ bool ClassicRoamMeshBuilder::SplitNode(
         {
             ++_stats.ConstraintPassCount;
             // 经典 ROAM 要求 baseNeighbor 先回到互为 base 的 diamond 关系
-            if (!SplitNode(baseNeighbor, SplitReason::ForcedByBaseNeighbor, node))
+            if (!SplitNode(baseNeighbor, SplitReason::ForcedByBaseNeighbor, node, reservedSplitSlots + 1U))
             {
                 return false;
             }
@@ -264,7 +272,7 @@ bool ClassicRoamMeshBuilder::SplitNode(
         // Classic ROAM 先补齐 base neighbor，保证旧 base edge 两侧一起 split 成 diamond
         // forcedFrom 防止互为 base neighbor 的两个 leaf 递归回跳
         ++_stats.ConstraintPassCount;
-        if (!SplitNode(baseNeighbor, SplitReason::ForcedByBaseNeighbor, node))
+        if (!SplitNode(baseNeighbor, SplitReason::ForcedByBaseNeighbor, node, reservedSplitSlots + 1U))
         {
             return false;
         }
@@ -314,6 +322,7 @@ bool ClassicRoamMeshBuilder::SplitNode(
     node->RightChild->ActivatedByForcedSplit = reason != SplitReason::Requested;
 
     LinkSplitNeighbors(node, baseNeighbor);
+    --_remainingSplitBudget;
     _currentSplitPaths.insert(parentPathId);
     ++_stats.SplitCount;
     if (reason != SplitReason::Requested)

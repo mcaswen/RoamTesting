@@ -87,6 +87,7 @@ ClassicRoamSettings ClassicRoamTerrainLodAlgorithm::ToClassicSettings(const Terr
     classicSettings.MaxDepth = settings.MaxDepth;
     classicSettings.SplitThreshold = settings.ScreenSpaceSplitThresholdPixels;
     classicSettings.MergeThreshold = settings.ScreenSpaceMergeThresholdPixels;
+    classicSettings.TriangleBudget = settings.TriangleBudget;
     classicSettings.EnableLocalConstraints = settings.EnableLocalConstraints;
     classicSettings.EnableTopologyValidation = settings.EnableTopologyValidation;
     return classicSettings;
@@ -110,6 +111,7 @@ TerrainLodStats ClassicRoamTerrainLodAlgorithm::ToTerrainLodStats(const ClassicR
     lodStats.ConstraintPassCount = stats.ConstraintPassCount;
     lodStats.CandidatePeakCount = stats.CandidatePeakCount;
     lodStats.RejectedSplitCount = stats.RejectedSplitCount;
+    lodStats.BudgetRejectedSplitCount = stats.BudgetRejectedSplitCount;
     lodStats.RejectedMergeCount = stats.RejectedMergeCount;
     lodStats.TjunctionCount = stats.TjunctionCount;
     lodStats.InvalidNeighborCount = stats.InvalidNeighborCount;

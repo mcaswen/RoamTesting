@@ -75,6 +75,8 @@ struct TerrainLodSettings
     // Classic CPU ROAM 使用像素单位；其他实现暂时沿用上面的无量纲阈值
     float ScreenSpaceSplitThresholdPixels{4.0F};
     float ScreenSpaceMergeThresholdPixels{2.0F};
+    // Classic CPU ROAM 的活动 leaf triangle 硬上限
+    std::size_t TriangleBudget{20000U};
     // 距离权重作为细节中性距离，近处会更细，远处会更快变粗
     float DistanceScale{24.0F};
     bool EnableLocalConstraints{true};
@@ -302,6 +304,7 @@ struct TerrainLodStats
     std::size_t ConstraintPassCount{0};
     std::size_t CandidatePeakCount{0};
     std::size_t RejectedSplitCount{0};
+    std::size_t BudgetRejectedSplitCount{0};
     std::size_t RejectedMergeCount{0};
     std::size_t TjunctionCount{0};
     std::size_t InvalidNeighborCount{0};

@@ -218,9 +218,9 @@ void WriteDetailedCsv(
     csv << "algorithm,buildConfiguration,graphicsBackend,graphicsAdapter,graphicsVersion,vSyncEnabled,"
         << "heightMapPath,heightMapWidth,heightMapHeight,terrainSize,heightScale,"
         << "maxDepthSetting,splitThreshold,mergeThreshold,screenSpaceSplitThresholdPixels,"
-        << "screenSpaceMergeThresholdPixels,distanceScale,"
+        << "screenSpaceMergeThresholdPixels,triangleBudget,distanceScale,"
         << "timeSeconds,cameraX,cameraY,cameraZ,frameMilliseconds,triangles,nodes,"
-        << "activeSplits,splits,forcedSplits,merges,candidatePeak,tjunctions,invalidNeighbors,"
+        << "activeSplits,splits,forcedSplits,merges,candidatePeak,budgetRejectedSplits,tjunctions,invalidNeighbors,"
         << "invalidTopology,cpuWorkers,cpuUtilizationPercent,lodTotalMilliseconds,"
         << "cpuUpdateMilliseconds,cpuUploadMilliseconds,gpuComputeMilliseconds,"
         << "gpuSnapshotBuildMilliseconds,gpuBufferAllocationMilliseconds,"
@@ -252,6 +252,7 @@ void WriteDetailedCsv(
                 << stats.RoamMergeThreshold << ','
                 << stats.ClassicScreenSpaceSplitThresholdPixels << ','
                 << stats.ClassicScreenSpaceMergeThresholdPixels << ','
+                << stats.RoamTriangleBudgetSetting << ','
                 << stats.RoamDistanceScale << ','
                 << sample.TimeSeconds << ','
                 << sample.CameraPosition.x << ','
@@ -265,6 +266,7 @@ void WriteDetailedCsv(
                 << stats.RoamForcedSplitCount << ','
                 << stats.RoamMergeCount << ','
                 << stats.RoamCandidatePeakCount << ','
+                << stats.RoamBudgetRejectedSplitCount << ','
                 << stats.RoamTjunctionCount << ','
                 << stats.RoamInvalidNeighborCount << ','
                 << stats.RoamInvalidTopologyCount << ','
@@ -340,7 +342,8 @@ void WriteSummaryMarkdown(
                  << stats->RoamSplitThreshold << " / " << stats->RoamMergeThreshold << "\n";
         markdown << "- Classic screen-space split/merge thresholds: "
                  << stats->ClassicScreenSpaceSplitThresholdPixels << " px / "
-                 << stats->ClassicScreenSpaceMergeThresholdPixels << " px\n\n";
+                 << stats->ClassicScreenSpaceMergeThresholdPixels << " px\n";
+        markdown << "- Classic triangle budget: " << stats->RoamTriangleBudgetSetting << "\n\n";
     }
     markdown << "| Algorithm | Samples | Avg Frame ms | Max Frame ms | Avg LOD ms | Max LOD ms | "
              << "Avg CPU Update ms | Avg CPU Upload ms | Avg GPU ms | Max GPU ms | "

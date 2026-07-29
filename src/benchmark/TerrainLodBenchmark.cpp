@@ -201,6 +201,7 @@ BenchmarkScenario MakeScenario(BenchmarkProfile profile)
     scenario.Settings.MergeThreshold = 0.02F;
     scenario.Settings.ScreenSpaceSplitThresholdPixels = 4.0F;
     scenario.Settings.ScreenSpaceMergeThresholdPixels = 2.0F;
+    scenario.Settings.TriangleBudget = 20000U;
     scenario.Settings.DistanceScale = 24.0F;
     scenario.Settings.EnableLocalConstraints = true;
 
@@ -445,7 +446,9 @@ BenchmarkAlgorithmRun RunAlgorithm(
         // BuildWallMilliseconds 包括接口调用外层开销
         // Stats.CpuUpdateMilliseconds 则由算法自己报告
         frame.BuildWallMilliseconds = std::chrono::duration<float, std::milli>(end - start).count();
-        frame.Passed = ValidateFrame(scenario, renderPacket, stats, buildSucceeded);
+        frame.Passed = ValidateFrame(scenario, renderPacket, stats, buildSucceeded) &&
+            (selection != BenchmarkAlgorithmSelection::Classic ||
+             stats.ActiveTriangleCount <= scenario.Settings.TriangleBudget);
         run.Frames.push_back(frame);
     }
 
@@ -566,8 +569,9 @@ bool WriteCsv(
     // GPU 字段现在可为 0，后续实现后不需要改 CSV 契约
     csv << "profile,algorithm,frameIndex,timeSeconds,cameraName,cameraX,cameraY,cameraZ,"
            "heightMapWidth,heightMapHeight,terrainSize,heightScale,maxDepth,splitThreshold,mergeThreshold,"
-           "screenSpaceSplitThresholdPixels,screenSpaceMergeThresholdPixels,"
+           "screenSpaceSplitThresholdPixels,screenSpaceMergeThresholdPixels,triangleBudget,"
            "activeTriangleCount,activeNodeCount,splitCount,forcedSplitCount,mergeCount,candidatePeakCount,"
+           "budgetRejectedSplitCount,"
            "tjunctionCount,invalidNeighborCount,invalidTopologyCount,cpuWorkerCount,cpuUtilizationPercent,"
            "cpuUpdateMs,cpuErrorEvalMs,"
            "cpuDecisionMs,cpuTopologyMs,cpuCollectMs,cpuMeshBuildMs,cpuUploadMs,gpuComputeMs,renderMs,"
@@ -603,12 +607,14 @@ bool WriteCsv(
                 << scenario.Settings.MergeThreshold << ','
                 << scenario.Settings.ScreenSpaceSplitThresholdPixels << ','
                 << scenario.Settings.ScreenSpaceMergeThresholdPixels << ','
+                << scenario.Settings.TriangleBudget << ','
                 << frame.TriangleCount << ','
                 << frame.Stats.ActiveNodeCount << ','
                 << frame.Stats.SplitCount << ','
                 << frame.Stats.ForcedSplitCount << ','
                 << frame.Stats.MergeCount << ','
                 << frame.Stats.CandidatePeakCount << ','
+                << frame.Stats.BudgetRejectedSplitCount << ','
                 << frame.Stats.TjunctionCount << ','
                 << frame.Stats.InvalidNeighborCount << ','
                 << frame.Stats.InvalidTopologyCount << ','
@@ -710,6 +716,7 @@ int RunTerrainLodBenchmark(const BenchmarkOptions& options)
               << " mergeThreshold=" << scenario.Settings.MergeThreshold
               << " screenSpaceSplitPixels=" << scenario.Settings.ScreenSpaceSplitThresholdPixels
               << " screenSpaceMergePixels=" << scenario.Settings.ScreenSpaceMergeThresholdPixels
+              << " triangleBudget=" << scenario.Settings.TriangleBudget
               << '\n';
 
     std::vector<BenchmarkAlgorithmRun> runs;

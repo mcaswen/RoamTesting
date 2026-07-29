@@ -101,6 +101,12 @@ bool ClassicRoamMeshBuilder::NeedsTopologyReset(
         return true;
     }
 
+    if (settings.TriangleBudget != _settings.TriangleBudget)
+    {
+        // 预算变化时从两个根重新按优先级分配，保证降低预算后当前 Build 立即满足硬上限
+        return true;
+    }
+
     // world-space 输入变化会改变 screen error 和 debug 高度映射
     // terrain size 或 height scale 改变时，保守重建以避免旧 score 驱动错误 hysteresis
     return terrainSize != _terrainSize || heightScale != _heightScale;

@@ -53,6 +53,9 @@ struct ClassicRoamSettings
     // 像素单位的 screen-space error 低于该阈值时允许 merge
     float MergeThreshold{2.0F};
 
+    // 活动 leaf triangle 硬上限，两个根三角形是最小合法值
+    std::size_t TriangleBudget{20000U};
+
     // 开启后会基于 baseNeighbor 执行局部 diamond forced split
     bool EnableLocalConstraints{true};
 
@@ -103,6 +106,9 @@ struct ClassicRoamStats
 
     // RejectedSplitCount 表示约束传播或过期候选导致的 split 失败
     std::size_t RejectedSplitCount{0};
+
+    // BudgetRejectedSplitCount 单独统计因活动三角形预算不足而拒绝的 split
+    std::size_t BudgetRejectedSplitCount{0};
 
     // RejectedMergeCount 表示 diamond 条件不满足而拒绝 merge
     std::size_t RejectedMergeCount{0};
@@ -238,7 +244,8 @@ private:
     [[nodiscard]] bool SplitNode(
         ClassicRoamNode* node,
         SplitReason reason,
-        ClassicRoamNode* forcedFrom);
+        ClassicRoamNode* forcedFrom,
+        std::size_t reservedSplitSlots);
 
     // split 后按 Classic ROAM diamond 关系连接 child 和 neighbor
     void LinkSplitNeighbors(ClassicRoamNode* node, ClassicRoamNode* baseNeighbor);
@@ -335,6 +342,7 @@ private:
     glm::mat4 _view{1.0F};
     glm::mat4 _projection{1.0F};
     std::uint32_t _drawableHeight{1U};
+    std::size_t _remainingSplitBudget{0U};
     float _terrainSize{1.0F};
     float _heightScale{1.0F};
     int _topologyMaxDepth{0};

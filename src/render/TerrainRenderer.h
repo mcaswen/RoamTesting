@@ -66,6 +66,7 @@ struct TerrainRenderSettings
     // Classic CPU ROAM 单独使用像素误差阈值，避免改变其他算法的评分单位
     float ClassicScreenSpaceSplitThresholdPixels{4.0F};
     float ClassicScreenSpaceMergeThresholdPixels{2.0F};
+    std::size_t RoamTriangleBudget{20000U};
     float RoamDistanceScale{24.0F};
 
     // 局部约束只做 baseNeighbor forced split，不执行全局 repair
@@ -108,6 +109,7 @@ struct TerrainRenderStats
     float RoamMergeThreshold{0.0F};
     float ClassicScreenSpaceSplitThresholdPixels{0.0F};
     float ClassicScreenSpaceMergeThresholdPixels{0.0F};
+    std::size_t RoamTriangleBudgetSetting{0U};
     float RoamDistanceScale{0.0F};
     std::size_t RoamNodeCount{0};
 
@@ -125,6 +127,7 @@ struct TerrainRenderStats
     std::size_t RoamConstraintPassCount{0};
     std::size_t RoamCandidatePeakCount{0};
     std::size_t RoamRejectedSplitCount{0};
+    std::size_t RoamBudgetRejectedSplitCount{0};
     std::size_t RoamRejectedMergeCount{0};
 
     // 下面三项只在可选全局验证开启时更新

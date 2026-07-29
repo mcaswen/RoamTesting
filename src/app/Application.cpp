@@ -86,6 +86,7 @@ Render::TerrainRenderSettings ToRenderSettings(const Gui::TerrainPanelState& sta
     settings.RoamMergeThreshold = state.RoamMergeThreshold;
     settings.ClassicScreenSpaceSplitThresholdPixels = state.ClassicScreenSpaceSplitThresholdPixels;
     settings.ClassicScreenSpaceMergeThresholdPixels = state.ClassicScreenSpaceMergeThresholdPixels;
+    settings.RoamTriangleBudget = static_cast<std::size_t>(std::max(state.RoamTriangleBudget, 2));
     settings.RoamDistanceScale = state.RoamDistanceScale;
     settings.RoamEnableLocalConstraints = state.RoamEnableLocalConstraints;
     settings.RoamEnableTopologyValidation = state.RoamEnableTopologyValidation;
@@ -466,6 +467,7 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
     debugData.RoamConstraintPassCount = terrainStats.RoamConstraintPassCount;
     debugData.RoamCandidatePeakCount = terrainStats.RoamCandidatePeakCount;
     debugData.RoamRejectedSplitCount = terrainStats.RoamRejectedSplitCount;
+    debugData.RoamBudgetRejectedSplitCount = terrainStats.RoamBudgetRejectedSplitCount;
     debugData.RoamRejectedMergeCount = terrainStats.RoamRejectedMergeCount;
     debugData.RoamTjunctionCount = terrainStats.RoamTjunctionCount;
     debugData.RoamInvalidNeighborCount = terrainStats.RoamInvalidNeighborCount;

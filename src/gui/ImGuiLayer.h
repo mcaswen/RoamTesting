@@ -108,6 +108,7 @@ struct DebugOverlayData
     std::size_t RoamConstraintPassCount{0};
     std::size_t RoamCandidatePeakCount{0};
     std::size_t RoamRejectedSplitCount{0};
+    std::size_t RoamBudgetRejectedSplitCount{0};
     std::size_t RoamRejectedMergeCount{0};
 
     // 拓扑验证关闭时这两个值保持为 0
@@ -170,6 +171,7 @@ struct TerrainPanelState
     float RoamMergeThreshold{0.02F};
     float ClassicScreenSpaceSplitThresholdPixels{4.0F};
     float ClassicScreenSpaceMergeThresholdPixels{2.0F};
+    int RoamTriangleBudget{20000};
     float RoamDistanceScale{24.0F};
 
     // 局部约束是 ROAM 消除裂缝的默认路径

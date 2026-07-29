@@ -126,6 +126,7 @@ bool NeedsMeshRebuild(const TerrainRenderSettings& previous, const TerrainRender
            previous.RoamMergeThreshold != next.RoamMergeThreshold ||
            previous.ClassicScreenSpaceSplitThresholdPixels != next.ClassicScreenSpaceSplitThresholdPixels ||
            previous.ClassicScreenSpaceMergeThresholdPixels != next.ClassicScreenSpaceMergeThresholdPixels ||
+           previous.RoamTriangleBudget != next.RoamTriangleBudget ||
            previous.RoamDistanceScale != next.RoamDistanceScale ||
            previous.RoamEnableLocalConstraints != next.RoamEnableLocalConstraints ||
            previous.RoamEnableTopologyValidation != next.RoamEnableTopologyValidation;
@@ -476,6 +477,7 @@ TerrainRenderStats TerrainRenderer::Stats() const
     stats.RoamMergeThreshold = _settings.RoamMergeThreshold;
     stats.ClassicScreenSpaceSplitThresholdPixels = _settings.ClassicScreenSpaceSplitThresholdPixels;
     stats.ClassicScreenSpaceMergeThresholdPixels = _settings.ClassicScreenSpaceMergeThresholdPixels;
+    stats.RoamTriangleBudgetSetting = _settings.RoamTriangleBudget;
     stats.RoamDistanceScale = _settings.RoamDistanceScale;
     stats.RoamNodeCount = _terrainLodStats.ActiveNodeCount;
     stats.RoamOriginalTriangleCount = _terrainLodStats.OriginalTriangleCount;
@@ -489,6 +491,7 @@ TerrainRenderStats TerrainRenderer::Stats() const
     stats.RoamConstraintPassCount = _terrainLodStats.ConstraintPassCount;
     stats.RoamCandidatePeakCount = _terrainLodStats.CandidatePeakCount;
     stats.RoamRejectedSplitCount = _terrainLodStats.RejectedSplitCount;
+    stats.RoamBudgetRejectedSplitCount = _terrainLodStats.BudgetRejectedSplitCount;
     stats.RoamRejectedMergeCount = _terrainLodStats.RejectedMergeCount;
     stats.RoamTjunctionCount = _terrainLodStats.TjunctionCount;
     stats.RoamInvalidNeighborCount = _terrainLodStats.InvalidNeighborCount;
@@ -597,6 +600,7 @@ bool TerrainRenderer::RebuildTerrainLod(const RenderContext& context, std::strin
     lodSettings.MergeThreshold = _settings.RoamMergeThreshold;
     lodSettings.ScreenSpaceSplitThresholdPixels = _settings.ClassicScreenSpaceSplitThresholdPixels;
     lodSettings.ScreenSpaceMergeThresholdPixels = _settings.ClassicScreenSpaceMergeThresholdPixels;
+    lodSettings.TriangleBudget = _settings.RoamTriangleBudget;
     lodSettings.DistanceScale = _settings.RoamDistanceScale;
     lodSettings.EnableLocalConstraints = _settings.RoamEnableLocalConstraints;
     lodSettings.EnableTopologyValidation = _settings.RoamEnableTopologyValidation;
