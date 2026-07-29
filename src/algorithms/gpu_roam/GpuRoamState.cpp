@@ -7,6 +7,7 @@
 namespace ParallelRoam::Algorithms::GpuRoam
 {
 static_assert(sizeof(GpuRoamDrawElementsIndirectCommand) == 5U * sizeof(std::uint32_t));
+static_assert(sizeof(GpuRoamCounters) == 8U * sizeof(std::uint32_t));
 
 GpuRoamState::~GpuRoamState()
 {

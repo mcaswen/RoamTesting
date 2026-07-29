@@ -725,31 +725,25 @@ bool ImGuiLayer::DrawDebugOverlay(const DebugOverlayData& data, TerrainPanelStat
     changed |= ImGui::Checkbox("拓扑验证", &terrainState.RoamEnableTopologyValidation);
     changed |= ImGui::SliderInt("最大深度", &terrainState.RoamMaxDepth, 1, 20);
     if (terrainState.TerrainLodAlgorithm == Algorithms::TerrainLodAlgorithmId::ClassicCpuRoam ||
-        terrainState.TerrainLodAlgorithm == Algorithms::TerrainLodAlgorithmId::DataOrientedCpuRoam)
+        terrainState.TerrainLodAlgorithm == Algorithms::TerrainLodAlgorithmId::DataOrientedCpuRoam ||
+        terrainState.TerrainLodAlgorithm == Algorithms::TerrainLodAlgorithmId::GpuRoamLike)
     {
         changed |= ImGui::SliderFloat(
             "Split 误差 (px)",
-            &terrainState.CpuRoamScreenSpaceSplitThresholdPixels,
+            &terrainState.RoamScreenSpaceSplitThresholdPixels,
             0.25F,
             32.0F,
             "%.2f");
         changed |= ImGui::SliderFloat(
             "Merge 误差 (px)",
-            &terrainState.CpuRoamScreenSpaceMergeThresholdPixels,
+            &terrainState.RoamScreenSpaceMergeThresholdPixels,
             0.1F,
             32.0F,
             "%.2f");
         changed |= ImGui::SliderInt("Triangle Budget", &terrainState.RoamTriangleBudget, 2, 200000);
-        terrainState.CpuRoamScreenSpaceMergeThresholdPixels = std::min(
-            terrainState.CpuRoamScreenSpaceMergeThresholdPixels,
-            terrainState.CpuRoamScreenSpaceSplitThresholdPixels);
-    }
-    else
-    {
-        changed |= ImGui::SliderFloat("Split 阈值", &terrainState.RoamSplitThreshold, 0.005F, 1.0F, "%.3f");
-        changed |= ImGui::SliderFloat("Merge 阈值", &terrainState.RoamMergeThreshold, 0.001F, 1.0F, "%.3f");
-        changed |= ImGui::SliderFloat("距离权重", &terrainState.RoamDistanceScale, 1.0F, 80.0F, "%.1f");
-        terrainState.RoamMergeThreshold = std::min(terrainState.RoamMergeThreshold, terrainState.RoamSplitThreshold);
+        terrainState.RoamScreenSpaceMergeThresholdPixels = std::min(
+            terrainState.RoamScreenSpaceMergeThresholdPixels,
+            terrainState.RoamScreenSpaceSplitThresholdPixels);
     }
 
     DrawSectionHeader("光照");

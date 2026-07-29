@@ -40,9 +40,11 @@ layout(std430, binding = 3) buffer CounterBuffer
     uint activeLeafCount;
     uint splitCandidateCount;
     uint mergeCandidateCount;
-    uint reservedCounter;
+    uint remainingSplitBudget;
     uint splitOnlyCommitCount;
     uint allocatedNodeCount;
+    uint budgetRejectedSplitCount;
+    uint reservedCounter;
 };
 
 layout(std430, binding = 4) readonly buffer SplitCandidateBuffer
@@ -117,6 +119,37 @@ bool allocateNodes(uint count, out uint firstNode)
     return false;
 }
 
+bool reserveSplitBudget(uint count)
+{
+    // remainingSplitBudget 表示还能增加多少个最终活动 leaf。
+    // 单 parent split 净增一，完整 diamond split 净增二。
+    for (uint attempt = 0u; attempt < 8u; ++attempt)
+    {
+        // 原子读和 CAS 共同防止并行 invocation 超卖 token。
+        uint current = atomicAdd(remainingSplitBudget, 0u);
+        if (current < count)
+        {
+            // 拒绝次数独立于节点池容量失败，供统一统计显示。
+            atomicAdd(budgetRejectedSplitCount, 1u);
+            return false;
+        }
+        uint previous = atomicCompSwap(remainingSplitBudget, current, current - count);
+        if (previous == current)
+        {
+            return true;
+        }
+    }
+    // 高竞争下有限重试失败也不能继续修改拓扑。
+    atomicAdd(budgetRejectedSplitCount, 1u);
+    return false;
+}
+
+void releaseSplitBudget(uint count)
+{
+    // parent 认领或 child 分配失败时必须归还完整预留量。
+    atomicAdd(remainingSplitBudget, count);
+}
+
 void writeChildNode(
     uint childIndex,
     uint parentIndex,
@@ -189,9 +222,15 @@ void main()
     if (baseNeighbor == invalidNode)
     {
         // 地形边界没有配对三角形，可以独立分配两个 child
+        // token 早于 parent flag 认领，失败路径按相反顺序回滚。
+        if (!reserveSplitBudget(1u))
+        {
+            return;
+        }
         uint originalFlags = 0u;
         if (!markParentSplit(nodeIndex, originalFlags))
         {
+            releaseSplitBudget(1u);
             return;
         }
 
@@ -200,6 +239,7 @@ void main()
         if (!allocateNodes(2u, firstChild))
         {
             restoreParentLeaf(nodeIndex, originalFlags);
+            releaseSplitBudget(1u);
             return;
         }
 
@@ -224,11 +264,18 @@ void main()
         return;
     }
 
+    if (!reserveSplitBudget(2u))
+    {
+        return;
+    }
+
     uint originalFlags = 0u;
     uint pairedOriginalFlags = 0u;
+    // 两个 token 覆盖 diamond 两侧各自增加的一个活动 leaf。
     // 两个 parent 必须全部认领成功，否则不能发布半个 diamond
     if (!markParentSplit(nodeIndex, originalFlags))
     {
+        releaseSplitBudget(2u);
         return;
     }
 
@@ -236,6 +283,7 @@ void main()
     if (!markParentSplit(baseNeighbor, pairedOriginalFlags))
     {
         restoreParentLeaf(nodeIndex, originalFlags);
+        releaseSplitBudget(2u);
         return;
     }
 
@@ -245,6 +293,7 @@ void main()
     {
         restoreParentLeaf(baseNeighbor, pairedOriginalFlags);
         restoreParentLeaf(nodeIndex, originalFlags);
+        releaseSplitBudget(2u);
         return;
     }
 

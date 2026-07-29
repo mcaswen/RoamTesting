@@ -70,15 +70,11 @@ struct TerrainLodSettings
     float TerrainSize{30.0F};
     float HeightScale{4.0F};
     int MaxDepth{14};
-    float SplitThreshold{0.04F};
-    float MergeThreshold{0.02F};
-    // Classic/DOD CPU ROAM 使用像素单位；GPU 原生 pass 暂时沿用上面的无量纲阈值
+    // Classic、DOD 和 GPU ROAM-like 共享像素单位的迟滞阈值。
     float ScreenSpaceSplitThresholdPixels{4.0F};
     float ScreenSpaceMergeThresholdPixels{2.0F};
-    // Classic/DOD CPU ROAM 的活动 leaf triangle 硬上限
+    // 三种 ROAM 路径共享活动 leaf triangle 硬上限。
     std::size_t TriangleBudget{20000U};
-    // GPU ROAM-like 原生评分的距离权重
-    float DistanceScale{24.0F};
     bool EnableLocalConstraints{true};
     bool EnableTopologyValidation{false};
 };

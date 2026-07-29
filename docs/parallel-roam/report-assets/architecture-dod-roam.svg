@@ -93,7 +93,7 @@
   <line x1="760" y1="568" x2="1030" y2="568" stroke="#bfdbfe"/>
   <text x="895" y="595" text-anchor="middle" class="code">误差评分函数</text>
   <text x="895" y="619" text-anchor="middle" class="small">完整方差 + 像素 SSE + 六平面视锥</text>
-  <text x="895" y="642" text-anchor="middle" class="small">与 Classic 共用质量和预算口径</text>
+  <text x="895" y="642" text-anchor="middle" class="small">与 Classic / GPU 共用质量和预算口径</text>
   <line x1="760" y1="666" x2="1030" y2="666" stroke="#bfdbfe"/>
   <text x="895" y="693" text-anchor="middle" class="caption">Topology commit 使用 chunk 统计区分 interior / boundary 候选</text>
 

@@ -30,14 +30,11 @@ struct RuntimeBenchmarkOverrides
     bool HasMaxDepth{false};
     int MaxDepth{14};
 
-    bool HasSplitThreshold{false};
-    float SplitThreshold{0.04F};
+    bool HasScreenSpaceSplitThresholdPixels{false};
+    float ScreenSpaceSplitThresholdPixels{4.0F};
 
-    bool HasMergeThreshold{false};
-    float MergeThreshold{0.02F};
-
-    bool HasDistanceScale{false};
-    float DistanceScale{24.0F};
+    bool HasScreenSpaceMergeThresholdPixels{false};
+    float ScreenSpaceMergeThresholdPixels{2.0F};
 
     bool HasDurationSeconds{false};
     float DurationSeconds{10.0F};

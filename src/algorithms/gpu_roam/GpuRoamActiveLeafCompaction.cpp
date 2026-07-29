@@ -48,9 +48,11 @@ layout(std430, binding = 3) buffer CounterBuffer
     // 其余字段属于后续 pass，本入口只读取 allocatedNodeCount
     uint splitCandidateCount;
     uint mergeCandidateCount;
-    uint reservedCounter;
+    uint remainingSplitBudget;
     uint splitOnlyCommitCount;
     uint allocatedNodeCount;
+    uint budgetRejectedSplitCount;
+    uint reservedCounter;
 };
 
 uniform uint uNodeCount;

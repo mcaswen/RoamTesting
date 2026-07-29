@@ -46,9 +46,11 @@ layout(std430, binding = 3) readonly buffer CounterBuffer
     uint activeLeafCount;
     uint splitCandidateCount;
     uint mergeCandidateCount;
-    uint reservedCounter;
+    uint remainingSplitBudget;
     uint splitOnlyCommitCount;
     uint allocatedNodeCount;
+    uint budgetRejectedSplitCount;
+    uint reservedCounter;
 };
 
 layout(std430, binding = 6) buffer MeshVertexBuffer
@@ -83,8 +85,20 @@ const uint vertexFloatStride = 13u;
 
 float sampleHeight(vec2 uv)
 {
-    // clamp 同时处理 terrain 边界和法线有限差分邻域
-    return texture(uHeightMap, clamp(uv, vec2(0.0), vec2(1.0))).r;
+    // emit 必须与 error pass 重建出同一世界空间高度。
+    // 否则评分使用的距离和最终绘制几何会出现半纹素偏差。
+    ivec2 size = textureSize(uHeightMap, 0);
+    // 归一化 UV 映射到 CPU 高度数组的离散坐标范围。
+    vec2 pixel = clamp(uv, vec2(0.0), vec2(1.0)) * vec2(max(size - ivec2(1), ivec2(0)));
+    ivec2 p0 = ivec2(floor(pixel));
+    ivec2 p1 = min(p0 + ivec2(1), size - ivec2(1));
+    vec2 weight = pixel - vec2(p0);
+    // 法线有限差分也复用本函数，因此梯度与顶点高度采用同一采样器。
+    float h00 = texelFetch(uHeightMap, p0, 0).r;
+    float h10 = texelFetch(uHeightMap, ivec2(p1.x, p0.y), 0).r;
+    float h01 = texelFetch(uHeightMap, ivec2(p0.x, p1.y), 0).r;
+    float h11 = texelFetch(uHeightMap, p1, 0).r;
+    return mix(mix(h00, h10, weight.x), mix(h01, h11, weight.x), weight.y);
 }
 
 vec3 domainToWorld(vec2 uv)

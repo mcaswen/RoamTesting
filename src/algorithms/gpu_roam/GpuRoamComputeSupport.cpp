@@ -169,4 +169,28 @@ void SetGpuRoamProgramVec3(std::uint32_t programId, const char* name, const glm:
         glUniform3f(location, value.x, value.y, value.z);
     }
 }
+
+void SetGpuRoamProgramMat4(std::uint32_t programId, const char* name, const glm::mat4& value)
+{
+    // GLM 和 GLSL 默认均为 column-major，上传时不执行转置。
+    const GLint location = glGetUniformLocation(programId, name);
+    if (location >= 0)
+    {
+        glUniformMatrix4fv(location, 1, GL_FALSE, &value[0][0]);
+    }
+}
+
+void SetGpuRoamProgramVec4Array(
+    std::uint32_t programId,
+    const char* name,
+    const glm::vec4* values,
+    std::size_t count)
+{
+    // 六个连续 vec4 对应 TerrainLodViewInput 的固定 frustum plane 顺序。
+    const GLint location = glGetUniformLocation(programId, name);
+    if (location >= 0 && values != nullptr && count > 0U)
+    {
+        glUniform4fv(location, static_cast<GLsizei>(count), &values[0].x);
+    }
+}
 } // namespace ParallelRoam::Algorithms::GpuRoam

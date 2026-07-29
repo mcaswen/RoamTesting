@@ -16,9 +16,11 @@ struct GpuRoamCounters
     std::uint32_t ActiveLeafCount{0};
     std::uint32_t SplitCandidateCount{0};
     std::uint32_t MergeCandidateCount{0};
-    std::uint32_t Reserved{0};
+    std::uint32_t RemainingSplitBudget{0};
     std::uint32_t SplitOnlyCommitCount{0};
     std::uint32_t AllocatedNodeCount{0};
+    std::uint32_t BudgetRejectedSplitCount{0};
+    std::uint32_t Reserved{0};
 };
 
 /// <summary>
@@ -46,6 +48,7 @@ struct GpuRoamTimingReadbackSlot
     std::size_t BaseNodeCount{0};
     std::size_t ActiveLeafCapacity{0};
     std::size_t NodeCapacity{0};
+    std::size_t InitialSplitBudget{0};
     bool Pending{false};
 };
 

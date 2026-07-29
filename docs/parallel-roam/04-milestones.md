@@ -168,7 +168,7 @@ assets/textures/Tex_Terrain_Debug_Diffuse.ppm
 - merge 使用动态最小堆，成功后立即检查两侧 parent，可在一次 Build 内从深层向上级联；
 - `PathId`、split/merge 双阈值和最终 active path 共同提供跨 Build 迟滞；
 - CPU Mesh 仍按活动 leaf 全量生成，每个 leaf 输出三个独立顶点；OpenGL/D3D12 renderer 负责上传和绘制；
-- ImGui 已让 Classic/DOD 共用像素阈值与预算，并与 GPU ROAM-like 的旧式阈值/距离权重区分；同时显示预算拒绝、拓扑和阶段耗时统计；
+- ImGui 已让 Classic、DOD 和 GPU ROAM-like 共用像素阈值与预算；同时显示预算拒绝、拓扑和阶段耗时统计；
 - Classic smoke 使用 6 个视点验证预算、视锥方向变化、单 Build 级联合并和 topology issue；当前 OpenGL/D3D12 构建与 smoke 均通过；
 - 阶段 2 的算法基线已封版。diamond/score heatmap 等更完整 debug draw 是后续可视化增强，不作为阶段完成阻塞项。
 
@@ -234,7 +234,7 @@ assets/textures/Tex_Terrain_Debug_Diffuse.ppm
 
 ### 目标
 
-在相同 Height Map、相机路径、完整方差树、像素 SSE、视锥规则和活动三角形预算下，以数据导向方式重构 ROAM，验证 CPU 多核与数据布局收益。GPU ROAM-like 的原生 compute 评分仍是独立旧式启发式，具体比较口径见 `05-experiments-and-benchmarks.md`。
+在相同 Height Map、相机路径、完整方差树、像素 SSE、视锥规则和活动三角形预算下，以数据导向方式重构 ROAM，验证 CPU 多核与数据布局收益。GPU ROAM-like 现已消费同一评分和预算输入，但仍是以 DOD 为持久拓扑真值的混合管线，具体比较边界见 `05-experiments-and-benchmarks.md`。
 
 ### 当前实现状态（2026-07-29）
 
@@ -242,7 +242,7 @@ assets/textures/Tex_Terrain_Debug_Diffuse.ppm
 - `ComputeScreenErrorScore` 与 Classic 同样消费 View、Projection、drawable height 和六个 inward frustum planes，输出像素误差并抑制视锥外主动 split；
 - `TriangleBudget` 默认 20,000，活动 leaf 每次 split 原子领取一个 token；并行 interior commit 与 forced split closure 共用同一硬上限；
 - merge 保留安全 interior chunk 并行预提交，成功后把新满足条件的 parent 放回动态最小堆，可在同一 Build 向上级联；
-- UI 对 Classic/DOD 显示同一组像素 split/merge 阈值和预算；renderer 在 FOV、朝向或 drawable 尺寸变化时触发两种 CPU ROAM 重建；
+- UI 对 Classic、DOD 和 GPU ROAM-like 显示同一组像素 split/merge 阈值和预算；renderer 在 FOV、朝向或 drawable 尺寸变化时触发三种 ROAM 重建；
 - DOD 六视点 smoke 与 Classic 使用相同的预算、视锥、级联和拓扑正确性断言。
 
 ### 子阶段
@@ -410,14 +410,14 @@ Level E：GPU split-only 或 split/merge topology update
 4C：GPU Error Evaluation
 
 - Compute shader 读取 height map texture、node buffer、camera/settings UBO；
-- 对 active leaf 计算 GPU ROAM-like 自己的旧式视点加权 error；当前不再声称与已升级的 DOD 像素 SSE 对齐；
+- 对 active leaf 使用快照携带的完整 `GeometricError`，按 View、Projection 和 drawable height 计算像素 SSE，并以方差扩张 AABB 做六平面视锥测试；
 - 输出 `screenError` buffer；
 - CPU 只抽样 readback 少量 error 值做验证，默认 benchmark 不全量 readback；
 - 用 timer query 记录 compute 时间，用 CPU 计时记录 upload / readback 时间。
 
 验收标准：
 
-- 抽样 GPU error 与同一 GPU 公式的 CPU 参考值误差在可解释范围内；
+- 抽样 GPU error 与 DOD 的共享像素 SSE 公式误差在可解释范围内；
 - CSV 同时记录 `CpuErrorEvalMilliseconds`、`GpuComputeMilliseconds`、upload/readback bytes；
 - GPU 不可用时该阶段保持 skip，不破坏 CPU benchmark；
 - 文档记录浮点误差、采样方式和 OpenGL 版本要求。
@@ -425,10 +425,10 @@ Level E：GPU split-only 或 split/merge topology update
 阶段完成记录：
 
 - 已新增 GPU error evaluation compute shader，读取 R32F height map texture、node SSBO 和 GPU compact 后的 active leaf buffer；
-- shader 侧计算旧式 height/distance/edge 启发式并写入 screen error SSBO；DOD 后续升级为完整方差与像素 SSE 后，两者评分单位已经分离；
+- OpenGL GLSL 与 D3D12 HLSL 都使用 CPU 兼容的显式双线性高度采样、完整方差、像素 SSE 和六平面视锥测试，并写入 screen error buffer；
 - GPU compute pass 已用 OpenGL timer query 包住，结果写入 `GpuComputeMilliseconds`；
 - 默认只 readback 少量 active leaf 和 error 样本，避免全量 screen error 回读污染性能口径；
-- 4C 完成时 error evaluation 是 shadow pass，尚未反向驱动 CPU topology commit；后续 GPU split-only 实验仍与 CPU DOD 基线保持独立。
+- error evaluation 既驱动 GPU candidate marking，也保留少量延迟 readback 统计；GPU split-only 只修改当前 GPU 快照，不反写 CPU DOD 持久拓扑。
 
 4D：GPU Candidate Marking 与候选压缩
 
@@ -538,12 +538,13 @@ Level E：GPU split-only 或 split/merge topology update
 阶段完成记录：
 
 - 已新增 `GpuRoamSplitOnlyTopology` 独立 pass 文件，将 GPU 拓扑扩展逻辑从 adapter 中拆出；
-- GPU node buffer 会按当前 DOD 节点数加 active leaf 的一层子节点容量预留，split-only pass 通过 `allocatedNodeCount` atomic counter 分配 child record；
+- GPU node/leaf buffer 只按 `TriangleBudget - CPU快照leaf数` 允许的额外 split 容量预留；split-only pass 通过 `allocatedNodeCount` atomic counter 分配 child record；
 - split-only pass 支持两类保守提交：外边界 base edge 单 triangle split，以及互为 base neighbor 且同 chunk 的 diamond pair split；
+- 所有 invocation 共享 `remainingSplitBudget` 原子 token；边界 split 消费 1，diamond pair 消费 2，parent claim 或 child allocation 失败时回滚 token，预算拒绝写入独立 counter；
 - split-only pass 暂不回收节点、不执行 merge，也不把 GPU 生成的拓扑写回 CPU DOD state；
 - mesh emit 不再依赖 CPU 传入的 active leaf 数，而是读取 GPU counter 中重新 compaction 后的最终 active leaf count；
-- 当前本机 OpenGL 4.1 仍无法执行该 compute path，只验证了构建、smoke 和 benchmark skip 语义；
-- 后续需要在支持 OpenGL 4.3 的环境下补 GPU readback validator，确认 split-only 后 T-junction 和 neighbor 约束是否满足。
+- OpenGL 与 D3D12 的应用级 GPU smoke 都检查 packet 非空、最终三角形不超共享预算，以及 CPU DOD 持久拓扑的三类 issue 为零；OpenGL 延迟 counter readback 额外检查 active/node 计数和 token 守恒；
+- 当前 GPU split 只接受外边界或同 chunk 互为 base 的直接 diamond，不实现跨 chunk forced closure；新 child 的 `GeometricError` 为 0 且不会跨帧持久化。这是混合实验层的明确能力边界，仍需 GPU 几何 readback/离线图像验证才能完整证明额外 split 后无裂缝。
 
 4I：GPU Split / Merge Topology Update（可选冲刺）
 

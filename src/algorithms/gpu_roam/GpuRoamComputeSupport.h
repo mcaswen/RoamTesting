@@ -23,4 +23,10 @@ void SetGpuRoamProgramUInt(std::uint32_t programId, const char* name, std::uint3
 void SetGpuRoamProgramInt(std::uint32_t programId, const char* name, int value);
 void SetGpuRoamProgramFloat(std::uint32_t programId, const char* name, float value);
 void SetGpuRoamProgramVec3(std::uint32_t programId, const char* name, const glm::vec3& value);
+void SetGpuRoamProgramMat4(std::uint32_t programId, const char* name, const glm::mat4& value);
+void SetGpuRoamProgramVec4Array(
+    std::uint32_t programId,
+    const char* name,
+    const glm::vec4* values,
+    std::size_t count);
 } // namespace ParallelRoam::Algorithms::GpuRoam

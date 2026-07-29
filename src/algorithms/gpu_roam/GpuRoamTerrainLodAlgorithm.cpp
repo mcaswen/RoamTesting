@@ -28,8 +28,7 @@ float CandidateCollectMilliseconds(const DataOrientedRoam::DataOrientedRoamStats
 DataOrientedRoam::DataOrientedRoamSettings ToDataOrientedSettings(const TerrainLodSettings& settings)
 {
     DataOrientedRoam::DataOrientedRoamSettings dataSettings{};
-    // CPU topology baseline follows the shared CPU ROAM pixel-SSE and budget contract.
-    // The native GPU split-only pass still consumes the legacy fields independently.
+    // CPU 持久拓扑与后续 GPU split-only pass 使用同一像素 SSE、视锥和预算口径。
     dataSettings.MaxDepth = settings.MaxDepth;
     dataSettings.SplitThreshold = settings.ScreenSpaceSplitThresholdPixels;
     dataSettings.MergeThreshold = settings.ScreenSpaceMergeThresholdPixels;

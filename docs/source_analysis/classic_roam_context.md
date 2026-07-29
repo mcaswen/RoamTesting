@@ -737,7 +737,7 @@ TriangleCount = ActiveLeafCount
 | `Depth <= MaxDepth` | queue/`SplitNode` | PathId/量化/资源规模 | benchmark 检查最终最大深度 | 无限/过量细分 |
 | `GeometricError == varianceTree[VarianceIndex]` | variance build/refresh、`AddNode` | SSE 与 frustum AABB | 无 assert | 父节点低估子域误差 |
 | 方差父值不小于左右 child 值 | `BuildVarianceSubtree` 的 `max` | 粗层保守评分 | 无 assert | 深层峰值无法向上传播 |
-| `ActiveTriangleCount <= TriangleBudget` | merge 后计数、`SplitNode` token | 内存/性能预算 | Classic/DOD smoke 检查 | 超预算 |
+| `ActiveTriangleCount <= TriangleBudget` | merge 后计数、`SplitNode` token | 内存/性能预算 | Classic/DOD benchmark 与双后端 GPU smoke 检查 | 超预算 |
 | `_remainingSplitBudget` 为未使用的净增 leaf 数 | `Build`、`SplitNode` | requested/forced split | 仅最终预算断言 | forced 链半完成或超预算 |
 | `_previousSplitPaths` 只代表上次最终 active internal | Build 末尾重新收集 | 迟滞判断 | 无 assert | 迟滞错误、拓扑抖动 |
 | 节点对象地址在普通 Build 间稳定 | `unique_ptr` pool、不 erase | 所有裸指针 | 由容器设计保证 | 悬空指针/崩溃 |
@@ -770,7 +770,7 @@ TriangleCount = ActiveLeafCount
 
 参数证据：`ITerrainLodAlgorithm.h` 第 70-83 行；`ClassicRoamMeshBuilder.h` 第 45-65 行；`ClassicRoamScoring.cpp` 第 11-13、214-243 行；`TerrainRenderer.h` 第 51-72 行；`ImGuiLayer.cpp` 第 726-750 行。
 
-**源码事实：** 统一 settings 中仍保留 `SplitThreshold/MergeThreshold/DistanceScale`，但 Classic 和 DOD adapter 都不读取它们；这些字段只供 GPU ROAM-like 的原生旧式评分 pass 使用。UI 在选择任一 CPU ROAM 时显示共享像素阈值和预算，选择 GPU ROAM-like 时显示旧式阈值和距离权重。
+**源码事实：** 统一 `TerrainLodSettings` 对 Classic、DOD 和 GPU ROAM-like 只暴露 `ScreenSpaceSplitThresholdPixels`、`ScreenSpaceMergeThresholdPixels` 与 `TriangleBudget`；旧式 `SplitThreshold/MergeThreshold/DistanceScale` 已从公共设置、renderer、UI 和 runtime benchmark schema 移除。三种 ROAM 在 UI 中共享同一组像素阈值与预算。
 
 ### 15.2 Classic 原生统计
 
@@ -803,11 +803,13 @@ TriangleCount = ActiveLeafCount
 
 ### 15.4 无窗口 benchmark
 
-**源码事实：** `--benchmark --algorithm classic|dod --profile smoke|standard [--csv path]` 直接创建 adapter，并为每个关键帧用 1280x720、60 度透视视图调用一次 `BuildRenderData`。Smoke 使用 129 高度图、6 个视点并开启 validator：`away` 与 `center` 位置相同但向上看，用于验证视锥；`far-return` 用于验证一次 Build 的向上级联合并；每帧还检查两种 CPU ROAM 的活动三角形不超过预算。Standard 使用 513 高度图、64 帧闭合路径并关闭 validator。
+**源码事实：** `--benchmark --algorithm classic|dod|gpu|all --profile smoke|standard [--csv path]` 为每个关键帧用 1280x720、60 度透视视图调用一次 `BuildRenderData`。Smoke 使用 129 高度图、6 个视点并开启 validator：`away` 与 `center` 位置相同但向上看，用于验证视锥；`far-return` 用于验证一次 Build 的向上级联合并。预算和 `away` 回收断言覆盖三个 ROAM 名称；无窗口 GPU 因缺少已初始化图形后端通常按 capability skip。Standard 使用 513 高度图、64 帧闭合路径并关闭 validator。
 
 证据：`src/benchmark/TerrainLodBenchmark.cpp`；符号：`BuildBenchmarkView`、`MakeScenario`、`RunBenchmark`；代码范围：第 157-229、423-464 行。
 
 **运行观察（2026-07-29，CPU ROAM 统一口径后的重编译产物）：** Classic 与 DOD smoke 六帧均 PASS，所有 topology issue 为 0；两者活动三角形都依次为 `far=7072`、`center=528`、`away=2`、`near-corner=2110`、`far-return=376`、`center-return=528`。`center -> away` 同位置从 528 降至 2，隔离验证了方向/视锥影响；所有帧低于 20000 预算。数值依赖当前地形和阈值，不是算法常量。
+
+**运行观察（2026-07-29，GPU 统一口径后的重编译产物）：** RTX 5090 D 上 OpenGL 4.3 与 D3D12 `--gpu-smoke-test` 均以退出码 0 通过；smoke 断言覆盖 GPU packet 非空、最终三角形不超过共享预算，以及 CPU DOD 持久拓扑三类 issue 为零。无窗口 benchmark 没有已初始化图形上下文，因此 GPU 按 capability gate skip；这里没有据此虚构 GPU 六视点三角形序列或独立拓扑 validator 结果。
 
 ### 15.5 运行时 benchmark
 
@@ -854,7 +856,7 @@ TriangleCount = ActiveLeafCount
 
 **根据实现推断：** 难点不是公式，而是 pointer-based 可变图：forced split 依赖邻居递归；一个 split 同时改多个节点的双向邻接；diamond merge 要原子地回收两侧 sibling pair；新节点分配和 priority queue 都有全局、数据相关顺序。这些写集合难以无冲突并行提交。
 
-**源码事实：** 项目的 DOD 版本已把字段拆为 SoA/index，并把 error evaluation、candidate marking、leaf collection 和部分 chunk interior commit 批处理；它与 Classic 共用完整方差、像素 SSE、视锥、硬预算和级联合并语义。GPU 版本仍先由 CPU DOD 生成持久拓扑真值，再做使用独立旧式评分的 GPU 快照/计算。这直接反映上述迁移边界。
+**源码事实：** 项目的 DOD 版本已把字段拆为 SoA/index，并把 error evaluation、candidate marking、leaf collection 和部分 chunk interior commit 批处理；它与 Classic 共用完整方差、像素 SSE、视锥、硬预算和级联合并语义。GPU 版本同样使用快照中的完整 `GeometricError`、像素 SSE、六平面视锥和剩余预算 token，但仍先由 CPU DOD 生成持久拓扑真值；GPU 只在当前快照上追加一轮 split-only、compaction、emit 和 indirect draw。这直接反映评分口径已统一、拓扑所有权尚未完全迁移的边界。
 
 ### 16.5 需要 profiler 才能确认
 
@@ -893,11 +895,11 @@ TriangleCount = ActiveLeafCount
 | 拓扑真值 | CPU Classic builder | CPU DOD state | 当前仍先由 CPU DOD 更新；GPU 有 split-only/compaction/emit 阶段 |
 | CPU Mesh | 是 | 是 | 否，返回 GPU buffer/indirect packet |
 | 跨帧拓扑 | 是 | 是 | CPU DOD 部分是；GPU frame resources 复用，但 GPU split 结果不回写 CPU 真值 |
-| error evaluation | 完整方差预计算；稳态串行像素 SSE + frustum，多次重算 | 相同完整方差与像素 SSE + frustum；批量并行并缓存 `ScreenErrors` | CPU 基线来自当前 DOD；GPU compute 仍使用独立旧式启发式 |
+| error evaluation | 完整方差预计算；稳态串行像素 SSE + frustum，多次重算 | 相同完整方差与像素 SSE + frustum；批量并行并缓存 `ScreenErrors` | 快照读取 DOD 完整 `GeometricError`；GLSL/HLSL 使用相同像素 SSE、显式双线性采样和六平面 frustum |
 | 邻接表达 | 指针 | 索引 | packed NodeRecord/index |
 | 并行适配性 | 较差 | 较好，按 pass/chunk 分解 | 计算/emit 适合 GPU；动态拓扑仍受限 |
 | merge | CPU diamond merge，动态 parent queue | CPU diamond merge；安全 chunk 并行预提交后动态 parent queue 同帧级联 | 能力标记为 true，但 D3D12 注释明确 GPU merge candidate 尚未提交；CPU DOD 基线仍 merge |
-| 活动三角形预算 | 串行 token 硬上限 | 原子 token 硬上限，覆盖并行 commit 与 forced closure | CPU DOD 快照受限；后续 GPU split-only 最终输出暂不保证同一上限 |
+| 活动三角形预算 | 串行 token 硬上限 | 原子 token 硬上限，覆盖并行 commit 与 forced closure | CPU 快照先占用预算；GPU 原子分配剩余 token，边界 split=1、diamond pair=2，最终输出受同一上限 |
 | 输出统计 | 统一 stats，worker=1 | 统一 stats + 多 pass/worker 内部统计 | 统一 CPU/GPU timing/resource stats |
 | 工程角色 | 对象式正确性/性能 baseline | 数据导向 CPU 对照 | 实验性 GPU 管线 |
 
@@ -1144,7 +1146,7 @@ MaxDepthReached = 1
 1. **源码事实：** `ComputeScreenErrorScore` 现在输出像素，但它使用 triangle center 的 view depth；名称没有错，精度层级应在注释中继续说明。
 2. **源码事实：** `CrackRiskCount` 注释与唯一写入点不一致；当前它等于 validator 发现的 T-junction 次数，而不是“最大深度修复失败”。
 3. **源码事实：** `RefineNode` 没有调用点，容易让读者误以为存在两条运行模式。应删除或明确标注 legacy/reference。
-4. **源码事实：** `DistanceScale` 仍存在统一 settings，但 Classic 已不消费；跨算法 UI/CSV 必须保留单位说明。
+4. **源码事实：** 三种 ROAM 已共用像素 SSE 和活动 leaf 预算；`DistanceScale` 已从活跃公共设置与报告 schema 移除。历史 benchmark 原始数据仍记录旧字段，不能与当前 `HEAD` 的三角形数量直接比较。
 5. **源码事实：** `Capabilities().SupportsMerge=true` 对 D3D12 GPU ROAM-like 容易造成误解；其 GPU merge candidate 尚未提交，能力实际来自 CPU DOD 基线。
 
 ### 22.2 静态阅读不能完全确认

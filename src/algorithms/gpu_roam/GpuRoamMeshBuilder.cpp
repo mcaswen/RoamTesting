@@ -12,7 +12,9 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstddef>
+#include <limits>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -34,6 +36,35 @@ struct GpuRoamUploadMetrics
 float ElapsedMilliseconds(Clock::time_point start, Clock::time_point end)
 {
     return std::chrono::duration<float, std::milli>(end - start).count();
+}
+
+std::size_t NormalizedTriangleBudget(const TerrainLodBuildInput& input)
+{
+    // 两个 root 是矩形地形完整覆盖所需的最小活动集合。
+    return std::max<std::size_t>(input.Settings.TriangleBudget, 2U);
+}
+
+std::uint32_t SaturateToUint32(std::size_t value)
+{
+    // GPU counter ABI 固定为 32 位，饱和转换避免超大宿主配置回绕成小预算。
+    return static_cast<std::uint32_t>(std::min<std::size_t>(
+        value,
+        std::numeric_limits<std::uint32_t>::max()));
+}
+
+std::size_t RemainingSplitBudget(const GpuRoamBufferSnapshot& snapshot, const TerrainLodBuildInput& input)
+{
+    // CPU DOD baseline 已消费的 leaf 与 GPU split-only pass 共用硬上限。
+    const std::size_t triangleBudget = NormalizedTriangleBudget(input);
+    return triangleBudget > snapshot.ActiveLeafIndices.size()
+        ? triangleBudget - snapshot.ActiveLeafIndices.size()
+        : 0U;
+}
+
+std::size_t AdditionalGpuSplitCapacity(const GpuRoamBufferSnapshot& snapshot, const TerrainLodBuildInput& input)
+{
+    // 一轮 pass 中每个输入 leaf 最多成功 split 一次。
+    return std::min(snapshot.ActiveLeafIndices.size(), RemainingSplitBudget(snapshot, input));
 }
 
 std::string BuildGpuStatusMessage(bool usesIndirectDraw)
@@ -250,6 +281,9 @@ bool ResolveTimingReadbackSlot(
         slot.BaseNodeCount + static_cast<std::size_t>(counters.SplitOnlyCommitCount) * 2U;
     if (counters.ActiveLeafCount != expectedActiveLeafCount ||
         counters.AllocatedNodeCount != expectedAllocatedNodeCount ||
+        static_cast<std::size_t>(counters.RemainingSplitBudget) +
+                static_cast<std::size_t>(counters.SplitOnlyCommitCount) !=
+            slot.InitialSplitBudget ||
         expectedActiveLeafCount > slot.ActiveLeafCapacity ||
         expectedAllocatedNodeCount > slot.NodeCapacity)
     {
@@ -326,7 +360,8 @@ bool GpuRoamMeshBuilder::Build(
     std::string* errorMessage)
 {
     // 最坏情况下每个输入叶节点成功一次 split，因此节点池额外预留两个节点
-    const std::size_t gpuNodeCapacity = snapshot.Nodes.size() + snapshot.ActiveLeafIndices.size() * 2U;
+    const std::size_t gpuNodeCapacity =
+        snapshot.Nodes.size() + AdditionalGpuSplitCapacity(snapshot, input) * 2U;
     std::size_t uploadBytes = 0U;
     float cpuUploadMilliseconds = 0.0F;
     float bufferAllocationMilliseconds = 0.0F;
@@ -385,6 +420,7 @@ bool GpuRoamMeshBuilder::Build(
         inOutStats.ActiveNodeCount = std::max(inOutStats.ActiveNodeCount, gpuNodeCount);
         inOutStats.SplitCount += gpuSplitOnlyCommitCount;
     }
+    inOutStats.BudgetRejectedSplitCount += _state.LastCompletedCounters.BudgetRejectedSplitCount;
 
     const Platform::OpenGlGpuCapabilities gpuCapabilities = Platform::QueryOpenGlGpuCapabilities();
     // 间接绘制不可用时仍复用 GPU 生成的 VBO 和 IBO，由 CPU 提供 draw count
@@ -491,10 +527,12 @@ bool GpuRoamMeshBuilder::RunGpuComputePipeline(
 
     const std::size_t nodeCount = snapshot.Nodes.size();
     const std::size_t activeLeafCount = snapshot.ActiveLeafIndices.size();
-    // split-only 每个候选最多追加两个节点，容量模型必须与 shader 的分配步长一致
-    const std::size_t nodeCapacity = nodeCount + activeLeafCount * 2U;
-    // 每个成功 split 让活动叶净增一个，因此两倍输入叶数量足够容纳最坏情况
-    const std::size_t activeLeafCapacity = std::max<std::size_t>(activeLeafCount * 2U, activeLeafCount);
+    const std::size_t remainingSplitBudget = RemainingSplitBudget(snapshot, input);
+    const std::size_t additionalSplitCapacity = AdditionalGpuSplitCapacity(snapshot, input);
+    // 每次成功 split 净增一个活动 leaf，并追加两个节点；容量只为统一预算内的提交预留。
+    // 预算耗尽时两种容量都退化为 CPU 快照的实际工作集。
+    const std::size_t nodeCapacity = nodeCount + additionalSplitCapacity * 2U;
+    const std::size_t activeLeafCapacity = activeLeafCount + additionalSplitCapacity;
     // 误差数组按输入活动叶索引寻址，不按完整节点池寻址
     const std::size_t screenErrorBytes = activeLeafCount * sizeof(float);
     // 候选缓冲按节点索引存储，至少分配一个元素以满足 OpenGL 资源规则
@@ -524,7 +562,9 @@ bool GpuRoamMeshBuilder::RunGpuComputePipeline(
 
     GpuRoamCounters zeroCounters{};
     // 节点池尾指针从 CPU 快照末尾开始，shader 只在该位置之后追加节点
-    zeroCounters.AllocatedNodeCount = static_cast<std::uint32_t>(nodeCount);
+    zeroCounters.AllocatedNodeCount = SaturateToUint32(nodeCount);
+    // counter 中的 token 会被所有并发 split invocation 原子共享。
+    zeroCounters.RemainingSplitBudget = SaturateToUint32(remainingSplitBudget);
     // 所有 pass 输出在 dispatch 前一次性扩容，执行期间不允许资源对象发生变化
     if (!EnsureBufferCapacity(
             GL_SHADER_STORAGE_BUFFER,
@@ -610,8 +650,13 @@ bool GpuRoamMeshBuilder::RunGpuComputePipeline(
     errorInput.ActiveLeafCount = activeLeafCount;
     errorInput.TerrainSize = input.Settings.TerrainSize;
     errorInput.HeightScale = input.Settings.HeightScale;
-    errorInput.DistanceScale = input.Settings.DistanceScale;
-    errorInput.CameraPosition = input.View.CameraPosition;
+    errorInput.View = input.View.View;
+    errorInput.FrustumPlanes = input.View.FrustumPlanes;
+    // projection Y 项和 drawable height 共同决定每个世界单位覆盖的像素数。
+    errorInput.ProjectionScaleY = std::abs(input.View.Projection[1][1]);
+    errorInput.DrawableHeight = std::max(input.View.DrawableHeight, 1U);
+    errorInput.IsOrthographic =
+        std::abs(input.View.Projection[3][3] - 1.0F) <= std::numeric_limits<float>::epsilon();
     RunGpuRoamErrorEvaluationPass(errorInput);
 
     // 候选 pass 读取同一活动叶顺序，使 screen error 与叶索引一一对应
@@ -629,11 +674,14 @@ bool GpuRoamMeshBuilder::RunGpuComputePipeline(
     candidateInput.MaxDepth = input.Settings.MaxDepth;
     candidateInput.TerrainSize = input.Settings.TerrainSize;
     candidateInput.HeightScale = input.Settings.HeightScale;
-    candidateInput.DistanceScale = input.Settings.DistanceScale;
-    candidateInput.SplitThreshold = input.Settings.SplitThreshold;
-    // merge 目前只输出统计候选，仍保持与 CPU 基线相同的阈值输入
-    candidateInput.MergeThreshold = input.Settings.MergeThreshold;
-    candidateInput.CameraPosition = input.View.CameraPosition;
+    candidateInput.SplitThreshold = input.Settings.ScreenSpaceSplitThresholdPixels;
+    // merge 只输出 GPU 统计；真正的动态级联合并已在本帧 DOD baseline 中提交。
+    candidateInput.MergeThreshold = input.Settings.ScreenSpaceMergeThresholdPixels;
+    candidateInput.View = input.View.View;
+    candidateInput.FrustumPlanes = input.View.FrustumPlanes;
+    candidateInput.ProjectionScaleY = errorInput.ProjectionScaleY;
+    candidateInput.DrawableHeight = errorInput.DrawableHeight;
+    candidateInput.IsOrthographic = errorInput.IsOrthographic;
     RunGpuRoamCandidateMarkingPass(candidateInput);
 
     // 拓扑 pass 通过原子锁和容量检查提交一轮兼容成对分裂
@@ -696,6 +744,7 @@ bool GpuRoamMeshBuilder::RunGpuComputePipeline(
     slot.BaseNodeCount = nodeCount;
     slot.ActiveLeafCapacity = activeLeafCapacity;
     slot.NodeCapacity = nodeCapacity;
+    slot.InitialSplitBudget = SaturateToUint32(remainingSplitBudget);
     slot.Pending = true;
     // 轮转槽位让 GPU 有多个帧间隔完成 query 和 counter 写入
     _state.TimingReadbackCursor = (_state.TimingReadbackCursor + 1U) % GpuRoamTimingReadbackSlotCount;

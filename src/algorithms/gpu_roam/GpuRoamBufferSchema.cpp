@@ -71,6 +71,7 @@ GpuRoamBufferSnapshot BuildGpuRoamBufferSnapshot(
 
         target.DomainCAndErrors[0] = source.Domain.C.x;
         target.DomainCAndErrors[1] = source.Domain.C.y;
+        // 该值已经是完整方差子树的最大误差，不是节点局部四点误差。
         target.DomainCAndErrors[2] = source.GeometricError;
         target.DomainCAndErrors[3] = source.ScreenError;
 

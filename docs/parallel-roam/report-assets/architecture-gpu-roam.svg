@@ -81,17 +81,17 @@
 
   <rect x="615" y="544" width="390" height="54" rx="8" class="gpu"/>
   <text x="810" y="566" text-anchor="middle" class="code">Screen error evaluation pass</text>
-  <text x="810" y="586" text-anchor="middle" class="caption">并行计算叶节点 screen error</text>
+  <text x="810" y="586" text-anchor="middle" class="caption">完整方差 + 像素 SSE + 六平面视锥</text>
   <path d="M810 598 L810 618" class="line"/>
 
   <rect x="615" y="618" width="390" height="54" rx="8" class="gpu"/>
   <text x="810" y="640" text-anchor="middle" class="code">Candidate marking pass</text>
-  <text x="810" y="660" text-anchor="middle" class="caption">标记 split / merge 候选并写计数器</text>
+  <text x="810" y="660" text-anchor="middle" class="caption">共享像素阈值标记 split / merge 候选</text>
   <path d="M810 672 L810 692" class="line"/>
 
   <rect x="615" y="692" width="390" height="54" rx="8" class="gpu"/>
   <text x="810" y="714" text-anchor="middle" class="code">Split-only topology pass</text>
-  <text x="810" y="734" text-anchor="middle" class="caption">实验性提交 GPU split 候选</text>
+  <text x="810" y="734" text-anchor="middle" class="caption">剩余预算原子 token 提交 split-only</text>
   <path d="M810 746 L810 766" class="line"/>
 
   <rect x="615" y="766" width="390" height="54" rx="8" class="gpu"/>

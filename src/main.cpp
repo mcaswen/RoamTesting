@@ -220,43 +220,38 @@ int main(int argc, char** argv)
             continue;
         }
 
-        if (argument == "--runtime-benchmark-split-threshold")
+        if (argument == "--runtime-benchmark-split-pixels" ||
+            argument == "--runtime-benchmark-split-threshold")
         {
             float value = 0.0F;
             if (!parseFloatOption(index, argument, value))
             {
                 break;
             }
-            runtimeBenchmarkOverrides.HasSplitThreshold = true;
-            runtimeBenchmarkOverrides.SplitThreshold = value;
+            runtimeBenchmarkOverrides.HasScreenSpaceSplitThresholdPixels = true;
+            runtimeBenchmarkOverrides.ScreenSpaceSplitThresholdPixels = value;
             hasRuntimeBenchmarkOverrides = true;
             continue;
         }
 
-        if (argument == "--runtime-benchmark-merge-threshold")
+        if (argument == "--runtime-benchmark-merge-pixels" ||
+            argument == "--runtime-benchmark-merge-threshold")
         {
             float value = 0.0F;
             if (!parseFloatOption(index, argument, value))
             {
                 break;
             }
-            runtimeBenchmarkOverrides.HasMergeThreshold = true;
-            runtimeBenchmarkOverrides.MergeThreshold = value;
+            runtimeBenchmarkOverrides.HasScreenSpaceMergeThresholdPixels = true;
+            runtimeBenchmarkOverrides.ScreenSpaceMergeThresholdPixels = value;
             hasRuntimeBenchmarkOverrides = true;
             continue;
         }
 
         if (argument == "--runtime-benchmark-distance-scale")
         {
-            float value = 0.0F;
-            if (!parseFloatOption(index, argument, value))
-            {
-                break;
-            }
-            runtimeBenchmarkOverrides.HasDistanceScale = true;
-            runtimeBenchmarkOverrides.DistanceScale = value;
-            hasRuntimeBenchmarkOverrides = true;
-            continue;
+            parseError = "--runtime-benchmark-distance-scale was removed; ROAM now uses pixel screen-space error";
+            break;
         }
 
         if (argument == "--runtime-benchmark-duration")

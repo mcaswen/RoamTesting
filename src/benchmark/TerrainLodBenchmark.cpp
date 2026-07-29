@@ -197,12 +197,9 @@ BenchmarkScenario MakeScenario(BenchmarkProfile profile)
     scenario.Settings.TerrainSize = 30.0F;
     scenario.Settings.HeightScale = 4.0F;
     scenario.Settings.MaxDepth = 14;
-    scenario.Settings.SplitThreshold = 0.04F;
-    scenario.Settings.MergeThreshold = 0.02F;
     scenario.Settings.ScreenSpaceSplitThresholdPixels = 4.0F;
     scenario.Settings.ScreenSpaceMergeThresholdPixels = 2.0F;
     scenario.Settings.TriangleBudget = 20000U;
-    scenario.Settings.DistanceScale = 24.0F;
     scenario.Settings.EnableLocalConstraints = true;
 
     if (profile == BenchmarkProfile::Smoke)
@@ -356,17 +353,19 @@ bool ValidateRunShape(const BenchmarkScenario& scenario, std::vector<BenchmarkFr
     if (scenario.RequireNearDetailIncrease && frames.size() >= 4U)
     {
         const std::size_t farTriangles = frames[0].TriangleCount;
-        const bool frustumAwareCpuRoam =
+        const bool frustumAwareRoam =
             frames[0].AlgorithmName == "classic_cpu_roam" ||
-            frames[0].AlgorithmName == "data_oriented_cpu_roam";
+            frames[0].AlgorithmName == "data_oriented_cpu_roam" ||
+            frames[0].AlgorithmName == "gpu_roam_like" ||
+            frames[0].AlgorithmName == "d3d12_gpu_roam_like";
         // 视锥感知后，近景只覆盖小块地形，总三角形数可以低于能看到全图的远景
-        const bool centerHasMoreDetail = frustumAwareCpuRoam
+        const bool centerHasMoreDetail = frustumAwareRoam
             ? frames[1].Stats.MaxActiveDepth == scenario.Settings.MaxDepth
             : frames[1].TriangleCount > farTriangles * 2U;
-        const bool cornerHasMoreDetail = frustumAwareCpuRoam
+        const bool cornerHasMoreDetail = frustumAwareRoam
             ? frames[3].Stats.MaxActiveDepth == scenario.Settings.MaxDepth
             : frames[3].TriangleCount > farTriangles * 2U;
-        const bool returnHasMoreDetail = frustumAwareCpuRoam
+        const bool returnHasMoreDetail = frustumAwareRoam
             ? frames.back().Stats.MaxActiveDepth == scenario.Settings.MaxDepth
             : frames.back().TriangleCount > farTriangles * 2U;
         frames[1].Passed = frames[1].Passed && centerHasMoreDetail;
@@ -456,13 +455,14 @@ BenchmarkAlgorithmRun RunAlgorithm(
         // BuildWallMilliseconds 包括接口调用外层开销
         // Stats.CpuUpdateMilliseconds 则由算法自己报告
         frame.BuildWallMilliseconds = std::chrono::duration<float, std::milli>(end - start).count();
-        const bool usesCpuRoamBudget =
+        const bool usesRoamBudget =
             selection == BenchmarkAlgorithmSelection::Classic ||
-            selection == BenchmarkAlgorithmSelection::DataOriented;
+            selection == BenchmarkAlgorithmSelection::DataOriented ||
+            selection == BenchmarkAlgorithmSelection::Gpu;
         frame.Passed = ValidateFrame(scenario, renderPacket, stats, buildSucceeded) &&
-            (!usesCpuRoamBudget ||
+            (!usesRoamBudget ||
              stats.ActiveTriangleCount <= scenario.Settings.TriangleBudget);
-        if (usesCpuRoamBudget && camera.Name == "away" && !run.Frames.empty())
+        if (usesRoamBudget && camera.Name == "away" && !run.Frames.empty())
         {
             // 同一位置转向后背离地形，视锥感知应在单次 Build 中回收活动拓扑
             frame.Passed = frame.Passed && frame.TriangleCount < run.Frames.back().TriangleCount;
@@ -586,7 +586,7 @@ bool WriteCsv(
     // 表头覆盖三类算法的共同统计字段
     // GPU 字段现在可为 0，后续实现后不需要改 CSV 契约
     csv << "profile,algorithm,frameIndex,timeSeconds,cameraName,cameraX,cameraY,cameraZ,"
-           "heightMapWidth,heightMapHeight,terrainSize,heightScale,maxDepth,splitThreshold,mergeThreshold,"
+           "heightMapWidth,heightMapHeight,terrainSize,heightScale,maxDepth,"
            "screenSpaceSplitThresholdPixels,screenSpaceMergeThresholdPixels,triangleBudget,"
            "activeTriangleCount,activeNodeCount,splitCount,forcedSplitCount,mergeCount,candidatePeakCount,"
            "budgetRejectedSplitCount,"
@@ -621,8 +621,6 @@ bool WriteCsv(
                 << scenario.Settings.TerrainSize << ','
                 << scenario.Settings.HeightScale << ','
                 << scenario.Settings.MaxDepth << ','
-                << scenario.Settings.SplitThreshold << ','
-                << scenario.Settings.MergeThreshold << ','
                 << scenario.Settings.ScreenSpaceSplitThresholdPixels << ','
                 << scenario.Settings.ScreenSpaceMergeThresholdPixels << ','
                 << scenario.Settings.TriangleBudget << ','
@@ -730,8 +728,6 @@ int RunTerrainLodBenchmark(const BenchmarkOptions& options)
               << " heightmap=" << scenario.HeightMapPath
               << " frames=" << scenario.CameraPath.size()
               << " maxDepth=" << scenario.Settings.MaxDepth
-              << " splitThreshold=" << scenario.Settings.SplitThreshold
-              << " mergeThreshold=" << scenario.Settings.MergeThreshold
               << " screenSpaceSplitPixels=" << scenario.Settings.ScreenSpaceSplitThresholdPixels
               << " screenSpaceMergePixels=" << scenario.Settings.ScreenSpaceMergeThresholdPixels
               << " triangleBudget=" << scenario.Settings.TriangleBudget

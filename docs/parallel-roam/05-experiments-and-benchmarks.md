@@ -46,7 +46,7 @@ Debug View 的价值不只是展示效果，也用于定位算法问题。比如
 
 > 当前边界：本实验继续用于 Classic CPU、Data-Oriented CPU 和 GPU ROAM-like 的成熟路径对比。CBT 2024 在完整 split/merge、高度图几何和统计接入完成前只运行专用正确性验证，不进入本表性能排名。
 
-> CPU ROAM 口径更新（2026-07-29）：Classic 与 DOD 都使用完整方差树、像素 SSE、六平面视锥感知、活动 leaf 硬预算和单 Build 级联合并。GPU ROAM-like 的原生 compute split 仍使用 unitless threshold 与 `DistanceScale`，因此 GPU 与 CPU ROAM 的相同数值阈值不代表相同质量；跨评分器比较必须使用最终网格的公共离线质量指标或匹配活动三角形数。
+> ROAM 口径更新（2026-07-29）：Classic、DOD 和 GPU ROAM-like 共享完整方差、像素 SSE、六平面视锥感知和活动 leaf 硬预算。GPU 路径的持久拓扑仍由 CPU DOD 更新；原生 compute 只在快照上追加一轮 split-only，GPU merge candidate 尚不提交，GPU 新 child 也不写回下一帧 CPU 真值。因此内部评分单位已经对齐，但跨架构质量结论仍应使用最终网格的公共离线指标。
 
 统一控制变量：
 
@@ -54,13 +54,13 @@ Debug View 的价值不只是展示效果，也用于定位算法问题。比如
 - 同一 Height Map
 - 同一 terrain size
 - 同一 max depth
-- 各算法记录自己的评分器、阈值数值和单位
+- 三种 ROAM 使用同一像素 split/merge 阈值；其他算法记录自己的评分器与单位
 - 同一相机路径
 - 同一渲染分辨率
 - 同一活动三角形预算或离线质量目标
 ```
 
-Classic 与 DOD 的 `TriangleBudget` 都是活动 leaf 硬上限，forced split 也消费同一预算；DOD 的并行 chunk commit 使用原子 token 保证不越界。GPU ROAM-like 会在 DOD CPU 快照后执行额外 GPU split-only pass，目前最终 GPU 输出不受同一硬预算语义约束。固定预算实验可以直接比较两个 CPU ROAM；纳入 GPU 时仍应在实验驱动层匹配最终 `ActiveTriangleCount`。
+三种 ROAM 的 `TriangleBudget` 都是最终活动 leaf 硬上限。Classic/DOD 的 requested、forced 和并行 chunk split 消费同一预算；GPU ROAM-like 先扣除 CPU DOD 快照已占用的 leaf，再由 compute counter 原子分配剩余 token：外边界单 split 消费 1，diamond pair 消费 2，提交失败时归还。该 GPU pass 按候选 append 顺序竞争 token，不是全局误差 Top-K；固定预算能直接约束资源上限，但不代表三种实现做出了相同的全局预算分配。
 
 主要对比指标：
 
@@ -130,9 +130,6 @@ mode
 terrainName
 heightMapSize
 maxDepth
-splitThreshold
-mergeThreshold
-thresholdUnit
 screenSpaceSplitThresholdPixels
 screenSpaceMergeThresholdPixels
 triangleBudget
@@ -164,7 +161,7 @@ cpuGpuReadbackBytes
 
 `cpuUtilizationPercent` 使用进程 CPU time / build wall time 的口径，单个逻辑核心满载约为 100%，多线程算法可以超过 100%。
 
-无窗口 Classic/DOD smoke 都包含 `center -> away` 同位置转向和 `far-return` 关键帧，并检查活动 leaf 不超过预算，用于回归视锥感知、单 Build 级联合并和并行预算安全；这类正确性帧不替代 30-60 秒 runtime 性能采样。
+统一 benchmark harness 对 Classic、DOD 和 GPU 名称都应用预算与 `center -> away` 视锥回收断言；无窗口模式因没有图形上下文通常跳过 GPU。应用级 `--gpu-smoke-test` 在 OpenGL 和 D3D12 上分别验证 GPU packet 非空、最终三角形不超预算，并检查 CPU DOD 持久拓扑的三类 issue 为零。这类正确性验证不替代 30-60 秒 runtime 性能采样。
 
 ## 结论写法
 

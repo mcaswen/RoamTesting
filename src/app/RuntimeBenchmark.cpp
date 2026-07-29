@@ -217,8 +217,8 @@ void WriteDetailedCsv(
     // 配置字段放在时间序列前，方便按高度图和参数筛选
     csv << "algorithm,buildConfiguration,graphicsBackend,graphicsAdapter,graphicsVersion,vSyncEnabled,"
         << "heightMapPath,heightMapWidth,heightMapHeight,terrainSize,heightScale,"
-        << "maxDepthSetting,splitThreshold,mergeThreshold,screenSpaceSplitThresholdPixels,"
-        << "screenSpaceMergeThresholdPixels,triangleBudget,distanceScale,"
+        << "maxDepthSetting,screenSpaceSplitThresholdPixels,"
+        << "screenSpaceMergeThresholdPixels,triangleBudget,"
         << "timeSeconds,cameraX,cameraY,cameraZ,frameMilliseconds,triangles,nodes,"
         << "activeSplits,splits,forcedSplits,merges,candidatePeak,budgetRejectedSplits,tjunctions,invalidNeighbors,"
         << "invalidTopology,cpuWorkers,cpuUtilizationPercent,lodTotalMilliseconds,"
@@ -248,12 +248,9 @@ void WriteDetailedCsv(
                 << stats.TerrainSize << ','
                 << stats.HeightScale << ','
                 << stats.RoamMaxDepthSetting << ','
-                << stats.RoamSplitThreshold << ','
-                << stats.RoamMergeThreshold << ','
-                << stats.CpuRoamScreenSpaceSplitThresholdPixels << ','
-                << stats.CpuRoamScreenSpaceMergeThresholdPixels << ','
+                << stats.RoamScreenSpaceSplitThresholdPixels << ','
+                << stats.RoamScreenSpaceMergeThresholdPixels << ','
                 << stats.RoamTriangleBudgetSetting << ','
-                << stats.RoamDistanceScale << ','
                 << sample.TimeSeconds << ','
                 << sample.CameraPosition.x << ','
                 << sample.CameraPosition.y << ','
@@ -337,13 +334,10 @@ void WriteSummaryMarkdown(
         markdown << "- Terrain size: " << stats->TerrainSize << "\n";
         markdown << "- Height scale: " << stats->HeightScale << "\n";
         markdown << "- Max depth setting: " << stats->RoamMaxDepthSetting << "\n";
-        markdown << "- Distance scale: " << stats->RoamDistanceScale << "\n";
-        markdown << "- Split/Merge thresholds: "
-                 << stats->RoamSplitThreshold << " / " << stats->RoamMergeThreshold << "\n";
-        markdown << "- CPU ROAM screen-space split/merge thresholds: "
-                 << stats->CpuRoamScreenSpaceSplitThresholdPixels << " px / "
-                 << stats->CpuRoamScreenSpaceMergeThresholdPixels << " px\n";
-        markdown << "- CPU ROAM triangle budget: " << stats->RoamTriangleBudgetSetting << "\n\n";
+        markdown << "- ROAM screen-space split/merge thresholds: "
+                 << stats->RoamScreenSpaceSplitThresholdPixels << " px / "
+                 << stats->RoamScreenSpaceMergeThresholdPixels << " px\n";
+        markdown << "- ROAM triangle budget: " << stats->RoamTriangleBudgetSetting << "\n\n";
     }
     markdown << "| Algorithm | Samples | Avg Frame ms | Max Frame ms | Avg LOD ms | Max LOD ms | "
              << "Avg CPU Update ms | Avg CPU Upload ms | Avg GPU ms | Max GPU ms | "

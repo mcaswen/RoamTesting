@@ -82,12 +82,9 @@ Render::TerrainRenderSettings ToRenderSettings(const Gui::TerrainPanelState& sta
     settings.UseTerrainLod = state.UseTerrainLod;
     settings.TerrainLodAlgorithm = state.TerrainLodAlgorithm;
     settings.RoamMaxDepth = state.RoamMaxDepth;
-    settings.RoamSplitThreshold = state.RoamSplitThreshold;
-    settings.RoamMergeThreshold = state.RoamMergeThreshold;
-    settings.CpuRoamScreenSpaceSplitThresholdPixels = state.CpuRoamScreenSpaceSplitThresholdPixels;
-    settings.CpuRoamScreenSpaceMergeThresholdPixels = state.CpuRoamScreenSpaceMergeThresholdPixels;
+    settings.RoamScreenSpaceSplitThresholdPixels = state.RoamScreenSpaceSplitThresholdPixels;
+    settings.RoamScreenSpaceMergeThresholdPixels = state.RoamScreenSpaceMergeThresholdPixels;
     settings.RoamTriangleBudget = static_cast<std::size_t>(std::max(state.RoamTriangleBudget, 2));
-    settings.RoamDistanceScale = state.RoamDistanceScale;
     settings.RoamEnableLocalConstraints = state.RoamEnableLocalConstraints;
     settings.RoamEnableTopologyValidation = state.RoamEnableTopologyValidation;
     settings.LightDirection = state.LightDirection;
@@ -423,6 +420,21 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
     }
 
     const Render::TerrainRenderStats terrainStats = _terrainRenderer.Stats();
+    if (_terrainLodSmokeTestEnabled &&
+        terrainStats.TerrainLodAlgorithm == Algorithms::TerrainLodAlgorithmId::GpuRoamLike)
+    {
+        // GPU smoke 同时验证共享 hard budget 和 CPU DOD baseline 的拓扑契约。
+        const std::size_t topologyIssueCount =
+            terrainStats.RoamTjunctionCount +
+            terrainStats.RoamInvalidNeighborCount +
+            terrainStats.RoamInvalidTopologyCount;
+        if (terrainStats.TriangleCount == 0U ||
+            terrainStats.TriangleCount > _terrainSettings.RoamTriangleBudget ||
+            topologyIssueCount != 0U)
+        {
+            _terrainLodSmokeTestFailed = true;
+        }
+    }
     Gui::DebugOverlayData debugData{};
     debugData.FramesPerSecond = _framesPerSecond;
     debugData.FrameTimeMilliseconds = _frameTimeMilliseconds;
@@ -582,19 +594,16 @@ void Application::ApplyPendingRuntimeBenchmarkOverrides()
         _terrainPanelState.RoamMaxDepth = std::clamp(overrides.MaxDepth, 1, 20);
     }
 
-    if (overrides.HasSplitThreshold)
+    if (overrides.HasScreenSpaceSplitThresholdPixels)
     {
-        _terrainPanelState.RoamSplitThreshold = std::clamp(overrides.SplitThreshold, 0.005F, 1.0F);
+        _terrainPanelState.RoamScreenSpaceSplitThresholdPixels =
+            std::clamp(overrides.ScreenSpaceSplitThresholdPixels, 0.25F, 32.0F);
     }
 
-    if (overrides.HasMergeThreshold)
+    if (overrides.HasScreenSpaceMergeThresholdPixels)
     {
-        _terrainPanelState.RoamMergeThreshold = std::clamp(overrides.MergeThreshold, 0.001F, 1.0F);
-    }
-
-    if (overrides.HasDistanceScale)
-    {
-        _terrainPanelState.RoamDistanceScale = std::clamp(overrides.DistanceScale, 1.0F, 80.0F);
+        _terrainPanelState.RoamScreenSpaceMergeThresholdPixels =
+            std::clamp(overrides.ScreenSpaceMergeThresholdPixels, 0.1F, 32.0F);
     }
 
     if (overrides.HasDurationSeconds)
@@ -602,8 +611,9 @@ void Application::ApplyPendingRuntimeBenchmarkOverrides()
         _runtimeBenchmark.DurationSeconds = std::max(0.1F, overrides.DurationSeconds);
     }
 
-    _terrainPanelState.RoamMergeThreshold =
-        std::min(_terrainPanelState.RoamMergeThreshold, _terrainPanelState.RoamSplitThreshold);
+    _terrainPanelState.RoamScreenSpaceMergeThresholdPixels = std::min(
+        _terrainPanelState.RoamScreenSpaceMergeThresholdPixels,
+        _terrainPanelState.RoamScreenSpaceSplitThresholdPixels);
 
     if (_initialized)
     {

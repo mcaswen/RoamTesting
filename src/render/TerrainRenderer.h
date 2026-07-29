@@ -58,16 +58,10 @@ struct TerrainRenderSettings
     Algorithms::TerrainLodAlgorithmId TerrainLodAlgorithm{Algorithms::TerrainLodAlgorithmId::ClassicCpuRoam};
     int RoamMaxDepth{14};
 
-    // SplitThreshold 是进入细分的高水位阈值
-    float RoamSplitThreshold{0.04F};
-
-    // MergeThreshold 是回落粗网格的低水位阈值
-    float RoamMergeThreshold{0.02F};
-    // 两种 CPU ROAM 共享像素误差阈值；GPU ROAM-like 仍使用其原生评分参数
-    float CpuRoamScreenSpaceSplitThresholdPixels{4.0F};
-    float CpuRoamScreenSpaceMergeThresholdPixels{2.0F};
+    // Classic、DOD 和 GPU ROAM-like 共享像素误差阈值与活动 leaf 预算。
+    float RoamScreenSpaceSplitThresholdPixels{4.0F};
+    float RoamScreenSpaceMergeThresholdPixels{2.0F};
     std::size_t RoamTriangleBudget{20000U};
-    float RoamDistanceScale{24.0F};
 
     // 局部约束只做 baseNeighbor forced split，不执行全局 repair
     bool RoamEnableLocalConstraints{true};
@@ -105,12 +99,9 @@ struct TerrainRenderStats
 
     // setting 字段来自 UI 快照，不与算法实际达到的状态混用
     int RoamMaxDepthSetting{0};
-    float RoamSplitThreshold{0.0F};
-    float RoamMergeThreshold{0.0F};
-    float CpuRoamScreenSpaceSplitThresholdPixels{0.0F};
-    float CpuRoamScreenSpaceMergeThresholdPixels{0.0F};
+    float RoamScreenSpaceSplitThresholdPixels{0.0F};
+    float RoamScreenSpaceMergeThresholdPixels{0.0F};
     std::size_t RoamTriangleBudgetSetting{0U};
-    float RoamDistanceScale{0.0F};
     std::size_t RoamNodeCount{0};
 
     // 三类活动叶用于区分保留、细分和本帧重建的几何来源

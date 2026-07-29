@@ -166,13 +166,10 @@ struct TerrainPanelState
     Algorithms::TerrainLodAlgorithmId TerrainLodAlgorithm{Algorithms::TerrainLodAlgorithmId::ClassicCpuRoam};
     int RoamMaxDepth{14};
 
-    // Split 和 Merge 使用双阈值减少相机移动时的抖动
-    float RoamSplitThreshold{0.04F};
-    float RoamMergeThreshold{0.02F};
-    float CpuRoamScreenSpaceSplitThresholdPixels{4.0F};
-    float CpuRoamScreenSpaceMergeThresholdPixels{2.0F};
+    // 三种 ROAM 使用同一组像素双阈值减少相机移动时的抖动。
+    float RoamScreenSpaceSplitThresholdPixels{4.0F};
+    float RoamScreenSpaceMergeThresholdPixels{2.0F};
     int RoamTriangleBudget{20000};
-    float RoamDistanceScale{24.0F};
 
     // 局部约束是 ROAM 消除裂缝的默认路径
     bool RoamEnableLocalConstraints{true};

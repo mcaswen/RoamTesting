@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -40,9 +41,11 @@ struct GpuCounters
     std::uint32_t ActiveLeafCount{0};
     std::uint32_t SplitCandidateCount{0};
     std::uint32_t MergeCandidateCount{0};
-    std::uint32_t Reserved{0};
+    std::uint32_t RemainingSplitBudget{0};
     std::uint32_t SplitOnlyCommitCount{0};
     std::uint32_t AllocatedNodeCount{0};
+    std::uint32_t BudgetRejectedSplitCount{0};
+    std::uint32_t Reserved{0};
 };
 
 /// <summary>
@@ -60,17 +63,24 @@ struct GpuConstants
     std::uint32_t BuildSequenceHigh{0};
     std::uint32_t HeightMapWidth{0};
     std::uint32_t HeightMapHeight{0};
-    // 地形参数和 split merge 阈值与统一算法设置保持一致
+    // 地形参数和像素阈值与统一算法设置保持一致
     float TerrainSize{0.0F};
     float HeightScale{0.0F};
-    float DistanceScale{0.0F};
     float SplitThreshold{0.0F};
     float MergeThreshold{0.0F};
-    glm::vec3 CameraPosition{0.0F};
+    std::uint32_t TriangleBudget{2U};
+    std::uint32_t DrawableHeight{1U};
+    float ProjectionScaleY{1.0F};
+    std::uint32_t IsOrthographic{0U};
+    glm::mat4 View{1.0F};
+    std::array<glm::vec4, 6U> FrustumPlanes{};
 };
 
 // 锁定 CPU 回读布局和共享顶点布局，防止着色器侧索引错位
-static_assert(sizeof(GpuCounters) == 24U);
+static_assert(sizeof(GpuCounters) == 32U);
+static_assert(sizeof(GpuConstants) <= ConstantBufferBytes);
+static_assert(offsetof(GpuConstants, View) == 64U);
+static_assert(offsetof(GpuConstants, FrustumPlanes) == 128U);
 static_assert(sizeof(Terrain::TerrainMeshVertex) == 13U * sizeof(float));
 
 /// <summary>
@@ -187,11 +197,36 @@ std::uint32_t High32(std::uint64_t value)
     return static_cast<std::uint32_t>(value >> 32U);
 }
 
+std::size_t NormalizedTriangleBudget(const TerrainLodBuildInput& input)
+{
+    return std::max<std::size_t>(input.Settings.TriangleBudget, 2U);
+}
+
+std::uint32_t SaturateToUint32(std::size_t value)
+{
+    // HLSL 常量和 counter 都是 uint，不能让 64 位 size_t 静默截断。
+    return static_cast<std::uint32_t>(std::min<std::size_t>(
+        value,
+        std::numeric_limits<std::uint32_t>::max()));
+}
+
+std::size_t RemainingSplitBudget(const GpuRoamBufferSnapshot& snapshot, const TerrainLodBuildInput& input)
+{
+    const std::size_t triangleBudget = NormalizedTriangleBudget(input);
+    return triangleBudget > snapshot.ActiveLeafIndices.size()
+        ? triangleBudget - snapshot.ActiveLeafIndices.size()
+        : 0U;
+}
+
+std::size_t AdditionalGpuSplitCapacity(const GpuRoamBufferSnapshot& snapshot, const TerrainLodBuildInput& input)
+{
+    return std::min(snapshot.ActiveLeafIndices.size(), RemainingSplitBudget(snapshot, input));
+}
+
 DataOrientedRoam::DataOrientedRoamSettings ToDataSettings(const TerrainLodSettings& settings)
 {
     DataOrientedRoam::DataOrientedRoamSettings result{};
-    // CPU topology baseline follows the shared CPU ROAM pixel-SSE and budget contract.
-    // D3D12 compute constants below intentionally retain the native GPU scoring fields.
+    // CPU 持久拓扑与后续 GPU compute pass 使用同一像素 SSE、视锥和预算口径。
     result.MaxDepth = settings.MaxDepth;
     result.SplitThreshold = settings.ScreenSpaceSplitThresholdPixels;
     result.MergeThreshold = settings.ScreenSpaceMergeThresholdPixels;
@@ -786,12 +821,14 @@ void ReadCompletedResults(D3D12GpuRoamState& state, std::uint32_t frameIndex, Te
     frame.PendingReadback = false;
     stats.GpuComputeMilliseconds = state.LastGpuMilliseconds;
     stats.CpuGpuReadbackBytes = sizeof(GpuCounters) + 2U * sizeof(std::uint64_t);
+    stats.BudgetRejectedSplitCount += state.LastCounters.BudgetRejectedSplitCount;
 }
 
 void UploadSnapshot(
     ID3D12GraphicsCommandList* commandList,
     GpuFrameResources& frame,
-    const GpuRoamBufferSnapshot& snapshot)
+    const GpuRoamBufferSnapshot& snapshot,
+    std::size_t remainingSplitBudget)
 {
     // CPU 仅上传节点快照，活动叶列表由 GPU 重新压缩得到
     const std::size_t nodeBytes = snapshot.NodeBufferBytes();
@@ -802,7 +839,8 @@ void UploadSnapshot(
 
     // 清零阶段计数器并从 CPU 快照节点数初始化节点池尾指针
     GpuCounters counters{};
-    counters.AllocatedNodeCount = static_cast<std::uint32_t>(snapshot.Nodes.size());
+    counters.AllocatedNodeCount = SaturateToUint32(snapshot.Nodes.size());
+    counters.RemainingSplitBudget = SaturateToUint32(remainingSplitBudget);
     std::memcpy(frame.Counters.MappedUpload, &counters, sizeof(counters));
     Transition(commandList, frame.Counters, D3D12_RESOURCE_STATE_COPY_DEST);
     commandList->CopyBufferRegion(
@@ -903,9 +941,11 @@ bool D3D12GpuRoamTerrainLodAlgorithm::BuildRenderData(
     // 读取的是同一 frameIndex 上一次提交，绝不会等待当前尚未录制的计算
     const std::uint32_t frameIndex = _backend->CurrentFrameIndex();
     ReadCompletedResults(*_state, frameIndex, _stats);
-    // 为每个输入活动叶节点预留一对潜在子节点，空间不足时着色器回滚分裂
-    // 该上界允许全部候选同时成功，不把调度顺序引入容量可用性
-    const std::size_t nodeCapacity = snapshot.Nodes.size() + snapshot.ActiveLeafIndices.size() * 2U;
+    // 只为共享硬预算允许的额外 leaf 预留子节点，空间不足时着色器回滚分裂。
+    const std::size_t remainingSplitBudget = RemainingSplitBudget(snapshot, input);
+    const std::size_t additionalSplitCapacity = AdditionalGpuSplitCapacity(snapshot, input);
+    const std::size_t nodeCapacity = snapshot.Nodes.size() + additionalSplitCapacity * 2U;
+    const std::size_t activeLeafCapacity = snapshot.ActiveLeafIndices.size() + additionalSplitCapacity;
     const auto allocationStart = std::chrono::steady_clock::now();
     if (!EnsureFrameResources(*_state, frameIndex, nodeCapacity, errorMessage))
     {
@@ -922,14 +962,14 @@ bool D3D12GpuRoamTerrainLodAlgorithm::BuildRenderData(
     Transition(commandList, frame.Vertices, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     Transition(commandList, frame.Indices, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     Transition(commandList, frame.IndirectArgs, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-    UploadSnapshot(commandList, frame, snapshot);
+    UploadSnapshot(commandList, frame, snapshot, remainingSplitBudget);
 
     // 常量布局必须与 HLSL GpuRoamConstants 的字段顺序一致
     // 单份帧常量供全部 pass 读取，pass 间只通过 UAV 数据交换结果
     GpuConstants constants{};
-    constants.NodeCount = static_cast<std::uint32_t>(snapshot.Nodes.size());
-    constants.NodeCapacity = static_cast<std::uint32_t>(nodeCapacity);
-    constants.ActiveLeafLimit = static_cast<std::uint32_t>(nodeCapacity);
+    constants.NodeCount = SaturateToUint32(snapshot.Nodes.size());
+    constants.NodeCapacity = SaturateToUint32(nodeCapacity);
+    constants.ActiveLeafLimit = SaturateToUint32(activeLeafCapacity);
     constants.MaxDepth = static_cast<std::uint32_t>(std::max(snapshot.MaxDepth, 0));
     constants.BuildSequenceLow = Low32(snapshot.BuildSequence);
     constants.BuildSequenceHigh = High32(snapshot.BuildSequence);
@@ -937,11 +977,18 @@ bool D3D12GpuRoamTerrainLodAlgorithm::BuildRenderData(
     constants.HeightMapHeight = static_cast<std::uint32_t>(input.HeightMap->Height());
     constants.TerrainSize = input.Settings.TerrainSize;
     constants.HeightScale = input.Settings.HeightScale;
-    constants.DistanceScale = input.Settings.DistanceScale;
-    constants.SplitThreshold = input.Settings.SplitThreshold;
+    constants.SplitThreshold = input.Settings.ScreenSpaceSplitThresholdPixels;
     // merge 阈值不允许高于 split 阈值，避免同一节点同时进入冲突候选集
-    constants.MergeThreshold = std::min(input.Settings.MergeThreshold, input.Settings.SplitThreshold);
-    constants.CameraPosition = input.View.CameraPosition;
+    constants.MergeThreshold = std::min(
+        input.Settings.ScreenSpaceMergeThresholdPixels,
+        input.Settings.ScreenSpaceSplitThresholdPixels);
+    constants.TriangleBudget = SaturateToUint32(NormalizedTriangleBudget(input));
+    constants.DrawableHeight = std::max(input.View.DrawableHeight, 1U);
+    constants.ProjectionScaleY = std::abs(input.View.Projection[1][1]);
+    constants.IsOrthographic =
+        std::abs(input.View.Projection[3][3] - 1.0F) <= std::numeric_limits<float>::epsilon() ? 1U : 0U;
+    constants.View = input.View.View;
+    constants.FrustumPlanes = input.View.FrustumPlanes;
     std::memset(frame.MappedConstants, 0, ConstantBufferBytes);
     std::memcpy(frame.MappedConstants, &constants, sizeof(constants));
 
@@ -1012,9 +1059,11 @@ bool D3D12GpuRoamTerrainLodAlgorithm::BuildRenderData(
     _stats.GpuComputeMilliseconds = _state->LastGpuMilliseconds;
     _stats.CpuGpuUploadBytes = snapshot.NodeBufferBytes() + sizeof(GpuCounters);
     // 当前帧尚未执行完成，绘制统计先采用上次结果或 CPU 快照估值
-    const std::size_t activeEstimate = _state->LastCounters.ActiveLeafCount > 0U
-        ? _state->LastCounters.ActiveLeafCount
-        : snapshot.ActiveLeafIndices.size();
+    const std::size_t activeEstimate = std::min(
+        _state->LastCounters.ActiveLeafCount > 0U
+            ? static_cast<std::size_t>(_state->LastCounters.ActiveLeafCount)
+            : snapshot.ActiveLeafIndices.size(),
+        activeLeafCapacity);
     _stats.ActiveTriangleCount = activeEstimate;
     _stats.ActiveNodeCount = std::max<std::size_t>(_stats.ActiveNodeCount, _state->LastCounters.AllocatedNodeCount);
     _stats.SubdividedTriangleCount += _state->LastCounters.SplitOnlyCommitCount;

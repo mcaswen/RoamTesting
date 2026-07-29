@@ -256,7 +256,19 @@
 - 定位：`DataOrientedRoamMeshBuilder` 的 view 输入退化为 `CameraPosition`；SoA 节点没有方差树归属/索引；`ComputeScreenErrorScore` 不读取 Projection、drawable height 或 frustum planes；并行 topology commit 没有跨 worker 的统一预算；`CommitInteriorMergeChunks` 不返回新满足条件的父层候选。
 - 解决方案：为两个根预计算完整方差树，并在 SoA 中加入 `VarianceTreeIndex/VarianceIndex`；builder 改为接收完整 `TerrainLodViewInput`，使用与 Classic 相同的像素 SSE 和方差扩张 AABB 六平面测试；加入默认 20,000 活动 leaf 预算，所有串行、并行和 forced split 通过同一原子 token 消费上限；保留安全 chunk merge 并行预提交，同时把成功回收后新可合并的 parent 放入动态最小堆，单次 Build 内持续向上级联；UI、renderer 重建判定和 benchmark 断言同步覆盖 Classic/DOD。
 - 验证：OpenGL 与 D3D12 RelWithDebInfo 构建通过；CTest 4/4 通过；Classic/DOD 六视点 smoke 均通过并得到相同活动三角形序列 `7072/528/2/2110/376/528`，所有 topology issue 为 0 且未超过 20,000 预算；`center -> away` 单次 Build 从 528 回收到 2。DOD standard 64 帧也通过，活动三角形范围为 `12906..20000`，实际触达硬上限但没有越界。
-- 后续：GPU ROAM-like 的原生 compute split 仍使用旧式 unitless threshold/`DistanceScale`，且 DOD 快照后还能追加 GPU split-only；它不应被描述为已具备相同像素评分或最终硬预算。后续若统一 GPU 口径，需要单独迁移 shader 公式、frustum 输入、预算计数与 GPU topology 状态持久化。
+- 后续：评分、视锥和最终硬预算口径已由 BUG-021 迁移完成；GPU topology 状态持久化、GPU merge 提交和依赖感知的全局预算调度仍是后续独立工作。
+
+### BUG-021：GPU ROAM-like 与 CPU ROAM 的评分和预算口径分叉
+
+- 状态：`Fixed`
+- 严重级别：`高`
+- 发生阶段：阶段 4 GPU ROAM-like 横向比较复核
+- 现象：Classic/DOD 已使用完整方差、像素 SSE、六平面视锥和 20,000 leaf 硬预算，但 OpenGL/D3D12 原生 GPU pass 仍按局部高度、距离和边长的 unitless 分数决定 split，忽略 FOV、drawable height 和相机方向；DOD 快照后的额外 GPU split 也可能越过统一预算。UI 与 runtime CSV 同时保留两套阈值，三算法相同参数不代表相同质量或资源上限。
+- 定位：GPU node record 已携带 DOD 的 `GeometricError`，但 error/candidate shader 重新采样旧式局部误差；GPU 常量缺少 View、projection scale、drawable height 和 frustum planes；node/leaf buffer 按全部输入 leaf 可再 split 一层扩容，counter 没有剩余预算 token；`TerrainLodSettings`、renderer、UI 和 runtime benchmark 仍暴露旧字段。
+- Debug 过程：先沿 DOD snapshot、OpenGL GLSL、D3D12 HLSL、counter readback、renderer rebuild 和 benchmark 参数链逐项对照 Classic/DOD 公式；再确认 GPU merge candidate 只是 shadow 数据，真正跨帧 merge 仍由 CPU DOD 动态 queue 完成，因此本次只统一可真实保证的评分、可见性和最终 leaf 上限，不把混合管线误写成完整 GPU 拓扑实现。
+- 解决方案：两个 GPU 后端都直接读取快照中由完整方差树传播的 `GeometricError`，使用显式 CPU 兼容双线性采样、View 中心深度、`Projection[1][1]`、drawable height 和正交投影分支计算像素 SSE，并以方差扩张世界 AABB 对六个 frustum plane 做保守测试；公共 UI/settings/CLI/CSV 移除 `DistanceScale` 与 unitless 阈值。CPU DOD 快照先占用 `TriangleBudget`，GPU split-only invocation 通过共享原子 counter 领取剩余 token：边界 split 消费 1、diamond pair 消费 2，claim/allocation 失败归还，buffer 也只按剩余预算扩容；延迟 readback 校验 active/node 计数和 token 守恒。
+- 验证：OpenGL 与 D3D12 RelWithDebInfo 构建通过，D3D12 九个 shader target 重新编译；OpenGL test tree 的 CTest 4/4 通过。RTX 5090 D 上 OpenGL 4.3 与 D3D12 `--gpu-smoke-test` 均以退出码 0 通过，应用级断言检查 GPU packet 非空、最终三角形不超共享预算，以及 CPU DOD 持久拓扑三类 issue 为零。无窗口 `--benchmark --algorithm all --profile smoke` PASS，Classic/DOD 六帧均为 `7072/528/2/2110/376/528`，GPU 按无上下文规则 skip。
+- 后续：GPU 新 child 的 `GeometricError` 当前为 0，且 GPU split 结果不回写下一帧 CPU DOD；GPU merge candidate 仍不提交，split token 又按并发 append 顺序而非全局 error priority 分配。后续应实现持久 GPU variance/topology、完整 forced closure 与 merge/recycle，并用 GPU 几何 readback 或离线渲染质量评估验证额外 split 后的裂缝和误差。
 
 ## 模板
 

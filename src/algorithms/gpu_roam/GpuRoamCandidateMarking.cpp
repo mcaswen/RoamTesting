@@ -53,7 +53,7 @@ layout(std430, binding = 3) buffer CounterBuffer
     // 两个 candidate counter 在 dispatch 前必须清零
     uint splitCandidateCount;
     uint mergeCandidateCount;
-    uint reservedCounter;
+    uint remainingSplitBudget;
 };
 
 layout(std430, binding = 4) writeonly buffer SplitCandidateBuffer
@@ -75,19 +75,34 @@ uniform uint uActiveLeafLimit;
 uniform uint uMaxDepth;
 uniform float uTerrainSize;
 uniform float uHeightScale;
-uniform float uDistanceScale;
 uniform float uSplitThreshold;
 uniform float uMergeThreshold;
-uniform vec3 uCameraPosition;
+uniform mat4 uView;
+uniform vec4 uFrustumPlanes[6];
+uniform float uProjectionScaleY;
+uniform uint uDrawableHeight;
+uniform uint uIsOrthographic;
 
-const float minimumDistanceScale = 0.01;
+const float minimumViewDepth = 0.05;
 // 与 error pass 保持完全相同，避免 split 和 merge 使用不同评分函数
 const float projectedEdgeWeight = 0.20;
 
 float sampleHeight(vec2 uv)
 {
-    // candidate merge 需要重新评分 internal parent，因此不能只复用 leaf error buffer
-    return texture(uHeightMap, clamp(uv, vec2(0.0), vec2(1.0))).r;
+    // 显式采用 CPU HeightMap::SampleBilinear 的 uv * (size - 1) 约定。
+    // candidate 对 internal parent 重新评分，不能只复用 leaf error 数组。
+    ivec2 size = textureSize(uHeightMap, 0);
+    // clamp 后的端点恰好落到纹素 0 和 size - 1。
+    vec2 pixel = clamp(uv, vec2(0.0), vec2(1.0)) * vec2(max(size - ivec2(1), ivec2(0)));
+    ivec2 p0 = ivec2(floor(pixel));
+    ivec2 p1 = min(p0 + ivec2(1), size - ivec2(1));
+    vec2 weight = pixel - vec2(p0);
+    // 显式插值确保 OpenGL 与 D3D12 的评分输入一致。
+    float h00 = texelFetch(uHeightMap, p0, 0).r;
+    float h10 = texelFetch(uHeightMap, ivec2(p1.x, p0.y), 0).r;
+    float h01 = texelFetch(uHeightMap, ivec2(p0.x, p1.y), 0).r;
+    float h11 = texelFetch(uHeightMap, p1, 0).r;
+    return mix(mix(h00, h10, weight.x), mix(h01, h11, weight.x), weight.y);
 }
 
 vec3 domainToWorld(vec2 uv)
@@ -99,12 +114,29 @@ vec3 domainToWorld(vec2 uv)
         (uv.y - 0.5) * uTerrainSize);
 }
 
-float distanceWeight(float distanceToCamera)
+bool isNodeVisible(NodeRecord node, vec3 a, vec3 b, vec3 c)
 {
-    // 分母下限由调用方 scoreNode 保证，函数只处理尺度下限
-    float safeDistanceScale = max(uDistanceScale, minimumDistanceScale);
-    float normalizedDistance = safeDistanceScale / distanceToCamera;
-    return normalizedDistance * normalizedDistance;
+    // merge parent 和 split leaf 使用完全相同的保守可见性判断。
+    vec3 minimumPoint = min(a, min(b, c));
+    vec3 maximumPoint = max(a, max(b, c));
+    float worldError = node.domainCAndErrors.z * uHeightScale;
+    // 子树最大方差扩张包围盒，避免隐藏在三角形内部的峰值被误剔除。
+    minimumPoint.y -= worldError;
+    maximumPoint.y += worldError;
+    vec3 center = (minimumPoint + maximumPoint) * 0.5;
+    vec3 extents = (maximumPoint - minimumPoint) * 0.5;
+    for (uint planeIndex = 0u; planeIndex < 6u; ++planeIndex)
+    {
+        // projectedRadius 是 AABB 在当前平面法线上的半径。
+        vec4 plane = uFrustumPlanes[planeIndex];
+        float centerDistance = dot(plane.xyz, center) + plane.w;
+        float projectedRadius = dot(abs(plane.xyz), extents);
+        if (centerDistance + projectedRadius < 0.0)
+        {
+            return false;
+        }
+    }
+    return true;
 }
 
 float scoreNode(uint nodeIndex)
@@ -118,17 +150,22 @@ float scoreNode(uint nodeIndex)
     vec3 a = domainToWorld(aUv);
     vec3 b = domainToWorld(bUv);
     vec3 c = domainToWorld(cUv);
+    if (!isNodeVisible(node, a, b, c))
+    {
+        // 零分不会产生主动 split，并允许 DOD baseline 在本 Build 回收旧拓扑。
+        return 0.0;
+    }
     vec3 center = (a + b + c) / 3.0;
-    // 相机进入三角形包围区域时仍保持有限权重
-    float distanceToCamera = max(length(center - uCameraPosition), 0.05);
     float worldError = node.domainCAndErrors.z * uHeightScale;
     float longestEdgeLength = max(max(length(a - b), length(b - c)), length(c - a));
-    float distanceScale = max(uDistanceScale, minimumDistanceScale);
-    float weight = distanceWeight(distanceToCamera);
-    float heightErrorScore = worldError * weight;
-    float edgeLengthScore = longestEdgeLength * projectedEdgeWeight / distanceScale * weight;
-    // merge 对 internal parent 使用相同最大项语义
-    return max(heightErrorScore, edgeLengthScore);
+    // View 和 ProjectionScaleY 来自生成 frustum planes 的同一帧输入。
+    vec4 viewCenter = uView * vec4(center, 1.0);
+    float depthScale = uIsOrthographic != 0u ? 1.0 : max(abs(viewCenter.z), minimumViewDepth);
+    float pixelsPerWorldUnit = float(max(uDrawableHeight, 1u)) * 0.5 * abs(uProjectionScaleY) / depthScale;
+    // max 语义与 CPU ROAM 保持一致，不把高度项和边长项重复累加。
+    return max(
+        worldError * pixelsPerWorldUnit,
+        longestEdgeLength * pixelsPerWorldUnit * projectedEdgeWeight);
 }
 
 void main()
@@ -142,7 +179,7 @@ void main()
         uint depth = nodes[nodeIndex].mergeBuildAndDepth.z;
         float screenError = screenErrors[index];
         // 最大深度是硬约束，达到后即使误差很高也不能继续分配节点
-        if (depth < uMaxDepth && screenError >= uSplitThreshold)
+        if (depth < uMaxDepth && screenError > uSplitThreshold)
         {
             // 原子 slot 只保证唯一，不保证候选按误差排序
             uint outputIndex = atomicAdd(splitCandidateCount, 1u);
@@ -207,11 +244,18 @@ void RunGpuRoamCandidateMarkingPass(const GpuRoamCandidateMarkingPassInput& inpu
     SetGpuRoamProgramUInt(input.ProgramId, "uMaxDepth", static_cast<std::uint32_t>(std::max(input.MaxDepth, 0)));
     SetGpuRoamProgramFloat(input.ProgramId, "uTerrainSize", input.TerrainSize);
     SetGpuRoamProgramFloat(input.ProgramId, "uHeightScale", input.HeightScale);
-    SetGpuRoamProgramFloat(input.ProgramId, "uDistanceScale", input.DistanceScale);
     SetGpuRoamProgramFloat(input.ProgramId, "uSplitThreshold", input.SplitThreshold);
     // C++ 再次钳制 merge 阈值，防止 UI 或 benchmark 输入破坏 hysteresis
     SetGpuRoamProgramFloat(input.ProgramId, "uMergeThreshold", std::min(input.MergeThreshold, input.SplitThreshold));
-    SetGpuRoamProgramVec3(input.ProgramId, "uCameraPosition", input.CameraPosition);
+    SetGpuRoamProgramMat4(input.ProgramId, "uView", input.View);
+    SetGpuRoamProgramVec4Array(
+        input.ProgramId,
+        "uFrustumPlanes",
+        input.FrustumPlanes.data(),
+        input.FrustumPlanes.size());
+    SetGpuRoamProgramFloat(input.ProgramId, "uProjectionScaleY", input.ProjectionScaleY);
+    SetGpuRoamProgramUInt(input.ProgramId, "uDrawableHeight", input.DrawableHeight);
+    SetGpuRoamProgramUInt(input.ProgramId, "uIsOrthographic", input.IsOrthographic ? 1U : 0U);
     // 单一 dispatch 覆盖两个扫描域，shader 分支分别限制访问范围
     glDispatchCompute(GpuRoamWorkGroupCount(std::max(input.NodeCount, input.ActiveLeafLimit)), 1U, 1U);
     // topology pass 和异步 counter readback 都依赖本 pass 的 SSBO 写入

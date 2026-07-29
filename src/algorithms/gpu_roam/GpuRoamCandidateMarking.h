@@ -2,6 +2,7 @@
 
 #include <glm/glm.hpp>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -26,10 +27,13 @@ struct GpuRoamCandidateMarkingPassInput
     int MaxDepth{0};
     float TerrainSize{0.0F};
     float HeightScale{0.0F};
-    float DistanceScale{0.0F};
     float SplitThreshold{0.0F};
     float MergeThreshold{0.0F};
-    glm::vec3 CameraPosition{0.0F};
+    glm::mat4 View{1.0F};
+    std::array<glm::vec4, 6U> FrustumPlanes{};
+    float ProjectionScaleY{1.0F};
+    std::uint32_t DrawableHeight{1U};
+    bool IsOrthographic{false};
 };
 
 [[nodiscard]] bool EnsureGpuRoamCandidateMarkingProgram(

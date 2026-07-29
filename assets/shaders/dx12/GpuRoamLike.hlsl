@@ -63,14 +63,22 @@ cbuffer GpuRoamConstants : register(b0)
     float TerrainSize;
     // 高度样本缩放
     float HeightScale;
-    // 距离误差缩放
-    float DistanceScale;
-    // split 候选阈值
+    // split 候选像素阈值
     float SplitThreshold;
-    // merge 候选阈值
+    // merge 候选像素阈值
     float MergeThreshold;
-    // 世界空间相机位置
-    float3 CameraPosition;
+    // 最终活动 leaf 的统一硬上限
+    uint TriangleBudget;
+    // 像素投影尺度所需的 drawable 高度
+    uint DrawableHeight;
+    // 投影矩阵 Y 缩放
+    float ProjectionScaleY;
+    // 正交投影不除以 view depth
+    uint IsOrthographic;
+    // 世界空间到 view 空间
+    float4x4 View;
+    // 向内法线的六个世界空间视锥平面
+    float4 FrustumPlanes[6];
 };
 
 // 与 CPU 快照中的无效节点哨兵保持一致
@@ -86,8 +94,19 @@ static const uint VertexFloatStride = 13u;
 
 float SampleHeight(float2 uv)
 {
-    // 参数域限制在高度图范围内并固定采样最高分辨率
-    return HeightMap.SampleLevel(HeightSampler, saturate(uv), 0.0);
+    // 与 CPU HeightMap::SampleBilinear 相同，归一化坐标映射到 [0, size - 1]。
+    uint maximumX = HeightMapWidth > 0u ? HeightMapWidth - 1u : 0u;
+    uint maximumY = HeightMapHeight > 0u ? HeightMapHeight - 1u : 0u;
+    float2 maximumPixel = float2(maximumX, maximumY);
+    float2 pixel = saturate(uv) * maximumPixel;
+    uint2 p0 = uint2(floor(pixel));
+    uint2 p1 = min(p0 + uint2(1u, 1u), uint2(maximumX, maximumY));
+    float2 weight = pixel - float2(p0);
+    float h00 = HeightMap.Load(int3(p0, 0));
+    float h10 = HeightMap.Load(int3(uint2(p1.x, p0.y), 0));
+    float h01 = HeightMap.Load(int3(uint2(p0.x, p1.y), 0));
+    float h11 = HeightMap.Load(int3(p1, 0));
+    return lerp(lerp(h00, h10, weight.x), lerp(h01, h11, weight.x), weight.y);
 }
 
 float3 DomainToWorld(float2 uv)
@@ -99,9 +118,32 @@ float3 DomainToWorld(float2 uv)
         (uv.y - 0.5) * TerrainSize);
 }
 
+bool IsNodeVisible(NodeRecord node, float3 a, float3 b, float3 c)
+{
+    float3 minimumPoint = min(a, min(b, c));
+    float3 maximumPoint = max(a, max(b, c));
+    float worldError = node.DomainCAndErrors.z * HeightScale;
+    minimumPoint.y -= worldError;
+    maximumPoint.y += worldError;
+    float3 center = (minimumPoint + maximumPoint) * 0.5;
+    float3 extents = (maximumPoint - minimumPoint) * 0.5;
+    [unroll]
+    for (uint planeIndex = 0u; planeIndex < 6u; ++planeIndex)
+    {
+        float4 plane = FrustumPlanes[planeIndex];
+        float centerDistance = dot(plane.xyz, center) + plane.w;
+        float projectedRadius = dot(abs(plane.xyz), extents);
+        if (centerDistance + projectedRadius < 0.0)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
 float ScoreNode(uint nodeIndex)
 {
-    // 当前误差模型是距离加权几何误差与最长边近似的最大值
+    // 完整方差由 CPU DOD 快照写入 DomainCAndErrors.z，这里只做逐帧像素投影。
     NodeRecord node = Nodes[nodeIndex];
     float2 aUv = node.DomainAAndB.xy;
     float2 bUv = node.DomainAAndB.zw;
@@ -109,17 +151,19 @@ float ScoreNode(uint nodeIndex)
     float3 a = DomainToWorld(aUv);
     float3 b = DomainToWorld(bUv);
     float3 c = DomainToWorld(cUv);
+    if (!IsNodeVisible(node, a, b, c))
+    {
+        return 0.0;
+    }
     float3 center = (a + b + c) / 3.0;
-    // 距离下限避免相机落在三角形中心时误差发散
-    float distanceToCamera = max(length(center - CameraPosition), 0.05);
-    float safeDistanceScale = max(DistanceScale, 0.01);
-    // 平方衰减提高近处细分敏感度
-    float normalizedDistance = safeDistanceScale / distanceToCamera;
-    float weight = normalizedDistance * normalizedDistance;
     float worldError = node.DomainCAndErrors.z * HeightScale;
     float longestEdge = max(max(length(a - b), length(b - c)), length(c - a));
-    // 最长边项为平坦区域保留与三角形尺寸相关的细分信号
-    return max(worldError * weight, longestEdge * 0.20 / safeDistanceScale * weight);
+    float4 viewCenter = mul(View, float4(center, 1.0));
+    float depthScale = IsOrthographic != 0u ? 1.0 : max(abs(viewCenter.z), 0.05);
+    float pixelsPerWorldUnit = float(max(DrawableHeight, 1u)) * 0.5 * abs(ProjectionScaleY) / depthScale;
+    return max(
+        worldError * pixelsPerWorldUnit,
+        longestEdge * pixelsPerWorldUnit * 0.20);
 }
 
 // 扫描节点池并以原子追加方式压缩活动叶节点
@@ -142,7 +186,7 @@ void CSCompact(uint3 dispatchThreadId : SV_DispatchThreadID)
     uint outputIndex;
     // Counters[0] 是活动叶输出长度
     InterlockedAdd(Counters[0], 1u, outputIndex);
-    if (outputIndex < NodeCapacity)
+    if (outputIndex < ActiveLeafLimit)
     {
         ActiveLeaves[outputIndex] = nodeIndex;
     }
@@ -153,7 +197,7 @@ void CSCompact(uint3 dispatchThreadId : SV_DispatchThreadID)
 void CSErrorEvaluation(uint3 dispatchThreadId : SV_DispatchThreadID)
 {
     uint leafSlot = dispatchThreadId.x;
-    uint activeLeafCount = min(Counters[0], ActiveLeafLimit);
+    uint activeLeafCount = min(Counters[0], min(ActiveLeafLimit, TriangleBudget));
     if (leafSlot >= activeLeafCount)
     {
         return;
@@ -167,17 +211,17 @@ void CSErrorEvaluation(uint3 dispatchThreadId : SV_DispatchThreadID)
 void CSCandidateMarking(uint3 dispatchThreadId : SV_DispatchThreadID)
 {
     uint index = dispatchThreadId.x;
-    uint activeLeafCount = min(Counters[0], ActiveLeafLimit);
+    uint activeLeafCount = min(Counters[0], min(ActiveLeafLimit, TriangleBudget));
     if (index < activeLeafCount)
     {
         uint nodeIndex = ActiveLeaves[index];
         uint depth = Nodes[nodeIndex].MergeBuildAndDepth.z;
-        if (depth < MaxDepth && ScreenErrors[index] >= SplitThreshold)
+        if (depth < MaxDepth && ScreenErrors[index] > SplitThreshold)
         {
             uint outputIndex;
             // Counters[1] 是 split 候选输出长度
             InterlockedAdd(Counters[1], 1u, outputIndex);
-            if (outputIndex < NodeCapacity)
+            if (outputIndex < ActiveLeafLimit)
             {
                 SplitCandidates[outputIndex] = nodeIndex;
             }
@@ -261,6 +305,34 @@ bool AllocateNodes(uint count, out uint firstNode)
     return false;
 }
 
+bool ReserveSplitBudget(uint count)
+{
+    [loop]
+    for (uint attempt = 0u; attempt < 8u; ++attempt)
+    {
+        uint current;
+        InterlockedAdd(Counters[3], 0u, current);
+        if (current < count)
+        {
+            InterlockedAdd(Counters[6], 1u);
+            return false;
+        }
+        uint previous;
+        InterlockedCompareExchange(Counters[3], current, current - count, previous);
+        if (previous == current)
+        {
+            return true;
+        }
+    }
+    InterlockedAdd(Counters[6], 1u);
+    return false;
+}
+
+void ReleaseSplitBudget(uint count)
+{
+    InterlockedAdd(Counters[3], count);
+}
+
 void WriteChildNode(
     uint childIndex,
     uint parentIndex,
@@ -330,9 +402,14 @@ void CSSplitOnlyTopology(uint3 dispatchThreadId : SV_DispatchThreadID)
     uint baseNeighbor = candidate.Topology0.w;
     if (baseNeighbor == InvalidNode)
     {
+        if (!ReserveSplitBudget(1u))
+        {
+            return;
+        }
         uint originalFlags;
         if (!MarkParentSplit(nodeIndex, originalFlags))
         {
+            ReleaseSplitBudget(1u);
             return;
         }
         uint firstChild;
@@ -340,6 +417,7 @@ void CSSplitOnlyTopology(uint3 dispatchThreadId : SV_DispatchThreadID)
         if (!AllocateNodes(2u, firstChild))
         {
             RestoreParentLeaf(nodeIndex, originalFlags);
+            ReleaseSplitBudget(1u);
             return;
         }
         WriteSplitChildren(nodeIndex, firstChild, false);
@@ -363,16 +441,23 @@ void CSSplitOnlyTopology(uint3 dispatchThreadId : SV_DispatchThreadID)
         return;
     }
 
+    if (!ReserveSplitBudget(2u))
+    {
+        return;
+    }
+
     uint originalFlags;
     uint pairedFlags;
     if (!MarkParentSplit(nodeIndex, originalFlags))
     {
+        ReleaseSplitBudget(2u);
         return;
     }
     // 第二个父节点竞争失败时恢复第一个父节点
     if (!MarkParentSplit(baseNeighbor, pairedFlags))
     {
         RestoreParentLeaf(nodeIndex, originalFlags);
+        ReleaseSplitBudget(2u);
         return;
     }
     uint firstChild;
@@ -381,6 +466,7 @@ void CSSplitOnlyTopology(uint3 dispatchThreadId : SV_DispatchThreadID)
     {
         RestoreParentLeaf(baseNeighbor, pairedFlags);
         RestoreParentLeaf(nodeIndex, originalFlags);
+        ReleaseSplitBudget(2u);
         return;
     }
     WriteSplitChildren(nodeIndex, firstChild, false);
@@ -399,8 +485,8 @@ void CSResetActiveLeafCount(uint3 dispatchThreadId : SV_DispatchThreadID)
 float3 SampleNormal(float2 uv)
 {
     // 使用相邻纹素中心差分估算世界空间切线
-    float stepU = 1.0 / max(float(HeightMapWidth - 1u), 1.0);
-    float stepV = 1.0 / max(float(HeightMapHeight - 1u), 1.0);
+    float stepU = 1.0 / max(float(HeightMapWidth > 0u ? HeightMapWidth - 1u : 0u), 1.0);
+    float stepV = 1.0 / max(float(HeightMapHeight > 0u ? HeightMapHeight - 1u : 0u), 1.0);
     float left = SampleHeight(float2(uv.x - stepU, uv.y));
     float right = SampleHeight(float2(uv.x + stepU, uv.y));
     float down = SampleHeight(float2(uv.x, uv.y - stepV));
@@ -491,7 +577,7 @@ bool IsValidDomain(float2 uv)
 void CSMeshEmit(uint3 dispatchThreadId : SV_DispatchThreadID)
 {
     uint leafSlot = dispatchThreadId.x;
-    uint emitLeafCount = min(Counters[0], ActiveLeafLimit);
+    uint emitLeafCount = min(Counters[0], min(ActiveLeafLimit, TriangleBudget));
     // 单个线程写入五个 DrawIndexed 参数避免额外调度
     if (leafSlot == 0u)
     {

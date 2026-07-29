@@ -2,7 +2,7 @@
 
 All raw runtime benchmark reports are organized per experiment folder. Each folder includes raw Markdown, raw CSV, generated `summary.csv`, generated `summary.md`, and SVG figures for report writing.
 
-> Historical-data notice (2026-07-29): these reports were generated before Classic and Data-Oriented CPU ROAM adopted complete variance trees, pixel-space SSE, frustum-aware LOD, a 20,000 active-triangle budget, and cascading merge. They remain valid records of the old implementations, but their Classic/DOD timings and triangle counts are not directly comparable with current `HEAD`. In particular, `experiment-03-distance-scale` describes the retired CPU ROAM distance-weighted heuristic; `DistanceScale` now applies only to the GPU ROAM-like native scoring pass.
+> Historical-data notice (2026-07-29): these reports were generated before Classic, Data-Oriented, and GPU ROAM-like adopted the current complete-variance, pixel-SSE, frustum-aware, hard-budget contract. They remain valid records of the old implementations, but their timings and triangle counts are not directly comparable with current `HEAD`. In particular, `experiment-03-distance-scale` describes the retired distance-weighted heuristic; `DistanceScale` has been removed from the active ROAM settings.
 
 | Experiment | Raw CSV count | Main generated files |
 | --- | ---: | --- |

@@ -49,18 +49,33 @@ layout(binding = 0) uniform sampler2D uHeightMap;
 uniform uint uActiveLeafCount;
 uniform float uTerrainSize;
 uniform float uHeightScale;
-uniform float uDistanceScale;
-uniform vec3 uCameraPosition;
+uniform mat4 uView;
+uniform vec4 uFrustumPlanes[6];
+uniform float uProjectionScaleY;
+uniform uint uDrawableHeight;
+uniform uint uIsOrthographic;
 
-// 下限避免零距离尺度放大为无穷
-const float minimumDistanceScale = 0.01;
+// 与 CPU ROAM 评分保持相同的近裁深度下限
+const float minimumViewDepth = 0.05;
 // 长边项补偿低高度差平坦区域的屏幕覆盖
 const float projectedEdgeWeight = 0.20;
 
 float sampleHeight(vec2 uv)
 {
-    // clamp 保证有限差分和边界节点不会访问高度图外部
-    return texture(uHeightMap, clamp(uv, vec2(0.0), vec2(1.0))).r;
+    // CPU 采样把端点 UV 精确映射到首尾纹素中心。
+    // 直接 texture() 会采用 API 的半纹素坐标约定，内部点会与 CPU 不同。
+    ivec2 size = textureSize(uHeightMap, 0);
+    // size - 1 对应 HeightMap::SampleBilinear 的像素跨度。
+    vec2 pixel = clamp(uv, vec2(0.0), vec2(1.0)) * vec2(max(size - ivec2(1), ivec2(0)));
+    ivec2 p0 = ivec2(floor(pixel));
+    ivec2 p1 = min(p0 + ivec2(1), size - ivec2(1));
+    vec2 weight = pixel - vec2(p0);
+    // 四次 texelFetch 避免硬件过滤再次施加坐标偏移。
+    float h00 = texelFetch(uHeightMap, p0, 0).r;
+    float h10 = texelFetch(uHeightMap, ivec2(p1.x, p0.y), 0).r;
+    float h01 = texelFetch(uHeightMap, ivec2(p0.x, p1.y), 0).r;
+    float h11 = texelFetch(uHeightMap, p1, 0).r;
+    return mix(mix(h00, h10, weight.x), mix(h01, h11, weight.x), weight.y);
 }
 
 vec3 domainToWorld(vec2 uv)
@@ -72,16 +87,34 @@ vec3 domainToWorld(vec2 uv)
         (uv.y - 0.5) * uTerrainSize);
 }
 
-float distanceWeight(float distanceToCamera)
+bool isNodeVisible(NodeRecord node, vec3 a, vec3 b, vec3 c)
 {
-    // 平方反比让近处误差快速增长，同时保持与 CPU baseline 相近的趋势
-    float safeDistanceScale = max(uDistanceScale, minimumDistanceScale);
-    float normalizedDistance = safeDistanceScale / distanceToCamera;
-    return normalizedDistance * normalizedDistance;
+    // 三个角点先形成当前线性三角形的世界空间 AABB。
+    vec3 minimumPoint = min(a, min(b, c));
+    vec3 maximumPoint = max(a, max(b, c));
+    // 完整方差是整个子树的高度误差上界，用它扩张 Y 轴保持剔除保守。
+    float worldError = node.domainCAndErrors.z * uHeightScale;
+    minimumPoint.y -= worldError;
+    maximumPoint.y += worldError;
+    vec3 center = (minimumPoint + maximumPoint) * 0.5;
+    vec3 extents = (maximumPoint - minimumPoint) * 0.5;
+    for (uint planeIndex = 0u; planeIndex < 6u; ++planeIndex)
+    {
+        // 平面法线朝内，AABB 最大支撑点仍为负才表示完全在视锥外。
+        vec4 plane = uFrustumPlanes[planeIndex];
+        float centerDistance = dot(plane.xyz, center) + plane.w;
+        float projectedRadius = dot(abs(plane.xyz), extents);
+        if (centerDistance + projectedRadius < 0.0)
+        {
+            return false;
+        }
+    }
+    return true;
 }
 
 float scoreNode(uint nodeIndex)
 {
+    // GPU 节点直接携带 CPU 完整方差树传播后的 GeometricError。
     // 三个 domain 点在当前高度图上重新求值，避免上传完整世界空间顶点
     NodeRecord node = nodes[nodeIndex];
     vec2 aUv = node.domainAAndB.xy;
@@ -91,18 +124,25 @@ float scoreNode(uint nodeIndex)
     vec3 a = domainToWorld(aUv);
     vec3 b = domainToWorld(bUv);
     vec3 c = domainToWorld(cUv);
-    // 中心距离作为视点权重，最小距离防止相机穿过地形时爆炸
+    if (!isNodeVisible(node, a, b, c))
+    {
+        // 视锥外 leaf 不主动细分，CPU DOD baseline 仍负责兼容性 closure
+        return 0.0;
+    }
+
     vec3 center = (a + b + c) / 3.0;
-    float distanceToCamera = max(length(center - uCameraPosition), 0.05);
     float worldError = node.domainCAndErrors.z * uHeightScale;
-    // 最长边项使近处平坦大三角形仍可被细分
+    // 平坦区域仍由最长边的投影覆盖率驱动继续细分。
     float longestEdgeLength = max(max(length(a - b), length(b - c)), length(c - a));
-    float distanceScale = max(uDistanceScale, minimumDistanceScale);
-    float weight = distanceWeight(distanceToCamera);
-    float heightErrorScore = worldError * weight;
-    float edgeLengthScore = longestEdgeLength * projectedEdgeWeight / distanceScale * weight;
-    // 取最大值而非求和，便于分别解释高度误差和覆盖率触发原因
-    return max(heightErrorScore, edgeLengthScore);
+    // CPU 与 GPU 都以三角形中心的 view-space Z 近似整片深度。
+    vec4 viewCenter = uView * vec4(center, 1.0);
+    // 正交投影的像素密度与深度无关，透视投影才除以深度。
+    float depthScale = uIsOrthographic != 0u ? 1.0 : max(abs(viewCenter.z), minimumViewDepth);
+    // projectionScaleY 已包含 FOV；drawable height 把 NDC 尺度换算为像素。
+    float pixelsPerWorldUnit = float(max(uDrawableHeight, 1u)) * 0.5 * abs(uProjectionScaleY) / depthScale;
+    float heightErrorPixels = worldError * pixelsPerWorldUnit;
+    float edgeLengthPixels = longestEdgeLength * pixelsPerWorldUnit * projectedEdgeWeight;
+    return max(heightErrorPixels, edgeLengthPixels);
 }
 
 void main()
@@ -149,8 +189,15 @@ void RunGpuRoamErrorEvaluationPass(const GpuRoamErrorEvaluationPassInput& input)
     SetGpuRoamProgramUInt(input.ProgramId, "uActiveLeafCount", static_cast<std::uint32_t>(input.ActiveLeafCount));
     SetGpuRoamProgramFloat(input.ProgramId, "uTerrainSize", input.TerrainSize);
     SetGpuRoamProgramFloat(input.ProgramId, "uHeightScale", input.HeightScale);
-    SetGpuRoamProgramFloat(input.ProgramId, "uDistanceScale", input.DistanceScale);
-    SetGpuRoamProgramVec3(input.ProgramId, "uCameraPosition", input.CameraPosition);
+    SetGpuRoamProgramMat4(input.ProgramId, "uView", input.View);
+    SetGpuRoamProgramVec4Array(
+        input.ProgramId,
+        "uFrustumPlanes",
+        input.FrustumPlanes.data(),
+        input.FrustumPlanes.size());
+    SetGpuRoamProgramFloat(input.ProgramId, "uProjectionScaleY", input.ProjectionScaleY);
+    SetGpuRoamProgramUInt(input.ProgramId, "uDrawableHeight", input.DrawableHeight);
+    SetGpuRoamProgramUInt(input.ProgramId, "uIsOrthographic", input.IsOrthographic ? 1U : 0U);
     // dispatch 只覆盖活动 leaf 数量，不按完整节点池容量浪费工作
     glDispatchCompute(GpuRoamWorkGroupCount(input.ActiveLeafCount), 1U, 1U);
     // candidate pass 随后读取 screenErrors，SSBO barrier 建立写后读顺序
