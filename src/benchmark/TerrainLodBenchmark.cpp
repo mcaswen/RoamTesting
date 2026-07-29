@@ -221,8 +221,10 @@ BenchmarkScenario MakeScenario(BenchmarkProfile profile)
             BenchmarkCameraKeyframe{"center", glm::vec3{0.0F, 4.0F, 0.0F}, 1.0F},
             // near-corner 检查非中心区域也能触发局部细分
             BenchmarkCameraKeyframe{"near-corner", glm::vec3{-13.0F, 2.5F, -13.0F}, 2.0F},
+            // far-return 检查一次 Build 是否可以从深层 leaf 向 parent 连续 merge
+            BenchmarkCameraKeyframe{"far-return", glm::vec3{0.0F, 60.0F, 120.0F}, 3.0F},
             // center-return 检查持久拓扑和 merge 后的再次细分稳定性
-            BenchmarkCameraKeyframe{"center-return", glm::vec3{0.0F, 4.0F, 0.0F}, 3.0F},
+            BenchmarkCameraKeyframe{"center-return", glm::vec3{0.0F, 4.0F, 0.0F}, 4.0F},
         };
         return scenario;
     }
@@ -358,10 +360,10 @@ bool ValidateRunShape(const BenchmarkScenario& scenario, std::vector<BenchmarkFr
         // GPU 初期实现也能在合理接近时扩展校验口径
         const bool centerHasMoreDetail = frames[1].TriangleCount > farTriangles * 2U;
         const bool cornerHasMoreDetail = frames[2].TriangleCount > farTriangles * 2U;
-        const bool returnHasMoreDetail = frames[3].TriangleCount > farTriangles * 2U;
+        const bool returnHasMoreDetail = frames.back().TriangleCount > farTriangles * 2U;
         frames[1].Passed = frames[1].Passed && centerHasMoreDetail;
         frames[2].Passed = frames[2].Passed && cornerHasMoreDetail;
-        frames[3].Passed = frames[3].Passed && returnHasMoreDetail;
+        frames.back().Passed = frames.back().Passed && returnHasMoreDetail;
         passed = passed && centerHasMoreDetail && cornerHasMoreDetail && returnHasMoreDetail;
     }
 

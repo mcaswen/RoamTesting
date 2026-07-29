@@ -164,29 +164,43 @@ void ClassicRoamMeshBuilder::RefineWithSplitQueue(ClassicRoamNode* rootA, Classi
 
 void ClassicRoamMeshBuilder::MergeWithDiamondQueue()
 {
-    // merge 从可回收 internal node 中收集候选
-    // 低 error 先回收
-    // 让远处细节比近处更早退回粗网格
     struct MergeCandidate
     {
         float Score{0.0F};
+        std::uint64_t Sequence{0};
         ClassicRoamNode* Node{nullptr};
     };
 
-    std::vector<MergeCandidate> candidates;
-    const auto collectCandidates = [this, &candidates](auto&& self, ClassicRoamNode* node) -> void {
+    struct CandidateCompare
+    {
+        bool operator()(const MergeCandidate& left, const MergeCandidate& right) const
+        {
+            if (left.Score == right.Score)
+            {
+                return left.Sequence > right.Sequence;
+            }
+            return left.Score > right.Score;
+        }
+    };
+
+    std::priority_queue<MergeCandidate, std::vector<MergeCandidate>, CandidateCompare> candidates;
+    std::uint64_t sequence = 0;
+    const auto enqueueCandidate = [this, &candidates, &sequence](ClassicRoamNode* node) {
+        if (CanMergeNode(node))
+        {
+            candidates.push(MergeCandidate{ComputeScreenErrorScore(*node), sequence++, node});
+            _stats.CandidatePeakCount = std::max(_stats.CandidatePeakCount, candidates.size());
+        }
+    };
+
+    const auto collectCandidates = [&enqueueCandidate, this](auto&& self, ClassicRoamNode* node) -> void {
         // merge candidate 必须从 active internal node 中收集
         if (node == nullptr || IsLeaf(node))
         {
             return;
         }
 
-        // CanMergeNode 已包含 diamond 形状和 error 阈值判断
-        if (CanMergeNode(node))
-        {
-            candidates.push_back(MergeCandidate{ComputeScreenErrorScore(*node), node});
-        }
-
+        enqueueCandidate(node);
         self(self, node->LeftChild);
         self(self, node->RightChild);
     };
@@ -194,27 +208,29 @@ void ClassicRoamMeshBuilder::MergeWithDiamondQueue()
     collectCandidates(collectCandidates, _rootA);
     collectCandidates(collectCandidates, _rootB);
 
-    std::sort(
-        candidates.begin(),
-        candidates.end(),
-        [](const MergeCandidate& left, const MergeCandidate& right) {
-            // 误差越低越优先 merge，减少远处无意义细节
-            return left.Score < right.Score;
-        });
-
-    for (const MergeCandidate& candidate : candidates)
+    while (!candidates.empty())
     {
-        // 候选列表排序后，前面的 merge 可能改变后面节点的 active 状态
+        const MergeCandidate candidate = candidates.top();
+        candidates.pop();
         ClassicRoamNode* node = candidate.Node;
         if (!CanMergeNode(node))
         {
             continue;
         }
 
+        // 成对 diamond merge 前保留两侧 parent；child 回收后它们可能立刻成为新候选
+        ClassicRoamNode* baseNeighbor = node->BaseNeighbor;
+        ClassicRoamNode* nodeParent = node->Parent;
+        ClassicRoamNode* baseParent = baseNeighbor != nullptr ? baseNeighbor->Parent : nullptr;
         if (!MergeNodeOrDiamond(node))
         {
             ++_stats.RejectedMergeCount;
+            continue;
         }
+
+        // 动态入队是单次 Build 向上级联的关键，不依赖 pass 开始时的旧候选快照
+        enqueueCandidate(nodeParent);
+        enqueueCandidate(baseParent);
     }
 }
 
