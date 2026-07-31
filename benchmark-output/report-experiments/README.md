@@ -1,8 +1,8 @@
-# Runtime Benchmark Experiment Index
+# 运行时基准测试实验索引
 
-All raw runtime benchmark reports are organized per experiment folder. Each folder includes raw Markdown, raw CSV, generated `summary.csv`, generated `summary.md`, and SVG figures for report writing.
+所有原始运行时基准报告均按实验目录整理。每个目录包含原始 Markdown、原始 CSV、生成的 `summary.csv`、生成的 `summary.md`，以及用于撰写报告的 SVG 图表。
 
-> Historical-data notice (2026-07-29): these reports were generated before Classic, Data-Oriented, and GPU ROAM-like adopted the current complete-variance, pixel-SSE, frustum-aware, hard-budget contract. They remain valid records of the old implementations, but their timings and triangle counts are not directly comparable with current `HEAD`. In particular, `experiment-03-distance-scale` describes the retired distance-weighted heuristic; `DistanceScale` has been removed from the active ROAM settings.
+> 历史数据说明（2026-07-29）：这些报告生成于 Classic、Data-Oriented 和 GPU ROAM-like 采用当前完整方差、像素 SSE、视锥感知和硬预算契约之前。它们仍是旧实现的有效记录，但耗时和三角形数量不能与当前 `HEAD` 直接比较。特别是 `experiment-03-distance-scale` 描述的是已废弃的距离加权启发式方法；`DistanceScale` 已从当前 ROAM 设置中移除。
 
 | Experiment | Raw CSV count | Main generated files |
 | --- | ---: | --- |
@@ -12,7 +12,7 @@ All raw runtime benchmark reports are organized per experiment folder. Each fold
 | `experiment-04-heightmap` | 2 | summary.md, summary.csv, chart_avg_cpu_percent.svg, chart_avg_frame_ms.svg, chart_avg_lod_ms.svg, chart_avg_triangles.svg, chart_gpu_breakdown_ms.svg |
 | `experiment-05-gpu-breakdown` | 1 | summary.md, summary.csv, chart_avg_cpu_percent.svg, chart_avg_frame_ms.svg, chart_avg_lod_ms.svg, chart_avg_triangles.svg, chart_gpu_breakdown_ms.svg |
 
-## Quick baseline aggregate
+## 基线快速汇总
 
 | Algorithm | Avg LOD ms mean | Avg frame ms mean | Avg triangles mean | Avg CPU % mean |
 | --- | ---: | ---: | ---: | ---: |

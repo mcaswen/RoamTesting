@@ -1,22 +1,22 @@
-# Runtime Benchmark
+# 运行时基准测试报告
 
-- Camera path: edge midpoint to terrain center
-- Sampled duration per algorithm: 0.2 seconds
-- Detailed CSV: `runtime-benchmark-20260716-005731.csv`
+- 相机路径：从地形边缘中点移动到地形中心
+- 每种算法的采样时长：0.2 秒
+- 详细 CSV：`runtime-benchmark-20260716-005731.csv`
 
-- Build configuration: Debug
-- Graphics backend: D3D12
-- Graphics adapter: NVIDIA GeForce RTX 5090 D (Direct3D 12 (feature level 12_0); driver 32.0.15.9186)
-- Benchmark label: dx12-gpu-peking
-- GPU timing model: DX12 compute topology refinement, GPU mesh emission and ExecuteIndirect
-- VSync: disabled during benchmark
+- 构建配置：Debug
+- 图形后端：D3D12
+- 图形适配器：NVIDIA GeForce RTX 5090 D (Direct3D 12 (feature level 12_0); driver 32.0.15.9186)
+- Benchmark 标签：dx12-gpu-peking
+- GPU 计时模型：DX12 compute 执行拓扑细分和 GPU mesh emit，并使用 ExecuteIndirect
+- VSync：基准测试期间已关闭
 
-- Height map: `assets/heightmaps/Hm_Terrain_Peking_513.png` 547x547
-- Terrain size: 30
-- Height scale: 4
-- Max depth setting: 14
-- Distance scale: 24
-- Split/Merge thresholds: 0.04 / 0.02
+- Height map：`assets/heightmaps/Hm_Terrain_Peking_513.png` 547x547
+- Terrain size：30
+- Height scale：4
+- Max depth 设置：14
+- Distance scale：24
+- Split/Merge 阈值：0.04 / 0.02
 
 | Algorithm | Samples | Avg Frame ms | Max Frame ms | Avg LOD ms | Max LOD ms | Avg CPU Update ms | Avg CPU Upload ms | Avg GPU ms | Max GPU ms | Avg GPU Snapshot ms | Avg GPU Alloc ms | Avg GPU Dispatch Wall ms | Avg GPU Query Wait ms | Avg GPU Readback Wait ms | Avg Frame Fence Wait ms | Max Frame Fence Wait ms | Avg Render ms | Max Render ms | Avg Triangles | Max Triangles | Avg Nodes | Max Nodes | Avg CPU % | Max CPU % | Max Workers | Max Upload B | Max Readback B | Config Max Depth | Reached Max Depth | Max Topology Issues |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |

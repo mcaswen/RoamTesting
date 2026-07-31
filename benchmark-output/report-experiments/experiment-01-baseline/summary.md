@@ -1,8 +1,8 @@
-# Experiment 01 Baseline
+# 实验 01：基线
 
-Generated from the raw runtime benchmark CSV files in this folder.
+由本目录中的原始运行时基准 CSV 文件生成。
 
-## Per-case summary
+## 分测试项汇总
 
 | Case | Algorithm | Samples | Avg LOD ms | Avg Frame ms | Avg Triangles | Avg CPU % | Avg GPU ms | Max Depth | Topology Issues |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -16,7 +16,7 @@ Generated from the raw runtime benchmark CSV files in this folder.
 | r03 | Data-Oriented CPU ROAM | 941 | 9.73 | 10.69 | 31489 | 327.35 | 0.00 | 17 | 0 |
 | r03 | GPU ROAM-like | 743 | 13.19 | 13.52 | 31325 | 217.05 | 0.67 | 17 | 0 |
 
-## Three-run aggregate
+## 三轮汇总
 
 | Algorithm | Avg LOD ms mean | Avg LOD ms stdev | Avg triangles mean | Avg CPU % mean |
 | --- | ---: | ---: | ---: | ---: |
@@ -24,7 +24,7 @@ Generated from the raw runtime benchmark CSV files in this folder.
 | Data-Oriented CPU ROAM | 10.49 | 0.84 | 31422 | 324.04 |
 | GPU ROAM-like | 13.38 | 0.18 | 31450 | 230.30 |
 
-## Figures
+## 图表
 
 - `chart_avg_cpu_percent.svg`
 - `chart_avg_frame_ms.svg`

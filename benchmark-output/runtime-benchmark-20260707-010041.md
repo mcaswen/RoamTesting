@@ -1,20 +1,20 @@
-# Runtime Benchmark
+# 运行时基准测试报告
 
-- Camera path: edge midpoint to terrain center
-- Duration per algorithm: 10 seconds
-- Detailed CSV: `runtime-benchmark-20260707-010041.csv`
+- 相机路径：从地形边缘中点移动到地形中心
+- 每种算法的运行时长：10 秒
+- 详细 CSV：`runtime-benchmark-20260707-010041.csv`
 
-- Build configuration: RelWithDebInfo
-- GPU device: NVIDIA GeForce RTX 5090 D/PCIe/SSE2 (4.3.0 NVIDIA 591.86)
-- GPU timing model: CPU DOD topology baseline plus GPU split-only, compaction, mesh emit and indirect draw; GPU ms measures compute passes only
-- VSync: disabled during benchmark
+- 构建配置：RelWithDebInfo
+- GPU 设备：NVIDIA GeForce RTX 5090 D/PCIe/SSE2 (4.3.0 NVIDIA 591.86)
+- GPU 计时模型：CPU DOD 拓扑基线加 GPU split-only、compaction、mesh emit 和 indirect draw；GPU ms 只统计 compute pass
+- VSync：基准测试期间已关闭
 
-- Height map: `assets/heightmaps/Hm_Terrain_Test_129.pgm` 129x129
-- Terrain size: 30
-- Height scale: 4
-- Max depth setting: 14
-- Distance scale: 24
-- Split/Merge thresholds: 0.04 / 0.02
+- Height map：`assets/heightmaps/Hm_Terrain_Test_129.pgm` 129x129
+- Terrain size：30
+- Height scale：4
+- Max depth 设置：14
+- Distance scale：24
+- Split/Merge 阈值：0.04 / 0.02
 
 | Algorithm | Samples | Avg Frame ms | Max Frame ms | Avg LOD ms | Max LOD ms | Avg CPU Update ms | Avg CPU Upload ms | Avg GPU ms | Max GPU ms | Avg Triangles | Max Triangles | Avg Nodes | Max Nodes | Avg CPU % | Max CPU % | Max Workers | Max Upload B | Max Readback B | Config Max Depth | Reached Max Depth | Max Topology Issues |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |

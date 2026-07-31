@@ -1,8 +1,8 @@
-# Experiment 04 Heightmap
+# 实验 04：Height Map
 
-Generated from the raw runtime benchmark CSV files in this folder.
+由本目录中的原始运行时基准 CSV 文件生成。
 
-## Per-case summary
+## 分测试项汇总
 
 | Case | Algorithm | Samples | Avg LOD ms | Avg Frame ms | Avg Triangles | Avg CPU % | Avg GPU ms | Max Depth | Topology Issues |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -13,7 +13,7 @@ Generated from the raw runtime benchmark CSV files in this folder.
 | Test129 | Data-Oriented CPU ROAM | 940 | 9.75 | 10.70 | 31461 | 329.71 | 0.00 | 17 | 0 |
 | Test129 | GPU ROAM-like | 741 | 13.22 | 13.55 | 31384 | 222.98 | 0.68 | 17 | 0 |
 
-## Figures
+## 图表
 
 - `chart_avg_cpu_percent.svg`
 - `chart_avg_frame_ms.svg`

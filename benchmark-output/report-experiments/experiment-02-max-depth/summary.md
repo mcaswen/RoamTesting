@@ -1,8 +1,8 @@
-# Experiment 02 Max Depth
+# 实验 02：Max Depth
 
-Generated from the raw runtime benchmark CSV files in this folder.
+由本目录中的原始运行时基准 CSV 文件生成。
 
-## Per-case summary
+## 分测试项汇总
 
 | Case | Algorithm | Samples | Avg LOD ms | Avg Frame ms | Avg Triangles | Avg CPU % | Avg GPU ms | Max Depth | Topology Issues |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -22,7 +22,7 @@ Generated from the raw runtime benchmark CSV files in this folder.
 | depth 20 | Data-Oriented CPU ROAM | 938 | 9.77 | 10.73 | 31441 | 321.28 | 0.00 | 17 | 0 |
 | depth 20 | GPU ROAM-like | 736 | 13.32 | 13.65 | 31375 | 209.83 | 0.66 | 17 | 0 |
 
-## Figures
+## 图表
 
 - `chart_avg_cpu_percent.svg`
 - `chart_avg_frame_ms.svg`

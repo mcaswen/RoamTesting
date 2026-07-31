@@ -1,8 +1,8 @@
-# Experiment 03 Distance Scale
+# 实验 03：Distance Scale
 
-Generated from the raw runtime benchmark CSV files in this folder.
+由本目录中的原始运行时基准 CSV 文件生成。
 
-## Per-case summary
+## 分测试项汇总
 
 | Case | Algorithm | Samples | Avg LOD ms | Avg Frame ms | Avg Triangles | Avg CPU % | Avg GPU ms | Max Depth | Topology Issues |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -19,7 +19,7 @@ Generated from the raw runtime benchmark CSV files in this folder.
 | distance 80 | Data-Oriented CPU ROAM | 912 | 10.06 | 11.03 | 31463 | 329.08 | 0.00 | 17 | 0 |
 | distance 80 | GPU ROAM-like | 719 | 13.65 | 13.96 | 31352 | 198.82 | 0.65 | 17 | 0 |
 
-## Figures
+## 图表
 
 - `chart_avg_cpu_percent.svg`
 - `chart_avg_frame_ms.svg`
