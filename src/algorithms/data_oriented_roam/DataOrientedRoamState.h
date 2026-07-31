@@ -296,8 +296,18 @@ void CollectSplitCandidates(DataOrientedRoamState& state, std::vector<DataOrient
 
 void CollectMergeCandidates(DataOrientedRoamState& state, std::vector<DataOrientedRoamMergeCandidate>& candidates);
 
+void CollectMergeCandidates(
+    DataOrientedRoamState& state,
+    std::vector<DataOrientedRoamMergeCandidate>& candidates,
+    float maximumScore);
+
 // CanMergeNode 只检查 diamond merge 前置条件，不修改拓扑
 [[nodiscard]] bool CanMergeNode(const DataOrientedRoamState& state, DataOrientedRoamNodeIndex node);
+
+[[nodiscard]] bool CanMergeNode(
+    const DataOrientedRoamState& state,
+    DataOrientedRoamNodeIndex node,
+    float maximumScore);
 
 // ShouldSplitWithScore 汇总 split 阈值、merge 阈值和 hysteresis 规则
 [[nodiscard]] bool ShouldSplitWithScore(

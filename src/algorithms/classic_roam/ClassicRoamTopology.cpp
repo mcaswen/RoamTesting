@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <limits>
 #include <queue>
 #include <vector>
 
@@ -197,61 +198,121 @@ void ClassicRoamMeshBuilder::MergeWithDiamondQueue()
         }
     };
 
-    std::priority_queue<MergeCandidate, std::vector<MergeCandidate>, CandidateCompare> candidates;
-    std::uint64_t sequence = 0;
-    const auto enqueueCandidate = [this, &candidates, &sequence](ClassicRoamNode* node) {
-        if (CanMergeNode(node))
-        {
-            candidates.push(MergeCandidate{ComputeScreenErrorScore(*node), sequence++, node});
+    float candidateMarkMilliseconds = 0.0F;
+    float topologyMilliseconds = 0.0F;
+    const auto runMergePass = [this, &candidateMarkMilliseconds, &topologyMilliseconds](
+                                  float maximumScore,
+                                  std::size_t maximumFreedLeaves) {
+        std::priority_queue<MergeCandidate, std::vector<MergeCandidate>, CandidateCompare> candidates;
+        std::uint64_t sequence = 0;
+        const auto mergeScore = [this](ClassicRoamNode* node) {
+            float score = ComputeScreenErrorScore(*node);
+            ClassicRoamNode* baseNeighbor = node->BaseNeighbor;
+            if (baseNeighbor != nullptr && !IsLeaf(baseNeighbor) && baseNeighbor->BaseNeighbor == node)
+            {
+                // diamond 的回收损失由两侧 parent 中较高的误差决定
+                score = std::max(score, ComputeScreenErrorScore(*baseNeighbor));
+            }
+            return score;
+        };
+        const auto enqueueCandidate = [this, maximumScore, &candidates, &sequence, &mergeScore](
+                                          ClassicRoamNode* node) {
+            if (!CanMergeNode(node, maximumScore))
+            {
+                return;
+            }
+            candidates.push(MergeCandidate{mergeScore(node), sequence++, node});
             _stats.CandidatePeakCount = std::max(_stats.CandidatePeakCount, candidates.size());
-        }
-    };
+        };
 
-    const auto collectCandidates = [&enqueueCandidate, this](auto&& self, ClassicRoamNode* node) -> void {
-        // merge candidate 必须从 active internal node 中收集
-        if (node == nullptr || IsLeaf(node))
+        const auto collectCandidates = [&enqueueCandidate, this](auto&& self, ClassicRoamNode* node) -> void {
+            if (node == nullptr || IsLeaf(node))
+            {
+                return;
+            }
+            enqueueCandidate(node);
+            self(self, node->LeftChild);
+            self(self, node->RightChild);
+        };
+
+        const auto candidateMarkStart = std::chrono::steady_clock::now();
+        collectCandidates(collectCandidates, _rootA);
+        collectCandidates(collectCandidates, _rootB);
+        candidateMarkMilliseconds +=
+            ElapsedMilliseconds(candidateMarkStart, std::chrono::steady_clock::now());
+
+        const auto topologyStart = std::chrono::steady_clock::now();
+        const std::size_t mergeCountBefore = _stats.MergeCount;
+        while (!candidates.empty() && _stats.MergeCount - mergeCountBefore < maximumFreedLeaves)
         {
-            return;
-        }
+            const MergeCandidate candidate = candidates.top();
+            candidates.pop();
+            ClassicRoamNode* node = candidate.Node;
+            if (!CanMergeNode(node, maximumScore))
+            {
+                continue;
+            }
 
-        enqueueCandidate(node);
-        self(self, node->LeftChild);
-        self(self, node->RightChild);
+            ClassicRoamNode* baseNeighbor = node->BaseNeighbor;
+            ClassicRoamNode* nodeParent = node->Parent;
+            ClassicRoamNode* baseParent = baseNeighbor != nullptr ? baseNeighbor->Parent : nullptr;
+            if (!MergeNodeOrDiamond(node, maximumScore))
+            {
+                ++_stats.RejectedMergeCount;
+                continue;
+            }
+
+            // 深层回收后立即重新评价 parent，保持单次 Build 级联合并
+            enqueueCandidate(nodeParent);
+            enqueueCandidate(baseParent);
+        }
+        topologyMilliseconds += ElapsedMilliseconds(topologyStart, std::chrono::steady_clock::now());
     };
 
-    const auto candidateMarkStart = std::chrono::steady_clock::now();
-    collectCandidates(collectCandidates, _rootA);
-    collectCandidates(collectCandidates, _rootB);
-    _stats.MergeCandidateMarkMilliseconds =
-        ElapsedMilliseconds(candidateMarkStart, std::chrono::steady_clock::now());
+    runMergePass(_settings.MergeThreshold, std::numeric_limits<std::size_t>::max());
 
-    const auto topologyStart = std::chrono::steady_clock::now();
-    while (!candidates.empty())
+    // 硬预算满载时，单纯阈值 merge 无法把 token 从旧视野转给新入屏区域
+    // 这里用有限批次交换最低损失 diamond 和最高价值 split，避免转向后长时间显示粗网格
+    const auto rebalanceMarkStart = std::chrono::steady_clock::now();
+    std::vector<ClassicRoamNode*> activeLeaves;
+    CollectLeafNodes(activeLeaves);
+    const std::size_t availableBudget = _settings.TriangleBudget > activeLeaves.size()
+        ? _settings.TriangleBudget - activeLeaves.size()
+        : 0U;
+    float highestSplitScore = 0.0F;
+    std::size_t splitDemandCount = 0U;
+    for (ClassicRoamNode* leaf : activeLeaves)
     {
-        const MergeCandidate candidate = candidates.top();
-        candidates.pop();
-        ClassicRoamNode* node = candidate.Node;
-        if (!CanMergeNode(node))
+        if (leaf == nullptr || leaf->Depth >= _settings.MaxDepth)
         {
             continue;
         }
-
-        // 成对 diamond merge 前保留两侧 parent；child 回收后它们可能立刻成为新候选
-        ClassicRoamNode* baseNeighbor = node->BaseNeighbor;
-        ClassicRoamNode* nodeParent = node->Parent;
-        ClassicRoamNode* baseParent = baseNeighbor != nullptr ? baseNeighbor->Parent : nullptr;
-        if (!MergeNodeOrDiamond(node))
+        const float score = ComputeScreenErrorScore(*leaf);
+        if (score > _settings.SplitThreshold)
         {
-            ++_stats.RejectedMergeCount;
-            continue;
+            highestSplitScore = std::max(highestSplitScore, score);
+            ++splitDemandCount;
         }
-
-        // 动态入队是单次 Build 向上级联的关键，不依赖 pass 开始时的旧候选快照
-        enqueueCandidate(nodeParent);
-        enqueueCandidate(baseParent);
     }
-    _stats.MergeTopologyMilliseconds =
-        ElapsedMilliseconds(topologyStart, std::chrono::steady_clock::now());
+
+    const std::size_t batchLimit = std::min<std::size_t>(
+        128U,
+        std::max<std::size_t>(1U, _settings.TriangleBudget / 32U));
+    const std::size_t desiredBudget = std::min(splitDemandCount, batchLimit);
+    const std::size_t requiredFreedLeaves = desiredBudget > availableBudget
+        ? desiredBudget - availableBudget
+        : 0U;
+    const float hysteresisGap = std::max(0.0F, _settings.SplitThreshold - _settings.MergeThreshold);
+    const float rebalanceScoreLimit = highestSplitScore - hysteresisGap;
+    candidateMarkMilliseconds +=
+        ElapsedMilliseconds(rebalanceMarkStart, std::chrono::steady_clock::now());
+    if (requiredFreedLeaves > 0U && rebalanceScoreLimit > _settings.MergeThreshold)
+    {
+        runMergePass(rebalanceScoreLimit, requiredFreedLeaves);
+    }
+
+    _stats.MergeCandidateMarkMilliseconds = candidateMarkMilliseconds;
+    _stats.MergeTopologyMilliseconds = topologyMilliseconds;
 }
 
 bool ClassicRoamMeshBuilder::SplitNode(
@@ -436,7 +497,7 @@ void ClassicRoamMeshBuilder::ReplaceNeighborReference(
     }
 }
 
-bool ClassicRoamMeshBuilder::CanMergeNode(const ClassicRoamNode* node) const
+bool ClassicRoamMeshBuilder::CanMergeNode(const ClassicRoamNode* node, float maximumScore) const
 {
     // 只能回收已经 split 的 parent
     if (node == nullptr || IsLeaf(node))
@@ -456,7 +517,7 @@ bool ClassicRoamMeshBuilder::CanMergeNode(const ClassicRoamNode* node) const
         return false;
     }
 
-    if (ComputeScreenErrorScore(*node) > _settings.MergeThreshold)
+    if (ComputeScreenErrorScore(*node) > maximumScore)
     {
         // parent 自身误差还高时，回收会造成明显 LOD 退化
         return false;
@@ -487,7 +548,7 @@ bool ClassicRoamMeshBuilder::CanMergeNode(const ClassicRoamNode* node) const
         return false;
     }
 
-    return ComputeScreenErrorScore(*baseNeighbor) <= _settings.MergeThreshold;
+    return ComputeScreenErrorScore(*baseNeighbor) <= maximumScore;
 }
 
 void ClassicRoamMeshBuilder::MergeSingleNode(ClassicRoamNode* node)
@@ -517,9 +578,9 @@ void ClassicRoamMeshBuilder::MergeSingleNode(ClassicRoamNode* node)
     ++_stats.MergeCount;
 }
 
-bool ClassicRoamMeshBuilder::MergeNodeOrDiamond(ClassicRoamNode* node)
+bool ClassicRoamMeshBuilder::MergeNodeOrDiamond(ClassicRoamNode* node, float maximumScore)
 {
-    if (!CanMergeNode(node))
+    if (!CanMergeNode(node, maximumScore))
     {
         // 外层队列可能持有已过期的 merge candidate
         return false;
@@ -530,7 +591,7 @@ bool ClassicRoamMeshBuilder::MergeNodeOrDiamond(ClassicRoamNode* node)
     {
         // 完整 diamond merge 要同时回收当前 parent 和 base parent
         // 单侧回收会让对侧 child 贴到粗边上
-        if (!CanMergeNode(baseNeighbor) || baseNeighbor->BaseNeighbor != node)
+        if (!CanMergeNode(baseNeighbor, maximumScore) || baseNeighbor->BaseNeighbor != node)
         {
             return false;
         }

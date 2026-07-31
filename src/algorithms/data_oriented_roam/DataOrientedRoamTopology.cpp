@@ -2,6 +2,7 @@
 #include "algorithms/data_oriented_roam/DataOrientedRoamState.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -445,12 +446,13 @@ void MergeSingleNode(
     RecordMerge(state, counters);
 }
 
-bool MergeNodeOrDiamond(
+bool MergeNodeOrDiamondWithScoreLimit(
     DataOrientedRoamState& state,
     DataOrientedRoamNodeIndex node,
+    float maximumScore,
     TopologyCommitCounters* counters = nullptr)
 {
-    if (!CanMergeNode(state, node))
+    if (!CanMergeNode(state, node, maximumScore))
     {
         return false;
     }
@@ -460,7 +462,7 @@ bool MergeNodeOrDiamond(
     {
         // 完整 diamond merge 要同时回收两侧 parent
         // 只回收一侧会让对侧 child 贴上粗边
-        if (!CanMergeNode(state, baseNeighbor) || state.Nodes[baseNeighbor].BaseNeighbor != node)
+        if (!CanMergeNode(state, baseNeighbor, maximumScore) || state.Nodes[baseNeighbor].BaseNeighbor != node)
         {
             return false;
         }
@@ -477,6 +479,18 @@ bool MergeNodeOrDiamond(
 
     MergeSingleNode(state, node, counters);
     return true;
+}
+
+bool MergeNodeOrDiamond(
+    DataOrientedRoamState& state,
+    DataOrientedRoamNodeIndex node,
+    TopologyCommitCounters* counters = nullptr)
+{
+    return MergeNodeOrDiamondWithScoreLimit(
+        state,
+        node,
+        state.Settings.MergeThreshold,
+        counters);
 }
 
 bool HasReusableChildren(const DataOrientedRoamState& state, DataOrientedRoamNodeIndex node)
@@ -1079,6 +1093,107 @@ void MergeWithDiamondQueue(DataOrientedRoamState& state)
         // A successful merge can make its parent eligible in the same Build.
         enqueueCandidate(parent);
         enqueueCandidate(baseParent);
+    }
+
+    // 阈值 merge 完成后若预算仍接近满载，按有限批次把低价值旧视野 diamond
+    // 交换给高价值新入屏 split。分数必须跨过迟滞差值，避免相近候选来回抖动。
+    const auto rebalanceMarkStart = std::chrono::steady_clock::now();
+    std::vector<DataOrientedRoamNodeIndex> activeLeaves;
+    CollectLeafNodes(state, activeLeaves);
+    const std::size_t availableBudget = state.Settings.TriangleBudget > activeLeaves.size()
+        ? state.Settings.TriangleBudget - activeLeaves.size()
+        : 0U;
+    float highestSplitScore = 0.0F;
+    std::size_t splitDemandCount = 0U;
+    for (DataOrientedRoamNodeIndex leaf : activeLeaves)
+    {
+        if (!state.IsValidNode(leaf) || state.Nodes[leaf].Depth >= state.Settings.MaxDepth)
+        {
+            continue;
+        }
+        const float score = EvaluateScreenErrorForNode(state, leaf);
+        if (score > state.Settings.SplitThreshold)
+        {
+            highestSplitScore = std::max(highestSplitScore, score);
+            ++splitDemandCount;
+        }
+    }
+
+    const std::size_t batchLimit = std::min<std::size_t>(
+        128U,
+        std::max<std::size_t>(1U, state.Settings.TriangleBudget / 32U));
+    const std::size_t desiredBudget = std::min(splitDemandCount, batchLimit);
+    const std::size_t requiredFreedLeaves = desiredBudget > availableBudget
+        ? desiredBudget - availableBudget
+        : 0U;
+    const float hysteresisGap = std::max(
+        0.0F,
+        state.Settings.SplitThreshold - state.Settings.MergeThreshold);
+    const float rebalanceScoreLimit = highestSplitScore - hysteresisGap;
+    state.Stats.MergeCandidateMarkMilliseconds +=
+        ElapsedMilliseconds(rebalanceMarkStart, std::chrono::steady_clock::now());
+    if (requiredFreedLeaves == 0U || rebalanceScoreLimit <= state.Settings.MergeThreshold)
+    {
+        return;
+    }
+
+    std::vector<DataOrientedRoamMergeCandidate> rebalanceCandidates;
+    CollectMergeCandidates(state, rebalanceCandidates, rebalanceScoreLimit);
+    std::priority_queue<MergeQueueEntry, std::vector<MergeQueueEntry>, CandidateCompare> rebalanceQueue;
+    std::uint64_t rebalanceSequence = 0U;
+    const auto enqueueRebalanceCandidate = [
+                                               &state,
+                                               rebalanceScoreLimit,
+                                               &rebalanceQueue,
+                                               &rebalanceSequence](DataOrientedRoamNodeIndex node) {
+        if (!CanMergeNode(state, node, rebalanceScoreLimit))
+        {
+            return;
+        }
+
+        float score = EvaluateScreenErrorForNode(state, node);
+        const DataOrientedRoamNodeIndex baseNeighbor = state.Nodes[node].BaseNeighbor;
+        if (state.IsValidNode(baseNeighbor) &&
+            !state.IsLeaf(baseNeighbor) &&
+            state.Nodes[baseNeighbor].BaseNeighbor == node)
+        {
+            score = std::max(score, EvaluateScreenErrorForNode(state, baseNeighbor));
+        }
+        rebalanceQueue.push(MergeQueueEntry{score, rebalanceSequence++, node});
+        state.Stats.CandidatePeakCount = std::max(state.Stats.CandidatePeakCount, rebalanceQueue.size());
+    };
+    for (const DataOrientedRoamMergeCandidate& candidate : rebalanceCandidates)
+    {
+        enqueueRebalanceCandidate(candidate.Node);
+    }
+
+    const std::size_t mergeCountBeforeRebalance = state.Stats.MergeCount;
+    while (!rebalanceQueue.empty() &&
+           state.Stats.MergeCount - mergeCountBeforeRebalance < requiredFreedLeaves)
+    {
+        const MergeQueueEntry candidate = rebalanceQueue.top();
+        rebalanceQueue.pop();
+        if (!CanMergeNode(state, candidate.Node, rebalanceScoreLimit))
+        {
+            continue;
+        }
+
+        const DataOrientedRoamNodeIndex baseNeighbor = state.Nodes[candidate.Node].BaseNeighbor;
+        const DataOrientedRoamNodeIndex parent = state.Nodes[candidate.Node].Parent;
+        const DataOrientedRoamNodeIndex baseParent = state.IsValidNode(baseNeighbor)
+            ? state.Nodes[baseNeighbor].Parent
+            : InvalidDataOrientedRoamNodeIndex;
+        if (!MergeNodeOrDiamondWithScoreLimit(
+                state,
+                candidate.Node,
+                rebalanceScoreLimit))
+        {
+            ++state.Stats.RejectedMergeCount;
+            continue;
+        }
+
+        enqueueRebalanceCandidate(parent);
+        enqueueRebalanceCandidate(baseParent);
     }
 }
 } // 命名空间 ParallelRoam::Algorithms::DataOrientedRoam

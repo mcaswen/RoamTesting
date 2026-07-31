@@ -80,3 +80,27 @@ target_link_libraries(
 )
 
 add_test(NAME terrain_lod_view COMMAND parallel_roam_terrain_lod_view_tests)
+
+if(TARGET parallel_roam)
+    add_test(
+        NAME roam_budget_reentry_classic
+        COMMAND
+            $<TARGET_FILE:parallel_roam>
+            --benchmark
+            --algorithm classic
+            --profile budget-reentry
+    )
+    add_test(
+        NAME roam_budget_reentry_dod
+        COMMAND
+            $<TARGET_FILE:parallel_roam>
+            --benchmark
+            --algorithm dod
+            --profile budget-reentry
+    )
+    set_tests_properties(
+        roam_budget_reentry_classic
+        roam_budget_reentry_dod
+        PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."
+    )
+endif()

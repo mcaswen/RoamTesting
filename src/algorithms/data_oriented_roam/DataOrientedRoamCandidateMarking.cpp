@@ -134,6 +134,14 @@ void CollectActiveLeafNodes(DataOrientedRoamState& state, std::vector<DataOrient
 
 bool CanMergeNode(const DataOrientedRoamState& state, DataOrientedRoamNodeIndex node)
 {
+    return CanMergeNode(state, node, state.Settings.MergeThreshold);
+}
+
+bool CanMergeNode(
+    const DataOrientedRoamState& state,
+    DataOrientedRoamNodeIndex node,
+    float maximumScore)
+{
     if (!state.IsValidNode(node) || state.IsLeaf(node))
     {
         // merge candidate 必须是 active internal node
@@ -152,7 +160,7 @@ bool CanMergeNode(const DataOrientedRoamState& state, DataOrientedRoamNodeIndex 
         return false;
     }
 
-    if (ComputeScreenErrorScore(state, candidate) > state.Settings.MergeThreshold)
+    if (ComputeScreenErrorScore(state, candidate) > maximumScore)
     {
         // parent 自身误差仍高时回收会造成可见 LOD 退化
         return false;
@@ -181,7 +189,7 @@ bool CanMergeNode(const DataOrientedRoamState& state, DataOrientedRoamNodeIndex 
         return false;
     }
 
-    return ComputeScreenErrorScore(state, state.Nodes[baseNeighbor]) <= state.Settings.MergeThreshold;
+    return ComputeScreenErrorScore(state, state.Nodes[baseNeighbor]) <= maximumScore;
 }
 
 void CollectSplitCandidates(DataOrientedRoamState& state, std::vector<DataOrientedRoamSplitCandidate>& candidates)
@@ -273,6 +281,14 @@ void CollectSplitCandidates(DataOrientedRoamState& state, std::vector<DataOrient
 
 void CollectMergeCandidates(DataOrientedRoamState& state, std::vector<DataOrientedRoamMergeCandidate>& candidates)
 {
+    CollectMergeCandidates(state, candidates, state.Settings.MergeThreshold);
+}
+
+void CollectMergeCandidates(
+    DataOrientedRoamState& state,
+    std::vector<DataOrientedRoamMergeCandidate>& candidates,
+    float maximumScore)
+{
     candidates.clear();
     const auto start = std::chrono::steady_clock::now();
     const std::size_t nodeCount = state.Nodes.size();
@@ -287,12 +303,17 @@ void CollectMergeCandidates(DataOrientedRoamState& state, std::vector<DataOrient
     }
 
     const auto markRange =
-        [&state](std::size_t begin, std::size_t end, std::vector<DataOrientedRoamMergeCandidate>& outCandidates) {
+        [&state, maximumScore](
+            std::size_t begin,
+            std::size_t end,
+            std::vector<DataOrientedRoamMergeCandidate>& outCandidates) {
         // CanMergeNode 只读拓扑  真正 merge 仍在串行提交流程
         for (std::size_t index = begin; index < end; ++index)
         {
             const auto node = static_cast<DataOrientedRoamNodeIndex>(index);
-            if (state.IsLeaf(node) || !IsActiveTopologyNode(state, node) || !CanMergeNode(state, node))
+            if (state.IsLeaf(node) ||
+                !IsActiveTopologyNode(state, node) ||
+                !CanMergeNode(state, node, maximumScore))
             {
                 // inactive 历史节点和 leaf 都不会进入 merge 队列
                 continue;
@@ -341,7 +362,7 @@ void CollectMergeCandidates(DataOrientedRoamState& state, std::vector<DataOrient
         }
     }
 
-    state.Stats.MergeCandidateCount = candidates.size();
-    state.Stats.MergeCandidateMarkMilliseconds = ElapsedMilliseconds(start, std::chrono::steady_clock::now());
+    state.Stats.MergeCandidateCount += candidates.size();
+    state.Stats.MergeCandidateMarkMilliseconds += ElapsedMilliseconds(start, std::chrono::steady_clock::now());
 }
 } // 命名空间 ParallelRoam::Algorithms::DataOrientedRoam

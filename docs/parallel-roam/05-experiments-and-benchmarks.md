@@ -60,7 +60,7 @@ Debug View 的价值不只是展示效果，也用于定位算法问题。比如
 - 同一活动三角形预算或离线质量目标
 ```
 
-三种 ROAM 的 `TriangleBudget` 都是最终活动 leaf 硬上限。Classic/DOD 的 requested、forced 和并行 chunk split 消费同一预算；GPU ROAM-like 先扣除 CPU DOD 快照已占用的 leaf，再由 compute counter 原子分配剩余 token：外边界单 split 消费 1，diamond pair 消费 2，提交失败时归还。该 GPU pass 按候选 append 顺序竞争 token，不是全局误差 Top-K；固定预算能直接约束资源上限，但不代表三种实现做出了相同的全局预算分配。
+三种 ROAM 的 `TriangleBudget` 都是最终活动 leaf 硬上限。Classic/DOD 的 requested、forced 和并行 chunk split 消费同一预算；当池接近满载且视点变化产生更高分 split 时，两者会用有界批次把低损失 diamond 的预算交换给新候选，避免新入屏区域等待旧视野完全越过 merge 阈值。GPU ROAM-like 先运行该 CPU DOD baseline，再由 compute counter 原子分配剩余 token：外边界单 split 消费 1，diamond pair 消费 2，提交失败时归还。原生 GPU pass 仍按候选 append 顺序竞争 token，不是全局误差 Top-K；固定预算能直接约束资源上限，但不代表三种实现做出了相同的全局预算分配。
 
 主要对比指标：
 
@@ -201,7 +201,7 @@ CPU 阶段按互斥执行区间记录，阶段和应接近 `cpuUpdateMs`；原�
 
 该表分析稳定帧热路径。variance tree / geometric-error rebuild 属于初始化、地形切换或相关设置失效后的 reset 路径，当前没有独立阶段计时；不能从稳定帧表中推断其成本，若要比较必须另建 initialization benchmark。
 
-统一 benchmark harness 对 Classic、DOD 和 GPU 名称都应用预算与 `center -> away` 视锥回收断言；无窗口模式因没有图形上下文通常跳过 GPU。应用级 `--gpu-smoke-test` 在 OpenGL 和 D3D12 上分别验证 GPU packet 非空、最终三角形不超预算，并检查 CPU DOD 持久拓扑的三类 issue 为零。这类正确性验证不替代 30-60 秒 runtime 性能采样。
+统一 benchmark harness 对 Classic、DOD 和 GPU 名称都应用预算与 `center -> away` 视锥回收断言；`budget-reentry` profile 另以低预算和原地小角度转向，要求 Classic/DOD 在转向后的第一次 Build 同时 merge 旧低分 diamond 并 split 新高分区域。无窗口模式因没有图形上下文通常跳过 GPU。应用级 `--gpu-smoke-test` 在 OpenGL 和 D3D12 上分别验证 GPU packet 非空、最终三角形不超预算，并检查 CPU DOD 持久拓扑的三类 issue 为零。这类正确性验证不替代 30-60 秒 runtime 性能采样。
 
 ## 结论写法
 

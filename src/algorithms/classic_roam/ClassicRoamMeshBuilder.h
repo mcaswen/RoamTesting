@@ -262,14 +262,14 @@ private:
     // 邻居还指向旧 leaf 时，需要改指向 split 后对应的 child
     void ReplaceNeighborReference(ClassicRoamNode* neighbor, ClassicRoamNode* oldNode, ClassicRoamNode* newNode) const;
 
-    // 判断 parent 是否可以安全回收为 leaf
-    [[nodiscard]] bool CanMergeNode(const ClassicRoamNode* node) const;
+    // 判断 parent 是否可以在给定最大误差下安全回收为 leaf
+    [[nodiscard]] bool CanMergeNode(const ClassicRoamNode* node, float maximumScore) const;
 
     // 回收一个 parent 的两个 leaf child
     void MergeSingleNode(ClassicRoamNode* node);
 
     // 若 base neighbor 也 split，则按 diamond 成对回收
-    [[nodiscard]] bool MergeNodeOrDiamond(ClassicRoamNode* node);
+    [[nodiscard]] bool MergeNodeOrDiamond(ClassicRoamNode* node, float maximumScore);
 
     // 收集当前 active leaf，供裂缝检测和 neighbor 重建复用
     void CollectLeafNodes(std::vector<ClassicRoamNode*>& leafNodes) const;

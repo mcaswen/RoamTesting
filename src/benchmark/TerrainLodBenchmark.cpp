@@ -55,10 +55,12 @@ struct BenchmarkScenario
     // Smoke 会打开拓扑验证并要求近处细节增长
     bool RequireTopologyClean{false};
     bool RequireNearDetailIncrease{false};
+    // 预算重入场景要求转向后的第一次 Build 同时回收旧细节并细分新区域
+    bool RequireImmediateBudgetReallocation{false};
 };
 
-// smoke 偏回归测试，standard 偏性能样本
-// 两者共用同一套 frame result 和 CSV 字段
+// smoke 和 budget-reentry 偏回归测试，standard 偏性能样本
+// 三者共用同一套 frame result 和 CSV 字段
 struct BenchmarkFrameResult
 {
     std::string AlgorithmName;
@@ -96,6 +98,8 @@ std::string ToString(BenchmarkProfile profile)
     {
     case BenchmarkProfile::Smoke:
         return "smoke";
+    case BenchmarkProfile::BudgetReentry:
+        return "budget-reentry";
     case BenchmarkProfile::Standard:
         return "standard";
     }
@@ -224,6 +228,44 @@ BenchmarkScenario MakeScenario(BenchmarkProfile profile)
             BenchmarkCameraKeyframe{"far-return", glm::vec3{0.0F, 60.0F, 120.0F}, 4.0F},
             // center-return 检查持久拓扑和 merge 后的再次细分稳定性
             BenchmarkCameraKeyframe{"center-return", glm::vec3{0.0F, 4.0F, 0.0F}, 5.0F},
+        };
+        return scenario;
+    }
+
+    if (profile == BenchmarkProfile::BudgetReentry)
+    {
+        // 低预算放大视点相关的优先级变化，稳定复现池满时的细节重分配
+        scenario.HeightMapPath = "assets/heightmaps/Hm_Terrain_Test_129.pgm";
+        scenario.Settings.TriangleBudget = 512U;
+        scenario.Settings.EnableTopologyValidation = true;
+        scenario.RequireTopologyClean = true;
+        scenario.RequireImmediateBudgetReallocation = true;
+        scenario.CameraPath = {
+            BenchmarkCameraKeyframe{
+                "focus-left",
+                glm::vec3{0.0F, 5.0F, 30.0F},
+                0.0F,
+                glm::vec3{-8.0F, 0.0F, 0.0F}},
+            BenchmarkCameraKeyframe{
+                "reentry-minus-four",
+                glm::vec3{0.0F, 5.0F, 30.0F},
+                1.0F,
+                glm::vec3{-4.0F, 0.0F, 0.0F}},
+            BenchmarkCameraKeyframe{
+                "reentry-center",
+                glm::vec3{0.0F, 5.0F, 30.0F},
+                2.0F,
+                glm::vec3{0.0F, 0.0F, 0.0F}},
+            BenchmarkCameraKeyframe{
+                "reentry-plus-four",
+                glm::vec3{0.0F, 5.0F, 30.0F},
+                3.0F,
+                glm::vec3{4.0F, 0.0F, 0.0F}},
+            BenchmarkCameraKeyframe{
+                "reentry-plus-eight",
+                glm::vec3{0.0F, 5.0F, 30.0F},
+                4.0F,
+                glm::vec3{8.0F, 0.0F, 0.0F}},
         };
         return scenario;
     }
@@ -372,6 +414,25 @@ bool ValidateRunShape(const BenchmarkScenario& scenario, std::vector<BenchmarkFr
         frames[3].Passed = frames[3].Passed && cornerHasMoreDetail;
         frames.back().Passed = frames.back().Passed && returnHasMoreDetail;
         passed = passed && centerHasMoreDetail && cornerHasMoreDetail && returnHasMoreDetail;
+    }
+
+    if (scenario.RequireImmediateBudgetReallocation && frames.size() >= 2U)
+    {
+        const std::size_t minimumFilledBudget = scenario.Settings.TriangleBudget > 2U
+            ? scenario.Settings.TriangleBudget - 2U
+            : scenario.Settings.TriangleBudget;
+        const bool initialBudgetFilled = frames.front().TriangleCount >= minimumFilledBudget;
+        frames.front().Passed = frames.front().Passed && initialBudgetFilled;
+        passed = passed && initialBudgetFilled;
+        for (std::size_t index = 1U; index < frames.size(); ++index)
+        {
+            const bool reallocatedInOneBuild =
+                frames[index].Stats.MergeCount > 0U &&
+                frames[index].Stats.SplitCount > 0U &&
+                frames[index].TriangleCount >= minimumFilledBudget;
+            frames[index].Passed = frames[index].Passed && reallocatedInOneBuild;
+            passed = passed && reallocatedInOneBuild;
+        }
     }
 
     return passed;
@@ -709,8 +770,7 @@ bool ParseAlgorithm(std::string_view value, BenchmarkAlgorithmSelection& outSele
 
 bool ParseProfile(std::string_view value, BenchmarkProfile& outProfile)
 {
-    // profile 名只保留 smoke 和 standard
-    // 参数面保持小而稳定
+    // budget-reentry 专门覆盖硬预算满载后的原地转向
     if (value == "smoke")
     {
         outProfile = BenchmarkProfile::Smoke;
@@ -720,6 +780,12 @@ bool ParseProfile(std::string_view value, BenchmarkProfile& outProfile)
     if (value == "standard")
     {
         outProfile = BenchmarkProfile::Standard;
+        return true;
+    }
+
+    if (value == "budget-reentry")
+    {
+        outProfile = BenchmarkProfile::BudgetReentry;
         return true;
     }
 
@@ -882,6 +948,7 @@ int RunTerrainLodBenchmarkFromCommandLine(int argc, char** argv)
 
 std::string BenchmarkUsage()
 {
-    return "Usage: ParallelROAM --benchmark [--algorithm classic|dod|gpu|all] [--profile smoke|standard] [--csv path]\n";
+    return "Usage: ParallelROAM --benchmark [--algorithm classic|dod|gpu|all] "
+           "[--profile smoke|budget-reentry|standard] [--csv path]\n";
 }
 } // 命名空间 ParallelRoam::Benchmark

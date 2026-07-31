@@ -293,6 +293,18 @@
 - 验证：OpenGL/D3D12 RelWithDebInfo 构建、CTest 4/4 与两个 `--gpu-smoke-test` 均通过。最终 OpenGL 报告 `benchmark-output/runtime-benchmark-20260731-222129.md` 中 split/merge candidate 分别为 0.0048/0.0055 ms；D3D12 报告 `benchmark-output/runtime-benchmark-20260731-222147.md` 中分别为 0.0030/0.0030 ms。OpenGL 回读为 96 B（32 B counter + 8 个 query result），D3D12 为 104 B（32 B counter + 9 个 timestamp）。
 - 后续：GPU merge topology、完整邻接发布和递归 forced-split chain 尚未实现，不能把当前 GPU-like shader 列视为完整 GPU ROAM。初始化时的 variance/geometric-error rebuild 仍不在稳定帧阶段表中，应在专门的 reset/initialization benchmark 中测量。
 
+### BUG-024：硬预算满载时转向后的新入屏区域延迟细分
+
+- 状态：`Fixed`
+- 严重级别：`高`
+- 发生阶段：Classic/DOD 视锥感知和硬预算交互复核
+- 现象：活动三角形达到 `TriangleBudget` 后，已经离开屏幕的区域再次进入视野时仍保持粗网格；继续转动到更大角度后才突然重新细分。截图中 Classic 恰好保持 `20000` 个活动三角形，说明问题发生在预算饱和状态。
+- 定位：renderer 在原地转向时会逐帧触发 LOD Build，延迟不是相机重建门限或视锥平面滞后。Classic 与 DOD 的旧 merge pass 只允许 `score <= MergeThreshold` 的 parent 回收；预算没有剩余 token 时，新入屏的高分 split 即使排在最大堆顶部也只能被拒绝。只有旧视野继续转出、低分 parent 穿过固定 merge 阈值后，才会释放 token，因此出现角度相关延迟。GPU ROAM-like 的持久拓扑来自 DOD，同样继承该问题。
+- Debug 过程：新增 `budget-reentry` 无窗口场景，以 `512` leaf 硬预算先聚焦左侧，再保持相机位置不变并按约 7-8 度步进转向。临时关闭预算交换分支时，Classic/DOD 在前三次转向均为 `split=0, merge=0`，直到最后更大角度才各执行 `6 merge + 6 split`，稳定复现用户现象。
+- 解决方案：正常 merge 仍严格使用 `MergeThreshold`。阈值回收完成后，若剩余 token 少于当前高分 split 需求，则计算本帧最高 split 分数，并只从拓扑上可安全合并、损失至少低一个 split/merge 迟滞区间的 diamond 中按低分优先释放 token。单帧交换量限制为 `min(128, max(1, TriangleBudget/32))`，防止一次转向大面积推倒拓扑；释放后继续复用原高分 split 队列、forced split 预算预留和 diamond 邻接维护。Classic 与 DOD 使用相同策略，GPU-like 的 CPU DOD baseline 自动获得相同行为。
+- 验证：交换开启后，Classic/DOD 在 `budget-reentry` 的每个小角度步进中都在第一次 Build 完成 `15-17` 次等量 merge/split，活动三角形始终为 `512/512`，拓扑 issue 为 0；临时关闭交换时该场景按预期失败。OpenGL/D3D12 RelWithDebInfo 构建和完整 CTest 覆盖该 profile。
+- 后续：当前实现是有界的串行优先级交换启发式，不等同于依赖感知的全局最优预算调度器；GPU 原生 split-only pass 仍按并发 append 顺序领取 CPU baseline 剩余 token。
+
 ## 模板
 
 ```text

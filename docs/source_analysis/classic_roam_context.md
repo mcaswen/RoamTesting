@@ -11,7 +11,7 @@
 
 ## 1. 一页概览
 
-**源码事实：** 当前 `Classic CPU ROAM` 是一个单线程、对象式、持久化二叉三角树（binary triangle tree，简称 bintree）实现。它通过 `ClassicRoamTerrainLodAlgorithm` 适配项目统一的 `ITerrainLodAlgorithm` 接口，实际拓扑由 `ClassicRoamMeshBuilder` 持有。初始化时为两个根预计算完整方差树；每次真正发生 LOD 构建时，先用动态最小堆级联合并低像素误差 diamond，再在严格活动三角形预算内用最大堆处理高误差 split 候选，最后完整生成 CPU 顶点/索引数组。
+**源码事实：** 当前 `Classic CPU ROAM` 是一个单线程、对象式、持久化二叉三角树（binary triangle tree，简称 bintree）实现。它通过 `ClassicRoamTerrainLodAlgorithm` 适配项目统一的 `ITerrainLodAlgorithm` 接口，实际拓扑由 `ClassicRoamMeshBuilder` 持有。初始化时为两个根预计算完整方差树；每次真正发生 LOD 构建时，先用动态最小堆级联合并低像素误差 diamond，预算接近满载时再有限交换低分 merge 与高分 split，随后在严格活动三角形预算内用最大堆处理高误差 split 候选，最后完整生成 CPU 顶点/索引数组。
 
 证据：
 
@@ -129,7 +129,7 @@ flowchart TD
 | `src/render/TerrainRenderer.h`、`src/render/TerrainRenderer.cpp` | OpenGL renderer | 创建、持有、调用 Classic，上传并绘制 CPU Mesh |
 | `src/render/D3D12TerrainRenderer.cpp` | D3D12 renderer | 同上，上传到逐帧 D3D12 资源并直接 indexed draw |
 | `src/gui/ImGuiLayer.h`、`src/gui/ImGuiLayer.cpp` | `TerrainPanelState`、ROAM 控件/统计 | 运行时参数入口和观测面板 |
-| `src/benchmark/TerrainLodBenchmark.cpp` | 无窗口 smoke/standard benchmark | 直接经统一接口逐相机关键帧调用 Classic |
+| `src/benchmark/TerrainLodBenchmark.cpp` | 无窗口 smoke/budget-reentry/standard benchmark | 直接经统一接口逐相机关键帧调用 Classic |
 | `src/app/RuntimeBenchmark.*`、`Application.cpp` | 有窗口运行时 benchmark | 强制逐帧重建并输出 Markdown/CSV |
 | `docs/parallel-roam/04-milestones.md` | 阶段 2 记录 | 有用的开发背景，但部分旧条目与当前代码冲突 |
 | `docs/parallel-roam/11-bug-fix-log.md` | BUG-004..010 等 | 说明 PathId、绕序、评分、持久拓扑入口等历史问题 |
@@ -246,7 +246,7 @@ ClassicRoamMeshBuilder::Build(heightMap, scales, fullView, settings)
     写入 View/Projection/FrustumPlanes/DrawableHeight
     必要时 RebuildVarianceTrees()
     必要时 ResetTopology()，否则刷新已有节点的 variance error
-    MergeWithDiamondQueue()             // 动态最小堆，可向父层级联
+    MergeWithDiamondQueue()             // 阈值级联合并；池满时有限交换低分 diamond
     CollectLeafNodes()                  // 得到 merge 后活动 leaf 数
     remainingBudget = budget - leafCount
     RefineWithSplitQueue(rootA, rootB)  // 视锥内像素误差最大堆
@@ -266,7 +266,7 @@ ClassicRoamMeshBuilder::Build(heightMap, scales, fullView, settings)
 
 1. **输入与缓存。** 已有持久树、上一 Build 的 split path、新 `HeightMap/settings/view`。先判断缓存兼容性，再覆盖成员；方差树必须在 root/child 读取 `GeometricError` 前可用。
 2. **Merge pass。** 动态最小堆先处理低像素误差 internal node。提交时重新验证；成功后立即把本侧与 base 对侧 parent 入队，所以孙层回收可以在同一 Build 使祖先继续成为候选。
-3. **预算初始化。** merge 稳定后收集全部活动 leaf；一次 leaf split 会使活动 leaf 数净增 1，因此 `_remainingSplitBudget` 是准确的可消费 token 数。
+3. **预算重平衡与初始化。** 阈值 merge 稳定后收集全部活动 leaf；若可用 token 少于当前高分 split 需求，则以有限批次回收分数至少低一个迟滞区间的安全 diamond。随后用最终活动 leaf 数计算 `_remainingSplitBudget`；一次 leaf split 使活动 leaf 数净增 1，因此 token 数仍是准确硬上限。
 4. **Split pass。** 递归扫描当前 leaf；`ComputeScreenErrorScore` 先以方差扩张的世界 AABB做六平面测试，不可见节点得 0。可见候选按像素误差降序处理；forced split 会预留调用链所需 token，预算不足则拒绝整条不安全细分。
 5. **可选验证。** 用量化共线边检查 T-junction，再验证 active neighbor、共享边和 parent/child/root 不变量。validator 只报告，不修复。
 6. **Mesh emit。** 从两个 root 收集唯一活动 leaf；每叶追加三个独立顶点和三个索引。视锥只影响细分，视锥外粗 leaf 仍会输出并由后端裁剪。
@@ -559,6 +559,8 @@ split 后关键赋值：
 
 **源码事实：** `TriangleBudget` 是活动 leaf 的硬上限且最小为 2。merge 后先计算 `budget-activeLeafCount`；每次成功 split 净增一个 leaf 并消费一个 token。预算拒绝单独计入 `BudgetRejectedSplitCount`。forced 调用通过预留 token 避免“先拆对侧、后发现调用者没预算”留下半完成约束链。
 
+**源码事实：** 普通 merge 仍要求 parent/diamond 两侧不超过 `MergeThreshold`。当预算接近满载且存在 `score > SplitThreshold` 的 leaf 时，`MergeWithDiamondQueue` 计算最高 split 分数，并允许分数不超过“最高 split 分数减去 split/merge 迟滞差值”的安全 diamond 进入第二个低分队列。单次最多为 `min(128, max(1, TriangleBudget/32))` 个 split 需求释放 leaf；之后仍由原 split 最大堆和 forced-chain token 预留决定实际细分。该机制解决视野重入延迟，但不是全局最优预算求解器。
+
 ## 10. Diamond 与裂缝约束
 
 ### 10.1 当前源码中的 diamond
@@ -806,7 +808,7 @@ TriangleCount = ActiveLeafCount
 
 ### 15.4 无窗口 benchmark
 
-**源码事实：** `--benchmark --algorithm classic|dod|gpu|all --profile smoke|standard [--csv path]` 为每个关键帧用 1280x720、60 度透视视图调用一次 `BuildRenderData`。Smoke 使用 129 高度图、6 个视点并开启 validator：`away` 与 `center` 位置相同但向上看，用于验证视锥；`far-return` 用于验证一次 Build 的向上级联合并。预算和 `away` 回收断言覆盖三个 ROAM 名称；无窗口 GPU 因缺少已初始化图形后端通常按 capability skip。Standard 使用 513 高度图、64 帧闭合路径并关闭 validator。
+**源码事实：** `--benchmark --algorithm classic|dod|gpu|all --profile smoke|budget-reentry|standard [--csv path]` 为每个关键帧用 1280x720、60 度透视视图调用一次 `BuildRenderData`。Smoke 使用 129 高度图、6 个视点并开启 validator：`away` 与 `center` 位置相同但向上看，用于验证视锥；`far-return` 用于验证一次 Build 的向上级联合并。`budget-reentry` 使用 512 leaf 预算和同位置小角度转向，要求第一次 Build 就同时发生 merge/split。无窗口 GPU 因缺少已初始化图形后端通常按 capability skip。Standard 使用 513 高度图、64 帧闭合路径并关闭 validator。
 
 证据：`src/benchmark/TerrainLodBenchmark.cpp`；符号：`BuildBenchmarkView`、`MakeScenario`、`RunBenchmark`；代码范围：第 157-229、423-464 行。
 
@@ -882,12 +884,12 @@ TriangleCount = ActiveLeafCount
 | Merge | sibling leaf，内部对侧成对回收并动态入队 parent | `MergeWithDiamondQueue`、`MergeNodeOrDiamond` | 基本一致；单 Build 可级联 |
 | Triangle Priority | 完整方差 + projected pixel SSE 最大堆 | `ComputeScreenErrorScore`、`RefineWithSplitQueue` | 有；使用中心深度近似 |
 | Crack Prevention | base-neighbor forced split | `SplitNode`、`LinkSplitNeighbors` | 默认有；可关闭；validator 不修复 |
-| Triangle Budget | 活动 leaf token 硬上限，forced 链预留 | `TriangleBudget`、`_remainingSplitBudget`、`SplitNode` | 已实现；不使用经典全局双队列预算平衡 |
+| Triangle Budget | 活动 leaf token 硬上限，forced 链预留；池满时有限低分 merge/高分 split 交换 | `TriangleBudget`、`MergeWithDiamondQueue`、`_remainingSplitBudget`、`SplitNode` | 已实现有界启发式；不是经典全局双队列最优平衡 |
 | Incremental Update | 持久 node/child、split/merge、PathId 迟滞 | `Build`、`_previousSplitPaths` | 已实现拓扑增量；Mesh 仍全量重建 |
 | View Frustum Culling | 方差扩张 AABB 对六平面测试，视锥外 score=0 | `IsNodeVisible` | LOD 感知已实现；Mesh 不裁掉视锥外 leaf |
 | Screen-space Error | projection Y scale、drawable height、view depth | `ComputeScreenErrorScore` | 像素单位；不是逐采样点精确投影 |
 
-**结论：** 当前实现已具备 bintree、完整方差树、像素 SSE、优先队列、硬预算、diamond forced split/merge、迟滞和视锥感知，是工程化 Classic ROAM baseline；仍不是经典论文的逐项复刻，例如没有一对长期维护的全局 split/merge 优先队列，也不按统一三角形预算做全局最优交换，Mesh 仍全量重建。
+**结论：** 当前实现已具备 bintree、完整方差树、像素 SSE、优先队列、硬预算、diamond forced split/merge、迟滞、视锥感知和池满时的有界预算交换，是工程化 Classic ROAM baseline；仍不是经典论文的逐项复刻，例如没有一对长期维护的全局 split/merge 优先队列，也不做共享闭包成本下的全局最优交换，Mesh 仍全量重建。
 
 ## 18. 与项目中其他算法的接口比较
 
@@ -902,7 +904,7 @@ TriangleCount = ActiveLeafCount
 | 邻接表达 | 指针 | 索引 | packed NodeRecord/index |
 | 并行适配性 | 较差 | 较好，按 pass/chunk 分解 | 计算/emit 适合 GPU；动态拓扑仍受限 |
 | merge | CPU diamond merge，动态 parent queue | CPU diamond merge；安全 chunk 并行预提交后动态 parent queue 同帧级联 | 能力标记为 true，但 D3D12 注释明确 GPU merge candidate 尚未提交；CPU DOD 基线仍 merge |
-| 活动三角形预算 | 串行 token 硬上限 | 原子 token 硬上限，覆盖并行 commit 与 forced closure | CPU 快照先占用预算；GPU 原子分配剩余 token，边界 split=1、diamond pair=2，最终输出受同一上限 |
+| 活动三角形预算 | 串行 token 硬上限；池满时有界预算交换 | 原子 token 硬上限，覆盖并行 commit 与 forced closure；使用相同有界交换 | CPU DOD 快照先重平衡并占用预算；GPU 原子分配剩余 token，边界 split=1、diamond pair=2，最终输出受同一上限 |
 | 输出统计 | 统一 stats，worker=1 | 统一 stats + 多 pass/worker 内部统计 | 统一 CPU/GPU timing/resource stats |
 | 工程角色 | 对象式正确性/性能 baseline | 数据导向 CPU 对照 | 实验性 GPU 管线 |
 
