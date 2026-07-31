@@ -2,7 +2,7 @@
 
 本文档记录 Parallel ROAM 开发过程中已经完成确认的 bug、易误判现象、定位过程、解决方案和验证方式。正在调查、尚未修复或用户未确认修复完成的问题，不写入正式记录。
 
-> 各条记录保留问题发生时的实现语境；较早条目中的“当前”“后续”和旧 benchmark 数值不代表仓库现状。Classic ROAM 的最新基线以 BUG-019 和 `docs/source_analysis/classic_roam_context.md` 为准。
+> 各条记录保留问题发生时的实现语境；较早条目中的“当前”“后续”和旧 benchmark 数值不代表仓库现状。算法质量基线见 BUG-019 至 BUG-021；最新性能统计口径见 BUG-023 和 `docs/source_analysis/classic_roam_context.md`。
 
 ## 记录规范
 
@@ -269,6 +269,29 @@
 - 解决方案：两个 GPU 后端都直接读取快照中由完整方差树传播的 `GeometricError`，使用显式 CPU 兼容双线性采样、View 中心深度、`Projection[1][1]`、drawable height 和正交投影分支计算像素 SSE，并以方差扩张世界 AABB 对六个 frustum plane 做保守测试；公共 UI/settings/CLI/CSV 移除 `DistanceScale` 与 unitless 阈值。CPU DOD 快照先占用 `TriangleBudget`，GPU split-only invocation 通过共享原子 counter 领取剩余 token：边界 split 消费 1、diamond pair 消费 2，claim/allocation 失败归还，buffer 也只按剩余预算扩容；延迟 readback 校验 active/node 计数和 token 守恒。
 - 验证：OpenGL 与 D3D12 RelWithDebInfo 构建通过，D3D12 九个 shader target 重新编译；OpenGL test tree 的 CTest 4/4 通过。RTX 5090 D 上 OpenGL 4.3 与 D3D12 `--gpu-smoke-test` 均以退出码 0 通过，应用级断言检查 GPU packet 非空、最终三角形不超共享预算，以及 CPU DOD 持久拓扑三类 issue 为零。无窗口 `--benchmark --algorithm all --profile smoke` PASS，Classic/DOD 六帧均为 `7072/528/2/2110/376/528`，GPU 按无上下文规则 skip。
 - 后续：GPU 新 child 的 `GeometricError` 当前为 0，且 GPU split 结果不回写下一帧 CPU DOD；GPU merge candidate 仍不提交，split token 又按并发 append 顺序而非全局 error priority 分配。后续应实现持久 GPU variance/topology、完整 forced closure 与 merge/recycle，并用 GPU 几何 readback 或离线渲染质量评估验证额外 split 后的裂缝和误差。
+
+### BUG-022：Runtime 报告把算法阶段折叠为 CPU update 和 GPU compute
+
+- 状态：`Fixed`
+- 严重级别：`高`
+- 发生阶段：阶段 4 三算法 runtime benchmark 统计复核
+- 现象：旧 Markdown 只有 `CPU Update`、原生 `Split/Merge/Emit/Validate` 和一个 `GPU compute` 数字。DOD 的误差评估/候选标记、Classic 的预算与最终 leaf 收集，以及 shader 内初始压缩、误差评估、候选标记、split 提交、计数重置、最终压缩和 mesh emit 都无法单独比较。报告即使显示 GPU 很快，也不能回答具体是哪一个算法阶段快或慢。
+- 定位：`TerrainLodStats` 已有少量 CPU 推导桶，但 renderer/UI 没有完整转发；OpenGL 用一个 `GL_TIME_ELAPSED` 包围整条 dispatch 链，D3D12 只在首尾放两个 timestamp；`RuntimeBenchmark.cpp` 再把结果汇总为一个超宽表。原有 `CpuDecision/CpuTopology/CpuCollect` 还是相互重叠的推导值，不能相加解释 `CpuUpdate`。
+- Debug 过程：沿 Classic/DOD builder、两个 GPU 后端、统一 stats、renderer、Application、ImGui 和 CSV/Markdown 全链追踪计时点。确认 Classic 的 screen error 在 split 队列扫描/弹出时就地计算，不能伪造独立 error pass；DOD 已有批量 error、active-leaf collect、split/merge candidate mark 子计时；OpenGL 的 leaf reset 原来是 CPU `glBufferSubData`，与 D3D12 reset compute shader 不同，不能直接标成相同 shader 阶段。
+- 解决方案：CPU 统一为互斥阶段：prepare、merge candidate、merge topology、预算 leaf collect、error eval、split candidate、split topology、最终 leaf collect、mesh emit 和 finalize；Validate 没有独立互斥桶，仍与原生 Split/Merge/Emit/Validate 一样作为可能重叠的包络另表展示。OpenGL 新增一个 active-leaf reset compute shader，并用七个顺序、非嵌套 `GL_TIME_ELAPSED` query；D3D12 用八个 timestamp 边界得到相同七段。统一接口、renderer、UI、两种 CSV 和 Markdown 全部改为具体 pass 名称，`GpuPassSumMilliseconds` 只表示七段之和。实验图表脚本兼容旧 CSV，但旧聚合值明确标为“未拆分”，不反推历史子阶段。
+- 验证：OpenGL/D3D12 RelWithDebInfo 构建通过；CTest 4/4 通过；RTX 5090 D 上两个后端 `--gpu-smoke-test` 均退出码 0。当时的 D3D12 运行时验证报告为 `benchmark-output/runtime-benchmark-20260731-141441.md`，OpenGL 报告为 `benchmark-output/runtime-benchmark-20260731-141428.md`；该七段物理 pass 口径随后被 BUG-023 的 ROAM 逻辑阶段口径取代。
+- 后续：GPU query 仍是环形槽延迟结果，严格逐帧关联需在 CSV 增加提交序列号；短测试中单个 shader pass 低于 0.01 ms，Markdown GPU 表已提升到四位小数，正式性能结论仍应使用 10-60 秒采样并报告 P95/P99。
+
+### BUG-023：GPU 计时按 dispatch 拆分，但没有对齐 ROAM 逻辑阶段
+
+- 状态：`Fixed`
+- 严重级别：`高`
+- 发生阶段：BUG-022 七段 shader 计时复核
+- 现象：报告虽然不再只有一个 GPU 总时间，但仍把 `Initial leaf compaction`、`Candidate marking`、`Active-leaf reset` 等物理 dispatch 当作 ROAM 阶段。尤其一个 candidate shader 同时扫描 split leaf 与 merge parent，无法比较 split/merge 决策；报告也没有明确说明 GPU merge candidate 从未提交、持久 merge 和邻接修复仍由 CPU DOD baseline 完成。
+- 定位：`GpuRoamCandidateMarking`/`CSCandidateMarking` 在一个 dispatch 中执行两个不同扫描域；`GpuRoamSplitOnlyTopology` 只提交边界 split 或直接 base-neighbor pair，不递归传播完整 forced-split chain；GPU 路径进入 shader 前已经运行一次完整 DOD `BuildGpuSnapshot`。BUG-022 记录的是设备命令边界，不是算法责任边界。
+- 解决方案：OpenGL candidate shader 新增 split/merge 模式并分别 dispatch；D3D12 拆成 `CSSplitCandidateMarking` 与 `CSMergeCandidateMarking` 两个入口。统一 stats、renderer、UI、CSV 和图表脚本增加独立 split/merge candidate 字段。Runtime Markdown 新增 `ROAM logical stage comparison`，按 prepare、merge candidate、merge commit、split 前 leaf collection、leaf error/frustum、split candidate、split/direct-diamond commit、split 后 leaf collection、mesh emit、finalize 对齐 Classic、DOD、GPU-like CPU baseline 与 GPU shader；GPU 未实现的 merge commit 显示为 `N/A`。
+- 验证：OpenGL/D3D12 RelWithDebInfo 构建、CTest 4/4 与两个 `--gpu-smoke-test` 均通过。最终 OpenGL 报告 `benchmark-output/runtime-benchmark-20260731-222129.md` 中 split/merge candidate 分别为 0.0048/0.0055 ms；D3D12 报告 `benchmark-output/runtime-benchmark-20260731-222147.md` 中分别为 0.0030/0.0030 ms。OpenGL 回读为 96 B（32 B counter + 8 个 query result），D3D12 为 104 B（32 B counter + 9 个 timestamp）。
+- 后续：GPU merge topology、完整邻接发布和递归 forced-split chain 尚未实现，不能把当前 GPU-like shader 列视为完整 GPU ROAM。初始化时的 variance/geometric-error rebuild 仍不在稳定帧阶段表中，应在专门的 reset/initialization benchmark 中测量。
 
 ## 模板
 

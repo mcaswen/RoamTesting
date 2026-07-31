@@ -284,7 +284,7 @@ assets/textures/Tex_Terrain_Debug_Diffuse.ppm
 
 - 新增 DOD `ErrorEvaluation` pass，先收集当前 active leaf，再批量刷新 SoA `ScreenErrors`；
 - 自动 worker 模式会按硬件线程数保守封顶，小批量 leaf 保持串行以避免线程启动成本吞掉收益；
-- 统一 benchmark 的 `CpuErrorEvalMilliseconds` 已接入 DOD 批量误差评估耗时，`CpuDecisionMilliseconds` 记录扣除该批量评估后的 split 决策时间；
+- 统一 benchmark 的 `CpuErrorEvalMilliseconds` 已接入 DOD 批量误差评估耗时；split 候选标记与 split 拓扑提交分别记录在 `CpuSplitCandidateMarkMilliseconds` 和 `CpuSplitTopologyMilliseconds`，不再使用折叠的决策阶段字段；
 - 统一 UI 和 benchmark 已输出 CPU worker 数与 CPU 占用率，用于观察并行评估是否真正吃到多核；
 - 拓扑提交、约束传播和 split / merge 仍保持单线程，为 3D 的并行候选标记与 thread-local 收集保留清晰边界。
 
@@ -300,7 +300,7 @@ assets/textures/Tex_Terrain_Debug_Diffuse.ppm
 - DOD split pass 已改为按 node index 分块扫描 active topology，并用 thread-local buffer 收集 active leaves；
 - split candidate 标记读取批量 `ScreenErrors` 缓存并行过滤，合并后统一分配稳定 sequence 再进入 priority queue；
 - merge candidate 标记并行扫描 active internal node；安全 interior diamond 可并行预提交，其余候选和新出现的父层候选由动态串行队列收敛；
-- `CpuCollectMilliseconds` 已汇总 active leaf 收集、split candidate 标记和 merge candidate 标记耗时。
+- active leaf 收集拆为 `CpuBudgetLeafCollectMilliseconds` 与 `CpuFinalLeafCollectMilliseconds`；split/merge 候选标记分别归入 `CpuSplitCandidateMarkMilliseconds` 与 `CpuMergeCandidateMarkMilliseconds`。
 
 3E：拓扑提交策略
 
@@ -315,7 +315,7 @@ assets/textures/Tex_Terrain_Debug_Diffuse.ppm
 - merge 并发提交只处理影响节点全集都在同一 chunk 内的候选，diamond merge 跨 chunk 时仍由串行路径保证 neighbor 一致性；
 - 所有 split 路径共用原子预算 token；并行提交不会让活动 leaf 超过 `TriangleBudget`，forced chain 失败会归还尚未提交的 caller token；
 - 并行 merge 返回新可检查的父节点，主线程动态最小堆继续级联，避免父层固定等待下一个 Build；
-- 统一 `CpuWorkerCount` 已纳入 topology commit worker 数，`CpuTopologyMilliseconds` 继续覆盖并发 batch 与串行回退的总拓扑提交耗时。
+- 统一 `CpuWorkerCount` 已纳入 topology commit worker 数；merge 与 split 拓扑提交分别记录在 `CpuMergeTopologyMilliseconds` 与 `CpuSplitTopologyMilliseconds`，不再折叠为单一 topology 阶段。
 
 ### 验收标准
 
@@ -339,7 +339,7 @@ GPU 版不强求原样复刻 Classic 的全局优先队列。推荐项目表述�
 - 当前 `TerrainRenderer` 仍只消费 CPU mesh，GPU-only packet 分支尚未实现；
 - Classic 与 DOD 已在 smoke benchmark 中保持相同三角形数和拓扑统计，可作为 GPU 版行为对照；
 - DOD 已具备 SoA node pool、active leaf 快照、chunk id 缓存、并行 candidate marking 和保守 chunk topology commit，是 GPU buffer schema 的主要参考；
-- Benchmark CSV 已包含 `gpuComputeMs`、`cpuGpuUploadBytes`、`cpuGpuReadbackBytes`、CPU worker 和 CPU 利用率字段；
+- Benchmark CSV 已包含八个 GPU 算法 pass、`gpuPassSumMs`、`cpuGpuUploadBytes`、`cpuGpuReadbackBytes`、CPU worker 和 CPU 利用率字段；
 - 当前 macOS 测试环境 OpenGL 运行时报告为 4.1，Compute Shader 需要 OpenGL 4.3 或对应扩展，因此必须先实现 GPU capability gate，无法运行 compute 时 benchmark 应明确 skip 而不是失败。
 
 ### 分级交付
@@ -362,7 +362,7 @@ Level E：GPU split-only 或 split/merge topology update
 - 在 renderer / benchmark 中允许选择 GPU 版，但当 OpenGL compute 不可用时返回明确 skip / error message；
 - 抽出 GPU capability 查询，记录 OpenGL version、compute shader、SSBO、atomic counter、indirect draw、timer query 支持情况；
 - 建立 GPU shader / buffer 资源生命周期规范，避免算法层直接散落 OpenGL 对象管理；
-- 接入 OpenGL timer query 包装，统一写入 `GpuComputeMilliseconds`；
+- 接入 OpenGL timer query；当前实现为八个非嵌套 query，分别写入 split 前 leaf collection、leaf error/frustum、split candidate、merge candidate score、split/direct-diamond commit、leaf reset、split 后 leaf collection 和 mesh emit 字段；
 - 暂不改变地形输出，目标是让三版本入口和失败语义稳定。
 
 验收标准：
@@ -378,7 +378,7 @@ Level E：GPU split-only 或 split/merge topology update
 - 已新增 OpenGL GPU capability 查询，记录 context、OpenGL version、renderer、compute shader、SSBO、atomic counter、indirect draw 和 timer query 能力；
 - 无窗口 benchmark 没有 OpenGL context 时，`--algorithm all` 会把 GPU 明确标为 skip，`--algorithm gpu` 会返回失败并输出原因；
 - macOS OpenGL 4.1 环境下，UI 选择 GPU ROAM-like 时会显示 OpenGL 4.3 / compute shader 不可用原因，不会静默回退成 CPU 成绩；
-- 运行时 benchmark CSV 和汇总表已预留 `gpuComputeMs`、CPU-GPU upload bytes 和 readback bytes；
+- 运行时 benchmark CSV 和汇总表输出八个 GPU pass、pass sum、CPU-GPU upload bytes 和 readback bytes；
 - 4A 完成时 GPU 版处于 Level A，尚未执行 compute shader、GPU mesh emit 或 GPU buffer rendering；后续 4C-4G 已补齐这些路径。
 
 4B：GPU buffer schema 与 DOD 快照对齐
@@ -418,7 +418,7 @@ Level E：GPU split-only 或 split/merge topology update
 验收标准：
 
 - 抽样 GPU error 与 DOD 的共享像素 SSE 公式误差在可解释范围内；
-- CSV 同时记录 `CpuErrorEvalMilliseconds`、`GpuComputeMilliseconds`、upload/readback bytes；
+- CSV 同时记录 CPU 互斥算法阶段、八个 GPU pass、upload/readback bytes；
 - GPU 不可用时该阶段保持 skip，不破坏 CPU benchmark；
 - 文档记录浮点误差、采样方式和 OpenGL 版本要求。
 
@@ -426,11 +426,11 @@ Level E：GPU split-only 或 split/merge topology update
 
 - 已新增 GPU error evaluation compute shader，读取 R32F height map texture、node SSBO 和 GPU compact 后的 active leaf buffer；
 - OpenGL GLSL 与 D3D12 HLSL 都使用 CPU 兼容的显式双线性高度采样、完整方差、像素 SSE 和六平面视锥测试，并写入 screen error buffer；
-- GPU compute pass 已用 OpenGL timer query 包住，结果写入 `GpuComputeMilliseconds`；
+- GPU 算法链已按实际 shader 责任拆成八个 OpenGL timer query，并通过延迟槽位整体回读；split 与 merge candidate 扫描不再混在一个计时区间；
 - 默认只 readback 少量 active leaf 和 error 样本，避免全量 screen error 回读污染性能口径；
-- error evaluation 既驱动 GPU candidate marking，也保留少量延迟 readback 统计；GPU split-only 只修改当前 GPU 快照，不反写 CPU DOD 持久拓扑。
+- leaf error evaluation 驱动 GPU split candidate；merge candidate pass 单独对 split parent 重新评分，但只产生诊断列表。GPU split-only 只修改当前 GPU 快照，不反写 CPU DOD 持久拓扑，merge commit 仍由 CPU DOD 完成。
 
-4D：GPU Candidate Marking 与候选压缩
+4D：GPU Split/Merge Candidate Marking 与候选压缩
 
 - Compute shader 根据 `screenError`、split / merge 阈值、depth 和 active 状态写 split / merge flag；
 - 使用 atomic append 或 prefix-sum compact 输出 split candidate list、merge candidate list；
@@ -447,7 +447,7 @@ Level E：GPU split-only 或 split/merge topology update
 
 阶段完成记录：
 
-- 已新增 GPU candidate marking compute shader，基于 GPU screen error 生成 split candidate buffer；
+- 已将 GPU candidate shader 拆为 split active-leaf classification 与 merge parent scoring 两次 dispatch，分别生成候选 buffer 和独立计时；
 - merge candidate 目前作为 shadow 预筛选，扫描 split node 并按 merge threshold 标记候选，不参与真正拓扑提交；
 - split / merge candidate count 通过小 counter buffer readback，用于后续和 DOD candidate marking 对齐；
 - 4D 完成时 CPU topology commit 仍完全由 DOD builder 负责，GPU candidate list 还不改变三角形结果。
@@ -455,14 +455,14 @@ Level E：GPU split-only 或 split/merge topology update
 4E：GPU Active Leaf Compaction
 
 - GPU 遍历 node buffer，压缩 active leaf index；
-- active leaf buffer 成为 error evaluation、candidate marking 和 mesh emit 的共享输入；
+- active leaf buffer 成为 leaf error evaluation、split candidate marking 和 mesh emit 的共享输入；merge candidate scoring 则扫描 split parent 节点池；
 - 默认只 readback active leaf count 和必要统计；
 - 继续用 CPU topology commit，保证风险集中在收集和数据流上。
 
 验收标准：
 
 - active leaf count 与 DOD 最终 leaf 快照一致；
-- `CpuCollectMilliseconds` 相比 DOD 路径下降或被明确替换为 GPU compute；
+- CPU collect/mark 与 GPU split 前 leaf collection、split candidate、merge candidate score 分开记录，不能用一个笼统 GPU 时间替代；
 - readback 口径清楚，只读计数时不影响主要性能结论；
 - debug 模式可选择全量 readback 以定位错误，但 benchmark 默认关闭。
 
@@ -495,20 +495,20 @@ Level E：GPU split-only 或 split/merge topology update
 - GPU mesh emit 的顶点布局按 `TerrainMeshVertex` 的 13 个 float 槽位写入，避免 std430 `vec3` padding 与 C++ layout 不一致；
 - `TerrainRenderer` 已支持 `TerrainLodRenderMode::GpuBuffers`，可在 `CpuMesh` 为空时绑定算法输出的 GPU vertex / index buffer 绘制；
 - benchmark 校验已识别 GPU-only packet，不再要求 GPU 路径提供 CPU mesh；
-- 当前 GPU 路径以 CPU DOD 拓扑为安全 baseline，并额外接入 GPU split-only 实验层，GPU 负责 compaction、error evaluation、candidate marking、split-only expansion 和 mesh emit。
+- 当前 GPU 路径以 CPU DOD 拓扑为安全 baseline，并额外接入 GPU split-only 实验层；GPU 负责 split 前/后 leaf collection、leaf error/frustum、split candidate、诊断性 merge candidate score、direct-diamond split commit 和 mesh emit，完整 merge 与递归 forced-split chain 尚未迁移。
 
 4G：GPU Indirect Draw
 
 - 在 GPU 端生成 indirect draw command；
 - `TerrainRenderer` 支持 `TerrainLodRenderMode::GpuIndirect`；
 - CPU 只提交一次 indirect draw，不读取完整 index count；
-- 保留 timer query，区分 GPU compute 和 render draw 时间。
+- 保留逐 pass timer query，区分八段 GPU shader 工作和 render draw 时间。
 
 验收标准：
 
 - `DrawElementsIndirect` 或等价路径可以绘制 active leaf mesh；
 - CPU readback 只保留统计所需最小数据；
-- `RenderMilliseconds` 与 `GpuComputeMilliseconds` 分开记录；
+- `RenderMilliseconds` 与八个 GPU pass 及其 `GpuPassSumMilliseconds` 分开记录；
 - GPU unavailable 或 indirect draw unsupported 时可回退 `GpuBuffers`。
 
 阶段完成记录：

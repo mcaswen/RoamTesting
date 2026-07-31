@@ -779,11 +779,14 @@ TriangleCount = ActiveLeafCount
 - 规模：`NodeCount`、`ActiveTriangleCount`、`Original/Subdivided/RebuiltTriangleCount`、`ActiveSplitCount`、`MaxDepthReached`。
 - 事件：`SplitCount`、`ForcedSplitCount`、`MergeCount`、`ConstraintPassCount`、`CandidatePeakCount`、`RejectedSplitCount`、`BudgetRejectedSplitCount`、`RejectedMergeCount`。
 - 正确性：`CrackRiskCount`、`TjunctionCount`、`InvalidNeighborCount`、`InvalidTopologyCount`。
-- 时间：`UpdateMilliseconds`、`SplitMilliseconds`、`MergeMilliseconds`、`EmitMilliseconds`、`ValidateMilliseconds`。
+- 互斥阶段时间：`PrepareMilliseconds`、`MergeCandidateMarkMilliseconds`、`MergeTopologyMilliseconds`、`BudgetLeafCollectMilliseconds`、`SplitInitialScanMilliseconds`、`SplitQueueTopologyMilliseconds`、`FinalLeafCollectMilliseconds`、`MeshEmitMilliseconds`、`ValidateMilliseconds`、`FinalizeMilliseconds`；这些阶段之和应接近外层 `UpdateMilliseconds`。
+- 原生 pass 包络时间：`SplitMilliseconds`、`MergeMilliseconds`、`EmitMilliseconds`、`ValidateMilliseconds`。它们与上述互斥阶段重叠，只用于观察实现原有 pass，不能再次相加到 `UpdateMilliseconds`。
 
 证据：文件：`src/algorithms/classic_roam/ClassicRoamMeshBuilder.h`；符号：`ClassicRoamStats`；代码范围：第 54-124 行。
 
-**源码事实：** adapter 映射到统一 `TerrainLodStats`，设置 `CpuWorkerCount=1`；Classic 没有独立的 error-eval、collect、内存占用或递归调用次数统计。`CpuDecisionMilliseconds=SplitMilliseconds`，`CpuTopologyMilliseconds=Split+Merge`，`CpuMeshBuildMilliseconds=Emit`。
+**源码事实：** adapter 映射到统一 `TerrainLodStats` 并设置 `CpuWorkerCount=1`。Classic 的 screen error 在 split 初始扫描和候选弹出时就地计算，因此没有伪造独立的 `CpuErrorEvalMilliseconds`：初始扫描/入队计入 `CpuSplitCandidateMarkMilliseconds`，队列重评估与拓扑提交计入 `CpuSplitTopologyMilliseconds`。预算前 leaf 收集、最终 leaf 收集和纯 mesh emit 分别计时。
+
+**源码事实：** runtime Markdown 先给出总体结果，再以 ROAM 逻辑阶段为行，对照 Classic CPU、DOD CPU、GPU-like CPU baseline 与 GPU-like shader；随后分别列出 CPU 实现阶段、原生 Split/Merge/Emit/Validate 包络、GPU 物理 shader dispatch 和 GPU 编排/渲染。GPU-like 被明确标为混合路径：CPU DOD 先完成持久拓扑的 merge/split baseline，GPU 再追加一轮 split-only 和 mesh emit；未实现的 GPU merge topology 显示为 `N/A`，不会用零耗时冒充已实现。
 
 证据：文件：`src/algorithms/classic_roam/ClassicRoamTerrainLodAlgorithm.cpp`；符号：`ToTerrainLodStats`；代码范围：第 96-128 行。
 
@@ -813,7 +816,7 @@ TriangleCount = ActiveLeafCount
 
 ### 15.5 运行时 benchmark
 
-**源码事实：** UI/`--runtime-benchmark` 依次运行 Classic、DOD，并在后端支持时加入 GPU；每个算法 reset，从地形 Z+ 边中点平滑移动到中心，默认 10 秒，每个应用帧强制 mesh rebuild。输出 `benchmark-output/runtime-benchmark-<timestamp>.md/.csv`，记录 frame、LOD、CPU update/upload、GPU、render、triangles、nodes、CPU%、worker、depth 和 topology issue。
+**源码事实：** UI/`--runtime-benchmark` 依次运行 Classic、DOD，并在后端支持时加入 GPU；每个算法 reset，从地形 Z+ 边中点平滑移动到中心，默认 10 秒，每个应用帧强制 mesh rebuild。输出 `benchmark-output/runtime-benchmark-<timestamp>.md/.csv`。CSV 逐帧记录 CPU 准备、merge 候选/提交、预算 leaf 收集、误差评估、split 候选/提交、最终 leaf 收集、mesh emit、收尾与 upload；GPU 路径另记录 split 前 leaf collection、leaf error/frustum、split candidate marking、merge parent scoring、split/direct-diamond commit、leaf counter reset、split 后 leaf collection、mesh/draw-args emit 八段延迟设备时间，以及 snapshot/allocation/dispatch/query/readback/render 边界成本。OpenGL 使用八个非嵌套 query，D3D12 使用九个 timestamp 边界。
 
 证据：`Application.cpp` 第 640-784、850-879 行；`RuntimeBenchmark.cpp` 第 130-200、339-390、414-430 行。
 
@@ -856,7 +859,7 @@ TriangleCount = ActiveLeafCount
 
 **根据实现推断：** 难点不是公式，而是 pointer-based 可变图：forced split 依赖邻居递归；一个 split 同时改多个节点的双向邻接；diamond merge 要原子地回收两侧 sibling pair；新节点分配和 priority queue 都有全局、数据相关顺序。这些写集合难以无冲突并行提交。
 
-**源码事实：** 项目的 DOD 版本已把字段拆为 SoA/index，并把 error evaluation、candidate marking、leaf collection 和部分 chunk interior commit 批处理；它与 Classic 共用完整方差、像素 SSE、视锥、硬预算和级联合并语义。GPU 版本同样使用快照中的完整 `GeometricError`、像素 SSE、六平面视锥和剩余预算 token，但仍先由 CPU DOD 生成持久拓扑真值；GPU 只在当前快照上追加一轮 split-only、compaction、emit 和 indirect draw。这直接反映评分口径已统一、拓扑所有权尚未完全迁移的边界。
+**源码事实：** 项目的 DOD 版本已把字段拆为 SoA/index，并把 error evaluation、split/merge candidate marking、leaf collection 和部分 chunk interior commit 批处理；它与 Classic 共用完整方差、像素 SSE、视锥、硬预算和级联合并语义。GPU 版本同样使用快照中的完整 `GeometricError`、像素 SSE、六平面视锥和剩余预算 token，但仍先由 CPU DOD 生成持久拓扑真值；GPU 的 merge candidate shader 只输出诊断列表，不提交 merge，split shader 只追加一轮独立边界 split 或直接 base-neighbor diamond pair，不递归传播完整 forced-split chain。随后 GPU 重建活动叶并 emit mesh/indirect draw。这直接反映评分口径已统一、拓扑所有权尚未完全迁移的边界。
 
 ### 16.5 需要 profiler 才能确认
 
