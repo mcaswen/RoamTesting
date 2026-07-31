@@ -35,11 +35,11 @@ private:
         float& bufferAllocationMilliseconds,
         std::string* errorMessage);
 
-    [[nodiscard]] bool RunGpuComputePipeline(
+    [[nodiscard]] bool RunGpuAlgorithmPasses(
         const GpuRoamBufferSnapshot& snapshot,
         const TerrainLodBuildInput& input,
         std::size_t& uploadBytes,
-        float& gpuComputeMilliseconds,
+        GpuRoamGpuPassTimings& gpuPassTimings,
         std::size_t& readbackBytes,
         float& bufferAllocationMilliseconds,
         float& dispatchWallMilliseconds,

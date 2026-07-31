@@ -18,13 +18,6 @@ float ErrorEvaluationMilliseconds(const DataOrientedRoam::DataOrientedRoamStats&
         stats.ErrorEvaluationSingleThreadMilliseconds;
 }
 
-float CandidateCollectMilliseconds(const DataOrientedRoam::DataOrientedRoamStats& stats)
-{
-    return stats.ActiveLeafCollectMilliseconds +
-           stats.SplitCandidateMarkMilliseconds +
-           stats.MergeCandidateMarkMilliseconds;
-}
-
 DataOrientedRoam::DataOrientedRoamSettings ToDataOrientedSettings(const TerrainLodSettings& settings)
 {
     DataOrientedRoam::DataOrientedRoamSettings dataSettings{};
@@ -73,13 +66,19 @@ TerrainLodStats ToTerrainLodStats(const DataOrientedRoam::DataOrientedRoamStats&
     const float splitCollectMilliseconds =
         stats.ActiveLeafCollectMilliseconds + stats.SplitCandidateMarkMilliseconds;
     lodStats.CpuUpdateMilliseconds = stats.UpdateMilliseconds;
+    lodStats.CpuPrepareMilliseconds = stats.PrepareMilliseconds;
+    lodStats.CpuMergeCandidateMarkMilliseconds = stats.MergeCandidateMarkMilliseconds;
+    lodStats.CpuMergeTopologyMilliseconds =
+        std::max(0.0F, stats.MergeMilliseconds - stats.MergeCandidateMarkMilliseconds);
+    lodStats.CpuBudgetLeafCollectMilliseconds = stats.BudgetLeafCollectMilliseconds;
     lodStats.CpuErrorEvalMilliseconds = errorEvaluationMilliseconds;
-    lodStats.CpuDecisionMilliseconds =
+    lodStats.CpuSplitCandidateMarkMilliseconds =
+        stats.ActiveLeafCollectMilliseconds + stats.SplitCandidateMarkMilliseconds;
+    lodStats.CpuSplitTopologyMilliseconds =
         std::max(0.0F, stats.SplitMilliseconds - errorEvaluationMilliseconds - splitCollectMilliseconds);
-    lodStats.CpuTopologyMilliseconds =
-        lodStats.CpuDecisionMilliseconds + std::max(0.0F, stats.MergeMilliseconds - stats.MergeCandidateMarkMilliseconds);
-    lodStats.CpuCollectMilliseconds = CandidateCollectMilliseconds(stats);
-    lodStats.CpuMeshBuildMilliseconds = stats.EmitMilliseconds;
+    lodStats.CpuFinalLeafCollectMilliseconds = stats.FinalLeafCollectMilliseconds;
+    lodStats.CpuMeshEmitMilliseconds = stats.MeshEmitMilliseconds;
+    lodStats.CpuFinalizeMilliseconds = stats.FinalizeMilliseconds;
     lodStats.SplitMilliseconds = stats.SplitMilliseconds;
     lodStats.MergeMilliseconds = stats.MergeMilliseconds;
     lodStats.EmitMilliseconds = stats.EmitMilliseconds;

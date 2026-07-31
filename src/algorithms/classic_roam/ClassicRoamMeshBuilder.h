@@ -124,6 +124,15 @@ struct ClassicRoamStats
 
     // UpdateMilliseconds 覆盖本次 Build 的完整 CPU 时间
     float UpdateMilliseconds{0.0F};
+    float PrepareMilliseconds{0.0F};
+    float MergeCandidateMarkMilliseconds{0.0F};
+    float MergeTopologyMilliseconds{0.0F};
+    float BudgetLeafCollectMilliseconds{0.0F};
+    float SplitInitialScanMilliseconds{0.0F};
+    float SplitQueueTopologyMilliseconds{0.0F};
+    float FinalLeafCollectMilliseconds{0.0F};
+    float MeshEmitMilliseconds{0.0F};
+    float FinalizeMilliseconds{0.0F};
 
     // SplitMilliseconds 只统计候选队列和拓扑 split 时间
     float SplitMilliseconds{0.0F};

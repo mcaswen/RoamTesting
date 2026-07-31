@@ -312,13 +312,28 @@ struct TerrainLodStats
     float CpuUpdateMilliseconds{0.0F};
     // CpuUtilizationPercent 按单核 100% 口径记录进程 CPU 占用
     float CpuUtilizationPercent{0.0F};
+    float CpuPrepareMilliseconds{0.0F};
+    float CpuMergeCandidateMarkMilliseconds{0.0F};
+    float CpuMergeTopologyMilliseconds{0.0F};
+    float CpuBudgetLeafCollectMilliseconds{0.0F};
     float CpuErrorEvalMilliseconds{0.0F};
-    float CpuDecisionMilliseconds{0.0F};
-    float CpuTopologyMilliseconds{0.0F};
-    float CpuCollectMilliseconds{0.0F};
-    float CpuMeshBuildMilliseconds{0.0F};
+    float CpuSplitCandidateMarkMilliseconds{0.0F};
+    float CpuSplitTopologyMilliseconds{0.0F};
+    float CpuFinalLeafCollectMilliseconds{0.0F};
+    float CpuMeshEmitMilliseconds{0.0F};
+    float CpuFinalizeMilliseconds{0.0F};
     float CpuUploadMilliseconds{0.0F};
-    float GpuComputeMilliseconds{0.0F};
+    // GPU pass timings are delayed query results. Each field names the algorithm work
+    // performed between two synchronization boundaries instead of collapsing the chain.
+    float GpuInitialLeafCompactionMilliseconds{0.0F};
+    float GpuErrorEvaluationMilliseconds{0.0F};
+    float GpuSplitCandidateMarkingMilliseconds{0.0F};
+    float GpuMergeCandidateMarkingMilliseconds{0.0F};
+    float GpuSplitTopologyMilliseconds{0.0F};
+    float GpuActiveLeafResetMilliseconds{0.0F};
+    float GpuFinalLeafCompactionMilliseconds{0.0F};
+    float GpuMeshEmitMilliseconds{0.0F};
+    float GpuPassSumMilliseconds{0.0F};
     float GpuSnapshotBuildMilliseconds{0.0F};
     float GpuBufferAllocationMilliseconds{0.0F};
     float GpuDispatchWallMilliseconds{0.0F};

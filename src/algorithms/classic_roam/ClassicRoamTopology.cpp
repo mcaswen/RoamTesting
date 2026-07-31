@@ -1,6 +1,7 @@
 #include "algorithms/classic_roam/ClassicRoamMeshBuilder.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <queue>
 #include <vector>
@@ -9,6 +10,13 @@ namespace ParallelRoam::Algorithms::ClassicRoam
 {
 namespace
 {
+float ElapsedMilliseconds(
+    std::chrono::steady_clock::time_point start,
+    std::chrono::steady_clock::time_point end)
+{
+    return std::chrono::duration<float, std::milli>(end - start).count();
+}
+
 std::uint64_t LeftChildPathId(std::uint64_t parentPathId)
 {
     // child path 保持二叉堆编码，便于跨帧 hysteresis 复用
@@ -116,9 +124,13 @@ void ClassicRoamMeshBuilder::RefineWithSplitQueue(ClassicRoamNode* rootA, Classi
         self(self, node->RightChild);
     };
 
+    const auto initialScanStart = std::chrono::steady_clock::now();
     enqueueActiveLeaves(enqueueActiveLeaves, rootA);
     enqueueActiveLeaves(enqueueActiveLeaves, rootB);
+    _stats.SplitInitialScanMilliseconds =
+        ElapsedMilliseconds(initialScanStart, std::chrono::steady_clock::now());
 
+    const auto queueTopologyStart = std::chrono::steady_clock::now();
     while (!candidates.empty())
     {
         const SplitCandidate candidate = candidates.top();
@@ -160,6 +172,8 @@ void ClassicRoamMeshBuilder::RefineWithSplitQueue(ClassicRoamNode* rootA, Classi
             enqueueCandidate(baseNeighborBeforeSplit->RightChild);
         }
     }
+    _stats.SplitQueueTopologyMilliseconds =
+        ElapsedMilliseconds(queueTopologyStart, std::chrono::steady_clock::now());
 }
 
 void ClassicRoamMeshBuilder::MergeWithDiamondQueue()
@@ -205,9 +219,13 @@ void ClassicRoamMeshBuilder::MergeWithDiamondQueue()
         self(self, node->RightChild);
     };
 
+    const auto candidateMarkStart = std::chrono::steady_clock::now();
     collectCandidates(collectCandidates, _rootA);
     collectCandidates(collectCandidates, _rootB);
+    _stats.MergeCandidateMarkMilliseconds =
+        ElapsedMilliseconds(candidateMarkStart, std::chrono::steady_clock::now());
 
+    const auto topologyStart = std::chrono::steady_clock::now();
     while (!candidates.empty())
     {
         const MergeCandidate candidate = candidates.top();
@@ -232,6 +250,8 @@ void ClassicRoamMeshBuilder::MergeWithDiamondQueue()
         enqueueCandidate(nodeParent);
         enqueueCandidate(baseParent);
     }
+    _stats.MergeTopologyMilliseconds =
+        ElapsedMilliseconds(topologyStart, std::chrono::steady_clock::now());
 }
 
 bool ClassicRoamMeshBuilder::SplitNode(

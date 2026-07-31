@@ -206,28 +206,36 @@ void CSErrorEvaluation(uint3 dispatchThreadId : SV_DispatchThreadID)
     ScreenErrors[leafSlot] = ScoreNode(ActiveLeaves[leafSlot]);
 }
 
-// 同一调度分别扫描活动叶和 CPU 快照节点以生成两类候选
+// 扫描活动叶并生成超过 split 阈值的候选。
 [numthreads(128, 1, 1)]
-void CSCandidateMarking(uint3 dispatchThreadId : SV_DispatchThreadID)
+void CSSplitCandidateMarking(uint3 dispatchThreadId : SV_DispatchThreadID)
 {
     uint index = dispatchThreadId.x;
     uint activeLeafCount = min(Counters[0], min(ActiveLeafLimit, TriangleBudget));
-    if (index < activeLeafCount)
+    if (index >= activeLeafCount)
     {
-        uint nodeIndex = ActiveLeaves[index];
-        uint depth = Nodes[nodeIndex].MergeBuildAndDepth.z;
-        if (depth < MaxDepth && ScreenErrors[index] > SplitThreshold)
+        return;
+    }
+    uint nodeIndex = ActiveLeaves[index];
+    uint depth = Nodes[nodeIndex].MergeBuildAndDepth.z;
+    if (depth < MaxDepth && ScreenErrors[index] > SplitThreshold)
+    {
+        uint outputIndex;
+        // Counters[1] 是 split 候选输出长度
+        InterlockedAdd(Counters[1], 1u, outputIndex);
+        if (outputIndex < ActiveLeafLimit)
         {
-            uint outputIndex;
-            // Counters[1] 是 split 候选输出长度
-            InterlockedAdd(Counters[1], 1u, outputIndex);
-            if (outputIndex < ActiveLeafLimit)
-            {
-                SplitCandidates[outputIndex] = nodeIndex;
-            }
+            SplitCandidates[outputIndex] = nodeIndex;
         }
     }
+}
 
+// 对 split parent 重新评分并生成低于 merge 阈值的候选。当前 GPU-like
+// 路径不提交这些 merge；持久拓扑的 merge 仍由 CPU DOD baseline 完成。
+[numthreads(128, 1, 1)]
+void CSMergeCandidateMarking(uint3 dispatchThreadId : SV_DispatchThreadID)
+{
+    uint index = dispatchThreadId.x;
     // merge 候选只扫描 CPU 快照范围，不读取本次刚创建的子节点
     if (index >= NodeCount)
     {

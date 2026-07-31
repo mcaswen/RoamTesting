@@ -311,7 +311,7 @@ void DrawCompactPerformanceMetrics(const DebugOverlayData& data)
     DrawMetricFloat("LOD total ms", data.RoamTotalMilliseconds, "%.2f");
     DrawMetricSize("CPU Worker", data.RoamCpuWorkerCount);
     DrawMetricFloat("CPU 占用", data.RoamCpuUtilizationPercent, "%.1f%%");
-    DrawMetricFloat("GPU ms", data.RoamGpuComputeMilliseconds, "%.2f");
+    DrawMetricFloat("GPU pass sum ms", data.RoamGpuPassSumMilliseconds, "%.2f");
     if (!data.TerrainLodStatusMessage.empty())
     {
         DrawMetricRow("LOD 状态", "不可用");
@@ -366,12 +366,30 @@ void DrawDetailedPerformanceMetrics(const DebugOverlayData& data)
     DrawMetricSize("拓扑错误", data.RoamInvalidTopologyCount);
     DrawMetricFloat("LOD total ms", data.RoamTotalMilliseconds, "%.2f");
     DrawMetricFloat("CPU update ms", data.RoamUpdateMilliseconds, "%.2f");
+    DrawMetricFloat("CPU prepare ms", data.RoamCpuPrepareMilliseconds, "%.2f");
+    DrawMetricFloat("CPU merge mark ms", data.RoamCpuMergeCandidateMarkMilliseconds, "%.2f");
+    DrawMetricFloat("CPU merge topology ms", data.RoamCpuMergeTopologyMilliseconds, "%.2f");
+    DrawMetricFloat("CPU budget collect ms", data.RoamCpuBudgetLeafCollectMilliseconds, "%.2f");
+    DrawMetricFloat("CPU error eval ms", data.RoamCpuErrorEvalMilliseconds, "%.2f");
+    DrawMetricFloat("CPU split mark ms", data.RoamCpuSplitCandidateMarkMilliseconds, "%.2f");
+    DrawMetricFloat("CPU split topology ms", data.RoamCpuSplitTopologyMilliseconds, "%.2f");
+    DrawMetricFloat("CPU final collect ms", data.RoamCpuFinalLeafCollectMilliseconds, "%.2f");
+    DrawMetricFloat("CPU mesh emit ms", data.RoamCpuMeshEmitMilliseconds, "%.2f");
+    DrawMetricFloat("CPU finalize ms", data.RoamCpuFinalizeMilliseconds, "%.2f");
     DrawMetricFloat("CPU upload ms", data.RoamCpuUploadMilliseconds, "%.2f");
     DrawMetricFloat("Split ms", data.RoamSplitMilliseconds, "%.2f");
     DrawMetricFloat("Merge ms", data.RoamMergeMilliseconds, "%.2f");
     DrawMetricFloat("Emit ms", data.RoamEmitMilliseconds, "%.2f");
     DrawMetricFloat("Validate ms", data.RoamValidateMilliseconds, "%.2f");
-    DrawMetricFloat("GPU ms", data.RoamGpuComputeMilliseconds, "%.2f");
+    DrawMetricFloat("GPU pre-split leaf collect ms", data.RoamGpuInitialLeafCompactionMilliseconds, "%.2f");
+    DrawMetricFloat("GPU leaf error/frustum ms", data.RoamGpuErrorEvaluationMilliseconds, "%.2f");
+    DrawMetricFloat("GPU split candidate ms", data.RoamGpuSplitCandidateMarkingMilliseconds, "%.2f");
+    DrawMetricFloat("GPU merge candidate ms", data.RoamGpuMergeCandidateMarkingMilliseconds, "%.2f");
+    DrawMetricFloat("GPU split/direct diamond ms", data.RoamGpuSplitTopologyMilliseconds, "%.2f");
+    DrawMetricFloat("GPU leaf-collect reset ms", data.RoamGpuActiveLeafResetMilliseconds, "%.2f");
+    DrawMetricFloat("GPU post-refine leaf collect ms", data.RoamGpuFinalLeafCompactionMilliseconds, "%.2f");
+    DrawMetricFloat("GPU mesh/draw args ms", data.RoamGpuMeshEmitMilliseconds, "%.2f");
+    DrawMetricFloat("GPU pass sum ms", data.RoamGpuPassSumMilliseconds, "%.2f");
     DrawMetricFloat("GPU snapshot ms", data.RoamGpuSnapshotBuildMilliseconds, "%.2f");
     DrawMetricFloat("GPU alloc ms", data.RoamGpuBufferAllocationMilliseconds, "%.2f");
     DrawMetricFloat("GPU dispatch wall ms", data.RoamGpuDispatchWallMilliseconds, "%.2f");

@@ -1,6 +1,7 @@
 #include "algorithms/gpu_roam/GpuRoamMeshBuilder.h"
 
 #include "algorithms/gpu_roam/GpuRoamActiveLeafCompaction.h"
+#include "algorithms/gpu_roam/GpuRoamActiveLeafReset.h"
 #include "algorithms/gpu_roam/GpuRoamBufferSchema.h"
 #include "algorithms/gpu_roam/GpuRoamCandidateMarking.h"
 #include "algorithms/gpu_roam/GpuRoamErrorEvaluation.h"
@@ -24,6 +25,32 @@ namespace ParallelRoam::Algorithms::GpuRoam
 namespace
 {
 using Clock = std::chrono::steady_clock;
+
+constexpr std::size_t GpuPassIndex(GpuRoamGpuPass pass)
+{
+    return static_cast<std::size_t>(pass);
+}
+
+void CopyGpuPassTimingsToStats(const GpuRoamGpuPassTimings& timings, TerrainLodStats& stats)
+{
+    stats.GpuInitialLeafCompactionMilliseconds =
+        timings.Milliseconds[GpuPassIndex(GpuRoamGpuPass::InitialLeafCompaction)];
+    stats.GpuErrorEvaluationMilliseconds =
+        timings.Milliseconds[GpuPassIndex(GpuRoamGpuPass::ErrorEvaluation)];
+    stats.GpuSplitCandidateMarkingMilliseconds =
+        timings.Milliseconds[GpuPassIndex(GpuRoamGpuPass::SplitCandidateMarking)];
+    stats.GpuMergeCandidateMarkingMilliseconds =
+        timings.Milliseconds[GpuPassIndex(GpuRoamGpuPass::MergeCandidateMarking)];
+    stats.GpuSplitTopologyMilliseconds =
+        timings.Milliseconds[GpuPassIndex(GpuRoamGpuPass::SplitTopology)];
+    stats.GpuActiveLeafResetMilliseconds =
+        timings.Milliseconds[GpuPassIndex(GpuRoamGpuPass::ActiveLeafReset)];
+    stats.GpuFinalLeafCompactionMilliseconds =
+        timings.Milliseconds[GpuPassIndex(GpuRoamGpuPass::FinalLeafCompaction)];
+    stats.GpuMeshEmitMilliseconds =
+        timings.Milliseconds[GpuPassIndex(GpuRoamGpuPass::MeshEmit)];
+    stats.GpuPassSumMilliseconds = timings.SumMilliseconds();
+}
 
 struct GpuRoamUploadMetrics
 {
@@ -71,10 +98,10 @@ std::string BuildGpuStatusMessage(bool usesIndirectDraw)
 {
     if (usesIndirectDraw)
     {
-        return "GPU ROAM-like: CPU DOD baseline, GPU split-only topology, mesh emit and indirect draw";
+        return "GPU ROAM-like: CPU DOD merge baseline, GPU split/direct-diamond, mesh emit and indirect draw";
     }
 
-    return "GPU ROAM-like: CPU DOD baseline, GPU split-only topology, mesh emit and GPU buffer draw";
+    return "GPU ROAM-like: CPU DOD merge baseline, GPU split/direct-diamond, mesh emit and GPU buffer draw";
 }
 
 bool EnsureBufferCapacity(
@@ -238,16 +265,16 @@ bool UploadHeightMapTextureIfNeeded(
 bool ResolveTimingReadbackSlot(
     GpuRoamState& state,
     std::size_t slotIndex,
-    float& gpuComputeMilliseconds,
+    GpuRoamGpuPassTimings& gpuPassTimings,
     std::size_t& readbackBytes,
     float& queryWaitMilliseconds,
     float& readbackWaitMilliseconds,
     std::string* errorMessage)
 {
     GpuRoamTimingReadbackSlot& slot = state.TimingReadbackSlots[slotIndex];
-    // 当前槽位尚未完成时继续暴露最近一次可靠的 GPU 时间
-    gpuComputeMilliseconds =
-        state.HasCompletedTimingReadback ? state.LastCompletedGpuComputeMilliseconds : 0.0F;
+    gpuPassTimings = state.HasCompletedTimingReadback
+        ? state.LastCompletedGpuPassTimings
+        : GpuRoamGpuPassTimings{};
 
     if (!slot.Pending)
     {
@@ -255,15 +282,26 @@ bool ResolveTimingReadbackSlot(
         return true;
     }
 
-    GLuint queryAvailable = GL_FALSE;
-    // available 只用于诊断延迟深度是否足够，最终结果读取仍保证正确性
-    glGetQueryObjectuiv(slot.TimerQueryId, GL_QUERY_RESULT_AVAILABLE, &queryAvailable);
-
+    bool allQueriesAvailable = true;
     const auto queryWaitStart = Clock::now();
-    GLuint64 elapsedNanoseconds = 0U;
-    // 延迟多个 slot 后通常已 ready；若仍未 ready，这里会等待并把等待时间单独记账
-    glGetQueryObjectui64v(slot.TimerQueryId, GL_QUERY_RESULT, &elapsedNanoseconds);
+    std::array<GLuint64, GpuRoamGpuPassCount> elapsedNanoseconds{};
+    for (std::size_t passIndex = 0; passIndex < GpuRoamGpuPassCount; ++passIndex)
+    {
+        GLuint queryAvailable = GL_FALSE;
+        glGetQueryObjectuiv(
+            slot.TimerQueryIds[passIndex],
+            GL_QUERY_RESULT_AVAILABLE,
+            &queryAvailable);
+        allQueriesAvailable = allQueriesAvailable && queryAvailable == GL_TRUE;
+        glGetQueryObjectui64v(
+            slot.TimerQueryIds[passIndex],
+            GL_QUERY_RESULT,
+            &elapsedNanoseconds[passIndex]);
+    }
     queryWaitMilliseconds += ElapsedMilliseconds(queryWaitStart, Clock::now());
+    // OpenGL keeps timer results in query objects rather than a readback buffer;
+    // count the logical seven 64-bit results so the CSV still exposes their transfer size.
+    readbackBytes += GpuRoamGpuPassCount * sizeof(GLuint64);
 
     GpuRoamCounters counters{};
     // counter buffer 与 timer query 使用同一槽位，二者描述的是同一次 dispatch 链
@@ -294,7 +332,7 @@ bool ResolveTimingReadbackSlot(
                    << counters.ActiveLeafCount << " expected=" << expectedActiveLeafCount
                    << ", allocated nodes gpu=" << counters.AllocatedNodeCount
                    << " expected=" << expectedAllocatedNodeCount
-                   << ", queryAvailable=" << (queryAvailable == GL_TRUE ? "true" : "false");
+                   << ", allQueriesAvailable=" << (allQueriesAvailable ? "true" : "false");
             *errorMessage = stream.str();
         }
         slot.Pending = false;
@@ -302,11 +340,13 @@ bool ResolveTimingReadbackSlot(
     }
 
     state.LastCompletedCounters = counters;
-    // 纳秒转毫秒后缓存，后续未完成槽位可继续使用这一稳定值
-    state.LastCompletedGpuComputeMilliseconds =
-        static_cast<float>(static_cast<double>(elapsedNanoseconds) / 1'000'000.0);
+    for (std::size_t passIndex = 0; passIndex < GpuRoamGpuPassCount; ++passIndex)
+    {
+        state.LastCompletedGpuPassTimings.Milliseconds[passIndex] =
+            static_cast<float>(static_cast<double>(elapsedNanoseconds[passIndex]) / 1'000'000.0);
+    }
     state.HasCompletedTimingReadback = true;
-    gpuComputeMilliseconds = state.LastCompletedGpuComputeMilliseconds;
+    gpuPassTimings = state.LastCompletedGpuPassTimings;
     slot.Pending = false;
     return true;
 }
@@ -318,15 +358,21 @@ bool EnsureTimingReadbackSlot(
     std::string* errorMessage)
 {
     GpuRoamTimingReadbackSlot& slot = state.TimingReadbackSlots[slotIndex];
-    if (slot.TimerQueryId == 0U)
+    const bool needsQueries = std::any_of(
+        slot.TimerQueryIds.begin(),
+        slot.TimerQueryIds.end(),
+        [](std::uint32_t queryId) { return queryId == 0U; });
+    if (needsQueries)
     {
-        // query 与槽位同生命周期，避免每帧创建和销毁计时对象
-        GLuint queryId = 0U;
-        glGenQueries(1, &queryId);
-        slot.TimerQueryId = queryId;
+        std::array<GLuint, GpuRoamGpuPassCount> queryIds{};
+        glGenQueries(static_cast<GLsizei>(queryIds.size()), queryIds.data());
+        std::copy(queryIds.begin(), queryIds.end(), slot.TimerQueryIds.begin());
     }
 
-    if (slot.TimerQueryId == 0U)
+    if (std::any_of(
+            slot.TimerQueryIds.begin(),
+            slot.TimerQueryIds.end(),
+            [](std::uint32_t queryId) { return queryId == 0U; }))
     {
         if (errorMessage != nullptr)
         {
@@ -378,7 +424,7 @@ bool GpuRoamMeshBuilder::Build(
     }
 
     // GPU 数量采用延迟回读，当前帧不会为了统计数据阻塞命令执行
-    float gpuComputeMilliseconds = 0.0F;
+    GpuRoamGpuPassTimings gpuPassTimings{};
     std::size_t readbackBytes = 0U;
     float dispatchWallMilliseconds = 0.0F;
     float queryWaitMilliseconds = 0.0F;
@@ -386,11 +432,11 @@ bool GpuRoamMeshBuilder::Build(
     std::size_t gpuActiveLeafCount = snapshot.ActiveLeafIndices.size();
     std::size_t gpuNodeCount = snapshot.Nodes.size();
     std::size_t gpuSplitOnlyCommitCount = 0U;
-    if (!RunGpuComputePipeline(
+    if (!RunGpuAlgorithmPasses(
             snapshot,
             input,
             uploadBytes,
-            gpuComputeMilliseconds,
+            gpuPassTimings,
             readbackBytes,
             bufferAllocationMilliseconds,
             dispatchWallMilliseconds,
@@ -407,7 +453,7 @@ bool GpuRoamMeshBuilder::Build(
     // 分项统计保留上传、调度、查询等待和回读等待，便于区分 CPU 与 GPU 瓶颈
     inOutStats.CpuGpuUploadBytes = uploadBytes;
     inOutStats.CpuGpuReadbackBytes = readbackBytes;
-    inOutStats.GpuComputeMilliseconds = gpuComputeMilliseconds;
+    CopyGpuPassTimingsToStats(gpuPassTimings, inOutStats);
     inOutStats.CpuUploadMilliseconds = cpuUploadMilliseconds;
     inOutStats.GpuBufferAllocationMilliseconds = bufferAllocationMilliseconds;
     inOutStats.GpuDispatchWallMilliseconds = dispatchWallMilliseconds;
@@ -501,11 +547,11 @@ bool GpuRoamMeshBuilder::UploadSnapshot(
     return true;
 }
 
-bool GpuRoamMeshBuilder::RunGpuComputePipeline(
+bool GpuRoamMeshBuilder::RunGpuAlgorithmPasses(
     const GpuRoamBufferSnapshot& snapshot,
     const TerrainLodBuildInput& input,
     std::size_t& uploadBytes,
-    float& gpuComputeMilliseconds,
+    GpuRoamGpuPassTimings& gpuPassTimings,
     std::size_t& readbackBytes,
     float& bufferAllocationMilliseconds,
     float& dispatchWallMilliseconds,
@@ -518,6 +564,7 @@ bool GpuRoamMeshBuilder::RunGpuComputePipeline(
 {
     // program 对象按需编译并缓存在 state 中，失败时不提交任何 compute 工作
     if (!EnsureGpuRoamActiveLeafCompactionProgram(_state.ActiveLeafCompactionProgramId, errorMessage) ||
+        !EnsureGpuRoamActiveLeafResetProgram(_state.ActiveLeafResetProgramId, errorMessage) ||
         !EnsureGpuRoamErrorEvaluationProgram(_state.ErrorEvaluationProgramId, errorMessage) ||
         !EnsureGpuRoamCandidateMarkingProgram(_state.CandidateMarkingProgramId, errorMessage) ||
         !EnsureGpuRoamMeshEmitProgram(_state.MeshEmitProgramId, errorMessage))
@@ -550,7 +597,7 @@ bool GpuRoamMeshBuilder::RunGpuComputePipeline(
     if (!ResolveTimingReadbackSlot(
             _state,
             timingSlotIndex,
-            gpuComputeMilliseconds,
+            gpuPassTimings,
             readbackBytes,
             queryWaitMilliseconds,
             readbackWaitMilliseconds,
@@ -628,8 +675,7 @@ bool GpuRoamMeshBuilder::RunGpuComputePipeline(
     bufferAllocationMilliseconds += metrics.BufferAllocationMilliseconds;
 
     const auto dispatchWallStart = Clock::now();
-    // timer query 只包围 GPU pass 链，CPU 侧资源准备不计入 compute 时间
-    glBeginQuery(GL_TIME_ELAPSED, _state.TimingReadbackSlots[timingSlotIndex].TimerQueryId);
+    GpuRoamTimingReadbackSlot& slot = _state.TimingReadbackSlots[timingSlotIndex];
 
     // 首次压缩只扫描 CPU 快照已有节点，为误差评估建立稠密活动叶列表
     GpuRoamActiveLeafCompactionPassInput compactionInput{};
@@ -638,7 +684,11 @@ bool GpuRoamMeshBuilder::RunGpuComputePipeline(
     compactionInput.ActiveLeafBufferId = _state.ActiveLeafBufferId;
     compactionInput.CounterBufferId = _state.CounterBufferId;
     compactionInput.NodeCount = nodeCount;
+    glBeginQuery(
+        GL_TIME_ELAPSED,
+        slot.TimerQueryIds[GpuPassIndex(GpuRoamGpuPass::InitialLeafCompaction)]);
     RunGpuRoamActiveLeafCompactionPass(compactionInput);
+    glEndQuery(GL_TIME_ELAPSED);
 
     // 误差 pass 只写 screen error，不修改节点拓扑
     GpuRoamErrorEvaluationPassInput errorInput{};
@@ -657,7 +707,11 @@ bool GpuRoamMeshBuilder::RunGpuComputePipeline(
     errorInput.DrawableHeight = std::max(input.View.DrawableHeight, 1U);
     errorInput.IsOrthographic =
         std::abs(input.View.Projection[3][3] - 1.0F) <= std::numeric_limits<float>::epsilon();
+    glBeginQuery(
+        GL_TIME_ELAPSED,
+        slot.TimerQueryIds[GpuPassIndex(GpuRoamGpuPass::ErrorEvaluation)]);
     RunGpuRoamErrorEvaluationPass(errorInput);
+    glEndQuery(GL_TIME_ELAPSED);
 
     // 候选 pass 读取同一活动叶顺序，使 screen error 与叶索引一一对应
     GpuRoamCandidateMarkingPassInput candidateInput{};
@@ -682,7 +736,21 @@ bool GpuRoamMeshBuilder::RunGpuComputePipeline(
     candidateInput.ProjectionScaleY = errorInput.ProjectionScaleY;
     candidateInput.DrawableHeight = errorInput.DrawableHeight;
     candidateInput.IsOrthographic = errorInput.IsOrthographic;
+    candidateInput.Kind = GpuRoamCandidateKind::Split;
+    glBeginQuery(
+        GL_TIME_ELAPSED,
+        slot.TimerQueryIds[GpuPassIndex(GpuRoamGpuPass::SplitCandidateMarking)]);
     RunGpuRoamCandidateMarkingPass(candidateInput);
+    glEndQuery(GL_TIME_ELAPSED);
+
+    // Merge scoring is a separate ROAM decision stage. It produces diagnostic
+    // candidates only; CPU DOD already committed the persistent merge topology.
+    candidateInput.Kind = GpuRoamCandidateKind::Merge;
+    glBeginQuery(
+        GL_TIME_ELAPSED,
+        slot.TimerQueryIds[GpuPassIndex(GpuRoamGpuPass::MergeCandidateMarking)]);
+    RunGpuRoamCandidateMarkingPass(candidateInput);
+    glEndQuery(GL_TIME_ELAPSED);
 
     // 拓扑 pass 通过原子锁和容量检查提交一轮兼容成对分裂
     GpuRoamSplitOnlyTopologyPassInput splitOnlyInput{};
@@ -693,25 +761,33 @@ bool GpuRoamMeshBuilder::RunGpuComputePipeline(
     splitOnlyInput.NodeCapacity = nodeCapacity;
     splitOnlyInput.MaxDepth = input.Settings.MaxDepth;
     splitOnlyInput.BuildSequence = snapshot.BuildSequence;
-    if (!RunGpuRoamSplitOnlyTopologyPass(_state.SplitOnlyTopologyProgramId, splitOnlyInput, errorMessage))
+    glBeginQuery(
+        GL_TIME_ELAPSED,
+        slot.TimerQueryIds[GpuPassIndex(GpuRoamGpuPass::SplitTopology)]);
+    const bool splitSucceeded = RunGpuRoamSplitOnlyTopologyPass(
+        _state.SplitOnlyTopologyProgramId,
+        splitOnlyInput,
+        errorMessage);
+    glEndQuery(GL_TIME_ELAPSED);
+    if (!splitSucceeded)
     {
         return false;
     }
 
-    // split 改变叶节点集合，第二次 compaction 前只重置活动叶计数
-    const std::uint32_t zeroActiveLeafCount = 0U;
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, _state.CounterBufferId);
-    glBufferSubData(
-        GL_SHADER_STORAGE_BUFFER,
-        offsetof(GpuRoamCounters, ActiveLeafCount),
-        static_cast<GLsizeiptr>(sizeof(zeroActiveLeafCount)),
-        &zeroActiveLeafCount);
-    uploadBytes += sizeof(zeroActiveLeafCount);
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    // split 改变叶节点集合，第二次 compaction 前由独立 shader 只重置活动叶计数
+    glBeginQuery(
+        GL_TIME_ELAPSED,
+        slot.TimerQueryIds[GpuPassIndex(GpuRoamGpuPass::ActiveLeafReset)]);
+    RunGpuRoamActiveLeafResetPass(_state.ActiveLeafResetProgramId, _state.CounterBufferId);
+    glEndQuery(GL_TIME_ELAPSED);
 
     // 扫描完整预留节点池，但 shader 通过 AllocatedNodeCount 排除未分配尾部
     compactionInput.NodeCount = nodeCapacity;
+    glBeginQuery(
+        GL_TIME_ELAPSED,
+        slot.TimerQueryIds[GpuPassIndex(GpuRoamGpuPass::FinalLeafCompaction)]);
     RunGpuRoamActiveLeafCompactionPass(compactionInput);
+    glEndQuery(GL_TIME_ELAPSED);
 
     // emit 消费最终活动叶集合并同时写顶点、索引和间接绘制命令
     GpuRoamMeshEmitPassInput emitInput{};
@@ -729,8 +805,10 @@ bool GpuRoamMeshBuilder::RunGpuComputePipeline(
     emitInput.BuildSequence = snapshot.BuildSequence;
     emitInput.TerrainSize = input.Settings.TerrainSize;
     emitInput.HeightScale = input.Settings.HeightScale;
+    glBeginQuery(
+        GL_TIME_ELAPSED,
+        slot.TimerQueryIds[GpuPassIndex(GpuRoamGpuPass::MeshEmit)]);
     RunGpuRoamMeshEmitPass(emitInput);
-
     glEndQuery(GL_TIME_ELAPSED);
     // wall 时间仅表示 CPU 发出 pass 链的耗时，不等同于 GPU 执行时间
     dispatchWallMilliseconds += ElapsedMilliseconds(dispatchWallStart, Clock::now());
@@ -738,7 +816,6 @@ bool GpuRoamMeshBuilder::RunGpuComputePipeline(
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
     glBindTexture(GL_TEXTURE_2D, 0);
 
-    GpuRoamTimingReadbackSlot& slot = _state.TimingReadbackSlots[timingSlotIndex];
     // 保存本帧基线数量，延迟回读时才能验证 split 后的计数守恒
     slot.BaseActiveLeafCount = activeLeafCount;
     slot.BaseNodeCount = nodeCount;

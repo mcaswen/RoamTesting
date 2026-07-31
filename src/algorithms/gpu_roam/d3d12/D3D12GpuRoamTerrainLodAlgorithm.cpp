@@ -17,6 +17,7 @@
 #include <filesystem>
 #include <fstream>
 #include <limits>
+#include <numeric>
 #include <string>
 #include <utility>
 #include <vector>
@@ -32,6 +33,46 @@ constexpr std::uint32_t DescriptorsPerFrame = 10U;
 constexpr std::uint32_t UavDescriptorCount = 9U;
 // D3D12 根 CBV 地址要求 256 字节对齐
 constexpr std::size_t ConstantBufferBytes = 256U;
+
+enum class TimedGpuPass : std::size_t
+{
+    InitialLeafCompaction,
+    ErrorEvaluation,
+    SplitCandidateMarking,
+    MergeCandidateMarking,
+    SplitTopology,
+    ActiveLeafReset,
+    FinalLeafCompaction,
+    MeshEmit,
+    Count,
+};
+
+constexpr std::size_t TimedGpuPassCount = static_cast<std::size_t>(TimedGpuPass::Count);
+constexpr std::size_t TimestampCountPerFrame = TimedGpuPassCount + 1U;
+
+constexpr std::size_t TimedGpuPassIndex(TimedGpuPass pass)
+{
+    return static_cast<std::size_t>(pass);
+}
+
+void CopyGpuPassTimingsToStats(
+    const std::array<float, TimedGpuPassCount>& timings,
+    TerrainLodStats& stats)
+{
+    stats.GpuInitialLeafCompactionMilliseconds =
+        timings[TimedGpuPassIndex(TimedGpuPass::InitialLeafCompaction)];
+    stats.GpuErrorEvaluationMilliseconds = timings[TimedGpuPassIndex(TimedGpuPass::ErrorEvaluation)];
+    stats.GpuSplitCandidateMarkingMilliseconds =
+        timings[TimedGpuPassIndex(TimedGpuPass::SplitCandidateMarking)];
+    stats.GpuMergeCandidateMarkingMilliseconds =
+        timings[TimedGpuPassIndex(TimedGpuPass::MergeCandidateMarking)];
+    stats.GpuSplitTopologyMilliseconds = timings[TimedGpuPassIndex(TimedGpuPass::SplitTopology)];
+    stats.GpuActiveLeafResetMilliseconds = timings[TimedGpuPassIndex(TimedGpuPass::ActiveLeafReset)];
+    stats.GpuFinalLeafCompactionMilliseconds =
+        timings[TimedGpuPassIndex(TimedGpuPass::FinalLeafCompaction)];
+    stats.GpuMeshEmitMilliseconds = timings[TimedGpuPassIndex(TimedGpuPass::MeshEmit)];
+    stats.GpuPassSumMilliseconds = std::accumulate(timings.begin(), timings.end(), 0.0F);
+}
 
 /// <summary>
 /// 与 HLSL Counters 缓冲布局一致的 GPU 计数器
@@ -226,7 +267,7 @@ std::size_t AdditionalGpuSplitCapacity(const GpuRoamBufferSnapshot& snapshot, co
 DataOrientedRoam::DataOrientedRoamSettings ToDataSettings(const TerrainLodSettings& settings)
 {
     DataOrientedRoam::DataOrientedRoamSettings result{};
-    // CPU 持久拓扑与后续 GPU compute pass 使用同一像素 SSE、视锥和预算口径。
+    // CPU 持久拓扑与后续 GPU leaf scoring/split pass 使用同一像素 SSE、视锥和预算口径。
     result.MaxDepth = settings.MaxDepth;
     result.SplitThreshold = settings.ScreenSpaceSplitThresholdPixels;
     result.MergeThreshold = settings.ScreenSpaceMergeThresholdPixels;
@@ -260,12 +301,23 @@ TerrainLodStats ToLodStats(const DataOrientedRoam::DataOrientedRoamStats& stats)
     result.InvalidTopologyCount = stats.InvalidTopologyCount;
     result.CpuWorkerCount = std::max<std::size_t>(stats.ErrorEvaluationWorkerCount, 1U);
     result.CpuUpdateMilliseconds = stats.UpdateMilliseconds;
+    result.CpuPrepareMilliseconds = stats.PrepareMilliseconds;
+    result.CpuMergeCandidateMarkMilliseconds = stats.MergeCandidateMarkMilliseconds;
+    result.CpuMergeTopologyMilliseconds =
+        std::max(0.0F, stats.MergeMilliseconds - stats.MergeCandidateMarkMilliseconds);
+    result.CpuBudgetLeafCollectMilliseconds = stats.BudgetLeafCollectMilliseconds;
     result.CpuErrorEvalMilliseconds = stats.ErrorEvaluationWorkerCount > 1U
         ? stats.ErrorEvaluationParallelMilliseconds
         : stats.ErrorEvaluationSingleThreadMilliseconds;
-    result.CpuCollectMilliseconds = stats.ActiveLeafCollectMilliseconds +
-        stats.SplitCandidateMarkMilliseconds + stats.MergeCandidateMarkMilliseconds;
-    result.CpuMeshBuildMilliseconds = stats.EmitMilliseconds;
+    result.CpuSplitCandidateMarkMilliseconds =
+        stats.ActiveLeafCollectMilliseconds + stats.SplitCandidateMarkMilliseconds;
+    result.CpuSplitTopologyMilliseconds = std::max(
+        0.0F,
+        stats.SplitMilliseconds - result.CpuErrorEvalMilliseconds -
+            result.CpuSplitCandidateMarkMilliseconds);
+    result.CpuFinalLeafCollectMilliseconds = stats.FinalLeafCollectMilliseconds;
+    result.CpuMeshEmitMilliseconds = stats.MeshEmitMilliseconds;
+    result.CpuFinalizeMilliseconds = stats.FinalizeMilliseconds;
     result.SplitMilliseconds = stats.SplitMilliseconds;
     result.MergeMilliseconds = stats.MergeMilliseconds;
     result.EmitMilliseconds = stats.EmitMilliseconds;
@@ -360,7 +412,8 @@ struct D3D12GpuRoamState
     // 六个 compute pass 共享同一根签名和描述符布局
     Microsoft::WRL::ComPtr<ID3D12PipelineState> CompactPipeline;
     Microsoft::WRL::ComPtr<ID3D12PipelineState> ErrorPipeline;
-    Microsoft::WRL::ComPtr<ID3D12PipelineState> CandidatePipeline;
+    Microsoft::WRL::ComPtr<ID3D12PipelineState> SplitCandidatePipeline;
+    Microsoft::WRL::ComPtr<ID3D12PipelineState> MergeCandidatePipeline;
     Microsoft::WRL::ComPtr<ID3D12PipelineState> SplitPipeline;
     Microsoft::WRL::ComPtr<ID3D12PipelineState> ResetLeavesPipeline;
     Microsoft::WRL::ComPtr<ID3D12PipelineState> EmitPipeline;
@@ -378,7 +431,7 @@ struct D3D12GpuRoamState
     Microsoft::WRL::ComPtr<ID3D12Resource> CounterReadback;
     std::uint64_t TimestampFrequency{0};
     GpuCounters LastCounters{};
-    float LastGpuMilliseconds{0.0F};
+    std::array<float, TimedGpuPassCount> LastGpuPassMilliseconds{};
     std::uint64_t Generation{0};
 
     ~D3D12GpuRoamState()
@@ -493,7 +546,16 @@ bool InitializeState(D3D12GpuRoamState& state, std::string* errorMessage)
 
     if (!CreateComputePipeline(state, "GpuRoamCompact.cso", state.CompactPipeline, errorMessage) ||
         !CreateComputePipeline(state, "GpuRoamError.cso", state.ErrorPipeline, errorMessage) ||
-        !CreateComputePipeline(state, "GpuRoamCandidates.cso", state.CandidatePipeline, errorMessage) ||
+        !CreateComputePipeline(
+            state,
+            "GpuRoamSplitCandidates.cso",
+            state.SplitCandidatePipeline,
+            errorMessage) ||
+        !CreateComputePipeline(
+            state,
+            "GpuRoamMergeCandidates.cso",
+            state.MergeCandidatePipeline,
+            errorMessage) ||
         !CreateComputePipeline(state, "GpuRoamSplit.cso", state.SplitPipeline, errorMessage) ||
         !CreateComputePipeline(state, "GpuRoamResetLeaves.cso", state.ResetLeavesPipeline, errorMessage) ||
         !CreateComputePipeline(state, "GpuRoamEmit.cso", state.EmitPipeline, errorMessage))
@@ -533,7 +595,7 @@ bool InitializeState(D3D12GpuRoamState& state, std::string* errorMessage)
     // 查询和回读区域都按帧索引固定布局，结果延迟到该槽位再次复用时读取
     D3D12_QUERY_HEAP_DESC queryDescription{};
     queryDescription.Type = D3D12_QUERY_HEAP_TYPE_TIMESTAMP;
-    queryDescription.Count = Render::D3D12GraphicsBackend::FrameCount * 2U;
+    queryDescription.Count = Render::D3D12GraphicsBackend::FrameCount * TimestampCountPerFrame;
     if (FAILED(state.Backend->Device()->CreateQueryHeap(&queryDescription, IID_PPV_ARGS(&state.QueryHeap))))
     {
         SetError(errorMessage, "Failed to create DX12 GPU ROAM-like timestamp heap");
@@ -541,7 +603,7 @@ bool InitializeState(D3D12GpuRoamState& state, std::string* errorMessage)
     }
     const D3D12_HEAP_PROPERTIES readbackHeap = HeapProperties(D3D12_HEAP_TYPE_READBACK);
     D3D12_RESOURCE_DESC queryReadbackDescription = BufferDescription(
-        Render::D3D12GraphicsBackend::FrameCount * 2U * sizeof(std::uint64_t),
+        Render::D3D12GraphicsBackend::FrameCount * TimestampCountPerFrame * sizeof(std::uint64_t),
         D3D12_RESOURCE_FLAG_NONE);
     if (FAILED(state.Backend->Device()->CreateCommittedResource(
             &readbackHeap,
@@ -802,25 +864,33 @@ void ReadCompletedResults(D3D12GpuRoamState& state, std::uint32_t frameIndex, Te
         state.CounterReadback->Unmap(0, nullptr);
     }
 
-    // 计算耗时由该帧第一个和最后一个计算调度外侧时间戳得出
-    const std::size_t queryOffset = frameIndex * 2U * sizeof(std::uint64_t);
-    D3D12_RANGE queryRange{queryOffset, queryOffset + 2U * sizeof(std::uint64_t)};
+    const std::size_t queryOffset = frameIndex * TimestampCountPerFrame * sizeof(std::uint64_t);
+    D3D12_RANGE queryRange{
+        queryOffset,
+        queryOffset + TimestampCountPerFrame * sizeof(std::uint64_t)};
     void* mappedQueries = nullptr;
     if (SUCCEEDED(state.QueryReadback->Map(0, &queryRange, &mappedQueries)))
     {
         const auto* timestamps = reinterpret_cast<const std::uint64_t*>(
             static_cast<const std::uint8_t*>(mappedQueries) + queryOffset);
-        if (timestamps[1] >= timestamps[0] && state.TimestampFrequency > 0U)
+        if (state.TimestampFrequency > 0U)
         {
-            state.LastGpuMilliseconds = static_cast<float>(
-                static_cast<double>(timestamps[1] - timestamps[0]) * 1000.0 /
-                static_cast<double>(state.TimestampFrequency));
+            for (std::size_t passIndex = 0; passIndex < TimedGpuPassCount; ++passIndex)
+            {
+                if (timestamps[passIndex + 1U] >= timestamps[passIndex])
+                {
+                    state.LastGpuPassMilliseconds[passIndex] = static_cast<float>(
+                        static_cast<double>(timestamps[passIndex + 1U] - timestamps[passIndex]) *
+                        1000.0 / static_cast<double>(state.TimestampFrequency));
+                }
+            }
         }
         state.QueryReadback->Unmap(0, nullptr);
     }
     frame.PendingReadback = false;
-    stats.GpuComputeMilliseconds = state.LastGpuMilliseconds;
-    stats.CpuGpuReadbackBytes = sizeof(GpuCounters) + 2U * sizeof(std::uint64_t);
+    CopyGpuPassTimingsToStats(state.LastGpuPassMilliseconds, stats);
+    stats.CpuGpuReadbackBytes =
+        sizeof(GpuCounters) + TimestampCountPerFrame * sizeof(std::uint64_t);
     stats.BudgetRejectedSplitCount += state.LastCounters.BudgetRejectedSplitCount;
 }
 
@@ -1004,30 +1074,41 @@ bool D3D12GpuRoamTerrainLodAlgorithm::BuildRenderData(
     heightGpu.ptr += static_cast<UINT64>(9U) * _state->DescriptorSize;
     commandList->SetComputeRootDescriptorTable(2, heightGpu);
 
-    // 时间戳包围完整计算链，不包含后续状态转换和回读复制
-    // DispatchPipeline 在相邻入口间插入 UAV barrier，保持数据依赖顺序
-    const std::uint32_t queryStart = frameIndex * 2U;
+    // Nine boundaries produce eight non-overlapping shader-pass durations.
+    const std::uint32_t queryStart = frameIndex * TimestampCountPerFrame;
     commandList->EndQuery(_state->QueryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, queryStart);
     // 从 CPU 快照重新压缩活动叶节点
     DispatchPipeline(commandList, _state->CompactPipeline.Get(), DispatchCount(nodeCapacity));
-    // 对压缩后的叶节点计算距离加权误差
+    commandList->EndQuery(_state->QueryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, queryStart + 1U);
+    // 对压缩后的叶节点计算像素误差并执行六平面视锥测试
     DispatchPipeline(commandList, _state->ErrorPipeline.Get(), DispatchCount(nodeCapacity));
-    // 同时生成 split 候选和仅用于统计的 merge 候选
-    // 候选当前按原子追加顺序提交，还没有实现全局误差优先级排序
+    commandList->EndQuery(_state->QueryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, queryStart + 2U);
+    // split 候选按原子追加顺序生成，还没有实现全局误差优先级排序
     DispatchPipeline(
         commandList,
-        _state->CandidatePipeline.Get(),
-        DispatchCount(std::max(snapshot.Nodes.size(), nodeCapacity)));
+        _state->SplitCandidatePipeline.Get(),
+        DispatchCount(activeLeafCapacity));
+    commandList->EndQuery(_state->QueryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, queryStart + 3U);
+    // Merge candidate scoring is measured separately, but this hybrid path
+    // still commits persistent merge topology in the CPU DOD baseline.
+    DispatchPipeline(
+        commandList,
+        _state->MergeCandidatePipeline.Get(),
+        DispatchCount(snapshot.Nodes.size()));
+    commandList->EndQuery(_state->QueryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, queryStart + 4U);
     // 提交一次 base-neighbor 成对兼容分裂，暂不递归传播 compatibility chain
     // 节点池容量检查和双节点分配在 shader 内作为同一提交条件处理
     DispatchPipeline(commandList, _state->SplitPipeline.Get(), DispatchCount(nodeCapacity));
+    commandList->EndQuery(_state->QueryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, queryStart + 5U);
     // 分裂改变活动叶集合，清零计数并重新压缩
     // emit 只能消费最终稠密叶表，不能复用 split 前的 compaction 输出
     DispatchPipeline(commandList, _state->ResetLeavesPipeline.Get(), 1U);
+    commandList->EndQuery(_state->QueryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, queryStart + 6U);
     DispatchPipeline(commandList, _state->CompactPipeline.Get(), DispatchCount(nodeCapacity));
+    commandList->EndQuery(_state->QueryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, queryStart + 7U);
     // 展开最终叶节点网格并写入 DrawIndexed 间接参数
     DispatchPipeline(commandList, _state->EmitPipeline.Get(), DispatchCount(nodeCapacity));
-    commandList->EndQuery(_state->QueryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, queryStart + 1U);
+    commandList->EndQuery(_state->QueryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, queryStart + 8U);
 
     // 计算输出随后在同一命令列表中由图形管线直接消费
     // 状态转换同时承担 compute 写入到 IA 和间接参数读取的可见性边界
@@ -1048,7 +1129,7 @@ bool D3D12GpuRoamTerrainLodAlgorithm::BuildRenderData(
         _state->QueryHeap.Get(),
         D3D12_QUERY_TYPE_TIMESTAMP,
         queryStart,
-        2,
+        TimestampCountPerFrame,
         _state->QueryReadback.Get(),
         static_cast<std::uint64_t>(queryStart) * sizeof(std::uint64_t));
     // 结果在该帧槽位下一次通过 fence 验证后读取
@@ -1056,7 +1137,7 @@ bool D3D12GpuRoamTerrainLodAlgorithm::BuildRenderData(
 
     _stats.GpuDispatchWallMilliseconds =
         std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - dispatchStart).count();
-    _stats.GpuComputeMilliseconds = _state->LastGpuMilliseconds;
+    CopyGpuPassTimingsToStats(_state->LastGpuPassMilliseconds, _stats);
     _stats.CpuGpuUploadBytes = snapshot.NodeBufferBytes() + sizeof(GpuCounters);
     // 当前帧尚未执行完成，绘制统计先采用上次结果或 CPU 快照估值
     const std::size_t activeEstimate = std::min(
@@ -1072,7 +1153,8 @@ bool D3D12GpuRoamTerrainLodAlgorithm::BuildRenderData(
     // 数据包返回算法拥有的原生资源，渲染器不得释放或跨重建缓存
     // Generation 让渲染器在同一指针地址复用时仍能识别内容版本变化
     outPacket.Mode = TerrainLodRenderMode::GpuIndirect;
-    outPacket.StatusMessage = "DX12 compute topology + GPU mesh emit + ExecuteIndirect";
+    outPacket.StatusMessage =
+        "DX12 CPU DOD merge baseline + GPU split/direct-diamond + mesh emit + ExecuteIndirect";
     outPacket.NativeResourceApi = TerrainLodNativeResourceApi::Direct3D12;
     outPacket.NativeVertexBuffer = reinterpret_cast<std::uintptr_t>(frame.Vertices.Resource.Get());
     outPacket.NativeIndexBuffer = reinterpret_cast<std::uintptr_t>(frame.Indices.Resource.Get());
@@ -1103,7 +1185,7 @@ void D3D12GpuRoamTerrainLodAlgorithm::Reset()
     if (_state != nullptr)
     {
         _state->LastCounters = {};
-        _state->LastGpuMilliseconds = 0.0F;
+        _state->LastGpuPassMilliseconds = {};
     }
 }
 } // namespace ParallelRoam::Algorithms::GpuRoam::D3D12

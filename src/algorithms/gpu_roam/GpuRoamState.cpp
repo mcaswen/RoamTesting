@@ -3,11 +3,17 @@
 #include <glad/gl.h>
 
 #include <array>
+#include <numeric>
 
 namespace ParallelRoam::Algorithms::GpuRoam
 {
 static_assert(sizeof(GpuRoamDrawElementsIndirectCommand) == 5U * sizeof(std::uint32_t));
 static_assert(sizeof(GpuRoamCounters) == 8U * sizeof(std::uint32_t));
+
+float GpuRoamGpuPassTimings::SumMilliseconds() const
+{
+    return std::accumulate(Milliseconds.begin(), Milliseconds.end(), 0.0F);
+}
 
 GpuRoamState::~GpuRoamState()
 {
@@ -63,8 +69,9 @@ void GpuRoamState::Reset()
         HeightMapTextureId = 0U;
     }
 
-    const std::array<std::uint32_t*, 5U> programIds{
+    const std::array<std::uint32_t*, 6U> programIds{
         &ActiveLeafCompactionProgramId,
+        &ActiveLeafResetProgramId,
         &ErrorEvaluationProgramId,
         &CandidateMarkingProgramId,
         &MeshEmitProgramId,
@@ -86,11 +93,14 @@ void GpuRoamState::Reset()
     {
         for (GpuRoamTimingReadbackSlot& slot : TimingReadbackSlots)
         {
-            if (slot.TimerQueryId != 0U)
+            for (std::uint32_t& timerQueryId : slot.TimerQueryIds)
             {
-                const GLuint queryId = slot.TimerQueryId;
-                glDeleteQueries(1, &queryId);
-                slot.TimerQueryId = 0U;
+                if (timerQueryId != 0U)
+                {
+                    const GLuint queryId = timerQueryId;
+                    glDeleteQueries(1, &queryId);
+                    timerQueryId = 0U;
+                }
             }
         }
     }
@@ -109,7 +119,7 @@ void GpuRoamState::Reset()
     HeightMapTextureUploaded = false;
     TimingReadbackCursor = 0U;
     LastCompletedCounters = {};
-    LastCompletedGpuComputeMilliseconds = 0.0F;
+    LastCompletedGpuPassTimings = {};
     HasCompletedTimingReadback = false;
     for (GpuRoamTimingReadbackSlot& slot : TimingReadbackSlots)
     {

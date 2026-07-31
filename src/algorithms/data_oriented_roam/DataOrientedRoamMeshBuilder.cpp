@@ -134,6 +134,7 @@ Terrain::TerrainMeshData DataOrientedRoamMeshBuilder::BuildInternal(
         // 提高深度时保留拓扑，但已有节点必须刷新子树最大误差
         RefreshNodeVarianceErrors(state);
     }
+    const auto prepareEnd = std::chrono::steady_clock::now();
 
     const auto mergeStart = std::chrono::steady_clock::now();
     // merge pass 先运行，远处旧细节先回收
@@ -141,12 +142,14 @@ Terrain::TerrainMeshData DataOrientedRoamMeshBuilder::BuildInternal(
     const auto mergeEnd = std::chrono::steady_clock::now();
 
     // 每次 leaf split 净增一个活动三角形，原子 token 供并行 commit 共同消费
+    const auto budgetCollectStart = std::chrono::steady_clock::now();
     CollectLeafNodes(state, state.FinalActiveLeaves);
     const std::size_t remainingBudget = state.Settings.TriangleBudget > state.FinalActiveLeaves.size()
         ? state.Settings.TriangleBudget - state.FinalActiveLeaves.size()
         : 0U;
     state.RemainingSplitBudget.store(remainingBudget, std::memory_order_relaxed);
     state.FinalActiveLeaves.clear();
+    const auto budgetCollectEnd = std::chrono::steady_clock::now();
 
     const auto splitStart = std::chrono::steady_clock::now();
     // split pass 再按当前相机重新分配细节
@@ -161,28 +164,43 @@ Terrain::TerrainMeshData DataOrientedRoamMeshBuilder::BuildInternal(
         state.Stats.ValidateMilliseconds = ElapsedMilliseconds(validateStart, validateEnd);
     }
 
-    const auto emitStart = std::chrono::steady_clock::now();
     // 最终 leaf 快照在拓扑稳定后收集，emit 和统计复用同一份视图
+    const auto finalCollectStart = std::chrono::steady_clock::now();
     CollectLeafNodes(state, state.FinalActiveLeaves);
+    const auto finalCollectEnd = std::chrono::steady_clock::now();
+    const auto meshEmitStart = std::chrono::steady_clock::now();
     if (emitCpuMesh)
     {
         // emit 计时包含最终快照收集，保持和旧路径的 mesh build 口径一致
         EmitLeafTriangles(state, meshData, state.FinalActiveLeaves);
     }
-    const auto emitEnd = std::chrono::steady_clock::now();
+    const auto meshEmitEnd = std::chrono::steady_clock::now();
 
     // GPU 路径不生成 CPU mesh，active triangle 数必须来自 leaf 快照
+    const auto finalizeStart = std::chrono::steady_clock::now();
     AccumulateLeafStats(state, state.FinalActiveLeaves);
     state.Stats.MergeMilliseconds = ElapsedMilliseconds(mergeStart, mergeEnd);
     state.Stats.SplitMilliseconds = ElapsedMilliseconds(splitStart, splitEnd);
-    state.Stats.EmitMilliseconds = emitCpuMesh ? ElapsedMilliseconds(emitStart, emitEnd) : 0.0F;
-    state.Stats.UpdateMilliseconds = ElapsedMilliseconds(updateStart, std::chrono::steady_clock::now());
+    state.Stats.EmitMilliseconds = emitCpuMesh
+        ? ElapsedMilliseconds(finalCollectStart, meshEmitEnd)
+        : 0.0F;
+    state.Stats.PrepareMilliseconds = ElapsedMilliseconds(updateStart, prepareEnd);
+    state.Stats.BudgetLeafCollectMilliseconds =
+        ElapsedMilliseconds(budgetCollectStart, budgetCollectEnd);
+    state.Stats.FinalLeafCollectMilliseconds =
+        ElapsedMilliseconds(finalCollectStart, finalCollectEnd);
+    state.Stats.MeshEmitMilliseconds = emitCpuMesh
+        ? ElapsedMilliseconds(meshEmitStart, meshEmitEnd)
+        : 0.0F;
 
     CollectActiveSplitPaths(state);
     // split path 集合是 hysteresis 的跨帧状态
     // 必须在 merge 和 split 都完成后再更新
     state.PreviousSplitPaths = state.CurrentSplitPaths;
     state.TopologyMaxDepth = state.Settings.MaxDepth;
+    state.Stats.FinalizeMilliseconds =
+        ElapsedMilliseconds(finalizeStart, std::chrono::steady_clock::now());
+    state.Stats.UpdateMilliseconds = ElapsedMilliseconds(updateStart, std::chrono::steady_clock::now());
     return meshData;
 }
 

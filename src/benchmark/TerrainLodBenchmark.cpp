@@ -591,8 +591,13 @@ bool WriteCsv(
            "activeTriangleCount,activeNodeCount,splitCount,forcedSplitCount,mergeCount,candidatePeakCount,"
            "budgetRejectedSplitCount,"
            "tjunctionCount,invalidNeighborCount,invalidTopologyCount,cpuWorkerCount,cpuUtilizationPercent,"
-           "cpuUpdateMs,cpuErrorEvalMs,"
-           "cpuDecisionMs,cpuTopologyMs,cpuCollectMs,cpuMeshBuildMs,cpuUploadMs,gpuComputeMs,renderMs,"
+           "cpuUpdateMs,cpuPrepareMs,cpuMergeCandidateMarkMs,cpuMergeTopologyMs,"
+           "cpuBudgetLeafCollectMs,cpuErrorEvalMs,cpuSplitCandidateMarkMs,cpuSplitTopologyMs,"
+           "cpuFinalLeafCollectMs,cpuMeshEmitMs,cpuFinalizeMs,cpuUploadMs,"
+           "gpuInitialLeafCompactionMs,gpuErrorEvaluationMs,gpuSplitCandidateMarkingMs,"
+           "gpuMergeCandidateMarkingMs,"
+           "gpuSplitTopologyMs,gpuActiveLeafResetMs,gpuFinalLeafCompactionMs,gpuMeshEmitMs,"
+           "gpuPassSumMs,renderMs,"
            "cpuGpuUploadBytes,cpuGpuReadbackBytes,buildWallMs,passed\n";
 
     for (const BenchmarkAlgorithmRun& run : runs)
@@ -637,13 +642,26 @@ bool WriteCsv(
                 << frame.Stats.CpuWorkerCount << ','
                 << frame.Stats.CpuUtilizationPercent << ','
                 << frame.Stats.CpuUpdateMilliseconds << ','
+                << frame.Stats.CpuPrepareMilliseconds << ','
+                << frame.Stats.CpuMergeCandidateMarkMilliseconds << ','
+                << frame.Stats.CpuMergeTopologyMilliseconds << ','
+                << frame.Stats.CpuBudgetLeafCollectMilliseconds << ','
                 << frame.Stats.CpuErrorEvalMilliseconds << ','
-                << frame.Stats.CpuDecisionMilliseconds << ','
-                << frame.Stats.CpuTopologyMilliseconds << ','
-                << frame.Stats.CpuCollectMilliseconds << ','
-                << frame.Stats.CpuMeshBuildMilliseconds << ','
+                << frame.Stats.CpuSplitCandidateMarkMilliseconds << ','
+                << frame.Stats.CpuSplitTopologyMilliseconds << ','
+                << frame.Stats.CpuFinalLeafCollectMilliseconds << ','
+                << frame.Stats.CpuMeshEmitMilliseconds << ','
+                << frame.Stats.CpuFinalizeMilliseconds << ','
                 << frame.Stats.CpuUploadMilliseconds << ','
-                << frame.Stats.GpuComputeMilliseconds << ','
+                << frame.Stats.GpuInitialLeafCompactionMilliseconds << ','
+                << frame.Stats.GpuErrorEvaluationMilliseconds << ','
+                << frame.Stats.GpuSplitCandidateMarkingMilliseconds << ','
+                << frame.Stats.GpuMergeCandidateMarkingMilliseconds << ','
+                << frame.Stats.GpuSplitTopologyMilliseconds << ','
+                << frame.Stats.GpuActiveLeafResetMilliseconds << ','
+                << frame.Stats.GpuFinalLeafCompactionMilliseconds << ','
+                << frame.Stats.GpuMeshEmitMilliseconds << ','
+                << frame.Stats.GpuPassSumMilliseconds << ','
                 << frame.Stats.RenderMilliseconds << ','
                 << frame.Stats.CpuGpuUploadBytes << ','
                 << frame.Stats.CpuGpuReadbackBytes << ','

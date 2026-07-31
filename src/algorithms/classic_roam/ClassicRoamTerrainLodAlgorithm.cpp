@@ -118,9 +118,16 @@ TerrainLodStats ClassicRoamTerrainLodAlgorithm::ToTerrainLodStats(const ClassicR
     lodStats.InvalidTopologyCount = stats.InvalidTopologyCount;
     lodStats.CpuWorkerCount = 1U;
     lodStats.CpuUpdateMilliseconds = stats.UpdateMilliseconds;
-    lodStats.CpuDecisionMilliseconds = stats.SplitMilliseconds;
-    lodStats.CpuTopologyMilliseconds = stats.SplitMilliseconds + stats.MergeMilliseconds;
-    lodStats.CpuMeshBuildMilliseconds = stats.EmitMilliseconds;
+    lodStats.CpuPrepareMilliseconds = stats.PrepareMilliseconds;
+    lodStats.CpuMergeCandidateMarkMilliseconds = stats.MergeCandidateMarkMilliseconds;
+    lodStats.CpuMergeTopologyMilliseconds = stats.MergeTopologyMilliseconds;
+    lodStats.CpuBudgetLeafCollectMilliseconds = stats.BudgetLeafCollectMilliseconds;
+    // Classic computes screen error while scanning and popping the split priority queue.
+    lodStats.CpuSplitCandidateMarkMilliseconds = stats.SplitInitialScanMilliseconds;
+    lodStats.CpuSplitTopologyMilliseconds = stats.SplitQueueTopologyMilliseconds;
+    lodStats.CpuFinalLeafCollectMilliseconds = stats.FinalLeafCollectMilliseconds;
+    lodStats.CpuMeshEmitMilliseconds = stats.MeshEmitMilliseconds;
+    lodStats.CpuFinalizeMilliseconds = stats.FinalizeMilliseconds;
     lodStats.SplitMilliseconds = stats.SplitMilliseconds;
     lodStats.MergeMilliseconds = stats.MergeMilliseconds;
     lodStats.EmitMilliseconds = stats.EmitMilliseconds;

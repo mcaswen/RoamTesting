@@ -9,6 +9,12 @@
 
 namespace ParallelRoam::Algorithms::GpuRoam
 {
+enum class GpuRoamCandidateKind : std::uint32_t
+{
+    Split,
+    Merge,
+};
+
 /// <summary>
 /// split 和 merge 候选标记 pass 的资源绑定及决策阈值
 /// </summary>
@@ -34,6 +40,7 @@ struct GpuRoamCandidateMarkingPassInput
     float ProjectionScaleY{1.0F};
     std::uint32_t DrawableHeight{1U};
     bool IsOrthographic{false};
+    GpuRoamCandidateKind Kind{GpuRoamCandidateKind::Split};
 };
 
 [[nodiscard]] bool EnsureGpuRoamCandidateMarkingProgram(

@@ -27,9 +27,31 @@ struct RuntimeBenchmarkSummary
     float AverageTotalLodMilliseconds{0.0F};
     float MaxTotalLodMilliseconds{0.0F};
     float AverageCpuUpdateMilliseconds{0.0F};
+    float AverageCpuPrepareMilliseconds{0.0F};
+    float AverageCpuMergeCandidateMarkMilliseconds{0.0F};
+    float AverageCpuMergeTopologyMilliseconds{0.0F};
+    float AverageCpuBudgetLeafCollectMilliseconds{0.0F};
+    float AverageCpuErrorEvalMilliseconds{0.0F};
+    float AverageCpuSplitCandidateMarkMilliseconds{0.0F};
+    float AverageCpuSplitTopologyMilliseconds{0.0F};
+    float AverageCpuFinalLeafCollectMilliseconds{0.0F};
+    float AverageCpuMeshEmitMilliseconds{0.0F};
+    float AverageCpuFinalizeMilliseconds{0.0F};
     float AverageCpuUploadMilliseconds{0.0F};
-    float AverageGpuComputeMilliseconds{0.0F};
-    float MaxGpuComputeMilliseconds{0.0F};
+    float AverageSplitMilliseconds{0.0F};
+    float AverageMergeMilliseconds{0.0F};
+    float AverageEmitMilliseconds{0.0F};
+    float AverageValidateMilliseconds{0.0F};
+    float AverageGpuInitialLeafCompactionMilliseconds{0.0F};
+    float AverageGpuErrorEvaluationMilliseconds{0.0F};
+    float AverageGpuSplitCandidateMarkingMilliseconds{0.0F};
+    float AverageGpuMergeCandidateMarkingMilliseconds{0.0F};
+    float AverageGpuSplitTopologyMilliseconds{0.0F};
+    float AverageGpuActiveLeafResetMilliseconds{0.0F};
+    float AverageGpuFinalLeafCompactionMilliseconds{0.0F};
+    float AverageGpuMeshEmitMilliseconds{0.0F};
+    float AverageGpuPassSumMilliseconds{0.0F};
+    float MaxGpuPassSumMilliseconds{0.0F};
     float AverageGpuSnapshotBuildMilliseconds{0.0F};
     float AverageGpuBufferAllocationMilliseconds{0.0F};
     float AverageGpuDispatchWallMilliseconds{0.0F};
@@ -119,8 +141,30 @@ RuntimeBenchmarkSummary SummarizeRuntimeBenchmark(const RuntimeBenchmarkAlgorith
     double totalFrameMilliseconds = 0.0;
     double totalLodMilliseconds = 0.0;
     double totalCpuUpdateMilliseconds = 0.0;
+    double totalCpuPrepareMilliseconds = 0.0;
+    double totalCpuMergeCandidateMarkMilliseconds = 0.0;
+    double totalCpuMergeTopologyMilliseconds = 0.0;
+    double totalCpuBudgetLeafCollectMilliseconds = 0.0;
+    double totalCpuErrorEvalMilliseconds = 0.0;
+    double totalCpuSplitCandidateMarkMilliseconds = 0.0;
+    double totalCpuSplitTopologyMilliseconds = 0.0;
+    double totalCpuFinalLeafCollectMilliseconds = 0.0;
+    double totalCpuMeshEmitMilliseconds = 0.0;
+    double totalCpuFinalizeMilliseconds = 0.0;
     double totalCpuUploadMilliseconds = 0.0;
-    double totalGpuComputeMilliseconds = 0.0;
+    double totalSplitMilliseconds = 0.0;
+    double totalMergeMilliseconds = 0.0;
+    double totalEmitMilliseconds = 0.0;
+    double totalValidateMilliseconds = 0.0;
+    double totalGpuInitialLeafCompactionMilliseconds = 0.0;
+    double totalGpuErrorEvaluationMilliseconds = 0.0;
+    double totalGpuSplitCandidateMarkingMilliseconds = 0.0;
+    double totalGpuMergeCandidateMarkingMilliseconds = 0.0;
+    double totalGpuSplitTopologyMilliseconds = 0.0;
+    double totalGpuActiveLeafResetMilliseconds = 0.0;
+    double totalGpuFinalLeafCompactionMilliseconds = 0.0;
+    double totalGpuMeshEmitMilliseconds = 0.0;
+    double totalGpuPassSumMilliseconds = 0.0;
     double totalGpuSnapshotBuildMilliseconds = 0.0;
     double totalGpuBufferAllocationMilliseconds = 0.0;
     double totalGpuDispatchWallMilliseconds = 0.0;
@@ -143,8 +187,30 @@ RuntimeBenchmarkSummary SummarizeRuntimeBenchmark(const RuntimeBenchmarkAlgorith
         totalFrameMilliseconds += sample.FrameMilliseconds;
         totalLodMilliseconds += stats.RoamTotalMilliseconds;
         totalCpuUpdateMilliseconds += stats.RoamUpdateMilliseconds;
+        totalCpuPrepareMilliseconds += stats.RoamCpuPrepareMilliseconds;
+        totalCpuMergeCandidateMarkMilliseconds += stats.RoamCpuMergeCandidateMarkMilliseconds;
+        totalCpuMergeTopologyMilliseconds += stats.RoamCpuMergeTopologyMilliseconds;
+        totalCpuBudgetLeafCollectMilliseconds += stats.RoamCpuBudgetLeafCollectMilliseconds;
+        totalCpuErrorEvalMilliseconds += stats.RoamCpuErrorEvalMilliseconds;
+        totalCpuSplitCandidateMarkMilliseconds += stats.RoamCpuSplitCandidateMarkMilliseconds;
+        totalCpuSplitTopologyMilliseconds += stats.RoamCpuSplitTopologyMilliseconds;
+        totalCpuFinalLeafCollectMilliseconds += stats.RoamCpuFinalLeafCollectMilliseconds;
+        totalCpuMeshEmitMilliseconds += stats.RoamCpuMeshEmitMilliseconds;
+        totalCpuFinalizeMilliseconds += stats.RoamCpuFinalizeMilliseconds;
         totalCpuUploadMilliseconds += stats.RoamCpuUploadMilliseconds;
-        totalGpuComputeMilliseconds += stats.RoamGpuComputeMilliseconds;
+        totalSplitMilliseconds += stats.RoamSplitMilliseconds;
+        totalMergeMilliseconds += stats.RoamMergeMilliseconds;
+        totalEmitMilliseconds += stats.RoamEmitMilliseconds;
+        totalValidateMilliseconds += stats.RoamValidateMilliseconds;
+        totalGpuInitialLeafCompactionMilliseconds += stats.RoamGpuInitialLeafCompactionMilliseconds;
+        totalGpuErrorEvaluationMilliseconds += stats.RoamGpuErrorEvaluationMilliseconds;
+        totalGpuSplitCandidateMarkingMilliseconds += stats.RoamGpuSplitCandidateMarkingMilliseconds;
+        totalGpuMergeCandidateMarkingMilliseconds += stats.RoamGpuMergeCandidateMarkingMilliseconds;
+        totalGpuSplitTopologyMilliseconds += stats.RoamGpuSplitTopologyMilliseconds;
+        totalGpuActiveLeafResetMilliseconds += stats.RoamGpuActiveLeafResetMilliseconds;
+        totalGpuFinalLeafCompactionMilliseconds += stats.RoamGpuFinalLeafCompactionMilliseconds;
+        totalGpuMeshEmitMilliseconds += stats.RoamGpuMeshEmitMilliseconds;
+        totalGpuPassSumMilliseconds += stats.RoamGpuPassSumMilliseconds;
         totalGpuSnapshotBuildMilliseconds += stats.RoamGpuSnapshotBuildMilliseconds;
         totalGpuBufferAllocationMilliseconds += stats.RoamGpuBufferAllocationMilliseconds;
         totalGpuDispatchWallMilliseconds += stats.RoamGpuDispatchWallMilliseconds;
@@ -159,8 +225,8 @@ RuntimeBenchmarkSummary SummarizeRuntimeBenchmark(const RuntimeBenchmarkAlgorith
         summary.MaxFrameMilliseconds = std::max(summary.MaxFrameMilliseconds, sample.FrameMilliseconds);
         summary.MaxTotalLodMilliseconds =
             std::max(summary.MaxTotalLodMilliseconds, stats.RoamTotalMilliseconds);
-        summary.MaxGpuComputeMilliseconds =
-            std::max(summary.MaxGpuComputeMilliseconds, stats.RoamGpuComputeMilliseconds);
+        summary.MaxGpuPassSumMilliseconds =
+            std::max(summary.MaxGpuPassSumMilliseconds, stats.RoamGpuPassSumMilliseconds);
         summary.MaxRenderMilliseconds =
             std::max(summary.MaxRenderMilliseconds, stats.RoamRenderMilliseconds);
         summary.MaxFrameFenceWaitMilliseconds =
@@ -182,8 +248,44 @@ RuntimeBenchmarkSummary SummarizeRuntimeBenchmark(const RuntimeBenchmarkAlgorith
     summary.AverageFrameMilliseconds = static_cast<float>(totalFrameMilliseconds / sampleCount);
     summary.AverageTotalLodMilliseconds = static_cast<float>(totalLodMilliseconds / sampleCount);
     summary.AverageCpuUpdateMilliseconds = static_cast<float>(totalCpuUpdateMilliseconds / sampleCount);
+    summary.AverageCpuPrepareMilliseconds = static_cast<float>(totalCpuPrepareMilliseconds / sampleCount);
+    summary.AverageCpuMergeCandidateMarkMilliseconds =
+        static_cast<float>(totalCpuMergeCandidateMarkMilliseconds / sampleCount);
+    summary.AverageCpuMergeTopologyMilliseconds =
+        static_cast<float>(totalCpuMergeTopologyMilliseconds / sampleCount);
+    summary.AverageCpuBudgetLeafCollectMilliseconds =
+        static_cast<float>(totalCpuBudgetLeafCollectMilliseconds / sampleCount);
+    summary.AverageCpuErrorEvalMilliseconds = static_cast<float>(totalCpuErrorEvalMilliseconds / sampleCount);
+    summary.AverageCpuSplitCandidateMarkMilliseconds =
+        static_cast<float>(totalCpuSplitCandidateMarkMilliseconds / sampleCount);
+    summary.AverageCpuSplitTopologyMilliseconds =
+        static_cast<float>(totalCpuSplitTopologyMilliseconds / sampleCount);
+    summary.AverageCpuFinalLeafCollectMilliseconds =
+        static_cast<float>(totalCpuFinalLeafCollectMilliseconds / sampleCount);
+    summary.AverageCpuMeshEmitMilliseconds = static_cast<float>(totalCpuMeshEmitMilliseconds / sampleCount);
+    summary.AverageCpuFinalizeMilliseconds = static_cast<float>(totalCpuFinalizeMilliseconds / sampleCount);
     summary.AverageCpuUploadMilliseconds = static_cast<float>(totalCpuUploadMilliseconds / sampleCount);
-    summary.AverageGpuComputeMilliseconds = static_cast<float>(totalGpuComputeMilliseconds / sampleCount);
+    summary.AverageSplitMilliseconds = static_cast<float>(totalSplitMilliseconds / sampleCount);
+    summary.AverageMergeMilliseconds = static_cast<float>(totalMergeMilliseconds / sampleCount);
+    summary.AverageEmitMilliseconds = static_cast<float>(totalEmitMilliseconds / sampleCount);
+    summary.AverageValidateMilliseconds = static_cast<float>(totalValidateMilliseconds / sampleCount);
+    summary.AverageGpuInitialLeafCompactionMilliseconds =
+        static_cast<float>(totalGpuInitialLeafCompactionMilliseconds / sampleCount);
+    summary.AverageGpuErrorEvaluationMilliseconds =
+        static_cast<float>(totalGpuErrorEvaluationMilliseconds / sampleCount);
+    summary.AverageGpuSplitCandidateMarkingMilliseconds =
+        static_cast<float>(totalGpuSplitCandidateMarkingMilliseconds / sampleCount);
+    summary.AverageGpuMergeCandidateMarkingMilliseconds =
+        static_cast<float>(totalGpuMergeCandidateMarkingMilliseconds / sampleCount);
+    summary.AverageGpuSplitTopologyMilliseconds =
+        static_cast<float>(totalGpuSplitTopologyMilliseconds / sampleCount);
+    summary.AverageGpuActiveLeafResetMilliseconds =
+        static_cast<float>(totalGpuActiveLeafResetMilliseconds / sampleCount);
+    summary.AverageGpuFinalLeafCompactionMilliseconds =
+        static_cast<float>(totalGpuFinalLeafCompactionMilliseconds / sampleCount);
+    summary.AverageGpuMeshEmitMilliseconds =
+        static_cast<float>(totalGpuMeshEmitMilliseconds / sampleCount);
+    summary.AverageGpuPassSumMilliseconds = static_cast<float>(totalGpuPassSumMilliseconds / sampleCount);
     summary.AverageGpuSnapshotBuildMilliseconds =
         static_cast<float>(totalGpuSnapshotBuildMilliseconds / sampleCount);
     summary.AverageGpuBufferAllocationMilliseconds =
@@ -201,6 +303,20 @@ RuntimeBenchmarkSummary SummarizeRuntimeBenchmark(const RuntimeBenchmarkAlgorith
     summary.AverageNodes = totalNodes / sampleCount;
     summary.AverageCpuUtilizationPercent = static_cast<float>(totalCpuUtilization / sampleCount);
     return summary;
+}
+
+RuntimeBenchmarkSummary SummaryForAlgorithm(
+    const std::vector<RuntimeBenchmarkAlgorithmResult>& results,
+    Algorithms::TerrainLodAlgorithmId algorithmId)
+{
+    const auto result = std::find_if(
+        results.begin(),
+        results.end(),
+        [algorithmId](const RuntimeBenchmarkAlgorithmResult& candidate)
+        {
+            return candidate.AlgorithmId == algorithmId;
+        });
+    return result == results.end() ? RuntimeBenchmarkSummary{} : SummarizeRuntimeBenchmark(*result);
 }
 
 void WriteDetailedCsv(
@@ -222,7 +338,16 @@ void WriteDetailedCsv(
         << "timeSeconds,cameraX,cameraY,cameraZ,frameMilliseconds,triangles,nodes,"
         << "activeSplits,splits,forcedSplits,merges,candidatePeak,budgetRejectedSplits,tjunctions,invalidNeighbors,"
         << "invalidTopology,cpuWorkers,cpuUtilizationPercent,lodTotalMilliseconds,"
-        << "cpuUpdateMilliseconds,cpuUploadMilliseconds,gpuComputeMilliseconds,"
+        << "cpuUpdateMilliseconds,cpuPrepareMilliseconds,cpuMergeCandidateMarkMilliseconds,"
+        << "cpuMergeTopologyMilliseconds,cpuBudgetLeafCollectMilliseconds,cpuErrorEvalMilliseconds,"
+        << "cpuSplitCandidateMarkMilliseconds,cpuSplitTopologyMilliseconds,"
+        << "cpuFinalLeafCollectMilliseconds,cpuMeshEmitMilliseconds,cpuFinalizeMilliseconds,"
+        << "cpuUploadMilliseconds,"
+        << "gpuInitialLeafCompactionMilliseconds,gpuErrorEvaluationMilliseconds,"
+        << "gpuSplitCandidateMarkingMilliseconds,gpuMergeCandidateMarkingMilliseconds,"
+        << "gpuSplitTopologyMilliseconds,"
+        << "gpuActiveLeafResetMilliseconds,gpuFinalLeafCompactionMilliseconds,"
+        << "gpuMeshEmitMilliseconds,gpuPassSumMilliseconds,"
         << "gpuSnapshotBuildMilliseconds,gpuBufferAllocationMilliseconds,"
         << "gpuDispatchWallMilliseconds,gpuQueryWaitMilliseconds,gpuReadbackWaitMilliseconds,"
         << "frameFenceWaitMilliseconds,renderMilliseconds,"
@@ -271,8 +396,26 @@ void WriteDetailedCsv(
                 << stats.RoamCpuUtilizationPercent << ','
                 << stats.RoamTotalMilliseconds << ','
                 << stats.RoamUpdateMilliseconds << ','
+                << stats.RoamCpuPrepareMilliseconds << ','
+                << stats.RoamCpuMergeCandidateMarkMilliseconds << ','
+                << stats.RoamCpuMergeTopologyMilliseconds << ','
+                << stats.RoamCpuBudgetLeafCollectMilliseconds << ','
+                << stats.RoamCpuErrorEvalMilliseconds << ','
+                << stats.RoamCpuSplitCandidateMarkMilliseconds << ','
+                << stats.RoamCpuSplitTopologyMilliseconds << ','
+                << stats.RoamCpuFinalLeafCollectMilliseconds << ','
+                << stats.RoamCpuMeshEmitMilliseconds << ','
+                << stats.RoamCpuFinalizeMilliseconds << ','
                 << stats.RoamCpuUploadMilliseconds << ','
-                << stats.RoamGpuComputeMilliseconds << ','
+                << stats.RoamGpuInitialLeafCompactionMilliseconds << ','
+                << stats.RoamGpuErrorEvaluationMilliseconds << ','
+                << stats.RoamGpuSplitCandidateMarkingMilliseconds << ','
+                << stats.RoamGpuMergeCandidateMarkingMilliseconds << ','
+                << stats.RoamGpuSplitTopologyMilliseconds << ','
+                << stats.RoamGpuActiveLeafResetMilliseconds << ','
+                << stats.RoamGpuFinalLeafCompactionMilliseconds << ','
+                << stats.RoamGpuMeshEmitMilliseconds << ','
+                << stats.RoamGpuPassSumMilliseconds << ','
                 << stats.RoamGpuSnapshotBuildMilliseconds << ','
                 << stats.RoamGpuBufferAllocationMilliseconds << ','
                 << stats.RoamGpuDispatchWallMilliseconds << ','
@@ -304,7 +447,7 @@ void WriteSummaryMarkdown(
         throw std::runtime_error{"Failed to create runtime benchmark table: " + markdownPath.string()};
     }
 
-    markdown << "# Runtime Benchmark\n\n";
+    markdown << "# 运行时基准测试报告\n\n";
     float sampledDurationSeconds = 0.0F;
     for (const RuntimeBenchmarkAlgorithmResult& result : results)
     {
@@ -314,9 +457,9 @@ void WriteSummaryMarkdown(
         }
     }
 
-    markdown << "- Camera path: edge midpoint to terrain center\n";
-    markdown << "- Sampled duration per algorithm: " << sampledDurationSeconds << " seconds\n";
-    markdown << "- Detailed CSV: `" << csvPath.filename().string() << "`\n\n";
+    markdown << "- 相机路径：从地形边缘中点移动到地形中心\n";
+    markdown << "- 每种算法的采样时长：" << sampledDurationSeconds << " 秒\n";
+    markdown << "- 详细 CSV：`" << csvPath.filename().string() << "`\n\n";
     for (const std::string& note : notes)
     {
         markdown << "- " << note << "\n";
@@ -329,26 +472,22 @@ void WriteSummaryMarkdown(
     if (const Render::TerrainRenderStats* stats = FindFirstSampleStats(results))
     {
         // 顶部配置块解释 UI 设置和实际达到深度的差异
-        markdown << "- Height map: `" << stats->HeightMapPath.generic_string() << "` "
+        markdown << "- Height map：`" << stats->HeightMapPath.generic_string() << "` "
                  << stats->HeightMapWidth << "x" << stats->HeightMapHeight << "\n";
-        markdown << "- Terrain size: " << stats->TerrainSize << "\n";
-        markdown << "- Height scale: " << stats->HeightScale << "\n";
-        markdown << "- Max depth setting: " << stats->RoamMaxDepthSetting << "\n";
-        markdown << "- ROAM screen-space split/merge thresholds: "
+        markdown << "- Terrain size：" << stats->TerrainSize << "\n";
+        markdown << "- Height scale：" << stats->HeightScale << "\n";
+        markdown << "- Max depth 设置：" << stats->RoamMaxDepthSetting << "\n";
+        markdown << "- ROAM 屏幕空间 split/merge 阈值："
                  << stats->RoamScreenSpaceSplitThresholdPixels << " px / "
                  << stats->RoamScreenSpaceMergeThresholdPixels << " px\n";
-        markdown << "- ROAM triangle budget: " << stats->RoamTriangleBudgetSetting << "\n\n";
+        markdown << "- ROAM triangle budget：" << stats->RoamTriangleBudgetSetting << "\n\n";
     }
+    markdown << "## 总体结果\n\n";
     markdown << "| Algorithm | Samples | Avg Frame ms | Max Frame ms | Avg LOD ms | Max LOD ms | "
-             << "Avg CPU Update ms | Avg CPU Upload ms | Avg GPU ms | Max GPU ms | "
-             << "Avg GPU Snapshot ms | Avg GPU Alloc ms | Avg GPU Dispatch Wall ms | "
-             << "Avg GPU Query Wait ms | Avg GPU Readback Wait ms | "
-             << "Avg Frame Fence Wait ms | Max Frame Fence Wait ms | "
-             << "Avg Render ms | Max Render ms | "
              << "Avg Triangles | Max Triangles | Avg Nodes | Max Nodes | Avg CPU % | Max CPU % | "
-             << "Max Workers | Max Upload B | Max Readback B | Config Max Depth | Reached Max Depth | Max Topology Issues |\n";
+             << "Max Workers | Config Max Depth | Reached Max Depth | Max Topology Issues |\n";
     markdown << "| ---";
-    for (int column = 0; column < 30; ++column)
+    for (int column = 0; column < 15; ++column)
     {
         markdown << " | ---:";
     }
@@ -365,19 +504,6 @@ void WriteSummaryMarkdown(
                  << " | " << summary.MaxFrameMilliseconds
                  << " | " << summary.AverageTotalLodMilliseconds
                  << " | " << summary.MaxTotalLodMilliseconds
-                 << " | " << summary.AverageCpuUpdateMilliseconds
-                 << " | " << summary.AverageCpuUploadMilliseconds
-                 << " | " << summary.AverageGpuComputeMilliseconds
-                 << " | " << summary.MaxGpuComputeMilliseconds
-                 << " | " << summary.AverageGpuSnapshotBuildMilliseconds
-                 << " | " << summary.AverageGpuBufferAllocationMilliseconds
-                 << " | " << summary.AverageGpuDispatchWallMilliseconds
-                 << " | " << summary.AverageGpuQueryWaitMilliseconds
-                 << " | " << summary.AverageGpuReadbackWaitMilliseconds
-                 << " | " << summary.AverageFrameFenceWaitMilliseconds
-                 << " | " << summary.MaxFrameFenceWaitMilliseconds
-                 << " | " << summary.AverageRenderMilliseconds
-                 << " | " << summary.MaxRenderMilliseconds
                  << " | " << summary.AverageTriangles
                  << " | " << summary.MaxTriangles
                  << " | " << summary.AverageNodes
@@ -385,12 +511,165 @@ void WriteSummaryMarkdown(
                  << " | " << summary.AverageCpuUtilizationPercent
                  << " | " << summary.MaxCpuUtilizationPercent
                  << " | " << summary.MaxCpuWorkerCount
-                 << " | " << summary.MaxCpuGpuUploadBytes
-                 << " | " << summary.MaxCpuGpuReadbackBytes
                  << " | " << summary.MaxDepthSetting
                  << " | " << summary.MaxDepthReached
                  << " | " << summary.MaxInvalidTopologyCount
                  << " |\n";
+    }
+
+    const RuntimeBenchmarkSummary classicSummary =
+        SummaryForAlgorithm(results, Algorithms::TerrainLodAlgorithmId::ClassicCpuRoam);
+    const RuntimeBenchmarkSummary dodSummary =
+        SummaryForAlgorithm(results, Algorithms::TerrainLodAlgorithmId::DataOrientedCpuRoam);
+    const RuntimeBenchmarkSummary gpuSummary =
+        SummaryForAlgorithm(results, Algorithms::TerrainLodAlgorithmId::GpuRoamLike);
+
+    markdown << "\n## ROAM 逻辑阶段对比\n\n";
+    markdown << "表中数值均为平均毫秒数。GPU ROAM-like 是混合路径：先运行完整的 CPU DOD "
+             << "拓扑基线，再追加一轮 GPU split-only 细分和 GPU mesh emit。两个 GPU-like 列分别展示 "
+             << "CPU 与 shader 的重复职责，避免把 shader 链误解为完整的 GPU ROAM 实现。\n\n";
+    markdown << "| ROAM 逻辑阶段 | Classic CPU | DOD CPU | GPU-like CPU baseline | "
+             << "GPU-like shader | 阶段映射与限制 |\n";
+    markdown << "| --- | ---: | ---: | ---: | ---: | --- |\n";
+    markdown << std::fixed << std::setprecision(4);
+    markdown << "| Prepare / 帧状态 | " << classicSummary.AverageCpuPrepareMilliseconds
+             << " | " << dodSummary.AverageCpuPrepareMilliseconds
+             << " | " << gpuSummary.AverageCpuPrepareMilliseconds
+             << " | N/A | CPU 准备持久拓扑和 snapshot 输入 |\n";
+    markdown << "| Merge 候选评分 | " << classicSummary.AverageCpuMergeCandidateMarkMilliseconds
+             << " | " << dodSummary.AverageCpuMergeCandidateMarkMilliseconds
+             << " | " << gpuSummary.AverageCpuMergeCandidateMarkMilliseconds
+             << " | " << gpuSummary.AverageGpuMergeCandidateMarkingMilliseconds
+             << " | Shader 为诊断重新扫描已 split 的父节点；GPU 不提交这些候选 |\n";
+    markdown << "| Merge 拓扑提交 / 向上级联 | " << classicSummary.AverageCpuMergeTopologyMilliseconds
+             << " | " << dodSummary.AverageCpuMergeTopologyMilliseconds
+             << " | " << gpuSummary.AverageCpuMergeTopologyMilliseconds
+             << " | N/A | 持久 merge、邻接修复和级联回收只由 CPU DOD 执行 |\n";
+    markdown << "| Split 前 active leaf 收集 | " << classicSummary.AverageCpuBudgetLeafCollectMilliseconds
+             << " | " << dodSummary.AverageCpuBudgetLeafCollectMilliseconds
+             << " | " << gpuSummary.AverageCpuBudgetLeafCollectMilliseconds
+             << " | " << gpuSummary.AverageGpuInitialLeafCompactionMilliseconds
+             << " | GPU 在评分前再次压缩已上传的 CPU 拓扑 |\n";
+    markdown << "| 视点相关 leaf error / 视锥测试 | " << classicSummary.AverageCpuErrorEvalMilliseconds
+             << " | " << dodSummary.AverageCpuErrorEvalMilliseconds
+             << " | " << gpuSummary.AverageCpuErrorEvalMilliseconds
+             << " | " << gpuSummary.AverageGpuErrorEvaluationMilliseconds
+             << " | Classic 在 split 扫描中内联评估；GPU 基于 snapshot 重复执行 DOD 评分 |\n";
+    markdown << "| Split 候选标记 | " << classicSummary.AverageCpuSplitCandidateMarkMilliseconds
+             << " | " << dodSummary.AverageCpuSplitCandidateMarkMilliseconds
+             << " | " << gpuSummary.AverageCpuSplitCandidateMarkMilliseconds
+             << " | " << gpuSummary.AverageGpuSplitCandidateMarkingMilliseconds
+             << " | 按 threshold 和 max depth 分类；GPU append 顺序不是误差优先级顺序 |\n";
+    markdown << "| Split 拓扑 / 裂缝约束提交 | " << classicSummary.AverageCpuSplitTopologyMilliseconds
+             << " | " << dodSummary.AverageCpuSplitTopologyMilliseconds
+             << " | " << gpuSummary.AverageCpuSplitTopologyMilliseconds
+             << " | " << gpuSummary.AverageGpuSplitTopologyMilliseconds
+             << " | GPU 只提交一轮受预算约束的细分，并只处理直接 base-neighbor diamond pair；没有递归 forced-split 链 |\n";
+    markdown << "| 细分后 active leaf 收集 | " << classicSummary.AverageCpuFinalLeafCollectMilliseconds
+             << " | " << dodSummary.AverageCpuFinalLeafCollectMilliseconds
+             << " | " << gpuSummary.AverageCpuFinalLeafCollectMilliseconds
+             << " | " << (gpuSummary.AverageGpuActiveLeafResetMilliseconds +
+                              gpuSummary.AverageGpuFinalLeafCompactionMilliseconds)
+             << " | GPU 数值包含 counter reset 和 split 后 leaf compaction |\n";
+    markdown << "| Mesh emit / draw argument 生成 | " << classicSummary.AverageCpuMeshEmitMilliseconds
+             << " | " << dodSummary.AverageCpuMeshEmitMilliseconds
+             << " | " << gpuSummary.AverageCpuMeshEmitMilliseconds
+             << " | " << gpuSummary.AverageGpuMeshEmitMilliseconds
+             << " | GPU 输出非共享顶点、索引和 indirect draw argument |\n";
+    markdown << "| Finalize / 发布 packet | " << classicSummary.AverageCpuFinalizeMilliseconds
+             << " | " << dodSummary.AverageCpuFinalizeMilliseconds
+             << " | " << gpuSummary.AverageCpuFinalizeMilliseconds
+             << " | N/A | CPU 发布统计和 renderer 资源契约 |\n";
+
+    markdown << "\n## CPU 实现阶段\n\n";
+    markdown << "`CPU update` 包含下表中互斥的算法阶段；`CPU upload` 是算法返回后的 renderer 上传。"
+             << "Classic 在扫描和弹出 split queue 时评估屏幕误差，因此单独的 `Error eval` 为零，"
+             << "这部分工作仍计入 `Split mark` / `Split topology`。\n\n";
+    markdown << "| Algorithm | CPU update | Prepare | Merge mark | Merge topology | Budget leaf collect | "
+             << "Error eval | Split mark | Split topology | Final leaf collect | Mesh emit | "
+             << "Finalize | CPU upload |\n";
+    markdown << "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n";
+    for (const RuntimeBenchmarkAlgorithmResult& result : results)
+    {
+        const RuntimeBenchmarkSummary summary = SummarizeRuntimeBenchmark(result);
+        markdown << "| " << result.AlgorithmName
+                 << " | " << summary.AverageCpuUpdateMilliseconds
+                 << " | " << summary.AverageCpuPrepareMilliseconds
+                 << " | " << summary.AverageCpuMergeCandidateMarkMilliseconds
+                 << " | " << summary.AverageCpuMergeTopologyMilliseconds
+                 << " | " << summary.AverageCpuBudgetLeafCollectMilliseconds
+                 << " | " << summary.AverageCpuErrorEvalMilliseconds
+                 << " | " << summary.AverageCpuSplitCandidateMarkMilliseconds
+                 << " | " << summary.AverageCpuSplitTopologyMilliseconds
+                 << " | " << summary.AverageCpuFinalLeafCollectMilliseconds
+                 << " | " << summary.AverageCpuMeshEmitMilliseconds
+                 << " | " << summary.AverageCpuFinalizeMilliseconds
+                 << " | " << summary.AverageCpuUploadMilliseconds << " |\n";
+    }
+
+    markdown << "\n### 原生 pass 包络\n\n";
+    markdown << "这些是各实现原有的外围 pass 计时。它们与上方互斥阶段重叠，不能重复相加。\n\n";
+    markdown << "| Algorithm | Split | Merge | Emit | Validate |\n";
+    markdown << "| --- | ---: | ---: | ---: | ---: |\n";
+    for (const RuntimeBenchmarkAlgorithmResult& result : results)
+    {
+        const RuntimeBenchmarkSummary summary = SummarizeRuntimeBenchmark(result);
+        markdown << "| " << result.AlgorithmName
+                 << " | " << summary.AverageSplitMilliseconds
+                 << " | " << summary.AverageMergeMilliseconds
+                 << " | " << summary.AverageEmitMilliseconds
+                 << " | " << summary.AverageValidateMilliseconds << " |\n";
+    }
+
+    markdown << "\n## GPU shader dispatch 明细\n\n";
+    markdown << "每个数值都是一个物理 dispatch 的延迟 GPU timestamp 结果。`Pass sum` 是八个互不重叠区间之和。"
+             << "本表用于解释上方 GPU-like shader 列，不能据此认定所有 ROAM 阶段都已在 GPU 实现。"
+             << "`Dispatch wall`、query wait、readback wait 和 frame-fence wait 都是 CPU 侧开销，"
+             << "不计入 `Pass sum`。\n\n";
+    markdown << "| Algorithm | Pre-split leaf collect | Leaf error / frustum | Split candidate mark | "
+             << "Merge candidate score | Split / direct-diamond commit | Leaf-counter reset | "
+             << "Post-refine leaf collect | Mesh emit / draw args | Pass sum | Max pass sum |\n";
+    markdown << "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n";
+    markdown << std::setprecision(4);
+    for (const RuntimeBenchmarkAlgorithmResult& result : results)
+    {
+        if (result.AlgorithmId != Algorithms::TerrainLodAlgorithmId::GpuRoamLike)
+        {
+            continue;
+        }
+        const RuntimeBenchmarkSummary summary = SummarizeRuntimeBenchmark(result);
+        markdown << "| " << result.AlgorithmName
+                 << " | " << summary.AverageGpuInitialLeafCompactionMilliseconds
+                 << " | " << summary.AverageGpuErrorEvaluationMilliseconds
+                 << " | " << summary.AverageGpuSplitCandidateMarkingMilliseconds
+                 << " | " << summary.AverageGpuMergeCandidateMarkingMilliseconds
+                 << " | " << summary.AverageGpuSplitTopologyMilliseconds
+                 << " | " << summary.AverageGpuActiveLeafResetMilliseconds
+                 << " | " << summary.AverageGpuFinalLeafCompactionMilliseconds
+                 << " | " << summary.AverageGpuMeshEmitMilliseconds
+                 << " | " << summary.AverageGpuPassSumMilliseconds
+                 << " | " << summary.MaxGpuPassSumMilliseconds << " |\n";
+    }
+
+    markdown << "\n## GPU 编排与渲染\n\n";
+    markdown << std::setprecision(2);
+    markdown << "| Algorithm | Snapshot build | Buffer allocation | Dispatch wall | Query wait | "
+             << "Readback wait | Frame fence wait | Render | Max render | Max upload B | Max readback B |\n";
+    markdown << "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n";
+    for (const RuntimeBenchmarkAlgorithmResult& result : results)
+    {
+        const RuntimeBenchmarkSummary summary = SummarizeRuntimeBenchmark(result);
+        markdown << "| " << result.AlgorithmName
+                 << " | " << summary.AverageGpuSnapshotBuildMilliseconds
+                 << " | " << summary.AverageGpuBufferAllocationMilliseconds
+                 << " | " << summary.AverageGpuDispatchWallMilliseconds
+                 << " | " << summary.AverageGpuQueryWaitMilliseconds
+                 << " | " << summary.AverageGpuReadbackWaitMilliseconds
+                 << " | " << summary.AverageFrameFenceWaitMilliseconds
+                 << " | " << summary.AverageRenderMilliseconds
+                 << " | " << summary.MaxRenderMilliseconds
+                 << " | " << summary.MaxCpuGpuUploadBytes
+                 << " | " << summary.MaxCpuGpuReadbackBytes << " |\n";
     }
 }
 } // namespace

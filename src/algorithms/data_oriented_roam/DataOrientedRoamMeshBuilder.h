@@ -109,10 +109,15 @@ struct DataOrientedRoamStats
     // parallel merge count 可用于观察 chunk commit 覆盖面
     std::size_t ParallelMergeCommitCount{0};
     float UpdateMilliseconds{0.0F};
+    float PrepareMilliseconds{0.0F};
+    float BudgetLeafCollectMilliseconds{0.0F};
+    float FinalLeafCollectMilliseconds{0.0F};
+    float MeshEmitMilliseconds{0.0F};
+    float FinalizeMilliseconds{0.0F};
     // 两个耗时字段按实际路径择一写入
     float ErrorEvaluationSingleThreadMilliseconds{0.0F};
     float ErrorEvaluationParallelMilliseconds{0.0F};
-    // collect/mark 耗时会汇总到统一 CpuCollectMilliseconds
+    // collect/mark 耗时映射到统一的 merge/split candidate 阶段
     float ActiveLeafCollectMilliseconds{0.0F};
     float SplitCandidateMarkMilliseconds{0.0F};
     float MergeCandidateMarkMilliseconds{0.0F};

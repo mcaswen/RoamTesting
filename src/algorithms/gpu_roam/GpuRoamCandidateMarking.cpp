@@ -82,6 +82,7 @@ uniform vec4 uFrustumPlanes[6];
 uniform float uProjectionScaleY;
 uniform uint uDrawableHeight;
 uniform uint uIsOrthographic;
+uniform uint uCandidateKind;
 
 const float minimumViewDepth = 0.05;
 // 与 error pass 保持完全相同，避免 split 和 merge 使用不同评分函数
@@ -172,9 +173,13 @@ void main()
 {
     uint index = gl_GlobalInvocationID.x;
 
-    // split 分支只覆盖稠密 active leaf 范围
-    if (index < uActiveLeafLimit)
+    // split 与 merge 分开 dispatch，使两个 ROAM 决策阶段可独立计时。
+    if (uCandidateKind == 0u)
     {
+        if (index >= uActiveLeafLimit)
+        {
+            return;
+        }
         uint nodeIndex = activeLeafIndices[index];
         uint depth = nodes[nodeIndex].mergeBuildAndDepth.z;
         float screenError = screenErrors[index];
@@ -185,9 +190,11 @@ void main()
             uint outputIndex = atomicAdd(splitCandidateCount, 1u);
             splitCandidates[outputIndex] = nodeIndex;
         }
+        return;
     }
 
-    // merge 分支按完整 CPU 快照节点池扫描 split parent
+    // merge 分支按完整 CPU 快照节点池扫描 split parent。当前 GPU-like
+    // 路径只记录候选，真正的 merge 拓扑提交仍由 CPU DOD baseline 完成。
     if (index >= uNodeCount)
     {
         return;
@@ -256,8 +263,14 @@ void RunGpuRoamCandidateMarkingPass(const GpuRoamCandidateMarkingPassInput& inpu
     SetGpuRoamProgramFloat(input.ProgramId, "uProjectionScaleY", input.ProjectionScaleY);
     SetGpuRoamProgramUInt(input.ProgramId, "uDrawableHeight", input.DrawableHeight);
     SetGpuRoamProgramUInt(input.ProgramId, "uIsOrthographic", input.IsOrthographic ? 1U : 0U);
-    // 单一 dispatch 覆盖两个扫描域，shader 分支分别限制访问范围
-    glDispatchCompute(GpuRoamWorkGroupCount(std::max(input.NodeCount, input.ActiveLeafLimit)), 1U, 1U);
+    SetGpuRoamProgramUInt(
+        input.ProgramId,
+        "uCandidateKind",
+        static_cast<std::uint32_t>(input.Kind));
+    const std::size_t dispatchCount = input.Kind == GpuRoamCandidateKind::Split
+        ? input.ActiveLeafLimit
+        : input.NodeCount;
+    glDispatchCompute(GpuRoamWorkGroupCount(dispatchCount), 1U, 1U);
     // topology pass 和异步 counter readback 都依赖本 pass 的 SSBO 写入
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 }

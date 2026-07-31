@@ -89,6 +89,7 @@ if(PARALLEL_ROAM_BUILD_APP)
                 src/algorithms/data_oriented_roam/DataOrientedRoamTopology.cpp
                 src/algorithms/data_oriented_roam/DataOrientedRoamValidation.cpp
                 src/algorithms/gpu_roam/GpuRoamActiveLeafCompaction.cpp
+                src/algorithms/gpu_roam/GpuRoamActiveLeafReset.cpp
                 src/algorithms/gpu_roam/GpuRoamBufferSchema.cpp
                 src/algorithms/gpu_roam/GpuRoamCandidateMarking.cpp
                 src/algorithms/gpu_roam/GpuRoamComputeSupport.cpp
@@ -206,7 +207,8 @@ if(PARALLEL_ROAM_BUILD_APP)
         set(PARALLEL_ROAM_DX12_GPU_ROAM_SHADERS
             "${PARALLEL_ROAM_DX12_SHADER_DIR}/GpuRoamCompact.cso"
             "${PARALLEL_ROAM_DX12_SHADER_DIR}/GpuRoamError.cso"
-            "${PARALLEL_ROAM_DX12_SHADER_DIR}/GpuRoamCandidates.cso"
+            "${PARALLEL_ROAM_DX12_SHADER_DIR}/GpuRoamSplitCandidates.cso"
+            "${PARALLEL_ROAM_DX12_SHADER_DIR}/GpuRoamMergeCandidates.cso"
             "${PARALLEL_ROAM_DX12_SHADER_DIR}/GpuRoamSplit.cso"
             "${PARALLEL_ROAM_DX12_SHADER_DIR}/GpuRoamResetLeaves.cso"
             "${PARALLEL_ROAM_DX12_SHADER_DIR}/GpuRoamEmit.cso"
@@ -237,7 +239,10 @@ if(PARALLEL_ROAM_BUILD_APP)
                 -T cs_6_0 -E CSErrorEvaluation -Fo "${PARALLEL_ROAM_DX12_SHADER_DIR}/GpuRoamError.cso"
                 "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/dx12/GpuRoamLike.hlsl"
             COMMAND ${PARALLEL_ROAM_DXC_EXECUTABLE}
-                -T cs_6_0 -E CSCandidateMarking -Fo "${PARALLEL_ROAM_DX12_SHADER_DIR}/GpuRoamCandidates.cso"
+                -T cs_6_0 -E CSSplitCandidateMarking -Fo "${PARALLEL_ROAM_DX12_SHADER_DIR}/GpuRoamSplitCandidates.cso"
+                "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/dx12/GpuRoamLike.hlsl"
+            COMMAND ${PARALLEL_ROAM_DXC_EXECUTABLE}
+                -T cs_6_0 -E CSMergeCandidateMarking -Fo "${PARALLEL_ROAM_DX12_SHADER_DIR}/GpuRoamMergeCandidates.cso"
                 "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/dx12/GpuRoamLike.hlsl"
             COMMAND ${PARALLEL_ROAM_DXC_EXECUTABLE}
                 -T cs_6_0 -E CSSplitOnlyTopology -Fo "${PARALLEL_ROAM_DX12_SHADER_DIR}/GpuRoamSplit.cso"

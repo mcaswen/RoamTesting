@@ -488,12 +488,34 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
     debugData.RoamCpuUtilizationPercent = terrainStats.RoamCpuUtilizationPercent;
     debugData.RoamTotalMilliseconds = terrainStats.RoamTotalMilliseconds;
     debugData.RoamUpdateMilliseconds = terrainStats.RoamUpdateMilliseconds;
+    debugData.RoamCpuPrepareMilliseconds = terrainStats.RoamCpuPrepareMilliseconds;
+    debugData.RoamCpuMergeCandidateMarkMilliseconds = terrainStats.RoamCpuMergeCandidateMarkMilliseconds;
+    debugData.RoamCpuMergeTopologyMilliseconds = terrainStats.RoamCpuMergeTopologyMilliseconds;
+    debugData.RoamCpuBudgetLeafCollectMilliseconds = terrainStats.RoamCpuBudgetLeafCollectMilliseconds;
+    debugData.RoamCpuErrorEvalMilliseconds = terrainStats.RoamCpuErrorEvalMilliseconds;
+    debugData.RoamCpuSplitCandidateMarkMilliseconds = terrainStats.RoamCpuSplitCandidateMarkMilliseconds;
+    debugData.RoamCpuSplitTopologyMilliseconds = terrainStats.RoamCpuSplitTopologyMilliseconds;
+    debugData.RoamCpuFinalLeafCollectMilliseconds = terrainStats.RoamCpuFinalLeafCollectMilliseconds;
+    debugData.RoamCpuMeshEmitMilliseconds = terrainStats.RoamCpuMeshEmitMilliseconds;
+    debugData.RoamCpuFinalizeMilliseconds = terrainStats.RoamCpuFinalizeMilliseconds;
     debugData.RoamCpuUploadMilliseconds = terrainStats.RoamCpuUploadMilliseconds;
     debugData.RoamSplitMilliseconds = terrainStats.RoamSplitMilliseconds;
     debugData.RoamMergeMilliseconds = terrainStats.RoamMergeMilliseconds;
     debugData.RoamEmitMilliseconds = terrainStats.RoamEmitMilliseconds;
     debugData.RoamValidateMilliseconds = terrainStats.RoamValidateMilliseconds;
-    debugData.RoamGpuComputeMilliseconds = terrainStats.RoamGpuComputeMilliseconds;
+    debugData.RoamGpuInitialLeafCompactionMilliseconds =
+        terrainStats.RoamGpuInitialLeafCompactionMilliseconds;
+    debugData.RoamGpuErrorEvaluationMilliseconds = terrainStats.RoamGpuErrorEvaluationMilliseconds;
+    debugData.RoamGpuSplitCandidateMarkingMilliseconds =
+        terrainStats.RoamGpuSplitCandidateMarkingMilliseconds;
+    debugData.RoamGpuMergeCandidateMarkingMilliseconds =
+        terrainStats.RoamGpuMergeCandidateMarkingMilliseconds;
+    debugData.RoamGpuSplitTopologyMilliseconds = terrainStats.RoamGpuSplitTopologyMilliseconds;
+    debugData.RoamGpuActiveLeafResetMilliseconds = terrainStats.RoamGpuActiveLeafResetMilliseconds;
+    debugData.RoamGpuFinalLeafCompactionMilliseconds =
+        terrainStats.RoamGpuFinalLeafCompactionMilliseconds;
+    debugData.RoamGpuMeshEmitMilliseconds = terrainStats.RoamGpuMeshEmitMilliseconds;
+    debugData.RoamGpuPassSumMilliseconds = terrainStats.RoamGpuPassSumMilliseconds;
     debugData.RoamGpuSnapshotBuildMilliseconds = terrainStats.RoamGpuSnapshotBuildMilliseconds;
     debugData.RoamGpuBufferAllocationMilliseconds = terrainStats.RoamGpuBufferAllocationMilliseconds;
     debugData.RoamGpuDispatchWallMilliseconds = terrainStats.RoamGpuDispatchWallMilliseconds;
@@ -662,13 +684,13 @@ void Application::StartRuntimeBenchmark()
     _runtimeBenchmark.FailureMessage.clear();
     _runtimeBenchmark.Results.clear();
     _runtimeBenchmark.Notes.clear();
-    _runtimeBenchmark.Notes.push_back("Build configuration: " + BuildConfigurationName());
-    _runtimeBenchmark.Notes.push_back("Graphics backend: " + std::string{_graphicsBackend->Name()});
+    _runtimeBenchmark.Notes.push_back("构建配置：" + BuildConfigurationName());
+    _runtimeBenchmark.Notes.push_back("图形后端：" + std::string{_graphicsBackend->Name()});
     _runtimeBenchmark.Notes.push_back(
-        "Graphics adapter: " + _graphicsBackend->AdapterName() + " (" + _graphicsBackend->VersionString() + ")");
+        "图形适配器：" + _graphicsBackend->AdapterName() + " (" + _graphicsBackend->VersionString() + ")");
     if (!_runtimeBenchmarkOverrides.Label.empty())
     {
-        _runtimeBenchmark.Notes.push_back("Benchmark label: " + _runtimeBenchmarkOverrides.Label);
+        _runtimeBenchmark.Notes.push_back("Benchmark 标签：" + _runtimeBenchmarkOverrides.Label);
     }
     _runtimeBenchmark.AlgorithmSequence = {
         Algorithms::TerrainLodAlgorithmId::ClassicCpuRoam,
@@ -680,38 +702,43 @@ void Application::StartRuntimeBenchmark()
     {
         _runtimeBenchmark.AlgorithmSequence.push_back(Algorithms::TerrainLodAlgorithmId::GpuRoamLike);
         _runtimeBenchmark.Notes.push_back(
-            "GPU device: " + gpuCapabilities.RendererString + " (" + gpuCapabilities.VersionString + ")");
+            "GPU 设备：" + gpuCapabilities.RendererString + " (" + gpuCapabilities.VersionString + ")");
         _runtimeBenchmark.Notes.push_back(
-            "GPU timing model: CPU DOD topology baseline plus GPU split-only, compaction, mesh emit and " +
+            "GPU 计时模型：先运行 CPU DOD 拓扑基线，再按顺序执行 shader 阶段：split 前 leaf 收集、"
+            "leaf error 评估、split 候选标记、诊断性 merge 候选评分、split/direct-diamond 拓扑提交、"
+            "细分后 leaf 收集和 mesh emit；GPU merge 拓扑尚未实现；" +
             std::string{gpuCapabilities.SupportsIndirectDraw ? "indirect draw" : "buffer draw"} +
-            "; GPU ms measures compute passes only");
+            " 单独统计");
     }
     else
     {
         _runtimeBenchmark.Notes.push_back(
-            "GPU ROAM-like skipped: " + gpuCapabilities.GpuRoamComputeUnavailableReason());
+            "跳过 GPU ROAM-like：" + gpuCapabilities.GpuRoamComputeUnavailableReason());
     }
 #else
     if (_graphicsBackend->SupportsGpuRoamLike())
     {
         _runtimeBenchmark.AlgorithmSequence.push_back(Algorithms::TerrainLodAlgorithmId::GpuRoamLike);
         _runtimeBenchmark.Notes.push_back(
-            "GPU timing model: DX12 compute topology refinement, GPU mesh emission and ExecuteIndirect");
+            "GPU 计时模型：先运行 CPU DOD 拓扑基线，再按顺序执行 DX12 shader 阶段：split 前 leaf 收集、"
+            "leaf error 评估、split 候选标记、诊断性 merge 候选评分、split/direct-diamond 拓扑提交、"
+            "细分后 leaf 收集和 mesh emit；GPU merge 拓扑尚未实现；ExecuteIndirect 单独统计");
     }
     else
     {
-        _runtimeBenchmark.Notes.push_back("GPU ROAM-like skipped: unavailable on the configured DX12 device");
+        _runtimeBenchmark.Notes.push_back("跳过 GPU ROAM-like：当前 DX12 设备不可用");
     }
     const Algorithms::Cbt2024::Cbt2024Availability cbtAvailability =
         Algorithms::Cbt2024::QueryCbt2024Availability(*_graphicsBackend);
     if (cbtAvailability.Available)
     {
         _runtimeBenchmark.Notes.push_back(
-            "CBT 2024 procedural validation is available but excluded until topology migration is complete");
+            "CBT 2024 procedural 验证可用，但在拓扑迁移完成前不纳入本报告");
     }
     else
     {
-        _runtimeBenchmark.Notes.push_back(cbtAvailability.UnavailableReason);
+        _runtimeBenchmark.Notes.push_back(
+            "CBT 2024 不可用：" + cbtAvailability.UnavailableReason);
     }
 #endif
     _runtimeBenchmark.PreviousTerrainPanelState = _terrainPanelState;
@@ -725,8 +752,8 @@ void Application::StartRuntimeBenchmark()
     ApplyWindowPanelSettings();
     _runtimeBenchmark.Notes.push_back(
         _terrainPanelState.VSyncEnabled ?
-            "VSync: enabled (disable request was not accepted)" :
-            "VSync: disabled during benchmark");
+            "VSync：已启用（关闭请求未被接受）" :
+            "VSync：基准测试期间已关闭");
 
     BeginRuntimeBenchmarkAlgorithm();
 }

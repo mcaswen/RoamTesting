@@ -497,12 +497,34 @@ TerrainRenderStats TerrainRenderer::Stats() const
     stats.RoamCpuUtilizationPercent = _terrainLodStats.CpuUtilizationPercent;
     stats.RoamTotalMilliseconds = _terrainLodTotalMilliseconds;
     stats.RoamUpdateMilliseconds = _terrainLodStats.CpuUpdateMilliseconds;
+    stats.RoamCpuPrepareMilliseconds = _terrainLodStats.CpuPrepareMilliseconds;
+    stats.RoamCpuMergeCandidateMarkMilliseconds = _terrainLodStats.CpuMergeCandidateMarkMilliseconds;
+    stats.RoamCpuMergeTopologyMilliseconds = _terrainLodStats.CpuMergeTopologyMilliseconds;
+    stats.RoamCpuBudgetLeafCollectMilliseconds = _terrainLodStats.CpuBudgetLeafCollectMilliseconds;
+    stats.RoamCpuErrorEvalMilliseconds = _terrainLodStats.CpuErrorEvalMilliseconds;
+    stats.RoamCpuSplitCandidateMarkMilliseconds = _terrainLodStats.CpuSplitCandidateMarkMilliseconds;
+    stats.RoamCpuSplitTopologyMilliseconds = _terrainLodStats.CpuSplitTopologyMilliseconds;
+    stats.RoamCpuFinalLeafCollectMilliseconds = _terrainLodStats.CpuFinalLeafCollectMilliseconds;
+    stats.RoamCpuMeshEmitMilliseconds = _terrainLodStats.CpuMeshEmitMilliseconds;
+    stats.RoamCpuFinalizeMilliseconds = _terrainLodStats.CpuFinalizeMilliseconds;
     stats.RoamCpuUploadMilliseconds = _terrainLodCpuUploadMilliseconds;
     stats.RoamSplitMilliseconds = _terrainLodStats.SplitMilliseconds;
     stats.RoamMergeMilliseconds = _terrainLodStats.MergeMilliseconds;
     stats.RoamEmitMilliseconds = _terrainLodStats.EmitMilliseconds;
     stats.RoamValidateMilliseconds = _terrainLodStats.ValidateMilliseconds;
-    stats.RoamGpuComputeMilliseconds = _terrainLodStats.GpuComputeMilliseconds;
+    stats.RoamGpuInitialLeafCompactionMilliseconds =
+        _terrainLodStats.GpuInitialLeafCompactionMilliseconds;
+    stats.RoamGpuErrorEvaluationMilliseconds = _terrainLodStats.GpuErrorEvaluationMilliseconds;
+    stats.RoamGpuSplitCandidateMarkingMilliseconds =
+        _terrainLodStats.GpuSplitCandidateMarkingMilliseconds;
+    stats.RoamGpuMergeCandidateMarkingMilliseconds =
+        _terrainLodStats.GpuMergeCandidateMarkingMilliseconds;
+    stats.RoamGpuSplitTopologyMilliseconds = _terrainLodStats.GpuSplitTopologyMilliseconds;
+    stats.RoamGpuActiveLeafResetMilliseconds = _terrainLodStats.GpuActiveLeafResetMilliseconds;
+    stats.RoamGpuFinalLeafCompactionMilliseconds =
+        _terrainLodStats.GpuFinalLeafCompactionMilliseconds;
+    stats.RoamGpuMeshEmitMilliseconds = _terrainLodStats.GpuMeshEmitMilliseconds;
+    stats.RoamGpuPassSumMilliseconds = _terrainLodStats.GpuPassSumMilliseconds;
     stats.RoamGpuSnapshotBuildMilliseconds = _terrainLodStats.GpuSnapshotBuildMilliseconds;
     stats.RoamGpuBufferAllocationMilliseconds = _terrainLodStats.GpuBufferAllocationMilliseconds;
     stats.RoamGpuDispatchWallMilliseconds = _terrainLodStats.GpuDispatchWallMilliseconds;

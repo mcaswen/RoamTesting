@@ -80,6 +80,7 @@ Terrain::TerrainMeshData ClassicRoamMeshBuilder::Build(
         // 增大 MaxDepth 不需要丢弃拓扑，但已有节点必须读取新的子树最大误差
         RefreshNodeVarianceErrors();
     }
+    const auto prepareEnd = std::chrono::steady_clock::now();
 
     const auto mergeStart = std::chrono::steady_clock::now();
     // merge 先运行，避免刚 split 的 child 在同一帧被低阈值立即回收
@@ -87,11 +88,13 @@ Terrain::TerrainMeshData ClassicRoamMeshBuilder::Build(
     const auto mergeEnd = std::chrono::steady_clock::now();
 
     // 每次 leaf split 会让活动三角形数量增加 1，剩余预算由 split 递归共同消费
+    const auto budgetCollectStart = std::chrono::steady_clock::now();
     CollectLeafNodes(_activeLeaves);
     _remainingSplitBudget = _settings.TriangleBudget > _activeLeaves.size()
         ? _settings.TriangleBudget - _activeLeaves.size()
         : 0U;
     _activeLeaves.clear();
+    const auto budgetCollectEnd = std::chrono::steady_clock::now();
 
     const auto splitStart = std::chrono::steady_clock::now();
     // 候选队列驱动 split，避免纯递归一次展开过多节点
@@ -107,23 +110,32 @@ Terrain::TerrainMeshData ClassicRoamMeshBuilder::Build(
         _stats.ValidateMilliseconds = ElapsedMilliseconds(validateStart, validateEnd);
     }
 
-    const auto emitStart = std::chrono::steady_clock::now();
     // 最终 leaf 快照在拓扑稳定后收集，emit 和统计共用
+    const auto finalCollectStart = std::chrono::steady_clock::now();
     CollectLeafNodes(_activeLeaves);
+    const auto finalCollectEnd = std::chrono::steady_clock::now();
+    const auto meshEmitStart = std::chrono::steady_clock::now();
     EmitLeafTriangles(meshData, _activeLeaves);
-    const auto emitEnd = std::chrono::steady_clock::now();
+    const auto meshEmitEnd = std::chrono::steady_clock::now();
 
+    const auto finalizeStart = std::chrono::steady_clock::now();
     AccumulateLeafStats(meshData, _activeLeaves);
     _stats.MergeMilliseconds = ElapsedMilliseconds(mergeStart, mergeEnd);
     _stats.SplitMilliseconds = ElapsedMilliseconds(splitStart, splitEnd);
-    _stats.EmitMilliseconds = ElapsedMilliseconds(emitStart, emitEnd);
-    // update 时间覆盖完整算法入口，便于和 wallMs 做 sanity check
-    _stats.UpdateMilliseconds = ElapsedMilliseconds(updateStart, std::chrono::steady_clock::now());
+    _stats.EmitMilliseconds = ElapsedMilliseconds(finalCollectStart, meshEmitEnd);
+    _stats.PrepareMilliseconds = ElapsedMilliseconds(updateStart, prepareEnd);
+    _stats.BudgetLeafCollectMilliseconds = ElapsedMilliseconds(budgetCollectStart, budgetCollectEnd);
+    _stats.FinalLeafCollectMilliseconds = ElapsedMilliseconds(finalCollectStart, finalCollectEnd);
+    _stats.MeshEmitMilliseconds = ElapsedMilliseconds(meshEmitStart, meshEmitEnd);
 
     CollectActiveSplitPaths();
     // hysteresis 只使用 merge 和 split 完成后的最终 active topology
     _previousSplitPaths = _currentSplitPaths;
     _topologyMaxDepth = _settings.MaxDepth;
+    _stats.FinalizeMilliseconds =
+        ElapsedMilliseconds(finalizeStart, std::chrono::steady_clock::now());
+    // update 时间覆盖完整算法入口，便于和各互斥阶段总和做 sanity check
+    _stats.UpdateMilliseconds = ElapsedMilliseconds(updateStart, std::chrono::steady_clock::now());
     return meshData;
 }
 } // 命名空间 ParallelRoam::Algorithms::ClassicRoam
