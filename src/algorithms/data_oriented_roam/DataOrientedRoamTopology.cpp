@@ -46,9 +46,52 @@ struct CommittedSplit
 
 struct CommittedMerge
 {
+    DataOrientedRoamNodeIndex Node{InvalidDataOrientedRoamNodeIndex};
+    DataOrientedRoamNodeIndex BaseNeighbor{InvalidDataOrientedRoamNodeIndex};
     DataOrientedRoamNodeIndex Parent{InvalidDataOrientedRoamNodeIndex};
     DataOrientedRoamNodeIndex BaseParent{InvalidDataOrientedRoamNodeIndex};
 };
+
+void ActivateInternalNode(DataOrientedRoamState& state, DataOrientedRoamNodeIndex node)
+{
+    // active index 由主线程维护：串行提交直接调用，并行提交在 join 后调用。
+    // position 非 sentinel 表示节点已被登记，重复 split 不能制造重复条目。
+    if (!state.IsValidNode(node) || node >= state.ActiveInternalNodePositions.size())
+    {
+        return;
+    }
+
+    if (state.ActiveInternalNodePositions[node] != InvalidActiveInternalNodePosition)
+    {
+        return;
+    }
+
+    state.ActiveInternalNodePositions[node] = state.ActiveInternalNodes.size();
+    state.ActiveInternalNodes.push_back(node);
+}
+
+void DeactivateInternalNode(DataOrientedRoamState& state, DataOrientedRoamNodeIndex node)
+{
+    // swap-remove 保持移除为 O(1)，同时修正被移动节点的反向位置。
+    // 集合顺序不承载优先级，merge candidate 会在后续阶段按 score 排序。
+    if (!state.IsValidNode(node) || node >= state.ActiveInternalNodePositions.size())
+    {
+        return;
+    }
+
+    const std::size_t position = state.ActiveInternalNodePositions[node];
+    if (position == InvalidActiveInternalNodePosition ||
+        position >= state.ActiveInternalNodes.size())
+    {
+        return;
+    }
+
+    const DataOrientedRoamNodeIndex movedNode = state.ActiveInternalNodes.back();
+    state.ActiveInternalNodes[position] = movedNode;
+    state.ActiveInternalNodePositions[movedNode] = position;
+    state.ActiveInternalNodes.pop_back();
+    state.ActiveInternalNodePositions[node] = InvalidActiveInternalNodePosition;
+}
 
 DataOrientedRoamChunkId InteriorChunkIdForNode(const DataOrientedRoamState& state, DataOrientedRoamNodeIndex node)
 {
@@ -412,6 +455,11 @@ bool SplitNode(
     rightChild.ActivatedByForcedSplit = reason != DataOrientedRoamSplitReason::Requested;
 
     LinkSplitNeighbors(state, node, baseNeighbor);
+    if (counters == nullptr)
+    {
+        // 并行提交由 join 后的主线程统一更新索引，避免 worker 竞争 vector
+        ActivateInternalNode(state, node);
+    }
     // 串行路径会记录 path，最终仍由 CollectActiveSplitPaths 重建一次
     RecordSplit(state, parentPathId, reason, counters);
     return true;
@@ -443,6 +491,11 @@ void MergeSingleNode(
     state.Nodes[node].ActivatedBuildId = state.BuildSequence;
     state.Nodes[node].MergeBuildId = state.BuildSequence;
     state.Nodes[node].ActivatedByForcedSplit = false;
+    if (counters == nullptr)
+    {
+        // parent 重新成为 leaf 后不再属于 active internal 集合
+        DeactivateInternalNode(state, node);
+    }
     RecordMerge(state, counters);
 }
 
@@ -809,6 +862,11 @@ std::vector<CommittedSplit> CommitInteriorSplitChunks(
         committedSplits.insert(committedSplits.end(), localSplits.begin(), localSplits.end());
     }
 
+    for (const CommittedSplit& split : committedSplits)
+    {
+        ActivateInternalNode(state, split.Node);
+    }
+
     state.Stats.ParallelSplitCommitCount += totalCommittedCount;
     return committedSplits;
 }
@@ -854,7 +912,8 @@ std::vector<CommittedMerge> CommitInteriorMergeChunks(
                     : InvalidDataOrientedRoamNodeIndex;
                 if (MergeNodeOrDiamond(state, node, &localCounters[workerIndex]))
                 {
-                    localCommittedMerges[workerIndex].push_back(CommittedMerge{parent, baseParent});
+                    localCommittedMerges[workerIndex].push_back(
+                        CommittedMerge{node, baseNeighbor, parent, baseParent});
                 }
             }
         }
@@ -872,6 +931,12 @@ std::vector<CommittedMerge> CommitInteriorMergeChunks(
     for (const std::vector<CommittedMerge>& localMerges : localCommittedMerges)
     {
         committedMerges.insert(committedMerges.end(), localMerges.begin(), localMerges.end());
+    }
+
+    for (const CommittedMerge& merge : committedMerges)
+    {
+        DeactivateInternalNode(state, merge.Node);
+        DeactivateInternalNode(state, merge.BaseNeighbor);
     }
 
     return committedMerges;

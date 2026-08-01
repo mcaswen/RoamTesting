@@ -5,6 +5,7 @@
 #include <cmath>
 #include <numeric>
 #include <unordered_map>
+#include <vector>
 
 namespace ParallelRoam::Algorithms::DataOrientedRoam
 {
@@ -286,6 +287,65 @@ void ValidateTopology(DataOrientedRoamState& state)
         if (nodeIndex != state.RootA && nodeIndex != state.RootB && !state.IsValidNode(node.Parent))
         {
             // 除 root 外的节点必须能回溯到 parent
+            ++state.Stats.InvalidTopologyCount;
+        }
+    }
+
+    // active internal 索引必须与两个 root 可达的当前拓扑完全一致。
+    // 历史 child 即使保留 IsSplit 状态，只要祖先已 merge，就不能出现在索引中。
+    std::vector<std::uint8_t> reachableInternal(state.Nodes.size(), 0U);
+    std::vector<DataOrientedRoamNodeIndex> stack;
+    stack.reserve(state.ActiveInternalNodes.size() + 2U);
+    if (state.IsValidNode(state.RootA))
+    {
+        stack.push_back(state.RootA);
+    }
+    if (state.IsValidNode(state.RootB))
+    {
+        stack.push_back(state.RootB);
+    }
+    while (!stack.empty())
+    {
+        const DataOrientedRoamNodeIndex nodeIndex = stack.back();
+        stack.pop_back();
+        if (!state.IsValidNode(nodeIndex) || !state.Nodes[nodeIndex].IsSplit)
+        {
+            continue;
+        }
+
+        if (reachableInternal[nodeIndex] != 0U)
+        {
+            continue;
+        }
+
+        reachableInternal[nodeIndex] = 1U;
+        stack.push_back(state.Nodes[nodeIndex].LeftChild);
+        stack.push_back(state.Nodes[nodeIndex].RightChild);
+    }
+
+    if (state.ActiveInternalNodePositions.size() != state.Nodes.size())
+    {
+        ++state.Stats.InvalidTopologyCount;
+    }
+
+    for (std::size_t position = 0U; position < state.ActiveInternalNodes.size(); ++position)
+    {
+        const DataOrientedRoamNodeIndex nodeIndex = state.ActiveInternalNodes[position];
+        if (!state.IsValidNode(nodeIndex) ||
+            nodeIndex >= state.ActiveInternalNodePositions.size() ||
+            state.ActiveInternalNodePositions[nodeIndex] != position ||
+            reachableInternal[nodeIndex] == 0U)
+        {
+            ++state.Stats.InvalidTopologyCount;
+        }
+    }
+
+    for (std::size_t nodeIndex = 0U; nodeIndex < state.Nodes.size(); ++nodeIndex)
+    {
+        const bool indexed = nodeIndex < state.ActiveInternalNodePositions.size() &&
+                             state.ActiveInternalNodePositions[nodeIndex] != InvalidActiveInternalNodePosition;
+        if (indexed != (reachableInternal[nodeIndex] != 0U))
+        {
             ++state.Stats.InvalidTopologyCount;
         }
     }

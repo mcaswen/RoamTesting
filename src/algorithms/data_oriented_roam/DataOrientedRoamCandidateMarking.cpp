@@ -291,9 +291,9 @@ void CollectMergeCandidates(
 {
     candidates.clear();
     const auto start = std::chrono::steady_clock::now();
-    const std::size_t nodeCount = state.Nodes.size();
+    const std::size_t nodeCount = state.ActiveInternalNodes.size();
     const std::size_t workerCount = ResolveTopologyWorkerCount(state, nodeCount);
-    // merge 标记扫描整个 node pool  但只接受 active internal node
+    // merge 标记只扫描当前 active internal 索引，不再触碰历史 inactive node pool
     state.Stats.CandidateMarkWorkerCount = std::max(state.Stats.CandidateMarkWorkerCount, workerCount);
 
     if (nodeCount == 0U)
@@ -310,12 +310,12 @@ void CollectMergeCandidates(
         // CanMergeNode 只读拓扑  真正 merge 仍在串行提交流程
         for (std::size_t index = begin; index < end; ++index)
         {
-            const auto node = static_cast<DataOrientedRoamNodeIndex>(index);
-            if (state.IsLeaf(node) ||
-                !IsActiveTopologyNode(state, node) ||
+            const DataOrientedRoamNodeIndex node = state.ActiveInternalNodes[index];
+            if (!state.IsValidNode(node) ||
+                state.IsLeaf(node) ||
                 !CanMergeNode(state, node, maximumScore))
             {
-                // inactive 历史节点和 leaf 都不会进入 merge 队列
+                // 索引不变量异常或当前不可回收的节点都不会进入 merge 队列
                 continue;
             }
 

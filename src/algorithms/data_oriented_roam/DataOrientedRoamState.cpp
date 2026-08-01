@@ -362,7 +362,7 @@ DataOrientedRoamNodeIndex AddNode(
     state.Stats.MaxDepthReached = std::max(state.Stats.MaxDepthReached, depth);
 
     // SoA 数组 index 是持久 node pool 的稳定节点引用
-    return state.Nodes.Add(
+    const DataOrientedRoamNodeIndex node = state.Nodes.Add(
         domain,
         parent,
         depth,
@@ -371,6 +371,9 @@ DataOrientedRoamNodeIndex AddNode(
         geometricError,
         varianceTreeIndex,
         varianceIndex);
+    // 新节点默认为 leaf，后续 split 才会加入 active internal 索引
+    state.ActiveInternalNodePositions.push_back(InvalidActiveInternalNodePosition);
+    return node;
 }
 
 void ReserveNodePool(DataOrientedRoamState& state)
@@ -399,6 +402,9 @@ void ReserveNodePool(DataOrientedRoamState& state)
         // 但所有 pass 仍必须通过 index 访问节点
         state.Nodes.reserve(targetCapacity);
     }
+
+    state.ActiveInternalNodePositions.reserve(targetCapacity);
+    state.ActiveInternalNodes.reserve(targetCapacity / 2U);
 }
 
 void ResetTopology(DataOrientedRoamState& state)
@@ -409,6 +415,8 @@ void ResetTopology(DataOrientedRoamState& state)
     state.PreviousSplitPaths.clear();
     state.CurrentSplitPaths.clear();
     state.FinalActiveLeaves.clear();
+    state.ActiveInternalNodes.clear();
+    state.ActiveInternalNodePositions.clear();
 
     state.RootA = AddNode(
         state,

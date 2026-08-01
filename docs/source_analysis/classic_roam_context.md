@@ -861,7 +861,7 @@ TriangleCount = ActiveLeafCount
 
 **根据实现推断：** 难点不是公式，而是 pointer-based 可变图：forced split 依赖邻居递归；一个 split 同时改多个节点的双向邻接；diamond merge 要原子地回收两侧 sibling pair；新节点分配和 priority queue 都有全局、数据相关顺序。这些写集合难以无冲突并行提交。
 
-**源码事实：** 项目的 DOD 版本已把字段拆为 SoA/index，并把 error evaluation、split/merge candidate marking、leaf collection 和部分 chunk interior commit 批处理；它与 Classic 共用完整方差、像素 SSE、视锥、硬预算和级联合并语义。GPU 版本同样使用快照中的完整 `GeometricError`、像素 SSE、六平面视锥和剩余预算 token，但仍先由 CPU DOD 生成持久拓扑真值；GPU 的 merge candidate shader 只输出诊断列表，不提交 merge，split shader 只追加一轮独立边界 split 或直接 base-neighbor diamond pair，不递归传播完整 forced-split chain。随后 GPU 重建活动叶并 emit mesh/indirect draw。这直接反映评分口径已统一、拓扑所有权尚未完全迁移的边界。
+**源码事实：** 项目的 DOD 版本已把字段拆为 SoA/index，并把 error evaluation、split/merge candidate marking、leaf collection 和部分 chunk interior commit 批处理；`ActiveInternalNodes` 与 `ActiveInternalNodePositions` 由 split/merge 增量维护，使 CPU merge candidate 只扫描当前活动 internal 集合，而不是包含 inactive 历史节点的完整 node pool。它与 Classic 共用完整方差、像素 SSE、视锥、硬预算和级联合并语义。GPU 版本同样使用快照中的完整 `GeometricError`、像素 SSE、六平面视锥和剩余预算 token，但仍先由 CPU DOD 生成持久拓扑真值；GPU 的 merge candidate shader 只输出诊断列表，不提交 merge，split shader 只追加一轮独立边界 split 或直接 base-neighbor diamond pair，不递归传播完整 forced-split chain。随后 GPU 重建活动叶并 emit mesh/indirect draw。这直接反映评分口径已统一、拓扑所有权尚未完全迁移的边界。
 
 ### 16.5 需要 profiler 才能确认
 
@@ -903,7 +903,7 @@ TriangleCount = ActiveLeafCount
 | error evaluation | 完整方差预计算；稳态串行像素 SSE + frustum，多次重算 | 相同完整方差与像素 SSE + frustum；批量并行并缓存 `ScreenErrors` | 快照读取 DOD 完整 `GeometricError`；GLSL/HLSL 使用相同像素 SSE、显式双线性采样和六平面 frustum |
 | 邻接表达 | 指针 | 索引 | packed NodeRecord/index |
 | 并行适配性 | 较差 | 较好，按 pass/chunk 分解 | 计算/emit 适合 GPU；动态拓扑仍受限 |
-| merge | CPU diamond merge，动态 parent queue | CPU diamond merge；安全 chunk 并行预提交后动态 parent queue 同帧级联 | 能力标记为 true，但 D3D12 注释明确 GPU merge candidate 尚未提交；CPU DOD 基线仍 merge |
+| merge | CPU diamond merge，动态 parent queue | active internal 连续索引生成候选；安全 chunk 并行预提交后动态 parent queue 同帧级联 | 能力标记为 true，但 D3D12 注释明确 GPU merge candidate 尚未提交；CPU DOD 基线仍 merge |
 | 活动三角形预算 | 串行 token 硬上限；池满时有界预算交换 | 原子 token 硬上限，覆盖并行 commit 与 forced closure；使用相同有界交换 | CPU DOD 快照先重平衡并占用预算；GPU 原子分配剩余 token，边界 split=1、diamond pair=2，最终输出受同一上限 |
 | 输出统计 | 统一 stats，worker=1 | 统一 stats + 多 pass/worker 内部统计 | 统一 CPU/GPU timing/resource stats |
 | 工程角色 | 对象式正确性/性能 baseline | 数据导向 CPU 对照 | 实验性 GPU 管线 |
@@ -911,7 +911,7 @@ TriangleCount = ActiveLeafCount
 证据：
 
 - 共同接口和 Classic：`ITerrainLodAlgorithm.h` 第 333-354 行；`ClassicRoamTerrainLodAlgorithm.cpp` 第 9-27 行。
-- DOD SoA：`DataOrientedRoamState.h` 第 126-236 行，符号 `DataOrientedRoamNodePool` / `DataOrientedRoamState`；DOD CPU Mesh：`DataOrientedRoamTerrainLodAlgorithm.cpp` 第 51-85 行，符号 `BuildRenderData`。
+- DOD SoA 与 active internal 索引：`DataOrientedRoamState.h`，符号 `DataOrientedRoamNodePool` / `DataOrientedRoamState::ActiveInternalNodes` / `ActiveInternalNodePositions`；候选读取：`DataOrientedRoamCandidateMarking.cpp`，符号 `CollectMergeCandidates`；索引维护：`DataOrientedRoamTopology.cpp`，符号 `ActivateInternalNode` / `DeactivateInternalNode`。DOD CPU Mesh：`DataOrientedRoamTerrainLodAlgorithm.cpp`，符号 `BuildRenderData`。
 - GPU OpenGL：`GpuRoamTerrainLodAlgorithm.h` 第 14-31 行；`GpuRoamTerrainLodAlgorithm.cpp` 第 113-160 行。
 - GPU D3D12：`D3D12GpuRoamTerrainLodAlgorithm.h` 第 17-41 行；`.cpp` 第 841-885 行。
 - 项目实验定位：`docs/parallel-roam/05-experiments-and-benchmarks.md` 第 7-25 行。

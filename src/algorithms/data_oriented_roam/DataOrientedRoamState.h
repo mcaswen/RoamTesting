@@ -17,6 +17,8 @@ class DataOrientedRoamThreadPool;
 using DataOrientedRoamNodeIndex = std::uint32_t;
 constexpr DataOrientedRoamNodeIndex InvalidDataOrientedRoamNodeIndex =
     std::numeric_limits<DataOrientedRoamNodeIndex>::max();
+constexpr std::size_t InvalidActiveInternalNodePosition =
+    std::numeric_limits<std::size_t>::max();
 // chunk id 是并发 topology commit 的 ownership 键
 using DataOrientedRoamChunkId = std::uint32_t;
 constexpr DataOrientedRoamChunkId InvalidDataOrientedRoamChunkId =
@@ -205,6 +207,11 @@ struct DataOrientedRoamState
     std::unordered_set<std::uint64_t> PreviousSplitPaths;
     std::unordered_set<std::uint64_t> CurrentSplitPaths;
     std::vector<DataOrientedRoamNodeIndex> FinalActiveLeaves;
+
+    // 当前活动 internal 节点的连续索引，避免 merge 每帧扫描历史 node pool
+    std::vector<DataOrientedRoamNodeIndex> ActiveInternalNodes;
+    // 节点索引到 ActiveInternalNodes 位置的反向表，支持 O(1) swap-remove
+    std::vector<std::size_t> ActiveInternalNodePositions;
 
     // RootA 和 RootB 构成初始 diamond
     DataOrientedRoamNodeIndex RootA{InvalidDataOrientedRoamNodeIndex};

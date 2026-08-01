@@ -203,6 +203,21 @@ CPU 阶段按互斥执行区间记录，阶段和应接近 `cpuUpdateMs`；原�
 
 统一 benchmark harness 对 Classic、DOD 和 GPU 名称都应用预算与 `center -> away` 视锥回收断言；`budget-reentry` profile 另以低预算和原地小角度转向，要求 Classic/DOD 在转向后的第一次 Build 同时 merge 旧低分 diamond 并 split 新高分区域。无窗口模式因没有图形上下文通常跳过 GPU。应用级 `--gpu-smoke-test` 在 OpenGL 和 D3D12 上分别验证 GPU packet 非空、最终三角形不超预算，并检查 CPU DOD 持久拓扑的三类 issue 为零。这类正确性验证不替代 30-60 秒 runtime 性能采样。
 
+### DOD active internal 索引 A/B
+
+2026-08-01 的隔离测试使用 OpenGL RelWithDebInfo、Test129、Terrain size 30、Height scale 4、Max depth 14、split/merge 4 px / 2 px、Triangle budget 20000，每种算法运行 10 秒。Control 保留 `ActiveInternalNodes` 的维护成本，但让 merge candidate 回到完整持久 node pool 扫描；实验组只改为扫描 active internal 连续索引，因此差值主要反映候选来源变化。
+
+| DOD 指标 | 完整 node pool control | Active internal index | 变化 |
+| --- | ---: | ---: | ---: |
+| Merge candidate mark | 1.6273 ms | 0.9777 ms | -39.9% |
+| Merge pass | 1.6495 ms | 0.9985 ms | -39.5% |
+| CPU update | 6.3595 ms | 5.3143 ms | -16.4% |
+| Avg triangles | 12354.1 | 12434.6 | +0.7% |
+| Avg nodes | 42756.9 | 42420.0 | -0.8% |
+| Max topology issues | 0 | 0 | 不变 |
+
+实验组为 `runtime-benchmark-20260801-030432`，control 为 `runtime-benchmark-20260801-030623`。两次运行的帧采样点数量随性能变化而不同，因此 triangles/nodes 不要求逐帧完全相等；当前结果证明候选扫描成本显著下降且输出规模没有系统性缩水，但正式报告仍应补充多轮重复和方差。
+
 ## 结论写法
 
 所有项目自有的 `.md` 实验报告和运行时报告必须使用中文编写，包括标题、正文说明、状态、限制和结论。算法名、API 名、shader/pass 名、单位、CSV 字段和表格参数等技术术语可以保留英语；不得因此把整段说明或完整标题写成英语。报告生成器也必须遵守这一规则，保证新生成文件不需要再人工翻译。

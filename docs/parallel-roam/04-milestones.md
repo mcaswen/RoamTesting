@@ -299,8 +299,11 @@ assets/textures/Tex_Terrain_Debug_Diffuse.ppm
 
 - DOD split pass 已改为按 node index 分块扫描 active topology，并用 thread-local buffer 收集 active leaves；
 - split candidate 标记读取批量 `ScreenErrors` 缓存并行过滤，合并后统一分配稳定 sequence 再进入 priority queue；
-- merge candidate 标记并行扫描 active internal node；安全 interior diamond 可并行预提交，其余候选和新出现的父层候选由动态串行队列收敛；
+- `ActiveInternalNodes` 连续表与反向 position 表由 split/merge 增量维护；merge candidate 标记只扫描当前 active internal node，不再遍历包含 inactive 历史节点的完整 node pool；
+- 安全 interior diamond 可并行预提交，其余候选和新出现的父层候选由动态串行队列收敛；并行提交在 worker join 后由主线程统一更新 active internal 索引，避免共享 vector 写竞争；
 - active leaf 收集拆为 `CpuBudgetLeafCollectMilliseconds` 与 `CpuFinalLeafCollectMilliseconds`；split/merge 候选标记分别归入 `CpuSplitCandidateMarkMilliseconds` 与 `CpuMergeCandidateMarkMilliseconds`。
+
+2026-08-01 同参数隔离 A/B 中，完整 node-pool 扫描与 active-internal 扫描都保留索引维护成本，只切换 merge 候选来源。DOD 的 `CpuMergeCandidateMarkMilliseconds` 从 `1.6273 ms` 降至 `0.9777 ms`，完整 Merge pass 从 `1.6495 ms` 降至 `0.9985 ms`；两组最大拓扑错误均为 0，平均 triangles/nodes 差异低于 1%。单轮数据用于确认优化方向，正式结论仍应采用多轮重复实验。
 
 3E：拓扑提交策略
 
