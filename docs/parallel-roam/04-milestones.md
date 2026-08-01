@@ -320,7 +320,7 @@ assets/textures/Tex_Terrain_Debug_Diffuse.ppm
 - DOD topology commit 已加入固定 `8x8` terrain chunk 分区，只有完整落在同一 chunk 的候选会进入并发提交；
 - split 并发提交只处理已有 child 可复用、且不会触发 forced split 的内部候选，fresh child 分配和跨 chunk 邻接继续串行回退；
 - merge 并发提交只处理影响节点全集都在同一 chunk 内的候选，diamond merge 跨 chunk 时仍由串行路径保证 neighbor 一致性；
-- 2026-08-01 配对实验表明 Merge chunk commit 在约 160 个 interior candidates 后才稳定获益；Split 现有场景只有 2-17 个安全 candidates 且并行总体更慢。当前代码默认阈值仍为 32，后续调整应拆分 Split/Merge 阈值，不能继续共用一个常量；
+- 2026-08-01 配对实验表明 Merge chunk commit 在约 160 个 interior candidates 后才稳定获益；因此 Merge 默认阈值已取 160。Split 现有场景只有 2-17 个安全 candidates 且并行总体更慢，暂时保留独立的 32 阈值；
 - 所有 split 路径共用原子预算 token；并行提交不会让活动 leaf 超过 `TriangleBudget`，forced chain 失败会归还尚未提交的 caller token；
 - 并行 merge 返回新可检查的父节点，主线程动态最小堆继续级联，避免父层固定等待下一个 Build；
 - 统一 `CpuWorkerCount` 已纳入 topology commit worker 数；merge 与 split 拓扑提交分别记录在 `CpuMergeTopologyMilliseconds` 与 `CpuSplitTopologyMilliseconds`，不再折叠为单一 topology 阶段。

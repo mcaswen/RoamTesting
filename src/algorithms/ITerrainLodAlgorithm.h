@@ -311,6 +311,8 @@ struct TerrainLodStats
     std::size_t CpuWorkerCount{0};
     // DOD chunk topology commit 诊断；其他算法保持为零
     std::size_t TopologyCommitMinCandidateCount{0};
+    std::size_t SplitTopologyCommitMinCandidateCount{0};
+    std::size_t MergeTopologyCommitMinCandidateCount{0};
     std::size_t SplitTopologyCandidateCount{0};
     std::size_t SplitTopologyNonEmptyChunkCount{0};
     std::size_t SplitTopologyCommitWorkerCount{0};

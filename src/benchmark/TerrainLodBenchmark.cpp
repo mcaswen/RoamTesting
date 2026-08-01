@@ -652,7 +652,8 @@ bool WriteCsv(
            "activeTriangleCount,activeNodeCount,splitCount,forcedSplitCount,mergeCount,candidatePeakCount,"
            "budgetRejectedSplitCount,"
            "tjunctionCount,invalidNeighborCount,invalidTopologyCount,cpuWorkerCount,cpuUtilizationPercent,"
-           "topologyCommitMinCandidateCount,splitTopologyCandidateCount,splitTopologyNonEmptyChunkCount,"
+           "topologyCommitMinCandidateCount,splitTopologyCommitMinCandidateCount,"
+           "mergeTopologyCommitMinCandidateCount,splitTopologyCandidateCount,splitTopologyNonEmptyChunkCount,"
            "splitTopologyCommitWorkerCount,parallelSplitCommitCount,mergeTopologyCandidateCount,"
            "mergeTopologyNonEmptyChunkCount,mergeTopologyCommitWorkerCount,parallelMergeCommitCount,"
            "cpuUpdateMs,cpuPrepareMs,cpuMergeCandidateMarkMs,cpuMergeTopologyMs,"
@@ -706,6 +707,8 @@ bool WriteCsv(
                 << frame.Stats.CpuWorkerCount << ','
                 << frame.Stats.CpuUtilizationPercent << ','
                 << frame.Stats.TopologyCommitMinCandidateCount << ','
+                << frame.Stats.SplitTopologyCommitMinCandidateCount << ','
+                << frame.Stats.MergeTopologyCommitMinCandidateCount << ','
                 << frame.Stats.SplitTopologyCandidateCount << ','
                 << frame.Stats.SplitTopologyNonEmptyChunkCount << ','
                 << frame.Stats.SplitTopologyCommitWorkerCount << ','

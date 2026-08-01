@@ -2,10 +2,10 @@
 
 ## 结论
 
-- **Merge chunk commit：** 保守交叉点约为 `160` 个 interior candidates。`150-159` 已开始出现收益，但稳定性低于 `160+`；建议后续把 Merge 并行阈值从当前 `32` 调整到 `160`。
+- **Merge chunk commit：** 保守交叉点约为 `160` 个 interior candidates。`150-159` 已开始出现收益，但稳定性低于 `160+`；验证后已把 Merge 并行阈值调整到 `160`。
 - **Split chunk commit：** 当前三个内置 profile 中，单帧最多只有 `17` 个安全 interior candidates。`2-17` 区间的并行中位耗时比串行高 `0.0180 ms`，并行胜率只有 `37.5%`。当前证据支持保持串行，尚无法推断更大 Split batch 的交叉点。
 - 候选数不是唯一变量。`nonEmptyChunkCount` 决定实际 worker 数；例如同为 `140` candidates，7 个 chunk 的样本回退 `7.3%`，9 个 chunk 的样本提升 `5.5%`。`160` 是针对当前 `8x8` chunk、最多 8 workers 和测试机器的保守一维阈值。
-- 本轮只验证阈值，**没有修改产品默认值**。
+- 验证完成后产品默认值已拆分为 Split `32`、Merge `160`。
 
 ## 测试环境
 

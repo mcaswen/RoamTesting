@@ -19,8 +19,9 @@ namespace ParallelRoam::Algorithms::DataOrientedRoam
 namespace
 {
 constexpr std::size_t MaxTopologyCommitWorkerCount = 8;
-// 候选太少时保留串行提交，避免调度成本超过收益
-constexpr std::size_t MinParallelCommitCandidateCount = 32;
+// Split 现有 batch 很小，保留原阈值；Merge 使用配对实验测得的保守交叉点。
+constexpr std::size_t MinParallelSplitCommitCandidateCount = 32;
+constexpr std::size_t MinParallelMergeCommitCandidateCount = 160;
 
 // 以下环境变量仅服务 benchmark 的独立进程配对实验：它们可以固定候选阈值，
 // 并把并行提交限制到指定 Build 和指定 phase。未设置变量时全部回落到上述产品默认值，
@@ -57,13 +58,16 @@ std::size_t ParseDiagnosticSize(const char* name, std::size_t fallback)
     return error == std::errc{} && end == value.data() + value.size() ? parsed : fallback;
 }
 
-std::size_t ResolveMinParallelCommitCandidateCount()
+std::size_t ResolveMinParallelCommitCandidateCount(std::string_view phase)
 {
     // 实验覆盖只在进程启动时读取一次；未设置或非法值保持产品默认值。
-    static const std::size_t threshold = ParseDiagnosticSize(
+    static const std::size_t splitThreshold = ParseDiagnosticSize(
         "PARALLEL_ROAM_DOD_MIN_PARALLEL_COMMIT_CANDIDATES",
-        MinParallelCommitCandidateCount);
-    return threshold;
+        MinParallelSplitCommitCandidateCount);
+    static const std::size_t mergeThreshold = ParseDiagnosticSize(
+        "PARALLEL_ROAM_DOD_MIN_PARALLEL_COMMIT_CANDIDATES",
+        MinParallelMergeCommitCandidateCount);
+    return phase == "merge" ? mergeThreshold : splitThreshold;
 }
 
 bool DiagnosticBuildAllowsParallelCommit(const DataOrientedRoamState& state, std::string_view phase)
@@ -255,7 +259,7 @@ std::size_t ResolveTopologyCommitWorkerCount(
         return 1U;
     }
 
-    if (candidateCount < ResolveMinParallelCommitCandidateCount() || nonEmptyChunkCount < 2U)
+    if (candidateCount < ResolveMinParallelCommitCandidateCount(phase) || nonEmptyChunkCount < 2U)
     {
         // 单 chunk 或小批量没有并发提交价值
         return 1U;
@@ -941,7 +945,9 @@ std::vector<CommittedSplit> CommitInteriorSplitChunks(
         candidateCount,
         nonEmptyChunkCount,
         "split");
-    state.Stats.TopologyCommitMinCandidateCount = ResolveMinParallelCommitCandidateCount();
+    const std::size_t minimumCandidateCount = ResolveMinParallelCommitCandidateCount("split");
+    state.Stats.TopologyCommitMinCandidateCount = minimumCandidateCount;
+    state.Stats.SplitTopologyCommitMinCandidateCount = minimumCandidateCount;
     state.Stats.SplitTopologyCandidateCount = candidateCount;
     state.Stats.SplitTopologyNonEmptyChunkCount = nonEmptyChunkCount;
     state.Stats.SplitTopologyCommitWorkerCount = workerCount;
@@ -1023,7 +1029,9 @@ std::vector<CommittedMerge> CommitInteriorMergeChunks(
         candidateCount,
         nonEmptyChunkCount,
         "merge");
-    state.Stats.TopologyCommitMinCandidateCount = ResolveMinParallelCommitCandidateCount();
+    const std::size_t minimumCandidateCount = ResolveMinParallelCommitCandidateCount("merge");
+    state.Stats.TopologyCommitMinCandidateCount = minimumCandidateCount;
+    state.Stats.MergeTopologyCommitMinCandidateCount = minimumCandidateCount;
     state.Stats.MergeTopologyCandidateCount = candidateCount;
     state.Stats.MergeTopologyNonEmptyChunkCount = nonEmptyChunkCount;
     state.Stats.MergeTopologyCommitWorkerCount = workerCount;

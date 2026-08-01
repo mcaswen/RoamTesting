@@ -98,6 +98,10 @@ struct DataOrientedRoamStats
     std::size_t TopologyCommitWorkerCount{0};
     // 下列字段用于固定轨迹 benchmark 定位 chunk 并行提交的收益交叉点
     std::size_t TopologyCommitMinCandidateCount{0};
+    // Split 保留小批量诊断阈值，不能沿用 Merge 的实测交叉点。
+    std::size_t SplitTopologyCommitMinCandidateCount{0};
+    // Merge 单独记录产品默认值，便于报告确认 160 阈值实际生效。
+    std::size_t MergeTopologyCommitMinCandidateCount{0};
     std::size_t SplitTopologyCandidateCount{0};
     // non-empty chunk 决定最多可用的独立提交任务数
     std::size_t SplitTopologyNonEmptyChunkCount{0};

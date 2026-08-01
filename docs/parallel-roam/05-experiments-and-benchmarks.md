@@ -245,7 +245,7 @@ CPU 阶段按互斥执行区间记录，阶段和应接近 `cpuUpdateMs`；原�
 - Merge `<100` candidates 时总体不值得并行；`100-149` 属于噪声/不稳定区；`150-159` 开始过渡；`160-199` 的配对中位节省为 `0.0432 ms`、并行胜率 `79.8%`；`200-399` 中位节省 `0.0928 ms`、胜率 `86.7%`。保守的一维交叉点取 `160`。
 - Split 在现有 Standard/Smoke/Budget-reentry 中最多只有 17 个安全 interior candidates。`2-17` 区间并行中位数反而慢 `0.0180 ms`，并行胜率 `37.5%`；当前证据支持保持串行，不能把 Merge 的 160 直接套给 Split。
 - `nonEmptyChunkCount` 同样重要：相同 candidate 数在不同 chunk 分布下可能一快一慢。160 只适用于当前测试 CPU、`8x8` chunk 和最多 8 workers。
-- 本轮只完成验证，没有修改当前产品默认阈值 32。完整方法、区间表、全轨迹确认和限制见 `benchmark-output/chunk-parallel-threshold-report-20260801.md`。
+- 验证完成后，产品默认阈值已拆分为 Split 32、Merge 160；两者不再共用同一个阈值。完整方法、区间表、全轨迹确认和限制见 `benchmark-output/chunk-parallel-threshold-report-20260801.md`。
 
 ## 结论写法
 

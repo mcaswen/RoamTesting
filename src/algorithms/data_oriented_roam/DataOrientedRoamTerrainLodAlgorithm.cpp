@@ -141,6 +141,8 @@ TerrainLodStats DataOrientedRoamTerrainLodAlgorithm::ToTerrainLodStats(const Dat
         stats.TopologyCommitWorkerCount,
     });
     lodStats.TopologyCommitMinCandidateCount = stats.TopologyCommitMinCandidateCount;
+    lodStats.SplitTopologyCommitMinCandidateCount = stats.SplitTopologyCommitMinCandidateCount;
+    lodStats.MergeTopologyCommitMinCandidateCount = stats.MergeTopologyCommitMinCandidateCount;
     lodStats.SplitTopologyCandidateCount = stats.SplitTopologyCandidateCount;
     lodStats.SplitTopologyNonEmptyChunkCount = stats.SplitTopologyNonEmptyChunkCount;
     lodStats.SplitTopologyCommitWorkerCount = stats.SplitTopologyCommitWorkerCount;
