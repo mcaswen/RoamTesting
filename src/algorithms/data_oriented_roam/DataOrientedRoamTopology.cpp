@@ -2,11 +2,15 @@
 #include "algorithms/data_oriented_roam/DataOrientedRoamState.h"
 
 #include <algorithm>
+#include <charconv>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <limits>
 #include <queue>
+#include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -17,6 +21,70 @@ namespace
 constexpr std::size_t MaxTopologyCommitWorkerCount = 8;
 // 候选太少时保留串行提交，避免调度成本超过收益
 constexpr std::size_t MinParallelCommitCandidateCount = 32;
+
+// 以下环境变量仅服务 benchmark 的独立进程配对实验：它们可以固定候选阈值，
+// 并把并行提交限制到指定 Build 和指定 phase。未设置变量时全部回落到上述产品默认值，
+// 因而正常运行路径不会因为实验仪表而改变提交策略。
+std::string ReadDiagnosticEnvironmentVariable(const char* name)
+{
+#if defined(_MSC_VER)
+    char* rawValue = nullptr;
+    std::size_t rawValueLength = 0U;
+    if (_dupenv_s(&rawValue, &rawValueLength, name) != 0 || rawValue == nullptr)
+    {
+        return {};
+    }
+    std::string value{rawValue};
+    std::free(rawValue);
+    return value;
+#else
+    const char* rawValue = std::getenv(name);
+    return rawValue == nullptr ? std::string{} : std::string{rawValue};
+#endif
+}
+
+std::size_t ParseDiagnosticSize(const char* name, std::size_t fallback)
+{
+    const std::string ownedValue = ReadDiagnosticEnvironmentVariable(name);
+    const std::string_view value{ownedValue};
+    if (value.empty())
+    {
+        return fallback;
+    }
+
+    std::size_t parsed = 0U;
+    const auto [end, error] = std::from_chars(value.data(), value.data() + value.size(), parsed);
+    return error == std::errc{} && end == value.data() + value.size() ? parsed : fallback;
+}
+
+std::size_t ResolveMinParallelCommitCandidateCount()
+{
+    // 实验覆盖只在进程启动时读取一次；未设置或非法值保持产品默认值。
+    static const std::size_t threshold = ParseDiagnosticSize(
+        "PARALLEL_ROAM_DOD_MIN_PARALLEL_COMMIT_CANDIDATES",
+        MinParallelCommitCandidateCount);
+    return threshold;
+}
+
+bool DiagnosticBuildAllowsParallelCommit(const DataOrientedRoamState& state, std::string_view phase)
+{
+    // build=0 表示所有 Build；非零值让配对实验只改变目标帧的提交策略。
+    static const std::size_t targetBuild = ParseDiagnosticSize(
+        "PARALLEL_ROAM_DOD_PARALLEL_COMMIT_BUILD",
+        0U);
+    if (targetBuild != 0U && state.BuildSequence != targetBuild)
+    {
+        return false;
+    }
+
+    // phase 默认 both；实验可只开启 split 或 merge，隔离同一 Build 内的输入。
+    static const std::string selectedPhase = []() {
+        const std::string value = ReadDiagnosticEnvironmentVariable(
+            "PARALLEL_ROAM_DOD_PARALLEL_COMMIT_PHASE");
+        return value.empty() ? std::string{"both"} : value;
+    }();
+    return selectedPhase == "both" || selectedPhase == phase;
+}
 
 /// <summary>
 /// 并发 worker 的本地提交计数，join 后再合并回全局 stats
@@ -179,9 +247,15 @@ bool NodeBelongsToChunk(
 std::size_t ResolveTopologyCommitWorkerCount(
     const DataOrientedRoamState& state,
     std::size_t candidateCount,
-    std::size_t nonEmptyChunkCount)
+    std::size_t nonEmptyChunkCount,
+    std::string_view phase)
 {
-    if (candidateCount < MinParallelCommitCandidateCount || nonEmptyChunkCount < 2U)
+    if (!DiagnosticBuildAllowsParallelCommit(state, phase))
+    {
+        return 1U;
+    }
+
+    if (candidateCount < ResolveMinParallelCommitCandidateCount() || nonEmptyChunkCount < 2U)
     {
         // 单 chunk 或小批量没有并发提交价值
         return 1U;
@@ -862,7 +936,15 @@ std::vector<CommittedSplit> CommitInteriorSplitChunks(
     std::vector<CommittedSplit> committedSplits;
     const std::size_t nonEmptyChunkCount = CountNonEmptyChunks(chunks);
     const std::size_t candidateCount = CountChunkCandidates(chunks);
-    const std::size_t workerCount = ResolveTopologyCommitWorkerCount(state, candidateCount, nonEmptyChunkCount);
+    const std::size_t workerCount = ResolveTopologyCommitWorkerCount(
+        state,
+        candidateCount,
+        nonEmptyChunkCount,
+        "split");
+    state.Stats.TopologyCommitMinCandidateCount = ResolveMinParallelCommitCandidateCount();
+    state.Stats.SplitTopologyCandidateCount = candidateCount;
+    state.Stats.SplitTopologyNonEmptyChunkCount = nonEmptyChunkCount;
+    state.Stats.SplitTopologyCommitWorkerCount = workerCount;
     state.Stats.TopologyCommitWorkerCount = std::max(state.Stats.TopologyCommitWorkerCount, workerCount);
 
     if (workerCount <= 1U)
@@ -936,7 +1018,15 @@ std::vector<CommittedMerge> CommitInteriorMergeChunks(
     std::vector<CommittedMerge> committedMerges;
     const std::size_t nonEmptyChunkCount = CountNonEmptyChunks(chunks);
     const std::size_t candidateCount = CountChunkCandidates(chunks);
-    const std::size_t workerCount = ResolveTopologyCommitWorkerCount(state, candidateCount, nonEmptyChunkCount);
+    const std::size_t workerCount = ResolveTopologyCommitWorkerCount(
+        state,
+        candidateCount,
+        nonEmptyChunkCount,
+        "merge");
+    state.Stats.TopologyCommitMinCandidateCount = ResolveMinParallelCommitCandidateCount();
+    state.Stats.MergeTopologyCandidateCount = candidateCount;
+    state.Stats.MergeTopologyNonEmptyChunkCount = nonEmptyChunkCount;
+    state.Stats.MergeTopologyCommitWorkerCount = workerCount;
     state.Stats.TopologyCommitWorkerCount = std::max(state.Stats.TopologyCommitWorkerCount, workerCount);
 
     if (workerCount <= 1U)

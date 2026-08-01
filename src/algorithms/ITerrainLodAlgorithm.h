@@ -309,6 +309,16 @@ struct TerrainLodStats
     std::size_t CpuGpuReadbackBytes{0};
     // CpuWorkerCount 表示本次 CPU LOD build 的实际并行宽度
     std::size_t CpuWorkerCount{0};
+    // DOD chunk topology commit 诊断；其他算法保持为零
+    std::size_t TopologyCommitMinCandidateCount{0};
+    std::size_t SplitTopologyCandidateCount{0};
+    std::size_t SplitTopologyNonEmptyChunkCount{0};
+    std::size_t SplitTopologyCommitWorkerCount{0};
+    std::size_t ParallelSplitCommitCount{0};
+    std::size_t MergeTopologyCandidateCount{0};
+    std::size_t MergeTopologyNonEmptyChunkCount{0};
+    std::size_t MergeTopologyCommitWorkerCount{0};
+    std::size_t ParallelMergeCommitCount{0};
     float CpuUpdateMilliseconds{0.0F};
     // CpuUtilizationPercent 按单核 100% 口径记录进程 CPU 占用
     float CpuUtilizationPercent{0.0F};

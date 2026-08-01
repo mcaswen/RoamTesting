@@ -96,6 +96,16 @@ struct DataOrientedRoamStats
     std::size_t TopologyChunkCount{0};
     // commit worker 数只统计 topology commit batch
     std::size_t TopologyCommitWorkerCount{0};
+    // 下列字段用于固定轨迹 benchmark 定位 chunk 并行提交的收益交叉点
+    std::size_t TopologyCommitMinCandidateCount{0};
+    std::size_t SplitTopologyCandidateCount{0};
+    // non-empty chunk 决定最多可用的独立提交任务数
+    std::size_t SplitTopologyNonEmptyChunkCount{0};
+    std::size_t SplitTopologyCommitWorkerCount{0};
+    std::size_t MergeTopologyCandidateCount{0};
+    // split/merge 分开记录，避免用本帧最大 worker 掩盖某一阶段仍为串行
+    std::size_t MergeTopologyNonEmptyChunkCount{0};
+    std::size_t MergeTopologyCommitWorkerCount{0};
     // interior candidate 满足同 chunk 写入约束
     std::size_t InteriorSplitCandidateCount{0};
     // boundary candidate 由串行回退处理

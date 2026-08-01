@@ -652,6 +652,9 @@ bool WriteCsv(
            "activeTriangleCount,activeNodeCount,splitCount,forcedSplitCount,mergeCount,candidatePeakCount,"
            "budgetRejectedSplitCount,"
            "tjunctionCount,invalidNeighborCount,invalidTopologyCount,cpuWorkerCount,cpuUtilizationPercent,"
+           "topologyCommitMinCandidateCount,splitTopologyCandidateCount,splitTopologyNonEmptyChunkCount,"
+           "splitTopologyCommitWorkerCount,parallelSplitCommitCount,mergeTopologyCandidateCount,"
+           "mergeTopologyNonEmptyChunkCount,mergeTopologyCommitWorkerCount,parallelMergeCommitCount,"
            "cpuUpdateMs,cpuPrepareMs,cpuMergeCandidateMarkMs,cpuMergeTopologyMs,"
            "cpuBudgetLeafCollectMs,cpuErrorEvalMs,cpuSplitCandidateMarkMs,cpuSplitTopologyMs,"
            "cpuFinalLeafCollectMs,cpuMeshEmitMs,cpuFinalizeMs,cpuUploadMs,"
@@ -702,6 +705,15 @@ bool WriteCsv(
                 << frame.Stats.InvalidTopologyCount << ','
                 << frame.Stats.CpuWorkerCount << ','
                 << frame.Stats.CpuUtilizationPercent << ','
+                << frame.Stats.TopologyCommitMinCandidateCount << ','
+                << frame.Stats.SplitTopologyCandidateCount << ','
+                << frame.Stats.SplitTopologyNonEmptyChunkCount << ','
+                << frame.Stats.SplitTopologyCommitWorkerCount << ','
+                << frame.Stats.ParallelSplitCommitCount << ','
+                << frame.Stats.MergeTopologyCandidateCount << ','
+                << frame.Stats.MergeTopologyNonEmptyChunkCount << ','
+                << frame.Stats.MergeTopologyCommitWorkerCount << ','
+                << frame.Stats.ParallelMergeCommitCount << ','
                 << frame.Stats.CpuUpdateMilliseconds << ','
                 << frame.Stats.CpuPrepareMilliseconds << ','
                 << frame.Stats.CpuMergeCandidateMarkMilliseconds << ','

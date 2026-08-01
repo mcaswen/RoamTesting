@@ -140,6 +140,15 @@ TerrainLodStats DataOrientedRoamTerrainLodAlgorithm::ToTerrainLodStats(const Dat
         stats.EmitWorkerCount,
         stats.TopologyCommitWorkerCount,
     });
+    lodStats.TopologyCommitMinCandidateCount = stats.TopologyCommitMinCandidateCount;
+    lodStats.SplitTopologyCandidateCount = stats.SplitTopologyCandidateCount;
+    lodStats.SplitTopologyNonEmptyChunkCount = stats.SplitTopologyNonEmptyChunkCount;
+    lodStats.SplitTopologyCommitWorkerCount = stats.SplitTopologyCommitWorkerCount;
+    lodStats.ParallelSplitCommitCount = stats.ParallelSplitCommitCount;
+    lodStats.MergeTopologyCandidateCount = stats.MergeTopologyCandidateCount;
+    lodStats.MergeTopologyNonEmptyChunkCount = stats.MergeTopologyNonEmptyChunkCount;
+    lodStats.MergeTopologyCommitWorkerCount = stats.MergeTopologyCommitWorkerCount;
+    lodStats.ParallelMergeCommitCount = stats.ParallelMergeCommitCount;
     // 融合扫描后 error/collect 独立时间为零，完整扫描成本归入 split mark。
     const float errorEvaluationMilliseconds = ErrorEvaluationMilliseconds(stats);
     const float splitCollectMilliseconds =

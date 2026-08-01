@@ -238,6 +238,15 @@ CPU 阶段按互斥执行区间记录，阶段和应接近 `cpuUpdateMs`；原�
 
 两组测试按固定运行时长而不是固定 Build 次数采样；优化后每秒 Build 次数增加，使相机路径上的采样密度和每帧 split/merge 数发生变化。triangles/nodes 的小幅差异不能直接解释为质量变化。本表是单轮方向性 A/B，正式论文或结项报告仍需固定轨迹、重复多轮并报告方差。
 
+### DOD Chunk 并行提交阈值验证
+
+2026-08-01 使用严格配对实验验证了“候选数量达到多少时 chunk 并行提交开始获益”。每个目标 Build 之前都强制串行，只在目标 Build 的 Split 或 Merge 单个阶段切换 serial/parallel；每点运行 12 对并交替执行顺序。1,224 个目标帧样本的 candidates、non-empty chunks、triangles 和 split/merge count 均逐对一致，拓扑错误为 0，所有并行样本的成功 commit 数等于输入 candidate 数。
+
+- Merge `<100` candidates 时总体不值得并行；`100-149` 属于噪声/不稳定区；`150-159` 开始过渡；`160-199` 的配对中位节省为 `0.0432 ms`、并行胜率 `79.8%`；`200-399` 中位节省 `0.0928 ms`、胜率 `86.7%`。保守的一维交叉点取 `160`。
+- Split 在现有 Standard/Smoke/Budget-reentry 中最多只有 17 个安全 interior candidates。`2-17` 区间并行中位数反而慢 `0.0180 ms`，并行胜率 `37.5%`；当前证据支持保持串行，不能把 Merge 的 160 直接套给 Split。
+- `nonEmptyChunkCount` 同样重要：相同 candidate 数在不同 chunk 分布下可能一快一慢。160 只适用于当前测试 CPU、`8x8` chunk 和最多 8 workers。
+- 本轮只完成验证，没有修改当前产品默认阈值 32。完整方法、区间表、全轨迹确认和限制见 `benchmark-output/chunk-parallel-threshold-report-20260801.md`。
+
 ## 结论写法
 
 所有项目自有的 `.md` 实验报告和运行时报告必须使用中文编写，包括标题、正文说明、状态、限制和结论。算法名、API 名、shader/pass 名、单位、CSV 字段和表格参数等技术术语可以保留英语；不得因此把整段说明或完整标题写成英语。报告生成器也必须遵守这一规则，保证新生成文件不需要再人工翻译。
