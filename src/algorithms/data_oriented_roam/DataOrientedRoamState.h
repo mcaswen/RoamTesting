@@ -206,7 +206,6 @@ struct DataOrientedRoamState
     // 两组稳定 path id 在帧边界交换，为 split/merge 提供 hysteresis 记忆
     std::unordered_set<std::uint64_t> PreviousSplitPaths;
     std::unordered_set<std::uint64_t> CurrentSplitPaths;
-    std::vector<DataOrientedRoamNodeIndex> FinalActiveLeaves;
 
     // 当前活动 internal 节点的连续索引，避免 merge 每帧扫描历史 node pool
     std::vector<DataOrientedRoamNodeIndex> ActiveInternalNodes;
@@ -277,7 +276,7 @@ void ResetTopology(DataOrientedRoamState& state);
     float heightScale,
     const DataOrientedRoamSettings& settings);
 
-// CollectLeafNodes 只遍历 active topology，不返回 inactive child
+// CollectLeafNodes 独立递归遍历 active topology，仅供 validator 交叉校验活动索引。
 void CollectLeafNodes(const DataOrientedRoamState& state, std::vector<DataOrientedRoamNodeIndex>& leafNodes);
 
 void CollectActiveSplitPaths(DataOrientedRoamState& state);

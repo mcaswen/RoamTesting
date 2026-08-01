@@ -305,6 +305,17 @@
 - 验证：交换开启后，Classic/DOD 在 `budget-reentry` 的每个小角度步进中都在第一次 Build 完成 `15-17` 次等量 merge/split，活动三角形始终为 `512/512`，拓扑 issue 为 0；临时关闭交换时该场景按预期失败。OpenGL/D3D12 RelWithDebInfo 构建和完整 CTest 覆盖该 profile。
 - 后续：当前实现是有界的串行优先级交换启发式，不等同于依赖感知的全局最优预算调度器；GPU 原生 split-only pass 仍按并发 append 顺序领取 CPU baseline 剩余 token。
 
+### BUG-025：DOD 最终输出重复递归收集 Active Leaf
+
+- 状态：`Fixed`
+- 严重级别：`中`
+- 发生阶段：阶段 3 Data-Oriented CPU ROAM 输出和统计
+- 现象：DOD 已用 `ActiveLeafNodes` / `ActiveLeafNodePositions` 增量维护活动叶，但每次 Build 在 split/merge 稳定后仍调用 `CollectLeafNodes`，从两个 root 递归遍历活动树并填充第二份 `FinalActiveLeaves`，随后 CPU emit、统计和 GPU snapshot 才读取该副本。
+- 定位：冗余入口位于 `DataOrientedRoamMeshBuilder::BuildInternal`；`BuildGpuRoamBufferSnapshot` 也绑定 `FinalActiveLeaves`。独立递归遍历对 validator 有价值，但正常输出路径没有在 Build 完成后到 emit/packing 之间修改拓扑，不需要用它重新发现 leaf。
+- 解决方案：删除 `FinalActiveLeaves`，让 CPU emit、`AccumulateLeafStats` 和 GPU snapshot 直接只读消费 `ActiveLeafNodes`；DOD 的统一兼容字段 `CpuFinalLeafCollectMilliseconds` 置 0。`CollectLeafNodes` 仅保留给 `ValidateTopology`，继续交叉检查活动索引集合、重复项和反向 position。
+- 验证：OpenGL/D3D12 RelWithDebInfo 构建通过，OpenGL CTest 6/6 通过；DOD standard 64 帧 PASS，活动三角形范围为 `12906..20000`。同参数 runtime 基线 `20260801-195558` 到最终报告 `20260801-221506` 中，DOD `Final leaf collect/view` 从 `0.2383 ms` 变为 `0.0000 ms`，平均 triangles/nodes 变化均小于 0.1%，最大 topology issues 保持 0。
+- 后续：`CollectActiveSplitPaths` 仍从 root 递归生成跨帧 hysteresis path 集合，它维护的是不同状态，不能仅因本次 leaf 输出优化直接删除；是否值得改为增量维护需要单独分析正确性和成本。
+
 ## 模板
 
 ```text

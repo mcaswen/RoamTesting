@@ -238,6 +238,21 @@ CPU 阶段按互斥执行区间记录，阶段和应接近 `cpuUpdateMs`；原�
 
 两组测试按固定运行时长而不是固定 Build 次数采样；优化后每秒 Build 次数增加，使相机路径上的采样密度和每帧 split/merge 数发生变化。triangles/nodes 的小幅差异不能直接解释为质量变化。本表是单轮方向性 A/B，正式论文或结项报告仍需固定轨迹、重复多轮并报告方差。
 
+### DOD 最终 Active Leaf 输出视图复用
+
+`ActiveLeafNodes` 已由每次 split/merge 增量维护，但旧输出路径仍在拓扑稳定后调用 `CollectLeafNodes`，从两个 root 递归遍历活动树并生成 `FinalActiveLeaves`。修复后 CPU mesh emit、统计和 GPU snapshot 直接只读复用 `ActiveLeafNodes`；`FinalActiveLeaves` 容器已删除。validator 仍从 root 独立递归收集，用不同真值来源校验活动索引和反向 position，避免索引自证正确。
+
+OpenGL RelWithDebInfo 使用 Test129、Terrain size 30、Height scale 4、Max depth 14、split/merge 4 px / 2 px、Triangle budget 20000，各算法运行 10 秒。基线为 `runtime-benchmark-20260801-195558`，最终实验为 `runtime-benchmark-20260801-221506`。
+
+| DOD 指标 | 递归最终收集 | 直接复用输出视图 | 变化 |
+| --- | ---: | ---: | ---: |
+| Final leaf collect/view | 0.2383 ms | 0.0000 ms | 独立 pass 消除 |
+| Avg triangles | 12284.50 | 12289.76 | +0.04% |
+| Avg nodes | 42971.53 | 42993.89 | +0.05% |
+| Max topology issues | 0 | 0 | 不变 |
+
+本次结构性收益可以由计时点直接确认，但单轮 `CPU update` 从 `3.6442 ms` 波动到 `3.7717 ms`，不能据此宣称整帧必然提速；两次固定时长运行的采样密度以及 merge/split 工作量并不逐帧配对。最终零复制实现另通过 DOD standard 64 帧验证，活动三角形范围保持 `12906..20000`，拓扑测试 6/6 通过。
+
 ### DOD Chunk 并行提交阈值验证
 
 2026-08-01 使用严格配对实验验证了“候选数量达到多少时 chunk 并行提交开始获益”。每个目标 Build 之前都强制串行，只在目标 Build 的 Split 或 Merge 单个阶段切换 serial/parallel；每点运行 12 对并交替执行顺序。1,224 个目标帧样本的 candidates、non-empty chunks、triangles 和 split/merge count 均逐对一致，拓扑错误为 0，所有并行样本的成功 commit 数等于输入 candidate 数。

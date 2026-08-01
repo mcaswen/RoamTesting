@@ -42,11 +42,11 @@ GpuRoamBufferSnapshot BuildGpuRoamBufferSnapshot(
     // 保留完整节点池而不仅是 active leaf，使 GPU split 能访问 parent 和 neighbor
     const std::size_t nodeCount = state.Nodes.size();
     snapshot.Nodes.resize(nodeCount);
-    snapshot.ActiveLeafIndices.reserve(state.FinalActiveLeaves.size());
+    snapshot.ActiveLeafIndices.reserve(state.ActiveLeafNodes.size());
 
     // 位标记和稠密列表同时生成，前者进入 NodeRecord，后者用于首轮并行调度
     std::vector<std::uint8_t> activeLeafFlags(nodeCount, 0U);
-    for (DataOrientedRoam::DataOrientedRoamNodeIndex leaf : state.FinalActiveLeaves)
+    for (DataOrientedRoam::DataOrientedRoamNodeIndex leaf : state.ActiveLeafNodes)
     {
         // 防御无效索引，损坏的 CPU leaf 不允许传播到 shader 地址计算
         if (leaf != DataOrientedRoam::InvalidDataOrientedRoamNodeIndex &&

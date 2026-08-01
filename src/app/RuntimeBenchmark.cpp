@@ -565,12 +565,12 @@ void WriteSummaryMarkdown(
              << " | " << gpuSummary.AverageCpuSplitTopologyMilliseconds
              << " | " << gpuSummary.AverageGpuSplitTopologyMilliseconds
              << " | GPU 只提交一轮受预算约束的细分，并只处理直接 base-neighbor diamond pair；没有递归 forced-split 链 |\n";
-    markdown << "| 细分后 active leaf 收集 | " << classicSummary.AverageCpuFinalLeafCollectMilliseconds
+    markdown << "| 细分后 active leaf 收集 / 输出视图 | " << classicSummary.AverageCpuFinalLeafCollectMilliseconds
              << " | " << dodSummary.AverageCpuFinalLeafCollectMilliseconds
              << " | " << gpuSummary.AverageCpuFinalLeafCollectMilliseconds
              << " | " << (gpuSummary.AverageGpuActiveLeafResetMilliseconds +
                               gpuSummary.AverageGpuFinalLeafCompactionMilliseconds)
-             << " | GPU 数值包含 counter reset 和 split 后 leaf compaction |\n";
+             << " | DOD CPU 直接复用增量维护的 ActiveLeafNodes，因此本列为 0；GPU 数值包含 counter reset 和 split 后 leaf compaction |\n";
     markdown << "| Mesh emit / draw argument 生成 | " << classicSummary.AverageCpuMeshEmitMilliseconds
              << " | " << dodSummary.AverageCpuMeshEmitMilliseconds
              << " | " << gpuSummary.AverageCpuMeshEmitMilliseconds
@@ -587,7 +587,7 @@ void WriteSummaryMarkdown(
              << " threshold 标记融合到同一次 active-leaf-index 扫描。因此两者单独的 `Error eval` 都为零，DOD 的融合成本"
              << "全部计入 `Split scan/mark`；GPU shader 仍保留独立 dispatch。\n\n";
     markdown << "| Algorithm | CPU update | Prepare | Merge mark | Merge topology | Budget leaf collect | "
-             << "Error eval | Split scan/mark | Split topology | Final leaf collect | Mesh emit | "
+             << "Error eval | Split scan/mark | Split topology | Final leaf collect/view | Mesh emit | "
              << "Finalize | CPU upload |\n";
     markdown << "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n";
     for (const RuntimeBenchmarkAlgorithmResult& result : results)

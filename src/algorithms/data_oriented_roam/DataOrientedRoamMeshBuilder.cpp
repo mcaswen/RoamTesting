@@ -98,7 +98,6 @@ Terrain::TerrainMeshData DataOrientedRoamMeshBuilder::BuildInternal(
     state.Settings.MergeThreshold = std::min(state.Settings.MergeThreshold, state.Settings.SplitThreshold);
     state.Stats = {};
     state.CurrentSplitPaths.clear();
-    state.FinalActiveLeaves.clear();
     state.View = view.View;
     state.Projection = view.Projection;
     state.FrustumPlanes = view.FrustumPlanes;
@@ -154,31 +153,29 @@ Terrain::TerrainMeshData DataOrientedRoamMeshBuilder::BuildInternal(
         state.Stats.ValidateMilliseconds = ElapsedMilliseconds(validateStart, validateEnd);
     }
 
-    // 最终 leaf 快照在拓扑稳定后收集，emit 和统计复用同一份视图
-    const auto finalCollectStart = std::chrono::steady_clock::now();
-    CollectLeafNodes(state, state.FinalActiveLeaves);
-    const auto finalCollectEnd = std::chrono::steady_clock::now();
+    // split/merge 已增量维护 ActiveLeafNodes；拓扑稳定后直接复用这份只读输出视图，
+    // 避免为了 emit、统计和 GPU snapshot 再从两个 root 递归遍历或复制活动 leaf。
+    const std::vector<DataOrientedRoamNodeIndex>& finalActiveLeaves = state.ActiveLeafNodes;
     const auto meshEmitStart = std::chrono::steady_clock::now();
     if (emitCpuMesh)
     {
-        // emit 计时包含最终快照收集，保持和旧路径的 mesh build 口径一致
-        EmitLeafTriangles(state, meshData, state.FinalActiveLeaves);
+        EmitLeafTriangles(state, meshData, finalActiveLeaves);
     }
     const auto meshEmitEnd = std::chrono::steady_clock::now();
 
-    // GPU 路径不生成 CPU mesh，active triangle 数必须来自 leaf 快照
+    // GPU 路径不生成 CPU mesh，active triangle 数直接来自持久活动 leaf 索引。
     const auto finalizeStart = std::chrono::steady_clock::now();
-    AccumulateLeafStats(state, state.FinalActiveLeaves);
+    AccumulateLeafStats(state, finalActiveLeaves);
     state.Stats.MergeMilliseconds = ElapsedMilliseconds(mergeStart, mergeEnd);
     state.Stats.SplitMilliseconds = ElapsedMilliseconds(splitStart, splitEnd);
     state.Stats.EmitMilliseconds = emitCpuMesh
-        ? ElapsedMilliseconds(finalCollectStart, meshEmitEnd)
+        ? ElapsedMilliseconds(meshEmitStart, meshEmitEnd)
         : 0.0F;
     state.Stats.PrepareMilliseconds = ElapsedMilliseconds(updateStart, prepareEnd);
     // DOD 不再有独立的预算 leaf collect，时间归入融合 split candidate pass。
     state.Stats.BudgetLeafCollectMilliseconds = 0.0F;
-    state.Stats.FinalLeafCollectMilliseconds =
-        ElapsedMilliseconds(finalCollectStart, finalCollectEnd);
+    // 字段为统一报告 schema 保留；DOD 不再执行最终 leaf collect/copy pass。
+    state.Stats.FinalLeafCollectMilliseconds = 0.0F;
     state.Stats.MeshEmitMilliseconds = emitCpuMesh
         ? ElapsedMilliseconds(meshEmitStart, meshEmitEnd)
         : 0.0F;

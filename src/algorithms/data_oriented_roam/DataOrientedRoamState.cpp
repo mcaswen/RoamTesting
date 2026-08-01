@@ -417,7 +417,6 @@ void ResetTopology(DataOrientedRoamState& state)
     state.Nodes.clear();
     state.PreviousSplitPaths.clear();
     state.CurrentSplitPaths.clear();
-    state.FinalActiveLeaves.clear();
     state.ActiveInternalNodes.clear();
     state.ActiveInternalNodePositions.clear();
     state.ActiveLeafNodes.clear();

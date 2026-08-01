@@ -303,7 +303,7 @@ assets/textures/Tex_Terrain_Debug_Diffuse.ppm
 - 预算满载时的 merge/split 重平衡预扫描也直接读取 `ActiveLeafNodes`；它发生在正式 Split 之前且可能先改拓扑，不能与后续候选结果共用，但已消除独立 root traversal；
 - merge candidate 标记只扫描 active internal 连续索引；安全 interior diamond 可并行预提交，其余候选和新出现的父层候选由动态串行队列收敛；
 - 并行 topology commit 完成后由主线程统一更新两组活动索引，串行 forced split/merge 则立即更新，避免共享 vector 写竞争；validator 仍从 root 独立遍历，并逐项校验活动索引和反向 position，防止索引错误自证正确；
-- 最终 mesh emit 前仍单独收集最终 active leaf，因为 split/merge 已改变拓扑；该阶段记录到 `CpuFinalLeafCollectMilliseconds`，不能与 split 前已消除的重复扫描混为一谈。
+- split/merge 已同步维护 `ActiveLeafNodes`；最终 mesh emit、统计和 GPU snapshot 直接读取这份拓扑稳定后的只读输出视图，不再从 root 递归收集，也不再复制第二份 leaf vector。DOD 的 `CpuFinalLeafCollectMilliseconds` 因而为 0；validator 仍保留独立 root traversal，用于交叉校验活动索引而不是让索引自证正确。
 
 2026-08-01 同参数隔离 A/B 中，完整 node-pool 扫描与 active-internal 扫描都保留索引维护成本，只切换 merge 候选来源。DOD 的 `CpuMergeCandidateMarkMilliseconds` 从 `1.6273 ms` 降至 `0.9777 ms`，完整 Merge pass 从 `1.6495 ms` 降至 `0.9985 ms`；两组最大拓扑错误均为 0，平均 triangles/nodes 差异低于 1%。单轮数据用于确认优化方向，正式结论仍应采用多轮重复实验。
 
@@ -469,7 +469,7 @@ Level E：GPU split-only 或 split/merge topology update
 
 验收标准：
 
-- active leaf count 与 DOD 最终 leaf 快照一致；
+- active leaf count 与 DOD `ActiveLeafNodes` 输出视图一致；
 - CPU collect/mark 与 GPU split 前 leaf collection、split candidate、merge candidate score 分开记录，不能用一个笼统 GPU 时间替代；
 - readback 口径清楚，只读计数时不影响主要性能结论；
 - debug 模式可选择全量 readback 以定位错误，但 benchmark 默认关闭。
@@ -478,7 +478,7 @@ Level E：GPU split-only 或 split/merge topology update
 
 - 已新增 GPU active leaf compaction compute shader，从 node flag 扫描 active leaf 并写入 active leaf SSBO；
 - CPU 上传的 DOD active leaf list 已改为 GPU 端重新压缩，CPU 只保留 expected active leaf count 做校验；
-- compaction 后 readback counter，并与 DOD `FinalActiveLeaves` 数量对齐，不一致时直接失败；
+- compaction 后 readback counter，并与 DOD `ActiveLeafNodes` 数量对齐，不一致时直接失败；
 - 本机 macOS OpenGL 4.1 无法执行该 compute path，只验证了构建和 GPU skip 语义。
 
 4F：GPU Mesh Emit 与 `GpuBuffers` 渲染分支
