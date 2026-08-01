@@ -270,7 +270,7 @@ assets/textures/Tex_Terrain_Debug_Diffuse.ppm
 当前状态：
 
 - `DataOrientedRoamNodePool` 已改为 SoA 数组，domain、parent/child、neighbor、error、方差索引、depth、build id 和 flag 分离存储；
-- `ScreenErrors` 缓存最近一次 split / merge 队列评分，为 3C 并行误差评估保留连续写入目标；
+- `ScreenErrors` 缓存最近一次 split / merge 队列评分，并作为融合 split 扫描的连续写入目标；
 - DOD 私有统计记录 SoA 数组数量和容量估算，统一 benchmark 接口保持不变。
 
 3C：线程池与并行误差评估
@@ -282,11 +282,11 @@ assets/textures/Tex_Terrain_Debug_Diffuse.ppm
 
 当前状态：
 
-- 新增 DOD `ErrorEvaluation` pass，先收集当前 active leaf，再批量刷新 SoA `ScreenErrors`；
-- 自动 worker 模式会按硬件线程数保守封顶，小批量 leaf 保持串行以避免线程启动成本吞掉收益；
-- 统一 benchmark 的 `CpuErrorEvalMilliseconds` 已接入 DOD 批量误差评估耗时；split 候选标记与 split 拓扑提交分别记录在 `CpuSplitCandidateMarkMilliseconds` 和 `CpuSplitTopologyMilliseconds`，不再使用折叠的决策阶段字段；
-- 统一 UI 和 benchmark 已输出 CPU worker 数与 CPU 占用率，用于观察并行评估是否真正吃到多核；
-- 拓扑提交、约束传播和 split / merge 仍保持单线程，为 3D 的并行候选标记与 thread-local 收集保留清晰边界。
+- 历史版本曾使用独立 DOD `ErrorEvaluation` pass，先收集 active leaf，再批量刷新 `ScreenErrors`；当前实现已将其并入 3D 的 split 扫描，避免重复遍历；
+- 自动 worker 模式会按硬件线程数保守封顶，小批量 leaf 保持串行以避免调度成本吞掉收益；
+- `CpuErrorEvalMilliseconds` 与 `CpuBudgetLeafCollectMilliseconds` 在 DOD 中作为兼容字段保持为 0；融合区间统一记录到 `CpuSplitCandidateMarkMilliseconds`，split 拓扑仍独立记录到 `CpuSplitTopologyMilliseconds`；
+- 统一 UI 和 benchmark 输出实际 worker 数、CPU 占用率及 `CPU split scan/mark ms`，用于观察融合扫描是否真正获得多核收益；
+- topology commit、约束传播继续与只读扫描分开；安全 chunk 内候选可并行预提交，其余路径串行收敛。
 
 3D：并行标记与收集
 
@@ -297,13 +297,17 @@ assets/textures/Tex_Terrain_Debug_Diffuse.ppm
 
 当前状态：
 
-- DOD split pass 已改为按 node index 分块扫描 active topology，并用 thread-local buffer 收集 active leaves；
-- split candidate 标记读取批量 `ScreenErrors` 缓存并行过滤，合并后统一分配稳定 sequence 再进入 priority queue；
-- `ActiveInternalNodes` 连续表与反向 position 表由 split/merge 增量维护；merge candidate 标记只扫描当前 active internal node，不再遍历包含 inactive 历史节点的完整 node pool；
-- 安全 interior diamond 可并行预提交，其余候选和新出现的父层候选由动态串行队列收敛；并行提交在 worker join 后由主线程统一更新 active internal 索引，避免共享 vector 写竞争；
-- active leaf 收集拆为 `CpuBudgetLeafCollectMilliseconds` 与 `CpuFinalLeafCollectMilliseconds`；split/merge 候选标记分别归入 `CpuSplitCandidateMarkMilliseconds` 与 `CpuMergeCandidateMarkMilliseconds`。
+- `ActiveLeafNodes` / `ActiveLeafNodePositions` 与 `ActiveInternalNodes` / `ActiveInternalNodePositions` 都由 split/merge 增量维护；节点池保留历史节点，但候选扫描不再遍历 inactive 历史节点；
+- `CollectSplitCandidates` 按 active leaf 连续索引分块，一个物理 pass 同时完成 active leaf 遍历与计数、像素 SSE/视锥评估、`ScreenErrors` 写入、阈值判断和 split 候选输出；worker-local buffer 合并后统一分配稳定 sequence；
+- active leaf 计数在同一 pass 内直接初始化剩余 triangle-budget token，不再为预算单独递归收集 leaf；
+- 预算满载时的 merge/split 重平衡预扫描也直接读取 `ActiveLeafNodes`；它发生在正式 Split 之前且可能先改拓扑，不能与后续候选结果共用，但已消除独立 root traversal；
+- merge candidate 标记只扫描 active internal 连续索引；安全 interior diamond 可并行预提交，其余候选和新出现的父层候选由动态串行队列收敛；
+- 并行 topology commit 完成后由主线程统一更新两组活动索引，串行 forced split/merge 则立即更新，避免共享 vector 写竞争；validator 仍从 root 独立遍历，并逐项校验活动索引和反向 position，防止索引错误自证正确；
+- 最终 mesh emit 前仍单独收集最终 active leaf，因为 split/merge 已改变拓扑；该阶段记录到 `CpuFinalLeafCollectMilliseconds`，不能与 split 前已消除的重复扫描混为一谈。
 
 2026-08-01 同参数隔离 A/B 中，完整 node-pool 扫描与 active-internal 扫描都保留索引维护成本，只切换 merge 候选来源。DOD 的 `CpuMergeCandidateMarkMilliseconds` 从 `1.6273 ms` 降至 `0.9777 ms`，完整 Merge pass 从 `1.6495 ms` 降至 `0.9985 ms`；两组最大拓扑错误均为 0，平均 triangles/nodes 差异低于 1%。单轮数据用于确认优化方向，正式结论仍应采用多轮重复实验。
+
+同日 split 融合实验先验证了一个反例：只合并循环、仍扫描完整历史 node pool 并沿 parent 链判断 active 时，原三个阶段之和从 `1.6152 ms` 升至 `1.6692 ms`。加入增量 active leaf 索引后，融合 `Split scan/mark` 降至 `0.2969 ms`，Split pass 从 `1.3832 ms` 降至 `0.3044 ms`，CPU update 从 `5.3143 ms` 降至 `3.6372 ms`；最大拓扑错误仍为 0。说明收益来自消除历史节点/parent-chain 工作和重复 leaf 遍历，而不是简单把计时字段合并。
 
 3E：拓扑提交策略
 

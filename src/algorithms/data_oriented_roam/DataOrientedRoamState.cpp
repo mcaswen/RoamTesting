@@ -372,7 +372,8 @@ DataOrientedRoamNodeIndex AddNode(
         varianceTreeIndex,
         varianceIndex);
     // 新节点默认为 leaf，后续 split 才会加入 active internal 索引
-    state.ActiveInternalNodePositions.push_back(InvalidActiveInternalNodePosition);
+    state.ActiveInternalNodePositions.push_back(InvalidActiveNodePosition);
+    state.ActiveLeafNodePositions.push_back(InvalidActiveNodePosition);
     return node;
 }
 
@@ -405,6 +406,8 @@ void ReserveNodePool(DataOrientedRoamState& state)
 
     state.ActiveInternalNodePositions.reserve(targetCapacity);
     state.ActiveInternalNodes.reserve(targetCapacity / 2U);
+    state.ActiveLeafNodePositions.reserve(targetCapacity);
+    state.ActiveLeafNodes.reserve(targetCapacity / 2U + 1U);
 }
 
 void ResetTopology(DataOrientedRoamState& state)
@@ -417,6 +420,8 @@ void ResetTopology(DataOrientedRoamState& state)
     state.FinalActiveLeaves.clear();
     state.ActiveInternalNodes.clear();
     state.ActiveInternalNodePositions.clear();
+    state.ActiveLeafNodes.clear();
+    state.ActiveLeafNodePositions.clear();
 
     state.RootA = AddNode(
         state,
@@ -440,6 +445,10 @@ void ResetTopology(DataOrientedRoamState& state)
     // 这是 Classic ROAM 根 diamond 的起点
     state.Nodes[state.RootA].BaseNeighbor = state.RootB;
     state.Nodes[state.RootB].BaseNeighbor = state.RootA;
+    state.ActiveLeafNodes.push_back(state.RootA);
+    state.ActiveLeafNodePositions[state.RootA] = 0U;
+    state.ActiveLeafNodes.push_back(state.RootB);
+    state.ActiveLeafNodePositions[state.RootB] = 1U;
     state.TopologyMaxDepth = state.Settings.MaxDepth;
 }
 

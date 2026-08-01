@@ -17,7 +17,7 @@ class DataOrientedRoamThreadPool;
 using DataOrientedRoamNodeIndex = std::uint32_t;
 constexpr DataOrientedRoamNodeIndex InvalidDataOrientedRoamNodeIndex =
     std::numeric_limits<DataOrientedRoamNodeIndex>::max();
-constexpr std::size_t InvalidActiveInternalNodePosition =
+constexpr std::size_t InvalidActiveNodePosition =
     std::numeric_limits<std::size_t>::max();
 // chunk id 是并发 topology commit 的 ownership 键
 using DataOrientedRoamChunkId = std::uint32_t;
@@ -212,6 +212,9 @@ struct DataOrientedRoamState
     std::vector<DataOrientedRoamNodeIndex> ActiveInternalNodes;
     // 节点索引到 ActiveInternalNodes 位置的反向表，支持 O(1) swap-remove
     std::vector<std::size_t> ActiveInternalNodePositions;
+    // 当前 active leaf 的连续索引直接驱动融合 split scan。
+    std::vector<DataOrientedRoamNodeIndex> ActiveLeafNodes;
+    std::vector<std::size_t> ActiveLeafNodePositions;
 
     // RootA 和 RootB 构成初始 diamond
     DataOrientedRoamNodeIndex RootA{InvalidDataOrientedRoamNodeIndex};
@@ -296,8 +299,6 @@ void EmitLeafTriangles(
     const std::vector<DataOrientedRoamNodeIndex>& leafNodes);
 
 [[nodiscard]] float EvaluateScreenErrorForNode(DataOrientedRoamState& state, DataOrientedRoamNodeIndex node);
-
-void EvaluateScreenErrors(DataOrientedRoamState& state, const std::vector<DataOrientedRoamNodeIndex>& leafNodes);
 
 void CollectSplitCandidates(DataOrientedRoamState& state, std::vector<DataOrientedRoamSplitCandidate>& candidates);
 

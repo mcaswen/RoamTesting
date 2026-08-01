@@ -141,18 +141,8 @@ Terrain::TerrainMeshData DataOrientedRoamMeshBuilder::BuildInternal(
     MergeWithDiamondQueue(state);
     const auto mergeEnd = std::chrono::steady_clock::now();
 
-    // 每次 leaf split 净增一个活动三角形，原子 token 供并行 commit 共同消费
-    const auto budgetCollectStart = std::chrono::steady_clock::now();
-    CollectLeafNodes(state, state.FinalActiveLeaves);
-    const std::size_t remainingBudget = state.Settings.TriangleBudget > state.FinalActiveLeaves.size()
-        ? state.Settings.TriangleBudget - state.FinalActiveLeaves.size()
-        : 0U;
-    state.RemainingSplitBudget.store(remainingBudget, std::memory_order_relaxed);
-    state.FinalActiveLeaves.clear();
-    const auto budgetCollectEnd = std::chrono::steady_clock::now();
-
     const auto splitStart = std::chrono::steady_clock::now();
-    // split pass 再按当前相机重新分配细节
+    // 融合扫描同时统计 active leaf、初始化预算、评估 SSE 并生成 split 候选。
     RefineWithSplitQueue(state);
     const auto splitEnd = std::chrono::steady_clock::now();
 
@@ -185,8 +175,8 @@ Terrain::TerrainMeshData DataOrientedRoamMeshBuilder::BuildInternal(
         ? ElapsedMilliseconds(finalCollectStart, meshEmitEnd)
         : 0.0F;
     state.Stats.PrepareMilliseconds = ElapsedMilliseconds(updateStart, prepareEnd);
-    state.Stats.BudgetLeafCollectMilliseconds =
-        ElapsedMilliseconds(budgetCollectStart, budgetCollectEnd);
+    // DOD 不再有独立的预算 leaf collect，时间归入融合 split candidate pass。
+    state.Stats.BudgetLeafCollectMilliseconds = 0.0F;
     state.Stats.FinalLeafCollectMilliseconds =
         ElapsedMilliseconds(finalCollectStart, finalCollectEnd);
     state.Stats.MeshEmitMilliseconds = emitCpuMesh

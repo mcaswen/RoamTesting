@@ -327,6 +327,10 @@ void ValidateTopology(DataOrientedRoamState& state)
     {
         ++state.Stats.InvalidTopologyCount;
     }
+    if (state.ActiveLeafNodePositions.size() != state.Nodes.size())
+    {
+        ++state.Stats.InvalidTopologyCount;
+    }
 
     for (std::size_t position = 0U; position < state.ActiveInternalNodes.size(); ++position)
     {
@@ -343,8 +347,37 @@ void ValidateTopology(DataOrientedRoamState& state)
     for (std::size_t nodeIndex = 0U; nodeIndex < state.Nodes.size(); ++nodeIndex)
     {
         const bool indexed = nodeIndex < state.ActiveInternalNodePositions.size() &&
-                             state.ActiveInternalNodePositions[nodeIndex] != InvalidActiveInternalNodePosition;
+                             state.ActiveInternalNodePositions[nodeIndex] != InvalidActiveNodePosition;
         if (indexed != (reachableInternal[nodeIndex] != 0U))
+        {
+            ++state.Stats.InvalidTopologyCount;
+        }
+    }
+
+    // active leaf 索引必须与原有 root 遍历结果相同，且反向 position 唯一。
+    // 这里故意保留独立 root traversal，避免 validator 与被验证索引共享同一个真值来源。
+    if (state.ActiveLeafNodes.size() != leafNodes.size())
+    {
+        ++state.Stats.InvalidTopologyCount;
+    }
+    for (std::size_t position = 0U; position < state.ActiveLeafNodes.size(); ++position)
+    {
+        // 正向表中的每个元素都必须反查到当前位置，并且确实属于可达 leaf 集合。
+        const DataOrientedRoamNodeIndex nodeIndex = state.ActiveLeafNodes[position];
+        if (!state.IsValidNode(nodeIndex) ||
+            nodeIndex >= state.ActiveLeafNodePositions.size() ||
+            state.ActiveLeafNodePositions[nodeIndex] != position ||
+            !leafSet[nodeIndex])
+        {
+            ++state.Stats.InvalidTopologyCount;
+        }
+    }
+    for (std::size_t nodeIndex = 0U; nodeIndex < state.Nodes.size(); ++nodeIndex)
+    {
+        // 反向全扫捕获漏登记 leaf，以及 merge 后仍残留 position 的 inactive child。
+        const bool indexed = nodeIndex < state.ActiveLeafNodePositions.size() &&
+                             state.ActiveLeafNodePositions[nodeIndex] != InvalidActiveNodePosition;
+        if (indexed != leafSet[nodeIndex])
         {
             ++state.Stats.InvalidTopologyCount;
         }

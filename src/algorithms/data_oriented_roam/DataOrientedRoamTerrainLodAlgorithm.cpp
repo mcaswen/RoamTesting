@@ -140,10 +140,10 @@ TerrainLodStats DataOrientedRoamTerrainLodAlgorithm::ToTerrainLodStats(const Dat
         stats.EmitWorkerCount,
         stats.TopologyCommitWorkerCount,
     });
-    // error eval 从 split pass 里拆出独立 CSV 字段
+    // 融合扫描后 error/collect 独立时间为零，完整扫描成本归入 split mark。
     const float errorEvaluationMilliseconds = ErrorEvaluationMilliseconds(stats);
     const float splitCollectMilliseconds =
-        // split pass 内部先 collect/mark 再进入队列提交
+        // 保留公式兼容旧报告；当前 ActiveLeafCollectMilliseconds 为零。
         stats.ActiveLeafCollectMilliseconds + stats.SplitCandidateMarkMilliseconds;
     lodStats.CpuUpdateMilliseconds = stats.UpdateMilliseconds;
     lodStats.CpuPrepareMilliseconds = stats.PrepareMilliseconds;

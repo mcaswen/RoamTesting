@@ -80,11 +80,11 @@ struct DataOrientedRoamStats
     std::size_t TjunctionCount{0};
     std::size_t InvalidNeighborCount{0};
     std::size_t InvalidTopologyCount{0};
-    // ErrorEvaluationCount 记录批量评分覆盖的 active leaf 数量
+    // ErrorEvaluationCount 记录融合 split 扫描实际评分的 active leaf 数量
     std::size_t ErrorEvaluationCount{0};
     // worker count 是本帧实际采用的并行宽度
     std::size_t ErrorEvaluationWorkerCount{0};
-    // collect 和 mark 分开统计，便于观察不规则拓扑扫描成本
+    // collect/mark worker 统计保留统一接口；融合 split 扫描会同时更新两者
     std::size_t CollectWorkerCount{0};
     std::size_t CandidateMarkWorkerCount{0};
     // emit worker 数用于确认 CPU mesh 输出是否进入并行路径
@@ -114,10 +114,10 @@ struct DataOrientedRoamStats
     float FinalLeafCollectMilliseconds{0.0F};
     float MeshEmitMilliseconds{0.0F};
     float FinalizeMilliseconds{0.0F};
-    // 两个耗时字段按实际路径择一写入
+    // 兼容旧报告；融合 split 扫描后两个独立误差耗时字段保持为零
     float ErrorEvaluationSingleThreadMilliseconds{0.0F};
     float ErrorEvaluationParallelMilliseconds{0.0F};
-    // collect/mark 耗时映射到统一的 merge/split candidate 阶段
+    // ActiveLeafCollectMilliseconds 兼容旧报告并保持为零；融合成本归入 split mark
     float ActiveLeafCollectMilliseconds{0.0F};
     float SplitCandidateMarkMilliseconds{0.0F};
     float MergeCandidateMarkMilliseconds{0.0F};
@@ -129,7 +129,7 @@ struct DataOrientedRoamStats
 };
 
 /// <summary>
-/// Data-Oriented CPU ROAM 在 SoA 节点池上评估 active leaf screen error
+/// Data-Oriented CPU ROAM 在 SoA 节点池上维护持久拓扑并生成 CPU Mesh
 /// </summary>
 class DataOrientedRoamMeshBuilder
 {

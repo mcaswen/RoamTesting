@@ -371,7 +371,7 @@ void DrawDetailedPerformanceMetrics(const DebugOverlayData& data)
     DrawMetricFloat("CPU merge topology ms", data.RoamCpuMergeTopologyMilliseconds, "%.2f");
     DrawMetricFloat("CPU budget collect ms", data.RoamCpuBudgetLeafCollectMilliseconds, "%.2f");
     DrawMetricFloat("CPU error eval ms", data.RoamCpuErrorEvalMilliseconds, "%.2f");
-    DrawMetricFloat("CPU split mark ms", data.RoamCpuSplitCandidateMarkMilliseconds, "%.2f");
+    DrawMetricFloat("CPU split scan/mark ms", data.RoamCpuSplitCandidateMarkMilliseconds, "%.2f");
     DrawMetricFloat("CPU split topology ms", data.RoamCpuSplitTopologyMilliseconds, "%.2f");
     DrawMetricFloat("CPU final collect ms", data.RoamCpuFinalLeafCollectMilliseconds, "%.2f");
     DrawMetricFloat("CPU mesh emit ms", data.RoamCpuMeshEmitMilliseconds, "%.2f");

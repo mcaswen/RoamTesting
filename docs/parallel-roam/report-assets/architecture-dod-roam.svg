@@ -48,11 +48,11 @@
   <line x1="70" y1="490" x2="340" y2="490" stroke="#bbf7d0"/>
   <text x="205" y="517" text-anchor="middle" class="code">PreviousSplitPaths</text>
   <text x="205" y="540" text-anchor="middle" class="code">CurrentSplitPaths</text>
-  <text x="205" y="563" text-anchor="middle" class="code">FinalActiveLeaves</text>
+  <text x="205" y="563" text-anchor="middle" class="code">ActiveLeafNodes / ActiveInternalNodes</text>
   <text x="205" y="586" text-anchor="middle" class="code">RootA / RootB / VarianceTrees</text>
   <line x1="70" y1="609" x2="340" y2="609" stroke="#bbf7d0"/>
   <text x="205" y="636" text-anchor="middle" class="code">DataOrientedRoamStats</text>
-  <text x="205" y="660" text-anchor="middle" class="small">Error / Collect / Topology / Emit 耗时桶</text>
+  <text x="205" y="660" text-anchor="middle" class="small">Split scan / Merge mark / Topology / Emit</text>
   <text x="205" y="683" text-anchor="middle" class="small">worker 数、候选数量、chunk commit 覆盖面</text>
 
   <rect x="400" y="340" width="300" height="64" rx="8" class="pass"/>
@@ -61,14 +61,14 @@
   <path d="M550 404 L550 424" class="line"/>
 
   <rect x="400" y="424" width="300" height="64" rx="8" class="pass"/>
-  <text x="550" y="450" text-anchor="middle" class="code">并行误差评估 pass</text>
-  <text x="550" y="472" text-anchor="middle" class="small">EvaluateScreenErrors() 批量写入 ScreenErrors</text>
+  <text x="550" y="450" text-anchor="middle" class="code">融合 Split 扫描 pass</text>
+  <text x="550" y="472" text-anchor="middle" class="small">active leaf + SSE/frustum + candidate</text>
   <path d="M550 488 L550 508" class="line"/>
 
   <rect x="400" y="508" width="300" height="74" rx="8" class="pass"/>
-  <text x="550" y="535" text-anchor="middle" class="code">候选标记 pass</text>
-  <text x="550" y="558" text-anchor="middle" class="small">CollectSplitCandidates() 生成 split 队列</text>
-  <text x="550" y="577" text-anchor="middle" class="small">CollectMergeCandidates() 生成 merge 队列</text>
+  <text x="550" y="535" text-anchor="middle" class="code">Merge 候选标记 pass</text>
+  <text x="550" y="558" text-anchor="middle" class="small">扫描 ActiveInternalNodes</text>
+  <text x="550" y="577" text-anchor="middle" class="small">低 score diamond 进入 merge queue</text>
   <path d="M550 582 L550 604" class="line"/>
 
   <rect x="400" y="604" width="300" height="84" rx="8" class="pass"/>
@@ -85,7 +85,7 @@
   <text x="895" y="370" text-anchor="middle" class="section">并行调度与验证</text>
   <text x="895" y="399" text-anchor="middle" class="code">DataOrientedRoamThreadPool</text>
   <text x="895" y="423" text-anchor="middle" class="small">EnsureWorkerCount() 固定 worker 数后复用线程</text>
-  <text x="895" y="446" text-anchor="middle" class="small">ParallelFor 分发 error / mark / emit 批处理</text>
+  <text x="895" y="446" text-anchor="middle" class="small">ParallelFor 分发 split scan / merge mark / emit</text>
   <line x1="760" y1="470" x2="1030" y2="470" stroke="#bfdbfe"/>
   <text x="895" y="497" text-anchor="middle" class="code">拓扑验证 pass</text>
   <text x="895" y="521" text-anchor="middle" class="small">ValidateTopology() 只统计异常，不主动修复</text>

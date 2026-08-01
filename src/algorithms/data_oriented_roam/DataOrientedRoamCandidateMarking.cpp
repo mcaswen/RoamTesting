@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cstddef>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace ParallelRoam::Algorithms::DataOrientedRoam
@@ -39,97 +40,11 @@ std::size_t ResolveTopologyWorkerCount(const DataOrientedRoamState& state, std::
     return std::clamp(requestedWorkerCount, std::size_t{1}, workItemCount);
 }
 
-bool IsActiveTopologyNode(const DataOrientedRoamState& state, DataOrientedRoamNodeIndex node)
+struct FusedSplitScanOutput
 {
-    if (!state.IsValidNode(node))
-    {
-        return false;
-    }
-
-    DataOrientedRoamNodeIndex cursor = node;
-    // 只要祖先有一个已经 merge  当前 node 就是 inactive 历史节点
-    while (state.IsValidNode(state.Nodes[cursor].Parent))
-    {
-        const DataOrientedRoamNodeIndex parent = state.Nodes[cursor].Parent;
-        if (!state.Nodes[parent].IsSplit)
-        {
-            // parent 已 merge 时，旧 child 仍在 node pool 但不属于 active topology
-            return false;
-        }
-
-        cursor = parent;
-    }
-
-    // parent 链最终必须回到两个 root 之一
-    return cursor == state.RootA || cursor == state.RootB;
-}
-
-void CollectActiveLeafNodes(DataOrientedRoamState& state, std::vector<DataOrientedRoamNodeIndex>& leafNodes)
-{
-    leafNodes.clear();
-    const auto start = std::chrono::steady_clock::now();
-    const std::size_t nodeCount = state.Nodes.size();
-    const std::size_t workerCount = ResolveTopologyWorkerCount(state, nodeCount);
-    // collect worker 数用于判断 active leaf 扫描是否进入并行路径
-    state.Stats.CollectWorkerCount = std::max(state.Stats.CollectWorkerCount, workerCount);
-
-    if (nodeCount == 0U)
-    {
-        // 空 node pool 只会出现在输入无效或 reset 前后
-        return;
-    }
-
-    const auto collectRange =
-        [&state](std::size_t begin, std::size_t end, std::vector<DataOrientedRoamNodeIndex>& outLeaves) {
-        // node index 范围固定  每个 worker 只写自己的 local buffer
-        for (std::size_t index = begin; index < end; ++index)
-        {
-            const auto node = static_cast<DataOrientedRoamNodeIndex>(index);
-            if (state.IsLeaf(node) && IsActiveTopologyNode(state, node))
-            {
-                outLeaves.push_back(node);
-            }
-        }
-    };
-
-    if (workerCount <= 1U)
-    {
-        // 串行路径复用同一个 range 函数  保持筛选口径一致
-        collectRange(0U, nodeCount, leafNodes);
-        state.Stats.ActiveLeafCollectMilliseconds = ElapsedMilliseconds(start, std::chrono::steady_clock::now());
-        return;
-    }
-
-    const std::size_t chunkSize = (nodeCount + workerCount - 1U) / workerCount;
-    std::vector<std::vector<DataOrientedRoamNodeIndex>> localLeaves(workerCount);
-    // localLeaves 避免多个 worker 同时 push 同一个 vector
-    RunDataOrientedRoamWorkers(state, workerCount, [&](std::size_t workerIndex) {
-        const std::size_t begin = workerIndex * chunkSize;
-        const std::size_t end = std::min(begin + chunkSize, nodeCount);
-        if (begin >= end)
-        {
-            return;
-        }
-
-        collectRange(begin, end, localLeaves[workerIndex]);
-    });
-
-    std::size_t totalLeafCount = 0U;
-    for (const std::vector<DataOrientedRoamNodeIndex>& localBuffer : localLeaves)
-    {
-        // 先统计总数  再一次 reserve 最终输出
-        totalLeafCount += localBuffer.size();
-    }
-
-    leafNodes.reserve(totalLeafCount);
-    for (std::vector<DataOrientedRoamNodeIndex>& localBuffer : localLeaves)
-    {
-        // 按 chunk 顺序合并  保持候选顺序稳定
-        leafNodes.insert(leafNodes.end(), localBuffer.begin(), localBuffer.end());
-    }
-
-    state.Stats.ActiveLeafCollectMilliseconds = ElapsedMilliseconds(start, std::chrono::steady_clock::now());
-}
+    // 候选只写 worker-local vector，扫描阶段不需要互斥锁。
+    std::vector<DataOrientedRoamSplitCandidate> Candidates;
+};
 } // 匿名命名空间
 
 bool CanMergeNode(const DataOrientedRoamState& state, DataOrientedRoamNodeIndex node)
@@ -195,77 +110,87 @@ bool CanMergeNode(
 void CollectSplitCandidates(DataOrientedRoamState& state, std::vector<DataOrientedRoamSplitCandidate>& candidates)
 {
     candidates.clear();
-    std::vector<DataOrientedRoamNodeIndex> activeLeaves;
-    // 批量评分只覆盖进入 split pass 前已有的 active leaf
-    CollectActiveLeafNodes(state, activeLeaves);
-    // 评估完成前不修改拓扑  leaf index 快照保持有效
-    EvaluateScreenErrors(state, activeLeaves);
-
     const auto start = std::chrono::steady_clock::now();
-    const std::size_t workerCount = ResolveTopologyWorkerCount(state, activeLeaves.size());
-    // split 和 merge 标记共享同一个 worker 统计
+    const std::size_t leafCount = state.ActiveLeafNodes.size();
+    const std::size_t workerCount = ResolveTopologyWorkerCount(state, leafCount);
+    // 一个物理 pass 同时承担 active leaf 判定、SSE/视锥评估和 split 标记。
+    state.Stats.CollectWorkerCount = std::max(state.Stats.CollectWorkerCount, workerCount);
+    state.Stats.ErrorEvaluationWorkerCount = workerCount;
     state.Stats.CandidateMarkWorkerCount = std::max(state.Stats.CandidateMarkWorkerCount, workerCount);
+    // 旧字段继续输出，零值明确表示职责已融合而不是没有执行。
+    state.Stats.ActiveLeafCollectMilliseconds = 0.0F;
+    state.Stats.ErrorEvaluationSingleThreadMilliseconds = 0.0F;
+    state.Stats.ErrorEvaluationParallelMilliseconds = 0.0F;
 
-    if (activeLeaves.empty())
+    if (leafCount == 0U)
     {
-        // 没有 active leaf 时无需启动候选标记
+        // 空池没有 active leaf，完整预算可供后续防御路径使用。
+        state.Stats.ErrorEvaluationCount = 0U;
+        state.RemainingSplitBudget.store(state.Settings.TriangleBudget, std::memory_order_relaxed);
         return;
     }
 
-    const auto markRange =
-        [&state, &activeLeaves](std::size_t begin, std::size_t end, std::vector<DataOrientedRoamSplitCandidate>& outCandidates) {
-        // 这里只读缓存分数  不重复采样 HeightMap
+    const auto scanRange =
+        [&state](std::size_t begin, std::size_t end, FusedSplitScanOutput& output) {
+        // 每个 worker 写互不重叠的 ScreenErrors 槽位和自己的候选 buffer。
+        // ActiveLeafNodes 在 topology commit 前只读稳定，因此无需重新检查 parent 链。
         for (std::size_t index = begin; index < end; ++index)
         {
-            const DataOrientedRoamNodeIndex node = activeLeaves[index];
-            if (!state.IsValidNode(node) || !state.IsLeaf(node) || state.Nodes[node].Depth >= state.Settings.MaxDepth)
+            const DataOrientedRoamNodeIndex node = state.ActiveLeafNodes[index];
+            if (!state.IsValidNode(node) || !state.IsLeaf(node))
             {
-                // 并行评估后拓扑仍可能因其他约束变化而使候选失效
+                // validator 会捕获索引不变量异常；扫描本身保持防御性跳过。
                 continue;
             }
 
-            const float score = state.Nodes[node].ScreenError;
-            // hysteresis 仍在 ShouldSplitWithScore 内统一处理
-            if (ShouldSplitWithScore(state, state.Nodes[node], score))
+            // score 只计算一次，同时供当前候选和后续诊断读取。
+            const DataOrientedRoamNodePool& nodes = state.Nodes;
+            const float score = ComputeScreenErrorScore(state, nodes[node]);
+            state.Nodes.ScreenErrors[node] = score;
+            if (nodes.Depths[node] < state.Settings.MaxDepth &&
+                ShouldSplitWithScore(state, nodes[node], score))
             {
-                outCandidates.push_back(DataOrientedRoamSplitCandidate{score, 0U, node});
+                // max depth 与 hysteresis 在生成候选前过滤，降低 priority queue 压力。
+                output.Candidates.push_back(DataOrientedRoamSplitCandidate{score, 0U, node});
             }
         }
     };
 
     if (workerCount <= 1U)
     {
-        // 小批量 leaf 不走并行调度  减少帧间抖动
-        markRange(0U, activeLeaves.size(), candidates);
+        // 串行路径复用相同扫描函数，保持 active 判定与并行路径一致。
+        FusedSplitScanOutput output;
+        scanRange(0U, leafCount, output);
+        candidates = std::move(output.Candidates);
     }
     else
     {
-        const std::size_t chunkSize = (activeLeaves.size() + workerCount - 1U) / workerCount;
-        std::vector<std::vector<DataOrientedRoamSplitCandidate>> localCandidates(workerCount);
-        // 每个 worker 的候选列表独立增长  不需要锁
+        const std::size_t chunkSize = (leafCount + workerCount - 1U) / workerCount;
+        // localOutputs 的下标就是稳定的 active-leaf range 顺序。
+        std::vector<FusedSplitScanOutput> localOutputs(workerCount);
         RunDataOrientedRoamWorkers(state, workerCount, [&](std::size_t workerIndex) {
             const std::size_t begin = workerIndex * chunkSize;
-            const std::size_t end = std::min(begin + chunkSize, activeLeaves.size());
+            const std::size_t end = std::min(begin + chunkSize, leafCount);
             if (begin >= end)
             {
                 return;
             }
 
-            markRange(begin, end, localCandidates[workerIndex]);
+            scanRange(begin, end, localOutputs[workerIndex]);
         });
 
         std::size_t totalCandidateCount = 0U;
-        for (const std::vector<DataOrientedRoamSplitCandidate>& localBuffer : localCandidates)
+        for (const FusedSplitScanOutput& output : localOutputs)
         {
-            // 合并前计算总量  避免反复扩容
-            totalCandidateCount += localBuffer.size();
+            // 先汇总总量，主候选 vector 只扩容一次。
+            totalCandidateCount += output.Candidates.size();
         }
 
         candidates.reserve(totalCandidateCount);
-        for (std::vector<DataOrientedRoamSplitCandidate>& localBuffer : localCandidates)
+        for (FusedSplitScanOutput& output : localOutputs)
         {
-            // chunk 顺序即稳定 sequence 的基础
-            candidates.insert(candidates.end(), localBuffer.begin(), localBuffer.end());
+            // 按 worker range 顺序合并，使相同 score 的 sequence 跨帧确定。
+            candidates.insert(candidates.end(), output.Candidates.begin(), output.Candidates.end());
         }
     }
 
@@ -275,7 +200,16 @@ void CollectSplitCandidates(DataOrientedRoamState& state, std::vector<DataOrient
         candidates[index].Sequence = index;
     }
 
+    state.Stats.ErrorEvaluationCount = leafCount;
     state.Stats.SplitCandidateCount = candidates.size();
+    // 每次成功 split 净增一个 active leaf，因此当前 leaf 数可直接换算剩余 token。
+    // 使用索引原始大小能在索引损坏时保持预算保守，validator 会报告具体不变量错误。
+    const std::size_t remainingBudget = state.Settings.TriangleBudget > leafCount
+        ? state.Settings.TriangleBudget - leafCount
+        : 0U;
+    state.RemainingSplitBudget.store(remainingBudget, std::memory_order_relaxed);
+    // 融合区间统一归入 split candidate mark；独立 collect/error 字段保持为零。
+    // 这样互斥阶段之和仍能还原 SplitMilliseconds，不会重复计算同一循环。
     state.Stats.SplitCandidateMarkMilliseconds = ElapsedMilliseconds(start, std::chrono::steady_clock::now());
 }
 

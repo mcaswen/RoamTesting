@@ -306,6 +306,7 @@ TerrainLodStats ToLodStats(const DataOrientedRoam::DataOrientedRoamStats& stats)
     result.CpuMergeTopologyMilliseconds =
         std::max(0.0F, stats.MergeMilliseconds - stats.MergeCandidateMarkMilliseconds);
     result.CpuBudgetLeafCollectMilliseconds = stats.BudgetLeafCollectMilliseconds;
+    // CPU DOD baseline 已融合 collect/error/mark，独立 error 时间保持为零。
     result.CpuErrorEvalMilliseconds = stats.ErrorEvaluationWorkerCount > 1U
         ? stats.ErrorEvaluationParallelMilliseconds
         : stats.ErrorEvaluationSingleThreadMilliseconds;

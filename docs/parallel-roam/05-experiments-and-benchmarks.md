@@ -218,6 +218,26 @@ CPU 阶段按互斥执行区间记录，阶段和应接近 `cpuUpdateMs`；原�
 
 实验组为 `runtime-benchmark-20260801-030432`，control 为 `runtime-benchmark-20260801-030623`。两次运行的帧采样点数量随性能变化而不同，因此 triangles/nodes 不要求逐帧完全相等；当前结果证明候选扫描成本显著下降且输出规模没有系统性缩水，但正式报告仍应补充多轮重复和方差。
 
+### DOD active leaf 融合 Split 扫描 A/B
+
+本轮继续使用相同的 OpenGL RelWithDebInfo、Test129、Terrain size 30、Height scale 4、Max depth 14、split/merge 4 px / 2 px、Triangle budget 20000，每种算法运行 10 秒。基线为上述 active internal 优化后的 `runtime-benchmark-20260801-030432`；最终实验组为 `runtime-benchmark-20260801-195558`。
+
+实现将 split 前的 active leaf 收集、预算 leaf 计数、像素 SSE/视锥评估、`ScreenErrors` 写入和 threshold 候选标记融合到 `CollectSplitCandidates` 的一次 active-leaf-index 扫描。预算满载时的 merge/split 重平衡仍需在正式 Split 之前评估需求，但也直接读取 `ActiveLeafNodes`，不再递归收集。DOD 的 `Budget leaf collect` 与独立 `Error eval` 兼容字段因此为 0，融合物理区间完整归入 `Split scan/mark`，避免同一循环被多个统计字段重复计时。
+
+| DOD 指标 | 独立 pass 基线 | 融合 active-leaf-index 扫描 | 变化 |
+| --- | ---: | ---: | ---: |
+| Split 前扫描工作合计 | 1.6152 ms | 0.2969 ms | -81.6% |
+| Split pass 包络 | 1.3832 ms | 0.3044 ms | -78.0% |
+| CPU update | 5.3143 ms | 3.6372 ms | -31.6% |
+| LOD total | 5.6192 ms | 3.8987 ms | -30.6% |
+| Avg triangles | 12434.6 | 12283.3 | -1.2% |
+| Avg nodes | 42420.0 | 42975.4 | +1.3% |
+| Max topology issues | 0 | 0 | 不变 |
+
+第一行基线是 `Budget leaf collect + Error eval + Split mark`；它包含基线中位于 Split pass 包络外的预算计数，所以不能与第二行混加。一次机械融合 control `runtime-benchmark-20260801-194942` 仍扫描完整持久 node pool，并为每个节点沿 parent 链判断是否 active，结果为 `1.6692 ms`，比基线三个阶段之和高 3.3%。最终收益因此应归因于增量维护 `ActiveLeafNodes`、只扫描真实活动叶以及消除重复遍历，而不是函数合并本身。
+
+两组测试按固定运行时长而不是固定 Build 次数采样；优化后每秒 Build 次数增加，使相机路径上的采样密度和每帧 split/merge 数发生变化。triangles/nodes 的小幅差异不能直接解释为质量变化。本表是单轮方向性 A/B，正式论文或结项报告仍需固定轨迹、重复多轮并报告方差。
+
 ## 结论写法
 
 所有项目自有的 `.md` 实验报告和运行时报告必须使用中文编写，包括标题、正文说明、状态、限制和结论。算法名、API 名、shader/pass 名、单位、CSV 字段和表格参数等技术术语可以保留英语；不得因此把整段说明或完整标题写成英语。报告生成器也必须遵守这一规则，保证新生成文件不需要再人工翻译。

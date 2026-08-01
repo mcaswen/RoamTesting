@@ -48,6 +48,7 @@ struct CommittedMerge
 {
     DataOrientedRoamNodeIndex Node{InvalidDataOrientedRoamNodeIndex};
     DataOrientedRoamNodeIndex BaseNeighbor{InvalidDataOrientedRoamNodeIndex};
+    bool MergedBaseNeighbor{false};
     DataOrientedRoamNodeIndex Parent{InvalidDataOrientedRoamNodeIndex};
     DataOrientedRoamNodeIndex BaseParent{InvalidDataOrientedRoamNodeIndex};
 };
@@ -61,7 +62,7 @@ void ActivateInternalNode(DataOrientedRoamState& state, DataOrientedRoamNodeInde
         return;
     }
 
-    if (state.ActiveInternalNodePositions[node] != InvalidActiveInternalNodePosition)
+    if (state.ActiveInternalNodePositions[node] != InvalidActiveNodePosition)
     {
         return;
     }
@@ -80,7 +81,7 @@ void DeactivateInternalNode(DataOrientedRoamState& state, DataOrientedRoamNodeIn
     }
 
     const std::size_t position = state.ActiveInternalNodePositions[node];
-    if (position == InvalidActiveInternalNodePosition ||
+    if (position == InvalidActiveNodePosition ||
         position >= state.ActiveInternalNodes.size())
     {
         return;
@@ -90,7 +91,63 @@ void DeactivateInternalNode(DataOrientedRoamState& state, DataOrientedRoamNodeIn
     state.ActiveInternalNodes[position] = movedNode;
     state.ActiveInternalNodePositions[movedNode] = position;
     state.ActiveInternalNodes.pop_back();
-    state.ActiveInternalNodePositions[node] = InvalidActiveInternalNodePosition;
+    state.ActiveInternalNodePositions[node] = InvalidActiveNodePosition;
+}
+
+void ActivateLeafNode(DataOrientedRoamState& state, DataOrientedRoamNodeIndex node)
+{
+    // leaf index 与 internal index 互斥；调用者必须先完成 IsSplit 状态转换。
+    // sentinel 检查让 forced split 或 diamond 两侧重复通知保持幂等。
+    if (!state.IsValidNode(node) || node >= state.ActiveLeafNodePositions.size() ||
+        state.ActiveLeafNodePositions[node] != InvalidActiveNodePosition)
+    {
+        return;
+    }
+
+    state.ActiveLeafNodePositions[node] = state.ActiveLeafNodes.size();
+    state.ActiveLeafNodes.push_back(node);
+}
+
+void DeactivateLeafNode(DataOrientedRoamState& state, DataOrientedRoamNodeIndex node)
+{
+    // 和 internal index 相同，leaf 顺序不表达拓扑或优先级，可以安全 swap-remove。
+    // 被换入空位的末尾节点必须同步更新反向 position。
+    if (!state.IsValidNode(node) || node >= state.ActiveLeafNodePositions.size())
+    {
+        return;
+    }
+
+    const std::size_t position = state.ActiveLeafNodePositions[node];
+    if (position == InvalidActiveNodePosition || position >= state.ActiveLeafNodes.size())
+    {
+        return;
+    }
+
+    const DataOrientedRoamNodeIndex movedNode = state.ActiveLeafNodes.back();
+    state.ActiveLeafNodes[position] = movedNode;
+    state.ActiveLeafNodePositions[movedNode] = position;
+    state.ActiveLeafNodes.pop_back();
+    state.ActiveLeafNodePositions[node] = InvalidActiveNodePosition;
+}
+
+void ApplySplitIndexTransition(DataOrientedRoamState& state, DataOrientedRoamNodeIndex node)
+{
+    // 一个 leaf split 的集合变化固定为 -1 leaf、+1 internal、+2 leaf。
+    // 净增一个 leaf，与 RemainingSplitBudget 的 token 语义完全一致。
+    DeactivateLeafNode(state, node);
+    ActivateInternalNode(state, node);
+    ActivateLeafNode(state, state.Nodes[node].LeftChild);
+    ActivateLeafNode(state, state.Nodes[node].RightChild);
+}
+
+void ApplyMergeIndexTransition(DataOrientedRoamState& state, DataOrientedRoamNodeIndex node)
+{
+    // 一个 parent merge 是 split 的逆操作：两个 child 退出，parent 回到 leaf 集合。
+    // diamond merge 会由调用者分别对两侧 parent 执行一次转换。
+    DeactivateInternalNode(state, node);
+    DeactivateLeafNode(state, state.Nodes[node].LeftChild);
+    DeactivateLeafNode(state, state.Nodes[node].RightChild);
+    ActivateLeafNode(state, node);
 }
 
 DataOrientedRoamChunkId InteriorChunkIdForNode(const DataOrientedRoamState& state, DataOrientedRoamNodeIndex node)
@@ -458,7 +515,7 @@ bool SplitNode(
     if (counters == nullptr)
     {
         // 并行提交由 join 后的主线程统一更新索引，避免 worker 竞争 vector
-        ActivateInternalNode(state, node);
+        ApplySplitIndexTransition(state, node);
     }
     // 串行路径会记录 path，最终仍由 CollectActiveSplitPaths 重建一次
     RecordSplit(state, parentPathId, reason, counters);
@@ -493,8 +550,8 @@ void MergeSingleNode(
     state.Nodes[node].ActivatedByForcedSplit = false;
     if (counters == nullptr)
     {
-        // parent 重新成为 leaf 后不再属于 active internal 集合
-        DeactivateInternalNode(state, node);
+        // parent 重新成为 leaf，同时两个 child 退出 active leaf 集合。
+        ApplyMergeIndexTransition(state, node);
     }
     RecordMerge(state, counters);
 }
@@ -864,7 +921,8 @@ std::vector<CommittedSplit> CommitInteriorSplitChunks(
 
     for (const CommittedSplit& split : committedSplits)
     {
-        ActivateInternalNode(state, split.Node);
+        // worker 只改 SoA 拓扑；join 后主线程再集中修改两个共享索引 vector。
+        ApplySplitIndexTransition(state, split.Node);
     }
 
     state.Stats.ParallelSplitCommitCount += totalCommittedCount;
@@ -906,6 +964,7 @@ std::vector<CommittedMerge> CommitInteriorMergeChunks(
 
                 // 真正提交前仍复用原 diamond merge 逻辑
                 const DataOrientedRoamNodeIndex baseNeighbor = state.Nodes[node].BaseNeighbor;
+                const bool mergedBaseNeighbor = state.IsValidNode(baseNeighbor) && !state.IsLeaf(baseNeighbor);
                 const DataOrientedRoamNodeIndex parent = state.Nodes[node].Parent;
                 const DataOrientedRoamNodeIndex baseParent = state.IsValidNode(baseNeighbor)
                     ? state.Nodes[baseNeighbor].Parent
@@ -913,7 +972,7 @@ std::vector<CommittedMerge> CommitInteriorMergeChunks(
                 if (MergeNodeOrDiamond(state, node, &localCounters[workerIndex]))
                 {
                     localCommittedMerges[workerIndex].push_back(
-                        CommittedMerge{node, baseNeighbor, parent, baseParent});
+                        CommittedMerge{node, baseNeighbor, mergedBaseNeighbor, parent, baseParent});
                 }
             }
         }
@@ -935,8 +994,14 @@ std::vector<CommittedMerge> CommitInteriorMergeChunks(
 
     for (const CommittedMerge& merge : committedMerges)
     {
-        DeactivateInternalNode(state, merge.Node);
-        DeactivateInternalNode(state, merge.BaseNeighbor);
+        // Node 一定被合并；BaseNeighbor 只有在完整 diamond merge 时才一起转换。
+        ApplyMergeIndexTransition(state, merge.Node);
+        if (merge.MergedBaseNeighbor &&
+            state.IsValidNode(merge.BaseNeighbor) &&
+            merge.BaseNeighbor != merge.Node)
+        {
+            ApplyMergeIndexTransition(state, merge.BaseNeighbor);
+        }
     }
 
     return committedMerges;
@@ -1163,8 +1228,8 @@ void MergeWithDiamondQueue(DataOrientedRoamState& state)
     // 阈值 merge 完成后若预算仍接近满载，按有限批次把低价值旧视野 diamond
     // 交换给高价值新入屏 split。分数必须跨过迟滞差值，避免相近候选来回抖动。
     const auto rebalanceMarkStart = std::chrono::steady_clock::now();
-    std::vector<DataOrientedRoamNodeIndex> activeLeaves;
-    CollectLeafNodes(state, activeLeaves);
+    // merge 提交已同步维护 ActiveLeafNodes，这里直接扫描索引，不再递归收集拓扑。
+    const std::vector<DataOrientedRoamNodeIndex>& activeLeaves = state.ActiveLeafNodes;
     const std::size_t availableBudget = state.Settings.TriangleBudget > activeLeaves.size()
         ? state.Settings.TriangleBudget - activeLeaves.size()
         : 0U;

@@ -549,17 +549,17 @@ void WriteSummaryMarkdown(
              << " | " << dodSummary.AverageCpuBudgetLeafCollectMilliseconds
              << " | " << gpuSummary.AverageCpuBudgetLeafCollectMilliseconds
              << " | " << gpuSummary.AverageGpuInitialLeafCompactionMilliseconds
-             << " | GPU 在评分前再次压缩已上传的 CPU 拓扑 |\n";
+             << " | DOD CPU 已将 active leaf 遍历与计数融合进 Split 候选扫描，本列为 0；GPU 在评分前仍单独压缩 snapshot |\n";
     markdown << "| 视点相关 leaf error / 视锥测试 | " << classicSummary.AverageCpuErrorEvalMilliseconds
              << " | " << dodSummary.AverageCpuErrorEvalMilliseconds
              << " | " << gpuSummary.AverageCpuErrorEvalMilliseconds
              << " | " << gpuSummary.AverageGpuErrorEvaluationMilliseconds
-             << " | Classic 在 split 扫描中内联评估；GPU 基于 snapshot 重复执行 DOD 评分 |\n";
-    markdown << "| Split 候选标记 | " << classicSummary.AverageCpuSplitCandidateMarkMilliseconds
+             << " | Classic 与 DOD 都在 Split 扫描中内联评估，DOD 本列为 0；GPU 基于 snapshot 单独评分 |\n";
+    markdown << "| Split 扫描/标记 | " << classicSummary.AverageCpuSplitCandidateMarkMilliseconds
              << " | " << dodSummary.AverageCpuSplitCandidateMarkMilliseconds
              << " | " << gpuSummary.AverageCpuSplitCandidateMarkMilliseconds
              << " | " << gpuSummary.AverageGpuSplitCandidateMarkingMilliseconds
-             << " | 按 threshold 和 max depth 分类；GPU append 顺序不是误差优先级顺序 |\n";
+             << " | DOD CPU 数值包含 active leaf 遍历、SSE/视锥评估和 threshold 标记；GPU append 顺序不是误差优先级顺序 |\n";
     markdown << "| Split 拓扑 / 裂缝约束提交 | " << classicSummary.AverageCpuSplitTopologyMilliseconds
              << " | " << dodSummary.AverageCpuSplitTopologyMilliseconds
              << " | " << gpuSummary.AverageCpuSplitTopologyMilliseconds
@@ -582,11 +582,12 @@ void WriteSummaryMarkdown(
              << " | N/A | CPU 发布统计和 renderer 资源契约 |\n";
 
     markdown << "\n## CPU 实现阶段\n\n";
-    markdown << "`CPU update` 包含下表中互斥的算法阶段；`CPU upload` 是算法返回后的 renderer 上传。"
-             << "Classic 在扫描和弹出 split queue 时评估屏幕误差，因此单独的 `Error eval` 为零，"
-             << "这部分工作仍计入 `Split mark` / `Split topology`。\n\n";
+    markdown << "`CPU update` 包含下表中互斥的物理执行区间；`CPU upload` 是算法返回后的 renderer 上传。"
+             << "Classic 在扫描和弹出 split queue 时评估屏幕误差；DOD 已把 active leaf 遍历、SSE/视锥评估和"
+             << " threshold 标记融合到同一次 active-leaf-index 扫描。因此两者单独的 `Error eval` 都为零，DOD 的融合成本"
+             << "全部计入 `Split scan/mark`；GPU shader 仍保留独立 dispatch。\n\n";
     markdown << "| Algorithm | CPU update | Prepare | Merge mark | Merge topology | Budget leaf collect | "
-             << "Error eval | Split mark | Split topology | Final leaf collect | Mesh emit | "
+             << "Error eval | Split scan/mark | Split topology | Final leaf collect | Mesh emit | "
              << "Finalize | CPU upload |\n";
     markdown << "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n";
     for (const RuntimeBenchmarkAlgorithmResult& result : results)
