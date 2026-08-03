@@ -1,26 +1,46 @@
 # 面向固定拓扑预算的 GPU 自适应网格细分：兼容闭包感知的全局资源分配
 
-本项目是一个面向高度图地形的自适应网格细分研究与实验平台。项目以自研的 Classic ROAM、Data-Oriented CPU ROAM、GPU ROAM-like 工程实现与优化和论文 CBT 2024：Large-scale Adaptive Mesh Refinement on the GPU(以下简称“CBT 2024”) 为对照路径，正在研究固定拓扑容量下兼顾视觉收益、兼容闭包成本与 GPU 并行性的全局资源分配方法。
+本项目是一个面向高度图地形的自适应网格细分研究与实验平台。项目以 ROAM 1997 核心算法思想为基础，实现了 Classic CPU ROAM、Data-Oriented CPU ROAM 和 GPU ROAM-like 三条对照路径，并正在复现与适配 CBT 2024 的 GPU 动态拓扑方法。在此基础上，项目拟研究固定拓扑池容量下兼顾视觉收益、兼容闭包成本与 GPU 并行性的全局资源分配方法。
 
-> **研究状态：进行中。** ROAM 对照平台、统一误差口径、固定预算、拓扑验证、双图形后端和阶段化 benchmark 已可运行；CBT 2024 的复现计划中，当前已完成 OCBT、基础二分器状态和程序化间接绘制。标题中的“兼容闭包感知全局资源分配”还未探索、实现和验证。
+**研究状态：基线建设与问题定义阶段。**
+
+ROAM 对照平台、统一误差口径、固定预算、拓扑验证、双图形后端和阶段化 benchmark 已可运行。CBT 2024 忠实基线正在复现，当前已完成 OCBT、基础二分器状态和程序化间接绘制。兼容闭包感知调度器已完成研究问题、假设、基线和实验计划定义，但尚未实现和验证。
 
 ![Parallel ROAM 交互界面](docs/parallel-roam/report-assets/进入后界面.png)
 
 ## 项目简介
 
-CBT 2024 以及相关工作中已经体现，动态 GPU 拓扑的执行流程通常可以通过原子计数保证不超出内存池预算，但这并不等价于有限资源被分配给了最重要的细分候选，其也是 CBT 2024 尚未完成的工作。当候选需求超过容量时，先到先得的提交顺序可能产生优先级倒置。与此同时，一次 split 可能需要沿邻接关系传播强制细分，多个候选的兼容闭包还可能互相重叠。
+CBT 2024 论文主要解决的是 GPU 动态拓扑问题，包括大量二分器的并发分配、拓扑依赖链并行传播等。其工作已经体现出，动态 GPU 拓扑的执行流程通常可以通过原子计数保证不超出内存池预算，但这并不等价于有限资源被分配给了最重要的细分候选。这一最优分配问题也不是 CBT 2024 论文的主要目标。当候选需求超过容量时，先到先得的提交顺序可能产生优先级倒置。与此同时，一次 split 可能需要沿邻接关系传播强制细分，多个候选的兼容闭包还可能互相重叠。
 
-本项目研究的问题是：
+**本项目研究的问题是：**
 
-> 在固定二分器容量和实时 GPU 时间约束下，能否考虑兼容闭包的依赖、重叠与真实成本，对 split/merge 进行全局预算感知分配，从而在保持无裂缝拓扑的同时在有限预算中选择最优待拓扑节点候选池，从而优化最终拓扑效果？
+在固定二分器池容量和实时 GPU 时间约束下，能否联合考虑 split 候选的视觉收益、兼容闭包依赖、闭包重叠和真实资源成本，在保持无裂缝拓扑的前提下选择价值更高的拓扑操作集合，从而改善有限预算下的最终网格质量？
 
-若候选 `i` 的预测收益为 `g_i`，兼容闭包为 `P_i`，选择集合为 `S`，则实际拓扑成本是：
+**本项目的研究目标是：**
+
+设计一种严格不超出拓扑池容量、保证兼容闭包完整、结果可解释且适合 GPU 并行执行的近似调度方法。
+
+目前规划中，第一阶段聚焦于冻结当前拓扑后的 split-only 预算分配；后续阶段再研究池饱和状态下的 merge/split 容量交换。
+
+若候选 split i 的预测收益为 `g_i`，其兼容闭包 `P_i` 表示执行该候选时，为保持无裂缝拓扑而新增的全部必要 split 操作，并包含候选 `i` 本身。对于已选择的候选集合 `S`：
 
 ```text
-cost(S) = | union(P_i), i in S |
+closure(S) = union(P_i), i in S
+cost(S) = |closure(S)|
 ```
 
-项目的研究目标是设计一种严格不超预算、闭包完整、可解释且适合 GPU 并行执行的近似调度方法。
+候选 i 相对于当前选择集合 S 的边际成本为：
+
+```text
+marginal_cost(i | S) = |P_i - closure(S)|
+```
+
+因此，第一阶段的优化目标可以近似为：
+
+```text
+maximize predicted_gain(S)
+subject to cost(S) <= available_capacity
+```
 
 ## 研究假设
 
@@ -28,11 +48,11 @@ cost(S) = | union(P_i), i in S |
 
 | 假设 | 验证目标 |
 | --- | --- |
-| H1 质量 | 相同活动三角形数或二分器容量下，降低最大值与 P95 屏幕空间误差 |
-| H2 预算 | 共享闭包去重减少保守预留造成的空闲，并保持内存超额量为零 |
-| H3 调度 | 稳定优先级与确定性分配减少原子竞争造成的优先级倒置 |
-| H4 性能 | 候选评分、闭包分析、选择与提交的额外 GPU 成本不抵消质量收益 |
-| H5 动态性 | 池饱和时，低损失 merge 与高收益 split 的交换能更快适应视点变化 |
+| H1 质量 | 在相同活动叶三角形数量或相同二分器池容量下，降低最大值、P95 和平均屏幕空间误差 |
+| H2 预算 | 通过共享闭包去重降低保守预留产生的未使用容量，并保证拓扑池容量越界次数为零 |
+| H3 调度 | 相比无序原子预留，稳定选择减少低收益候选提前占用预算的现象，并降低不同运行之间的结果方差 |
+| H4 性能 | 在相同帧时间下获得更低误差，或在达到相同误差水平时使用更少的拓扑资源 |
+| H5 动态性 | 相机快速移动或跳转后，merge/split 交换降低误差恢复时间和过渡期间的累计屏幕空间误差 |
 
 详细的继续条件、停止条件和实验设计见[研究假设与验证计划](docs/parallel-roam/12-research-hypothesis-validation-plan.md)。
 
@@ -42,40 +62,52 @@ cost(S) = | union(P_i), i in S |
 
 | 路径 | 数据与执行方式 | 当前能力 | 边界 |
 | --- | --- | --- | --- |
-| Classic CPU ROAM | 对象式节点、裸指针 bintree、串行 indexed heaps | 持久 `Q_s/Q_m`、统一 crossover、split、forced split、diamond merge、视锥感知、固定 leaf 预算、增量 indexed CPU Mesh | 采用工程等价复现口径：公式、连续拓扑和增量输出对应论文主要效果，但不追求完整最优性证明 |
-| Data-Oriented CPU ROAM | SoA 节点池、索引邻接、活动集合、批量 pass 与条件并行 | 与 Classic 共享质量合同；融合 leaf 扫描、误差评估和候选标记 | 拓扑依赖限制并行度，最终仍生成 CPU Mesh |
-| GPU ROAM-like | CPU DOD 持久拓扑快照 + compute shader | GPU leaf compaction、误差评估、候选标记、单轮 split、mesh emit、indirect draw | 混合管线；GPU merge 只评分不提交，GPU split 不回写 CPU 持久真值 |
+| Classic CPU ROAM | 对象式节点、裸指针二叉三角树、串行索引堆 | 持久 `Q_s/Q_m`、统一交叉调度、split、forced split、diamond merge、视锥感知、固定叶三角形预算、增量 indexed CPU Mesh | 采用工程等价复现口径：公式、连续拓扑和增量输出对应 ROAM 1997 论文主要效果，但不追求完整最优性证明 |
+| Data-Oriented CPU ROAM | SoA 节点池、索引邻接、活动集合、批量处理阶段与条件并行 | 与 Classic 使用相同的误差公式、阈值、预算和拓扑验证口径；融合叶三角形扫描、误差评估和候选标记 | 拓扑依赖限制并行度，最终仍生成 CPU Mesh |
+| GPU ROAM-like | CPU DOD 持久拓扑快照 + compute shader | GPU 叶三角形 compaction、误差评估、候选标记、单轮 split、Mesh emit、indirect draw | 混合管线；GPU merge 只评分不提交，GPU split 不回写 CPU 持久真值 |
 | CBT 2024 | D3D12、OCBT 位域/归约树、GPU 基础二分器资源 | 四档 OCBT、基础拓扑、程序化间接绘制及专项验证 | 动态 split/merge、兼容传播和高度图自适应路径尚待实现 |
 | 闭包感知预算调度器 | 计划中的独立研究变体 | 研究问题、假设、基线和验收标准已定义 | 尚未实现；必须在忠实 CBT 基线冻结后开展 |
 
-### 统一质量口径
+### 统一误差、预算与拓扑语义
 
 三种 ROAM 路径当前共享：
 
-- 论文公式 (1) 的 nested wedgie thickness 预计算；
-- 论文公式 (2)/(3) 的保守屏幕空间投影；
-- wedgie 穿越 near plane 时的人工最大优先级；
-- 完整 `ViewProjection`、drawable width/height 和六平面视锥输入；
+- ROAM 1997 论文第 6.1 节，自底向上预计算嵌套楔形厚度的公式 (1)；
+- ROAM 1997 论文第 6.2 节，将楔形厚度转换为屏幕空间几何畸变上界的保守投影的公式 (2)/(3)；
+- 楔形误差包围体穿越近裁剪面时的人工最大优先级；
+- 完整 `ViewProjection`、可绘制区域宽度/高度和六平面视锥输入；
 - 像素单位的 split/merge 双阈值；
-- 活动 leaf `TriangleBudget` 上限；
+- 活动叶三角形 `TriangleBudget` 上限；
 - forced split、diamond merge 和可选拓扑验证；
-- 平坦区域的独立 projected edge-density 扩展。
+- 为避免几何误差接近零时平坦区域过度粗糙，额外提供独立的投影边密度约束。
 
-对于 ROAM 1997 论文算法口径对齐问题：项目已经在误差公式、forced split/diamond merge、持久双队列和增量 Mesh 更新等阶段实现论文相近的拓扑效果与变化量相关成本，但由于项目工程实现约束，主问题复杂度、优化收益等因素综合考量，整帧复杂度并非论文严格的 `O(Delta N)`，当前网格也不是给定预算下的数学最优解。
+当前 Classic 路径已经对齐以下 ROAM 1997 关键机制：
 
-### 工程能力
+- 公式 (1) 的嵌套楔形厚度预计算；
+- 公式 (2)/(3) 的保守屏幕空间投影；
+- 连续二叉三角树与 diamond 拓扑；
+- forced split 和 diamond merge；
+- 持久 split/merge 优先级队列；
+- 增量 indexed CPU Mesh 更新。
+
+当前实现未复现以下机制：
+
+- priority deferral list；
+- 原论文的三角形条带输出结构；
+- 严格的 O(Delta N) 整帧更新复杂度；
+- 给定预算下的数学最优性证明。
+
+### 已完成的工作
 
 - C++20、CMake 与 SDL2 应用框架；
 - OpenGL 4.3 和 D3D12 双渲染后端；
 - Dear ImGui 参数、LOD 调试着色与阶段化性能面板；
 - CPU Mesh、GPU buffer 和 indirect draw 统一渲染包；
-- Classic、DOD、GPU compute 基于 ITerrainLodAlgorithm 统一输入输出与更新流程 的 ROAM 算法及其变体 的实现与工程优化；
-- Classic、DOD、GPU compute 的 ROAM 逻辑阶段统计；
+- 基于 ITerrainLodAlgorithm 统一接口实现并优化 Classic、DOD 和 GPU ROAM-like 路径；
+- Classic、DOD 和 GPU ROAM-like 的阶段化 CPU/GPU 性能统计；
 - 自动相机路径 benchmark，输出中文 Markdown 与逐帧 CSV；
 - CTest、预算重入测试、GPU smoke test 和 CBT 专项 smoke test；
 - 拓扑预算、邻接、T-junction 和资源契约检查。
-
-![现有 ROAM 对照层架构](docs/parallel-roam/report-assets/architecture-overview.svg)
 
 ## 快速开始
 
@@ -131,7 +163,7 @@ powershell -ExecutionPolicy Bypass -File scripts/setup_cbt_dx12_dependencies.ps1
 | 旋转视角 | 按住鼠标右键并移动 |
 | 退出 | `Esc` |
 
-右侧面板可以切换高度图、线框、LOD 算法和调试着色，并调整 `TerrainSize`、`HeightScale`、`MaxDepth`、`Split/Merge threshold (px)`、`TriangleBudget`、局部约束、拓扑验证与光照参数。
+右侧面板可以切换高度图、线框、LOD 算法和调试着色，并调整 `TerrainSize`、`HeightScale`、`MaxDepth`、`Split/Merge thresholds (px)`、`TriangleBudget`、局部约束、拓扑验证与光照参数。
 
 ## 测试与验证
 
@@ -159,7 +191,7 @@ powershell -ExecutionPolicy Bypass -File scripts/setup_cbt_dx12_dependencies.ps1
 .\build\relwithdebinfo-d3d12-fetch\bin\ParallelROAM.exe --cbt-procedural-smoke-test
 ```
 
-当前单元与结构测试覆盖 nested wedgie、保守屏幕投影、D3D/OpenGL 视锥约定、CBT occupancy tree、基础 bisector topology、Classic/DOD 预算重入、Classic 增量 Mesh emit 及 C++ 注释覆盖率。
+当前单元与结构测试覆盖嵌套楔形误差、保守屏幕投影、D3D/OpenGL 视锥约定、CBT 占用树、基础二分器拓扑、Classic/DOD 预算重入、Classic 增量 Mesh 输出及 C++ 注释覆盖率。
 
 ## Benchmark
 
@@ -187,7 +219,9 @@ powershell -ExecutionPolicy Bypass -File scripts/setup_cbt_dx12_dependencies.ps1
 
 可通过 `--runtime-benchmark-heightmap`、`--runtime-benchmark-terrain-size`、`--runtime-benchmark-height-scale`、`--runtime-benchmark-max-depth`、`--runtime-benchmark-split-pixels`、`--runtime-benchmark-merge-pixels`、`--runtime-benchmark-duration` 和 `--runtime-benchmark-label` 覆盖实验参数。
 
-> 论文公式 (1) 和公式 (2)/(3) 接入后，ROAM score 与活动拓扑语义已经变化。旧报告仍可用于解释当时的阶段成本，但不能把三角形数量、score 分布或画质与当前版本直接横向比较。
+正式对比实验将为每条算法路径独立执行 warm-up，并轮换或随机化算法运行顺序，以降低缓存状态、GPU 频率和设备温度造成的顺序偏差。
+
+> ROAM 1997 论文公式 (1) 和公式 (2)/(3) 接入后，候选优先级分数（score）与活动拓扑语义已经变化。旧版本的三角形数量、score 分布等结果不应与当前版本直接横向比较。
 
 实验方法、字段定义与现有 A/B 结果见[实验与基准测试](docs/parallel-roam/05-experiments-and-benchmarks.md)。
 
@@ -200,7 +234,7 @@ powershell -ExecutionPolicy Bypass -File scripts/setup_cbt_dx12_dependencies.ps1
 ├── cmake/                   CMake 依赖和编译配置
 ├── docs/
 │   ├── parallel-roam/       当前计划、实验、架构和修复记录
-│   └── source_analysis/     ROAM 论文、参考实现和源码上下文分析
+│   └── source_analysis/     ROAM 1997 论文、参考实现和源码上下文分析
 ├── scripts/                 构建、运行、smoke test 与报告脚本
 ├── src/
 │   ├── algorithms/          Classic、DOD、GPU ROAM-like、CBT 2024
@@ -223,11 +257,6 @@ powershell -ExecutionPolicy Bypass -File scripts/setup_cbt_dx12_dependencies.ps1
 | [CBT 2024 接入计划](docs/parallel-roam/16-cbt-2024-integration-plan.md) | 忠实基线的阶段状态、能力边界和后续 split/merge 路线 |
 | [实验与基准测试](docs/parallel-roam/05-experiments-and-benchmarks.md) | 指标、统计口径、实验流程和现有 A/B 结果 |
 | [依赖配置说明](docs/parallel-roam/10-dependency-setup.md) | OpenGL/D3D12 依赖、固定版本和构建脚本 |
-| [Bug 修复记录](docs/parallel-roam/11-bug-fix-log.md) | 已确认问题、定位、修复和验证证据 |
-| [Classic ROAM 源码上下文](docs/source_analysis/classic_roam_context.md) | Classic 实现的数据流、拓扑、误差、split/merge 和内存分析 |
-| [论文与当前 Classic 对比](docs/source_analysis/classic_roam_paper_comparison.md) | 已实现、未实现和建议实现的论文机制 |
-| [ROAM 论文 Markdown](docs/source_analysis/roaming_terrain_paper.md) | 项目内论文文本版本 |
-| [LibGenROAM 参考实现分析](docs/source_analysis/libgen_roam_reference_analysis.md) | 论文配套源码的结构和算法路径 |
 
 ## 可复现实验要求
 
@@ -235,29 +264,28 @@ powershell -ExecutionPolicy Bypass -File scripts/setup_cbt_dx12_dependencies.ps1
 
 - Git commit、构建配置和图形后端；
 - CPU、GPU、驱动、D3D12Core/OpenGL 版本；
-- Height Map、`TerrainSize`、`HeightScale` 和 `MaxDepth`；
+- HeightMap、`TerrainSize`、`HeightScale` 和 `MaxDepth`；
 - split/merge 像素阈值与拓扑预算；
-- drawable 分辨率、FOV、相机路径和 VSync 状态；
+- 可绘制区域分辨率、FOV、相机路径和 VSync 状态；
 - warm-up、采样时长、重复次数和随机种子；
 - CPU/GPU 各逻辑阶段耗时；
 - 最大/P95/平均屏幕误差、预算利用率、拓扑错误和确定性；
 
 ## 当前限制
 
-- 兼容闭包感知调度器尚未实现，H1-H5 仍待实验验证；
+- 兼容闭包感知调度器目前仅完成问题定义、假设、基线和实验计划，算法实现与 H1–H5 验证尚未开展；
 - CBT 2024 当前只到基础拓扑和程序化绘制，完整动态 split/merge 尚未接入；
 - GPU ROAM-like 是 CPU DOD + GPU split-only/emit 的混合路径，仅供当前实验探索和参考；
-- Classic 已实现公式 (1)-(3)、连续 bintree/diamond 拓扑、持久双队列和增量 Mesh 输出；最终 priority、硬预算和输出格式是项目变体，当前研究不追求补齐论文完整最优性证明；
+- Classic 已实现公式 (1)-(3)、连续二叉三角树/diamond 拓扑、持久双队列和增量 Mesh 输出；最终 priority、硬预算和输出格式是项目变体，当前研究不追求补齐 ROAM 1997 论文完整最优性证明；
 - 当前正式场景数量和 DEM 多样性不足，旧性能数据也需要在新误差口径下重跑；
 
 ## 路线图
 
 1. 完成并冻结 CBT 2024 忠实基线的 split、merge、兼容传播、槽位回收和高度图几何；
 2. 建立公共离线质量评估器与小规模精确参考；
-3. 对比先到先分配、误差 Top-K、成本感知贪心和闭包去重策略；
-4. 在独立 GPU 变体中实现冻结拓扑上的闭包分析、确定性选择与预算提交；
-5. 验证饱和状态下的 merge/split 交换、迟滞和时间预算；
-6. 在多类 DEM、预算与相机轨迹上重复实验并报告方差和消融结果。
+3. 在冻结拓扑上建立 split 候选兼容闭包，并对比先到先分配、误差 Top-K、独立成本贪心和闭包去重贪心；
+4. 在独立 GPU 变体中实现闭包分析、确定性选择和严格预算提交，并与小规模精确参考比较；
+5. 在 split-only 调度验证完成后，进一步研究池饱和状态下的低损失 merge、高收益 split 交换、迟滞和时间预算。
 
 ## 引用与参考
 
