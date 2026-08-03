@@ -1,6 +1,6 @@
 # ROAM 论文与当前 Classic CPU ROAM 实现详细对比
 
-> 对比基线：仓库提交 `ec9e735018366df93e47d2d9bf98ea232788c1b7`（2026-08-01）。  
+> 对比基线：仓库提交 `eeb3f3a` 及 2026-08-03 的 nested wedgie 公式 (1) 实现。
 > 论文依据：项目内转写文档 [`roaming_terrain_paper.md`](roaming_terrain_paper.md)，未重新解析 PDF。  
 > 实现范围：以 `src/algorithms/classic_roam` 为核心，并追踪统一 LOD 接口、渲染上传和 Benchmark。  
 > 本文讨论的是“论文描述的 ROAM”与“项目当前名为 Classic CPU ROAM 的实现”之间的对应关系，不把同名类型或函数自动视为论文机制的完整复现。
@@ -17,13 +17,13 @@
 - 跨帧保留 active topology；
 - 默认启用 local constraints 时，CPU 端生成目标为无 T-junction 的连续三角网格。
 
-它也实现了若干论文所需但早期版本曾缺失的工程能力：完整深度的误差预计算树、像素单位阈值、FOV/投影和 drawable height 感知、视锥感知、硬 Triangle Budget、split/merge 迟滞以及预算满载时的再平衡。
+它也实现了若干论文所需但早期版本曾缺失的工程能力：论文公式 (1) 的 nested wedgie thickness tree、像素单位阈值、FOV/投影和 drawable height 感知、视锥感知、硬 Triangle Budget、split/merge 迟滞以及预算满载时的再平衡。
 
 但是，当前实现不能被严格称为论文算法的完整复现。最关键的差异有三项：
 
-1. 当前 `GeometricError` 不是论文公式 (1) 的 nested wedgie thickness。项目对子树取 `max(local, left, right)`，论文则是 `max(child thickness) + 当前层 base midpoint displacement`。前者不保证覆盖跨层累积误差。
-2. 当前 `ComputeScreenErrorScore()` 是像素单位的启发式评分，不是论文公式 (2)/(3) 对 wedgie thickness segment 的保守投影上界；它还加入了论文基础误差度量中不存在的 projected edge length 项。
-3. 当前每次 `Build()` 都重建临时 split/merge queue，并按“先 merge、后 split”的独立 pass 处理；没有论文的持久 `Q_s/Q_m`、split/merge crossover 比较和最小拓扑改动证明。
+1. 当前 `ComputeScreenErrorScore()` 是像素单位的启发式评分，不是论文公式 (2)/(3) 对 wedgie thickness segment 的保守投影上界；它还加入了论文基础误差度量中不存在的 projected edge length 项。
+2. 当前每次 `Build()` 都重建临时 split/merge queue，并按“先 merge、后 split”的独立 pass 处理；没有论文的持久 `Q_s/Q_m`、split/merge crossover 比较和最小拓扑改动证明。
+3. 当前每次 `Build()` 仍完整收集活动叶、重建 CPU Mesh 并上传，不维护论文的增量 triangle strips 或现代等价的增量 indexed output。
 
 因此，以下论文结论目前不能直接套用到项目实现：
 
@@ -80,7 +80,7 @@
 规范化 MaxDepth / TriangleBudget
         |
         v
-必要时完整重建 variance trees 或重置 topology
+必要时按源分辨率重建 nested wedgie trees 或重置 topology
         |
         v
 扫描 active internal nodes，构建临时 merge min-heap 并 merge
@@ -113,7 +113,7 @@
 
 | 论文阶段 | 当前对应 | 状态 | 核心差异 |
 | --- | --- | --- | --- |
-| view-independent nested bounds 预计算 | `RebuildVarianceTrees()` | 部分实现/变体 | 完整向下构树、向上传播，但传播公式不是 nested wedgie 公式 |
+| view-independent nested bounds 预计算 | `Roam::BuildNestedWedgieSubtree()` + `RebuildVarianceTrees()` | 已实现 | 最细层为 0；父层严格执行公式 (1)，深度上限为 20 |
 | incremental frustum update | `IsNodeVisible()` | 部分实现/变体 | 每次评分重新做 6-plane AABB 测试，没有跨帧标签和 subtree early-out 状态 |
 | deferred priority recomputation | split/merge candidate 扫描 | 未实现 | 每次 Build 对 active topology 全量重新评分，弹出候选时还会再次评分 |
 | persistent dual queues | 两个函数内的临时 heaps | 部分实现/变体 | 有 max split heap 和 min merge heap，但不持久、不交替、不做 crossover 终止判断 |
@@ -193,48 +193,51 @@ e_T = max(e_T0, e_T1) + abs(z(v_c) - z_T(v_c))
 
 其中局部项只使用本次 split 新增的 base midpoint `v_c`。依据见 [`§6.1 Nested World-Space Bounds`](roaming_terrain_paper.md#L253)。加法很关键：child thickness 是相对 child plane 的误差，局部 midpoint displacement 是 child plane 相对 parent plane 的偏移，二者需要组合才能形成 parent plane 相对所有后代曲面的保守界。
 
-### 6.2 当前 variance tree
+### 6.2 当前 nested wedgie tree
 
-[`RebuildVarianceTrees()`](../../src/algorithms/classic_roam/ClassicRoamScoring.cpp#L150) 为两个根分别分配完整二叉堆数组，并递归到 `MaxDepth`。[`BuildVarianceSubtree()`](../../src/algorithms/classic_roam/ClassicRoamScoring.cpp#L174) 使用：
+[`ResolveNestedWedgieTreeDepth()`](../../src/algorithms/RoamNestedWedgie.h#L28) 先解析预计算最细深度：
 
 ```text
-localError = ComputeLocalGeometricError(domain)
-subtreeError = max(localError, leftError, rightError)
+sourceAxisLevel = max(ceil(log2(width-1)), ceil(log2(height-1)))
+sourceDepth = min(2 * sourceAxisLevel, 20)
+finestDepth = max(clamp(runtime MaxDepth, 0, 20), sourceDepth)
 ```
 
-[`ComputeLocalGeometricError()`](../../src/algorithms/classic_roam/ClassicRoamScoring.cpp#L122) 不是只采 base midpoint，而是取以下四项的最大值：
+bintree 每两个层级才会把 height map 的两个轴各缩小一半，所以 129x129 与 513x513 输入分别需要深度 14 与 18。预计算深度不再被较小的运行时 `MaxDepth` 截断。
 
-- 三条边各自 midpoint 的真实高度与端点线性插值高度之差；
-- centroid 的真实高度与三个顶点平均高度之差。
+[`BuildNestedWedgieSubtree()`](../../src/algorithms/RoamNestedWedgie.h#L60) 在最细层写 0，其他层严格执行：
 
-### 6.3 相同点
+```text
+thickness = max(leftThickness, rightThickness)
+          + abs(ComputeBaseMidpointDisplacement(domain))
+```
 
-- 都是 view-independent 的预计算数据；
-- 都按完整 triangle bintree 组织；
-- 都从 child 向 parent 传播信息；
-- parent 当前保存的值不会小于任一 child 保存的值；
-- 相机移动不需要重建该树。
+[`ComputeBaseMidpointDisplacement()`](../../src/algorithms/classic_roam/ClassicRoamScoring.cpp#L125) 只计算当前 base edge `A-B` 的 midpoint 实际高度与端点线性插值之差，并保留符号；共享递推负责取绝对值。Classic 与 DOD 共用 `RoamNestedWedgie.h`，GPU ROAM-like 则从 DOD topology snapshot 直接读取传播后的 `GeometricError`。
 
-### 6.4 关键差异
+### 6.3 与论文一致的部分
 
-项目公式只取不同层级“局部残差”的最大值，没有把 child plane 到 parent plane 的位移逐层累加。一个深层局部残差相对它自己的细层 plane 很小，不代表该点相对祖先粗平面的误差也小。
+- view-independent，且相机移动不需要重建；
+- 按完整 triangle bintree 和二叉堆索引组织；
+- 最细层 thickness 为 0；
+- parent 按 `max(child)+abs(local displacement)` 向上累计；
+- parent thickness 不小于任一 child thickness。
 
-因此：
+### 6.4 当前边界
 
-- `GeometricError` 是“子树内已采样局部残差的最大值”；
-- 它不是已经证明的 `abs(z-z_T) <= e_T` wedgie thickness；
-- 三个额外 midpoint 和 centroid 能提高尖峰检出率，但不能替代 nested bound 的组合公式；
-- 当前 parent >= child 的数值关系成立，但“数值非增”不等于“几何误差上界正确”。
+公式层面的旧差异已经消除。当前剩余限定来自输入和容量边界：
+
+- `2^k+1` 规则网格且 `2k<=20` 时，finest bintree level 与源采样格对齐；
+- 非 `2^k+1` 尺寸会向上取整到下一 dyadic extent；
+- 所需 source depth 超过 20 时会被截断；
+- `HeightMap::SampleBilinear` 若被解释为连续双线性曲面，finest triangle thickness=0 的严格性还需另外证明，而论文公式首先约束离散 bintree terrain。
 
 ### 6.5 判定
 
-**状态：部分实现/变体。** 完整 Variance Tree 已实现，但不是论文的 nested wedgie tree。
-
-如果文档或 UI 把它简称为“Variance Tree”是合理的；如果据此宣称“论文级误差上界”则不成立。
+**状态：已实现（带输入/深度限定）。** 递推公式、最细层初始化和两个根的完整 heap-indexed tree 均与论文公式 (1) 对齐。该结论只覆盖 world-space nested thickness，不自动证明后续 screen projection 和最终 priority 的保守性。
 
 ### 6.6 预计算代价
 
-每棵树容量为 `2^(MaxDepth+1)-1`，两棵树总空间和构建时间随 `MaxDepth` 指数增长。项目把 `MaxDepth` 限制为 20，证据见 [`MaximumSupportedDepth`](../../src/algorithms/classic_roam/ClassicRoamMeshBuilder.cpp#L12) 和 [`RebuildVarianceTrees()`](../../src/algorithms/classic_roam/ClassicRoamScoring.cpp#L150)。在深度 20 时，两棵树约包含 419 万个 `float`，仅数组本体约 16 MiB，构建还会进行大量重复高度采样。
+每棵树容量为 `2^(finestDepth+1)-1`，两棵树总空间和构建时间随预计算深度指数增长。项目把深度限制为 20，证据见 [`MaximumSupportedDepth`](../../src/algorithms/classic_roam/ClassicRoamMeshBuilder.cpp#L13) 和 [`CompleteBinaryTreeNodeCount()`](../../src/algorithms/RoamNestedWedgie.h#L46)。深度 20 时两棵树约包含 419 万个 `float`，数组本体约 16 MiB；129x129 深度 14 约 256 KiB，513x513 深度 18 约 4 MiB。每个非叶节点采样 base 两端和 midpoint，仍适合单独建立 initialization benchmark。
 
 ## 7. 屏幕空间误差与 Priority
 
@@ -288,7 +291,7 @@ score              = max(heightErrorPixels, edgeLengthPixels)
 论文 greedy 最优性依赖 `child priority <= parent priority`，见 [`Dual-Queue Optimization`](roaming_terrain_paper.md#L178)。当前实现只能证明 world error array 满足 parent value 不小于 child value，不能证明最终 screen score 单调，原因包括：
 
 - child center 可能比 parent center 更靠近相机；
-- child/parent 的 projected edge term 不只由 variance 决定；
+- child/parent 的 projected edge term 不只由 nested thickness 决定；
 - visibility 从 parent/child 的 AABB 测试结果参与 score；
 - near-plane clamp 是启发式而不是论文的保守处理；
 - hysteresis 区间内还会根据上一帧 path 状态改变 split 决策。
@@ -454,7 +457,7 @@ score < MergeThreshold  -> coarse
 
 ### 13.3 正确性限制
 
-AABB 的 Y 扩张是否保守，依赖 `GeometricError` 是否真能包住 subtree 曲面。由于当前 variance 不是论文 nested bound，当前 frustum test 不能继承论文 wedgie culling 的严格保守性证明。
+AABB 的 Y 扩张使用公式 (1) 的 nested thickness，已经消除旧 `max(local,left,right)` 的跨层低估。其严格保守性仍受输入是否与 finest bintree 对齐、深度 20 截断和连续双线性曲面解释限制，因此当前 frustum test 还不能无条件继承论文 wedgie culling 的全部证明。
 
 ### 13.4 判定
 
@@ -530,7 +533,7 @@ OpenGL renderer 随后在 [`TerrainRenderer::RebuildTerrainLod()`](../../src/ren
 
 论文 nested bound 支持从被修改 vertex 沿 dependents 局部更新，见 [`论文 dynamic terrain 目标`](roaming_terrain_paper.md#L87) 和 [`§6.1`](roaming_terrain_paper.md#L275)。
 
-当前只在 height map 对象地址变化或 `MaxDepth` 变化时完整重建 variance trees，判定见 [`ClassicRoamMeshBuilder::Build()`](../../src/algorithms/classic_roam/ClassicRoamMeshBuilder.cpp#L34)。如果同一个 `HeightMap` 对象的内部样本原地变化，指针不变，当前缓存不会自动失效。
+当前只在 height map 对象地址变化或解析出的 nested tree depth 变化时完整重建；判定见 [`ClassicRoamMeshBuilder::Build()`](../../src/algorithms/classic_roam/ClassicRoamMeshBuilder.cpp#L37)。如果同一个 `HeightMap` 对象的内部样本原地变化，指针与预计算深度都不变，当前缓存不会自动失效。
 
 **状态：未实现。** 更准确地说，当前支持“换一个 height map 后全量重建”，不支持论文式局部 dynamic terrain updates。
 
@@ -566,8 +569,8 @@ OpenGL renderer 随后在 [`TerrainRenderer::RebuildTerrainLod()`](../../src/ren
 | Mergeable diamond | `CanMergeNode()` | 已实现 | 是 |
 | Diamond merge | `MergeNodeOrDiamond()` | 已实现 | 是 |
 | 跨帧 active topology | persistent nodes + `IsSplit` | 已实现 | 只有 topology coherence |
-| View-independent error tree | two `_varianceTrees` | 已实现 | 仅结构成立 |
-| Nested wedgie thickness | 无等价公式 | 未实现 | 否，不能宣称 world-space bound |
+| View-independent error tree | two `_varianceTrees` + shared builder | 已实现 | 结构与公式 (1) 均成立，受输入/深度边界限制 |
+| Nested wedgie thickness | `Roam::BuildNestedWedgieSubtree()` | 已实现 | 可继承公式 (1) 的离散 bintree 语义；不自动包含 screen bound |
 | Conservative screen-distortion bound | `ComputeScreenErrorScore()` | 部分实现/变体 | 否，当前是像素启发式 score |
 | Monotonic priority | 无 invariant/check | 未实现 | 否，最优性证明前提缺失 |
 | Highest-priority split heap | `RefineWithSplitQueue()` | 已实现 | 只对当帧已发现候选成立 |
@@ -613,7 +616,7 @@ forced split 是保持连续性的最小必要 refinement
 给定 bintree mesh 空间内的最大误差最优性与全局误差上界
 ```
 
-当前 forced split 和连续 topology 已基本具备，但前面三项误差前提以及持久 dual-queue 调度均未完整实现。因此即使视觉结果很好、阈值单位是 pixel、active triangle 不超过 budget，也只能称为经验质量约束，不能升级为数学保证。
+当前公式 (1)、forced split 和连续 topology 已基本具备，但 conservative screen projection、priority monotonicity 与持久 dual-queue 调度仍未完整实现。因此即使视觉结果很好、阈值单位是 pixel、active triangle 不超过 budget，最终 screen-space quality 仍只能称为经验质量约束，不能升级为完整数学保证。
 
 建议在 UI、报告和代码注释中使用以下术语：
 
@@ -637,26 +640,30 @@ forced split 是保持连续性的最小必要 refinement
 
 用于在相同 pixel score、相同 hysteresis、相同 budget 下比较 Classic、DOD 和 GPU 的执行效率。当前实现更接近此目标。
 
-建议新增独立算法 ID 或明确模式，例如 `ClassicPaperRoam` 与 `ClassicCpuRoam`，不要悄悄替换当前评分公式。否则历史 Benchmark 的 `4 px/2 px` 将失去可比性，而且 DOD/GPU 仍使用旧 metric 时会发生质量口径分裂。
+公式 (1) 已同时接入 Classic、DOD 和由 DOD snapshot 驱动的 GPU ROAM-like，因此三条路径没有发生 quality contract 分裂。但 thickness 数值改变后，旧 benchmark 的 `4 px/2 px` 与新结果不再是同一误差语义；性能趋势可以保留作历史记录，三角形数量和画质结论必须重跑。
 
-### 20.2 P0：补齐误差正确性基础
+### 20.2 P0：公式 (1) 已完成，继续补齐误差正确性验证
 
-#### 建议 1：实现论文 nested wedgie thickness
+#### 已完成 1：实现论文 nested wedgie thickness
 
-新增独立 `WedgieThicknessTree`，严格使用：
+共享 [`RoamNestedWedgie.h`](../../src/algorithms/RoamNestedWedgie.h) 已严格使用：
 
 ```text
-e_T = max(e_left, e_right) + baseMidpointDisplacement(T)
+e_T = max(e_left, e_right) + abs(baseMidpointDisplacement(T))
 ```
 
-不要直接覆盖当前 variance tree，先让两种 metric 可并行输出和 A/B 验证。
+Classic/DOD 的旧 `_varianceTrees`/`VarianceTrees` 成员名保留以减少结构改动，但内容语义已变为 nested thickness。GPU 沿 snapshot 继承同值。
 
-验收条件：
+当前自动测试已覆盖：
 
-- 对小型离散 height map，穷举最细层采样点，验证每个 ancestor 的实际 `abs(z-z_T) <= e_T + epsilon`；
 - 最细层 thickness 为 0；
 - parent thickness 不小于任一 child thickness；
-- 修改一个 height sample 后，未来局部更新结果与全量重建一致。
+- 有符号局部位移取绝对值；
+- 多层累计严格等于公式 (1)；
+- 小型几何 bintree 中，每个 ancestor thickness 覆盖所有最细后代顶点相对 ancestor plane 的高度偏差；
+- 129/513 输入深度解析与深度 20 上限。
+
+仍应补充：通过项目 `HeightMap` 类型加载真实小图的同类穷举、非 `2^k+1` 输入、深度截断，以及未来动态地形局部更新与全量重建一致性。
 
 #### 建议 2：实现保守 screen-space wedgie projection
 
@@ -757,8 +764,9 @@ LOS、object positioning、backface、normal、silhouette、fog 等 metric 建�
 
 | 优先级 | 工作 | 首要收益 | 前置依赖 | 主要风险 |
 | --- | --- | --- | --- | --- |
-| P0 | nested wedgie + conservative projection | 恢复误差上界和论文比较的正确语义 | 无 | 会改变三种算法当前质量口径和历史数据 |
-| P0 | 单调性/上界自动测试 | 防止把 heuristic 当 theorem | 新旧 metric 都可先做 | 连续空间只能通过保守推导最终证明 |
+| 已完成 | nested wedgie 公式 (1) | 恢复 world-space 累计 thickness 语义 | 无 | 已改变三种算法质量口径，历史数据需重跑 |
+| P0 | conservative projection 公式 (2)/(3) | 恢复 screen-space bound | nested thickness | near-plane 与分母极值处理复杂 |
+| P0 | 单调性/上界自动测试 | 防止把 heuristic 当 theorem | 公式 (1) 已有递推测试 | 连续空间只能通过保守推导最终证明 |
 | P1 | persistent dual queues | 恢复 `Delta N` 级增量优化目标 | 稳定 priority | handle 失效、forced split 的多节点事务 |
 | P1 | target count/crossover | 接近论文预算下最优分配 | dual queues | 并非所有整数 count 都一定可由合法 topology 精确表示 |
 | P2 | incremental frustum flags | 减少重复 plane tests | 保守 bound | camera teleport 的状态失效 |
@@ -776,9 +784,9 @@ LOS、object positioning、backface、normal、silhouette、fog 等 metric 建�
 
 名称不会带来持久 membership、局部更新、crossover 或 `Delta N` 复杂度。应先定义 queue invariant 和 topology transaction。
 
-### 22.2 不要在旧 `max(local,left,right)` 上声明 guaranteed bound
+### 22.2 不要把公式 (1) 已实现等同于完整 guaranteed bound
 
-更多采样点可以减少漏检，但不能替代跨层误差组合证明。
+旧 `max(local,left,right)` 已移除；但只有 world-space thickness 还不足以证明最终像素误差，因为公式 (2)/(3)、near-plane 处理和 priority monotonicity 尚未实现。
 
 ### 22.3 不要只增加 worker 数来模拟论文增量性
 
@@ -794,7 +802,7 @@ LOS、object positioning、backface、normal、silhouette、fog 等 metric 建�
 
 ## 23. 测试缺口与验证建议
 
-当前 `tests` 目录没有 Classic ROAM 专用单元测试。Benchmark 会检查输出非空、深度和 triangle budget 等基本合同，但不能替代以下验证：
+当前 `tests/RoamNestedWedgieTests.cpp` 已覆盖共享公式递推、叶层为 0 和分辨率深度解析；Classic/DOD budget-reentry 测试与 smoke benchmark 覆盖拓扑合同。但这些仍不能替代以下验证：
 
 1. `SplitTriangleDomain()` 在多层后仍覆盖 parent、无重叠、winding 一致。
 2. root diamond 和任意 forced split chain 后无 T-junction。
@@ -802,7 +810,7 @@ LOS、object positioning、backface、normal、silhouette、fog 等 metric 建�
 4. random camera path 下每帧 `ValidateTopology()` 的三个错误计数始终为 0。
 5. forced split 在预算边界上不突破 hard limit，失败后 topology 仍合法。
 6. 视锥快速旋转时，新入视野高 score 区域在同一 Build 获得预算。
-7. variance/wedgie 对真实 height samples 的 bound property。
+7. nested wedgie 对真实 height samples 的 ancestor bound property。
 8. screen bound 对密集投影采样的 conservativeness。
 9. priority parent-child monotonicity。
 10. persistent dual queues 与 top-down reference 在小输入上的最终 priority/triangle set 对照。
@@ -815,7 +823,7 @@ LOS、object positioning、backface、normal、silhouette、fog 等 metric 建�
 
 ### 24.1 源码可直接确认
 
-- variance rebuild 是完整深度递归，复杂度与完整预计算 bintree 节点数成正比；
+- nested wedgie rebuild 是完整深度递归，复杂度与完整预计算 bintree 节点数成正比；
 - merge candidate mark 每次扫描 active internal topology；
 - budget rebalance 至少收集并扫描 active leaves；
 - split candidate mark 每次扫描 active leaves；
@@ -878,7 +886,7 @@ LOS、object positioning、backface、normal、silhouette、fog 等 metric 建�
 | [`ClassicRoamMeshBuilder.h`](../../src/algorithms/classic_roam/ClassicRoamMeshBuilder.h) | `TriangleDomain`, `ClassicRoamNode`, settings/stats | Classic 核心状态和合同 |
 | [`ClassicRoamMeshBuilder.cpp`](../../src/algorithms/classic_roam/ClassicRoamMeshBuilder.cpp) | `ClassicRoamMeshBuilder::Build` | 当前每次 Build 的真实 pass 顺序 |
 | [`ClassicRoamState.cpp`](../../src/algorithms/classic_roam/ClassicRoamState.cpp) | `AddNode`, `ResetTopology`, leaf/path collect | 根 diamond、node ownership、持久 topology |
-| [`ClassicRoamScoring.cpp`](../../src/algorithms/classic_roam/ClassicRoamScoring.cpp) | variance, score, frustum | 当前误差公式和 view weighting |
+| [`ClassicRoamScoring.cpp`](../../src/algorithms/classic_roam/ClassicRoamScoring.cpp) | base displacement、score、frustum | 当前误差公式和 view weighting |
 | [`ClassicRoamTopology.cpp`](../../src/algorithms/classic_roam/ClassicRoamTopology.cpp) | split queue, merge queue, forced split, diamond merge | 动态 topology 更新 |
 | [`ClassicRoamMeshEmit.cpp`](../../src/algorithms/classic_roam/ClassicRoamMeshEmit.cpp) | `EmitLeafTriangles`, `EmitDomainTriangle` | full CPU mesh rebuild |
 | [`ClassicRoamValidation.cpp`](../../src/algorithms/classic_roam/ClassicRoamValidation.cpp) | `ValidateTopology` | T-junction、邻接和树不变量诊断 |
@@ -899,7 +907,9 @@ LOS、object positioning、backface、normal、silhouette、fog 等 metric 建�
 - neighbor relink 与 crack prevention；
 - mergeable diamond 检查；
 - diamond merge 和同一 Build 向上级联；
-- 完整深度的 view-independent variance tree 数据结构；
+- 受深度 20 上限约束的 view-independent nested tree 数据结构；
+- 论文公式 (1) nested wedgie thickness，包括 finest leaf 为 0 和跨层累计；
+- Classic/DOD 共享公式实现，GPU snapshot 继承相同 `GeometricError`；
 - FOV、投影、drawable height 和距离参与 pixel score；
 - frustum-aware LOD priority；
 - active leaf hard upper budget；
@@ -908,7 +918,7 @@ LOS、object positioning、backface、normal、silhouette、fog 等 metric 建�
 
 ### 27.2 部分实现或项目变体
 
-- Variance Tree：结构完整，公式不是 nested wedgie；
+- Nested Wedgie Tree：公式 (1) 已实现，但非 dyadic 输入、深度 20 截断和连续双线性曲面仍需验证；
 - Screen Error：单位为 pixel，但不是 conservative distortion bound；
 - Split/Merge Queues：各自有临时 heap，但不是 persistent dual queues；
 - Triangle Budget：hard upper bound，不是 direct target count；
@@ -919,7 +929,6 @@ LOS、object positioning、backface、normal、silhouette、fog 等 metric 建�
 
 ### 27.3 未实现
 
-- 论文公式 (1) nested wedgie thickness；
 - 论文公式 (2)/(3) screen-space conservative bound；
 - 可验证的 monotonic priority；
 - persistent `Q_s/Q_m` 和局部 queue maintenance；
@@ -935,14 +944,14 @@ LOS、object positioning、backface、normal、silhouette、fog 等 metric 建�
 - dynamic terrain 局部 bound 更新；
 - LOS 与其他高级 priority corrections；
 - 任意 manifold base mesh；
-- Classic 专用自动化单元/性质测试。
+- 对实际 HeightMap ancestor bound 的完整性质测试。
 
 ### 27.4 建议优先实现
 
-1. 先新增论文忠实的 nested wedgie 和 conservative projection，并补上界/单调性测试。
+1. 在已完成公式 (1) 的基础上，实现 conservative projection 公式 (2)/(3)，并补 ancestor bound/单调性测试。
 2. 再实现 persistent dual queues、crossover 和 target-count reference mode。
 3. 然后实现 incremental frustum state 与 priority deferral，恢复 `O(Delta N)` 方向。
 4. 以现代 incremental indexed output 为主，triangle strips 作为论文复现实验模式。
 5. 最后加入 progressive optimization、vertex morphing、dynamic terrain 和高级 metrics。
 
-只有完成第 1、2 项并通过性质测试后，项目文档才适合使用“论文级 guaranteed error bound”和“给定 bintree mesh 空间中的 optimal triangulation”等表述。
+只有完成剩余的 conservative screen bound、dual queues/crossover 并通过性质测试后，项目文档才适合使用“论文级 guaranteed error bound”和“给定 bintree mesh 空间中的 optimal triangulation”等表述。

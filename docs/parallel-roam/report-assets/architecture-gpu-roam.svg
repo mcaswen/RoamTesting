@@ -81,7 +81,7 @@
 
   <rect x="615" y="544" width="390" height="54" rx="8" class="gpu"/>
   <text x="810" y="566" text-anchor="middle" class="code">Screen error evaluation pass</text>
-  <text x="810" y="586" text-anchor="middle" class="caption">完整方差 + 像素 SSE + 六平面视锥</text>
+  <text x="810" y="586" text-anchor="middle" class="caption">Nested thickness + 像素 SSE + 六平面视锥</text>
   <path d="M810 598 L810 618" class="line"/>
 
   <rect x="615" y="618" width="390" height="54" rx="8" class="gpu"/>

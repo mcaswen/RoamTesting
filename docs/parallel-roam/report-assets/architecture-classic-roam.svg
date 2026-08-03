@@ -67,7 +67,7 @@
 
   <rect x="395" y="428" width="310" height="64" rx="8" class="pass"/>
   <text x="550" y="454" text-anchor="middle" class="code">误差评分 pass</text>
-  <text x="550" y="473" text-anchor="middle" class="small">完整方差树 + 像素 SSE + 视锥测试</text>
+  <text x="550" y="473" text-anchor="middle" class="small">Nested thickness + SSE + frustum</text>
   <text x="550" y="489" text-anchor="middle" class="small">ShouldSplit() 用像素阈值筛选候选</text>
   <path d="M550 492 L550 516" class="line"/>
 

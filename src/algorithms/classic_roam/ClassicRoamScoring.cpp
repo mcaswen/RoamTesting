@@ -1,5 +1,7 @@
 #include "algorithms/classic_roam/ClassicRoamMeshBuilder.h"
 
+#include "algorithms/RoamNestedWedgie.h"
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -120,42 +122,18 @@ float ClassicRoamMeshBuilder::DebugHighlightForLeaf(const ClassicRoamNode& node)
     return 0.35F;
 }
 
-float ClassicRoamMeshBuilder::ComputeLocalGeometricError(const TriangleDomain& domain) const
+float ClassicRoamMeshBuilder::ComputeBaseMidpointDisplacement(const TriangleDomain& domain) const
 {
     const float heightA = _heightMap->SampleBilinear(domain.A.x, domain.A.y);
     const float heightB = _heightMap->SampleBilinear(domain.B.x, domain.B.y);
-    const float heightC = _heightMap->SampleBilinear(domain.C.x, domain.C.y);
-
-    // 边中点误差能捕获边界起伏，避免只看 base edge
-    const auto edgeMidpointError = [this](const glm::vec2& start, const glm::vec2& end, float startHeight, float endHeight) {
-        const glm::vec2 midpoint = (start + end) * 0.5F;
-        const float midpointHeight = _heightMap->SampleBilinear(midpoint.x, midpoint.y);
-        const float interpolatedHeight = (startHeight + endHeight) * 0.5F;
-        return std::abs(midpointHeight - interpolatedHeight);
-    };
-
-    const glm::vec2 centroid = (domain.A + domain.B + domain.C) / 3.0F;
-    // 重心采样补足三角形内部的非边界起伏
-    const float centroidHeight = _heightMap->SampleBilinear(centroid.x, centroid.y);
-    const float centroidInterpolatedHeight = (heightA + heightB + heightC) / 3.0F;
-
-    // 采样三条边中点和重心，避免非 base 边或三角形内部起伏被漏掉
-    return std::max({
-        edgeMidpointError(domain.A, domain.B, heightA, heightB),
-        edgeMidpointError(domain.B, domain.C, heightB, heightC),
-        edgeMidpointError(domain.C, domain.A, heightC, heightA),
-        std::abs(centroidHeight - centroidInterpolatedHeight),
-    });
+    const glm::vec2 midpoint = (domain.A + domain.B) * 0.5F;
+    const float midpointHeight = _heightMap->SampleBilinear(midpoint.x, midpoint.y);
+    const float interpolatedHeight = (heightA + heightB) * 0.5F;
+    return midpointHeight - interpolatedHeight;
 }
 
-void ClassicRoamMeshBuilder::RebuildVarianceTrees()
+void ClassicRoamMeshBuilder::RebuildVarianceTrees(int finestDepth)
 {
-    const std::size_t nodeCountPerTree = (std::size_t{1} << static_cast<unsigned>(_settings.MaxDepth + 1)) - 1U;
-    for (std::vector<float>& tree : _varianceTrees)
-    {
-        tree.assign(nodeCountPerTree, 0.0F);
-    }
-
     const TriangleDomain rootA{
         glm::vec2{0.0F, 1.0F},
         glm::vec2{1.0F, 0.0F},
@@ -166,30 +144,26 @@ void ClassicRoamMeshBuilder::RebuildVarianceTrees()
         glm::vec2{0.0F, 1.0F},
         glm::vec2{1.0F, 1.0F},
     };
-    static_cast<void>(BuildVarianceSubtree(rootA, 0, 0, _varianceTrees[0]));
-    static_cast<void>(BuildVarianceSubtree(rootB, 0, 0, _varianceTrees[1]));
+    const auto splitDomain = [](const TriangleDomain& domain) {
+        return SplitTriangleDomain(domain);
+    };
+    const auto signedDisplacement = [this](const TriangleDomain& domain) {
+        return ComputeBaseMidpointDisplacement(domain);
+    };
+    static_cast<void>(Roam::BuildNestedWedgieTree(
+        rootA,
+        finestDepth,
+        _varianceTrees[0],
+        splitDomain,
+        signedDisplacement));
+    static_cast<void>(Roam::BuildNestedWedgieTree(
+        rootB,
+        finestDepth,
+        _varianceTrees[1],
+        splitDomain,
+        signedDisplacement));
     _varianceHeightMap = _heightMap;
-    _varianceTreeMaxDepth = _settings.MaxDepth;
-}
-
-float ClassicRoamMeshBuilder::BuildVarianceSubtree(
-    const TriangleDomain& domain,
-    int depth,
-    std::size_t varianceIndex,
-    std::vector<float>& varianceTree)
-{
-    const float localError = ComputeLocalGeometricError(domain);
-    float subtreeError = localError;
-    if (depth < _settings.MaxDepth)
-    {
-        const TriangleDomainChildren children = SplitTriangleDomain(domain);
-        const float leftError = BuildVarianceSubtree(children.Left, depth + 1, varianceIndex * 2U + 1U, varianceTree);
-        const float rightError = BuildVarianceSubtree(children.Right, depth + 1, varianceIndex * 2U + 2U, varianceTree);
-        subtreeError = std::max({localError, leftError, rightError});
-    }
-
-    varianceTree[varianceIndex] = subtreeError;
-    return subtreeError;
+    _varianceTreeMaxDepth = finestDepth;
 }
 
 void ClassicRoamMeshBuilder::RefreshNodeVarianceErrors()
@@ -250,7 +224,7 @@ bool ClassicRoamMeshBuilder::IsNodeVisible(
 {
     glm::vec3 minimum = glm::min(a, glm::min(b, c));
     glm::vec3 maximum = glm::max(a, glm::max(b, c));
-    // 子树最大误差界定实际曲面相对三角形平面的高度偏差，扩张后测试保持保守
+    // nested wedgie thickness 界定子树累积高度偏差，扩张后测试保持保守
     const float worldError = node.GeometricError * _heightScale;
     minimum.y -= worldError;
     maximum.y += worldError;

@@ -46,7 +46,9 @@ Debug View 的价值不只是展示效果，也用于定位算法问题。比如
 
 > 当前边界：本实验继续用于 Classic CPU、Data-Oriented CPU 和 GPU ROAM-like 的成熟路径对比。CBT 2024 在完整 split/merge、高度图几何和统计接入完成前只运行专用正确性验证，不进入本表性能排名。
 
-> ROAM 口径更新（2026-07-29）：Classic、DOD 和 GPU ROAM-like 共享完整方差、像素 SSE、六平面视锥感知和活动 leaf 硬预算。GPU 路径的持久拓扑仍由 CPU DOD 更新；原生 compute 只在快照上追加一轮 split-only，GPU merge candidate 尚不提交，GPU 新 child 也不写回下一帧 CPU 真值。因此内部评分单位已经对齐，但跨架构质量结论仍应使用最终网格的公共离线指标。
+> ROAM 口径更新（2026-08-03）：Classic 与 DOD 共用论文公式 (1) 的 nested wedgie thickness tree，预计算深度覆盖 height map 源分辨率并限制到 20；GPU ROAM-like 从 DOD snapshot 读取同一 `GeometricError`。三者还共享像素 SSE、六平面视锥感知和活动 leaf 硬预算。GPU 路径的持久拓扑仍由 CPU DOD 更新；原生 compute 只在快照上追加一轮 split-only，GPU merge candidate 尚不提交，GPU 新 child 也不写回下一帧 CPU 真值。因此内部 world-error 口径已经对齐，但 screen projection 仍是中心深度近似，跨架构质量结论仍应使用最终网格的公共离线指标。
+
+> 数据可比性：公式 (1) 替换了旧的 `max(local,left,right)` 四点采样误差。2026-08-03 之前生成的 runtime 报告仍可描述当时的 CPU/GPU 阶段成本，但其三角形数量、score 分布和画质不能与新实现直接横向比较。需要用当前二进制重跑正式性能表。
 
 统一控制变量：
 
@@ -199,7 +201,7 @@ CPU 阶段按互斥执行区间记录，阶段和应接近 `cpuUpdateMs`；原�
 
 运行时 Markdown 的首要比较表必须以 ROAM 逻辑阶段为行，而不是以 shader 名为行。GPU ROAM-like 是混合实现：完整 merge、级联回收、邻接修复和 CPU split baseline 仍由 DOD 执行；GPU merge shader 当前只产生诊断候选，GPU 拓扑只追加一轮 split，并仅支持直接 base-neighbor diamond。报告必须分别显示 `GPU-like CPU baseline` 与 `GPU-like shader`，未实现的 GPU merge topology 写成 `N/A`，不能用 `0 ms` 暗示它已经实现。
 
-该表分析稳定帧热路径。variance tree / geometric-error rebuild 属于初始化、地形切换或相关设置失效后的 reset 路径，当前没有独立阶段计时；不能从稳定帧表中推断其成本，若要比较必须另建 initialization benchmark。
+该表分析稳定帧热路径。nested wedgie tree / `GeometricError` rebuild 属于初始化、地形切换或预计算深度失效后的 reset 路径，当前没有独立阶段计时；不能从稳定帧表中推断其成本，若要比较必须另建 initialization benchmark。
 
 统一 benchmark harness 对 Classic、DOD 和 GPU 名称都应用预算与 `center -> away` 视锥回收断言；`budget-reentry` profile 另以低预算和原地小角度转向，要求 Classic/DOD 在转向后的第一次 Build 同时 merge 旧低分 diamond 并 split 新高分区域。无窗口模式因没有图形上下文通常跳过 GPU。应用级 `--gpu-smoke-test` 在 OpenGL 和 D3D12 上分别验证 GPU packet 非空、最终三角形不超预算，并检查 CPU DOD 持久拓扑的三类 issue 为零。这类正确性验证不替代 30-60 秒 runtime 性能采样。
 

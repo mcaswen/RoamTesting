@@ -121,7 +121,7 @@ bool isNodeVisible(NodeRecord node, vec3 a, vec3 b, vec3 c)
     vec3 minimumPoint = min(a, min(b, c));
     vec3 maximumPoint = max(a, max(b, c));
     float worldError = node.domainCAndErrors.z * uHeightScale;
-    // 子树最大方差扩张包围盒，避免隐藏在三角形内部的峰值被误剔除。
+    // nested wedgie thickness 扩张包围盒，避免子树高度偏差被误剔除。
     minimumPoint.y -= worldError;
     maximumPoint.y += worldError;
     vec3 center = (minimumPoint + maximumPoint) * 0.5;

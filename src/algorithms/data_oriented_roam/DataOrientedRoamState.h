@@ -143,7 +143,7 @@ struct DataOrientedRoamNodePool
     // InteriorChunkIds 缓存分块归属，避免 topology pass 反复按 UV 计算
     std::vector<DataOrientedRoamChunkId> InteriorChunkIds;
 
-    // GeometricErrors 与相机无关，节点创建后跨帧复用
+    // GeometricErrors 保存 nested wedgie thickness，与相机无关且可跨帧复用
     std::vector<float> GeometricErrors;
     std::vector<float> ScreenErrors;
     std::vector<std::size_t> VarianceIndices;
@@ -198,7 +198,7 @@ struct DataOrientedRoamState
     DataOrientedRoamStats Stats;
     DataOrientedRoamNodePool Nodes;
 
-    // 两棵完整方差树分别对应两个根三角形
+    // 两棵 nested wedgie tree 分别对应两个根三角形；深度可超过运行时 MaxDepth
     std::array<std::vector<float>, 2> VarianceTrees;
     const Terrain::HeightMap* VarianceHeightMap{nullptr};
     int VarianceTreeMaxDepth{-1};
@@ -255,7 +255,7 @@ struct DataOrientedRoamState
     std::uint8_t varianceTreeIndex,
     std::size_t varianceIndex);
 
-void RebuildVarianceTrees(DataOrientedRoamState& state);
+void RebuildVarianceTrees(DataOrientedRoamState& state, int finestDepth);
 void RefreshNodeVarianceErrors(DataOrientedRoamState& state);
 [[nodiscard]] float VarianceError(
     const DataOrientedRoamState& state,
@@ -333,8 +333,8 @@ void CollectMergeCandidates(
 [[nodiscard]] glm::vec3 DebugColorForLeaf(const DataOrientedRoamState& state, DataOrientedRoamNodeConstRef node);
 [[nodiscard]] float DebugHighlightForLeaf(const DataOrientedRoamState& state, DataOrientedRoamNodeConstRef node);
 
-// 局部误差由完整方差树向父节点传播
-[[nodiscard]] float ComputeLocalGeometricError(const DataOrientedRoamState& state, const TriangleDomain& domain);
+// 返回 base edge 中点相对父三角形线性插值的有符号高度位移
+[[nodiscard]] float ComputeBaseMidpointDisplacement(const DataOrientedRoamState& state, const TriangleDomain& domain);
 
 // ComputeScreenErrorScore 是当前 split/merge 队列排序的统一评分
 [[nodiscard]] float ComputeScreenErrorScore(const DataOrientedRoamState& state, DataOrientedRoamNodeConstRef node);

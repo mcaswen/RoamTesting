@@ -92,7 +92,7 @@ bool isNodeVisible(NodeRecord node, vec3 a, vec3 b, vec3 c)
     // 三个角点先形成当前线性三角形的世界空间 AABB。
     vec3 minimumPoint = min(a, min(b, c));
     vec3 maximumPoint = max(a, max(b, c));
-    // 完整方差是整个子树的高度误差上界，用它扩张 Y 轴保持剔除保守。
+    // nested wedgie thickness 是子树累积高度误差界，用它扩张 Y 轴保持剔除保守。
     float worldError = node.domainCAndErrors.z * uHeightScale;
     minimumPoint.y -= worldError;
     maximumPoint.y += worldError;
@@ -114,7 +114,7 @@ bool isNodeVisible(NodeRecord node, vec3 a, vec3 b, vec3 c)
 
 float scoreNode(uint nodeIndex)
 {
-    // GPU 节点直接携带 CPU 完整方差树传播后的 GeometricError。
+    // GPU 节点直接携带 CPU 按论文公式 (1) 传播后的 nested wedgie thickness。
     // 三个 domain 点在当前高度图上重新求值，避免上传完整世界空间顶点
     NodeRecord node = nodes[nodeIndex];
     vec2 aUv = node.domainAAndB.xy;

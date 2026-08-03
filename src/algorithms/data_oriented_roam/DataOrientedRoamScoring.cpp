@@ -1,5 +1,7 @@
 #include "algorithms/data_oriented_roam/DataOrientedRoamState.h"
 
+#include "algorithms/RoamNestedWedgie.h"
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -10,37 +12,6 @@ namespace
 {
 constexpr float MinimumViewDepth = 0.05F;
 constexpr float ProjectedEdgeWeight = 0.20F;
-
-float BuildVarianceSubtree(
-    DataOrientedRoamState& state,
-    const TriangleDomain& domain,
-    int depth,
-    std::size_t varianceIndex,
-    std::vector<float>& varianceTree)
-{
-    const float localError = ComputeLocalGeometricError(state, domain);
-    float subtreeError = localError;
-    if (depth < state.Settings.MaxDepth)
-    {
-        const TriangleDomainChildren children = SplitTriangleDomain(domain);
-        const float leftError = BuildVarianceSubtree(
-            state,
-            children.Left,
-            depth + 1,
-            varianceIndex * 2U + 1U,
-            varianceTree);
-        const float rightError = BuildVarianceSubtree(
-            state,
-            children.Right,
-            depth + 1,
-            varianceIndex * 2U + 2U,
-            varianceTree);
-        subtreeError = std::max({localError, leftError, rightError});
-    }
-
-    varianceTree[varianceIndex] = subtreeError;
-    return subtreeError;
-}
 
 bool IsNodeVisible(
     const DataOrientedRoamState& state,
@@ -176,47 +147,18 @@ float DebugHighlightForLeaf(const DataOrientedRoamState& state, DataOrientedRoam
     return 0.35F;
 }
 
-float ComputeLocalGeometricError(const DataOrientedRoamState& state, const TriangleDomain& domain)
+float ComputeBaseMidpointDisplacement(const DataOrientedRoamState& state, const TriangleDomain& domain)
 {
-    // 误差缓存只看 domain 对应的高度变化
-    // 因此 node 创建后可以跨帧复用
     const float heightA = state.HeightMap->SampleBilinear(domain.A.x, domain.A.y);
     const float heightB = state.HeightMap->SampleBilinear(domain.B.x, domain.B.y);
-    const float heightC = state.HeightMap->SampleBilinear(domain.C.x, domain.C.y);
-
-    const auto edgeMidpointError = [&state](const glm::vec2& start, const glm::vec2& end, float startHeight, float endHeight) {
-        // 边中点误差能捕获边界起伏
-        // 只看三角形重心会漏掉沿边的高频变化
-        const glm::vec2 midpoint = (start + end) * 0.5F;
-        const float midpointHeight = state.HeightMap->SampleBilinear(midpoint.x, midpoint.y);
-        const float interpolatedHeight = (startHeight + endHeight) * 0.5F;
-        return std::abs(midpointHeight - interpolatedHeight);
-    };
-
-    const glm::vec2 centroid = (domain.A + domain.B + domain.C) / 3.0F;
-    // 重心采样补足三角形内部起伏
-    const float centroidHeight = state.HeightMap->SampleBilinear(centroid.x, centroid.y);
-    const float centroidInterpolatedHeight = (heightA + heightB + heightC) / 3.0F;
-
-    // 取边中点和重心的最大误差
-    // 平衡边界裂缝风险和三角形内部起伏
-    return std::max({
-        edgeMidpointError(domain.A, domain.B, heightA, heightB),
-        edgeMidpointError(domain.B, domain.C, heightB, heightC),
-        edgeMidpointError(domain.C, domain.A, heightC, heightA),
-        std::abs(centroidHeight - centroidInterpolatedHeight),
-    });
+    const glm::vec2 midpoint = (domain.A + domain.B) * 0.5F;
+    const float midpointHeight = state.HeightMap->SampleBilinear(midpoint.x, midpoint.y);
+    const float interpolatedHeight = (heightA + heightB) * 0.5F;
+    return midpointHeight - interpolatedHeight;
 }
 
-void RebuildVarianceTrees(DataOrientedRoamState& state)
+void RebuildVarianceTrees(DataOrientedRoamState& state, int finestDepth)
 {
-    const std::size_t nodeCountPerTree =
-        (std::size_t{1} << static_cast<unsigned>(state.Settings.MaxDepth + 1)) - 1U;
-    for (std::vector<float>& tree : state.VarianceTrees)
-    {
-        tree.assign(nodeCountPerTree, 0.0F);
-    }
-
     const TriangleDomain rootA{
         glm::vec2{0.0F, 1.0F},
         glm::vec2{1.0F, 0.0F},
@@ -227,10 +169,26 @@ void RebuildVarianceTrees(DataOrientedRoamState& state)
         glm::vec2{0.0F, 1.0F},
         glm::vec2{1.0F, 1.0F},
     };
-    static_cast<void>(BuildVarianceSubtree(state, rootA, 0, 0U, state.VarianceTrees[0]));
-    static_cast<void>(BuildVarianceSubtree(state, rootB, 0, 0U, state.VarianceTrees[1]));
+    const auto splitDomain = [](const TriangleDomain& domain) {
+        return SplitTriangleDomain(domain);
+    };
+    const auto signedDisplacement = [&state](const TriangleDomain& domain) {
+        return ComputeBaseMidpointDisplacement(state, domain);
+    };
+    static_cast<void>(Roam::BuildNestedWedgieTree(
+        rootA,
+        finestDepth,
+        state.VarianceTrees[0],
+        splitDomain,
+        signedDisplacement));
+    static_cast<void>(Roam::BuildNestedWedgieTree(
+        rootB,
+        finestDepth,
+        state.VarianceTrees[1],
+        splitDomain,
+        signedDisplacement));
     state.VarianceHeightMap = state.HeightMap;
-    state.VarianceTreeMaxDepth = state.Settings.MaxDepth;
+    state.VarianceTreeMaxDepth = finestDepth;
 }
 
 void RefreshNodeVarianceErrors(DataOrientedRoamState& state)

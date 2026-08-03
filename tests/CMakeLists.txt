@@ -55,6 +55,25 @@ target_link_libraries(
 
 add_test(NAME cbt_bisector_topology COMMAND parallel_roam_cbt_bisector_topology_tests)
 
+add_executable(
+    parallel_roam_nested_wedgie_tests
+    RoamNestedWedgieTests.cpp
+)
+
+target_include_directories(
+    parallel_roam_nested_wedgie_tests
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+)
+
+target_link_libraries(
+    parallel_roam_nested_wedgie_tests
+    PRIVATE
+        parallel_roam_project_options
+        parallel_roam_project_warnings
+)
+
+add_test(NAME roam_nested_wedgie COMMAND parallel_roam_nested_wedgie_tests)
+
 if(NOT TARGET ParallelROAM::GLM)
     message(STATUS "Skipping terrain LOD view tests because GLM is unavailable.")
     return()

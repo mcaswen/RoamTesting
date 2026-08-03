@@ -316,6 +316,17 @@
 - 验证：OpenGL/D3D12 RelWithDebInfo 构建通过，OpenGL CTest 6/6 通过；DOD standard 64 帧 PASS，活动三角形范围为 `12906..20000`。同参数 runtime 基线 `20260801-195558` 到最终报告 `20260801-221506` 中，DOD `Final leaf collect/view` 从 `0.2383 ms` 变为 `0.0000 ms`，平均 triangles/nodes 变化均小于 0.1%，最大 topology issues 保持 0。
 - 后续：`CollectActiveSplitPaths` 仍从 root 递归生成跨帧 hysteresis path 集合，它维护的是不同状态，不能仅因本次 leaf 输出优化直接删除；是否值得改为增量维护需要单独分析正确性和成本。
 
+### BUG-026：旧方差递推没有实现论文公式 (1) 的 Nested Wedgie Thickness
+
+- 状态：`Fixed`
+- 严重级别：`高`
+- 发生阶段：论文与 Classic/DOD 误差预计算对照
+- 现象：旧实现虽然递归建立完整树，但每个节点取 `max(localError,leftError,rightError)`，其中 `localError` 来自三边中点与重心四点采样。它没有把 child plane 相对 parent plane 的 base-midpoint displacement 逐层累加，因此不能等同于论文公式 (1)；而且预计算只到运行时 `MaxDepth`，较小的运行时上限会遮蔽源 height map 更深层的误差。
+- 定位：Classic 的 `ClassicRoamMeshBuilder::BuildVarianceSubtree` 与 DOD scoring 文件中的同名匿名递推各维护一份旧公式；GPU ROAM-like 从 DOD snapshot 读取 `GeometricError`，因此也继承旧语义。
+- 解决方案：新增共享 `RoamNestedWedgie.h`。`ResolveNestedWedgieTreeDepth` 按 `max(MaxDepth, 2*ceil(log2(max(width-1,height-1))))` 选择预计算深度并限制到 20；`BuildNestedWedgieSubtree` 把最细层设为 0，其他节点执行 `max(leftThickness,rightThickness)+abs(baseMidpointDisplacement)`。Classic/DOD 删除各自旧递推，共用同一公式；GPU snapshot 自动继承新 thickness。
+- 验证：新增 `roam_nested_wedgie` 属性测试，覆盖最细层为 0、有符号位移取绝对值、多层累计、129/513 source depth，并穷举小型几何 bintree 中每个 ancestor 对最细后代顶点的高度误差界；RelWithDebInfo CTest 7/7 通过。Classic/DOD smoke、budget-reentry 与 513x513 standard 64 帧均 PASS，逐帧输出规模保持一致且 topology issue 为 0；standard 三角形范围均为 `12906..20000`。RTX 5090 D 上 OpenGL 4.3 与 D3D12 `--gpu-smoke-test` 均以退出码 0 完成。
+- 后续：仍需增加真实小型 HeightMap 的 ancestor bound 穷举测试，并明确验证非 `2^k+1` 输入、source depth 超过 20 和连续双线性曲面解释。论文公式 (2)/(3) 的 conservative screen projection 尚未实现，不能因为公式 (1) 完成就宣称完整 guaranteed screen-space error。
+
 ## 模板
 
 ```text

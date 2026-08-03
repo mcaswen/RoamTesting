@@ -157,11 +157,11 @@ assets/textures/Tex_Terrain_Debug_Diffuse.ppm
 - 能输出 active triangle count；
 - 可作为三版本视觉一致性的 baseline。
 
-### 当前实现状态（2026-07-29）
+### 当前实现状态（2026-08-03）
 
 - `ClassicRoamMeshBuilder` 使用两个根三角形、裸指针 parent/child/neighbor 和持久化 binary triangle tree；
 - 默认防裂缝路径是局部 `baseNeighbor` forced split；全局 validator 只检查并计数，不参与修复；
-- 两个根各有一棵完整方差树，按二叉堆索引预计算到 `MaxDepth`，父值为局部、左子树、右子树误差最大值；
+- 两个根各有一棵 nested wedgie tree，按二叉堆索引预计算到 `max(MaxDepth, sourceDepth)`，最细层为 0，父值严格执行论文公式 (1) `max(left,right)+abs(base midpoint displacement)`；
 - `ComputeScreenErrorScore` 使用 View、Projection、drawable height 和 view-space depth 输出像素误差，FOV 与分辨率会影响 LOD；
 - 六个 inward frustum planes 用于方差扩张 AABB 测试；视锥外节点不主动 split，但仍允许 forced split 维持邻接约束；
 - split 使用像素误差最大堆，并受默认 20,000 活动 leaf 硬预算限制；forced split 为调用链预留预算 token；
@@ -200,7 +200,7 @@ assets/textures/Tex_Terrain_Debug_Diffuse.ppm
 
 2I：误差队列与 split 策略（已完成）
 
-- 完整方差树预计算并向父节点传播子树最大误差；
+- Classic/DOD 共用 `RoamNestedWedgie.h`，按论文公式 (1) 预计算累计 thickness；
 - 以像素为单位的 screen-space error 纳入 FOV、drawable height 和 view depth；
 - max heap 管理 split candidate，六平面视锥测试抑制不可见区域的主动细分；
 - 最大深度、双阈值和活动三角形硬预算共同限制细分规模；
@@ -234,11 +234,11 @@ assets/textures/Tex_Terrain_Debug_Diffuse.ppm
 
 ### 目标
 
-在相同 Height Map、相机路径、完整方差树、像素 SSE、视锥规则和活动三角形预算下，以数据导向方式重构 ROAM，验证 CPU 多核与数据布局收益。GPU ROAM-like 现已消费同一评分和预算输入，但仍是以 DOD 为持久拓扑真值的混合管线，具体比较边界见 `05-experiments-and-benchmarks.md`。
+在相同 Height Map、相机路径、nested wedgie thickness、像素 SSE、视锥规则和活动三角形预算下，以数据导向方式重构 ROAM，验证 CPU 多核与数据布局收益。GPU ROAM-like 现已消费同一评分和预算输入，但仍是以 DOD 为持久拓扑真值的混合管线，具体比较边界见 `05-experiments-and-benchmarks.md`。
 
-### 当前实现状态（2026-07-29）
+### 当前实现状态（2026-08-03）
 
-- 两个根分别预计算 heap-indexed 完整方差树，节点用 `VarianceTreeIndex/VarianceIndex` 从 SoA 缓存对应子树最大误差；
+- 两个根分别预计算 heap-indexed nested wedgie tree，节点用 `VarianceTreeIndex/VarianceIndex` 从 SoA 缓存公式 (1) thickness；预计算深度覆盖源分辨率且上限为 20；
 - `ComputeScreenErrorScore` 与 Classic 同样消费 View、Projection、drawable height 和六个 inward frustum planes，输出像素误差并抑制视锥外主动 split；
 - `TriangleBudget` 默认 20,000，活动 leaf 每次 split 原子领取一个 token；并行 interior commit 与 forced split closure 共用同一硬上限；
 - merge 保留安全 interior chunk 并行预提交，成功后把新满足条件的 parent 放回动态最小堆，可在同一 Build 向上级联；
@@ -418,7 +418,7 @@ Level E：GPU split-only 或 split/merge topology update
 4C：GPU Error Evaluation
 
 - Compute shader 读取 height map texture、node buffer、camera/settings UBO；
-- 对 active leaf 使用快照携带的完整 `GeometricError`，按 View、Projection 和 drawable height 计算像素 SSE，并以方差扩张 AABB 做六平面视锥测试；
+- 对 active leaf 使用快照携带的 nested wedgie `GeometricError`，按 View、Projection 和 drawable height 计算像素 SSE，并以 thickness 扩张 AABB 做六平面视锥测试；
 - 输出 `screenError` buffer；
 - CPU 只抽样 readback 少量 error 值做验证，默认 benchmark 不全量 readback；
 - 用 timer query 记录 compute 时间，用 CPU 计时记录 upload / readback 时间。
@@ -433,7 +433,7 @@ Level E：GPU split-only 或 split/merge topology update
 阶段完成记录：
 
 - 已新增 GPU error evaluation compute shader，读取 R32F height map texture、node SSBO 和 GPU compact 后的 active leaf buffer；
-- OpenGL GLSL 与 D3D12 HLSL 都使用 CPU 兼容的显式双线性高度采样、完整方差、像素 SSE 和六平面视锥测试，并写入 screen error buffer；
+- OpenGL GLSL 与 D3D12 HLSL 都读取 DOD snapshot 中按公式 (1) 传播的 `GeometricError`，并使用 CPU 兼容的显式双线性高度采样、像素 SSE 和六平面视锥测试写入 screen error buffer；
 - GPU 算法链已按实际 shader 责任拆成八个 OpenGL timer query，并通过延迟槽位整体回读；split 与 merge candidate 扫描不再混在一个计时区间；
 - 默认只 readback 少量 active leaf 和 error 样本，避免全量 screen error 回读污染性能口径；
 - leaf error evaluation 驱动 GPU split candidate；merge candidate pass 单独对 split parent 重新评分，但只产生诊断列表。GPU split-only 只修改当前 GPU 快照，不反写 CPU DOD 持久拓扑，merge commit 仍由 CPU DOD 完成。

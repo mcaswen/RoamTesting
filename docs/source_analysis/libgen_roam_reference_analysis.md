@@ -161,7 +161,7 @@ e_local  = length(M_actual - M_linear)
 e[bi] = max(e_left, e_right) + e_local
 ```
 
-这不是本项目使用的 `max(local, left, right)` variance，而是把本层 displacement 加到子树最大 error radius 上。其算法意图是形成覆盖后代位移的嵌套保守半径。
+这与本项目当前 `Roam::BuildNestedWedgieSubtree` 的公式意图一致：把本层 displacement 加到两个 child thickness 的最大值上，形成覆盖后代位移的嵌套保守半径。区别在于本项目共享实现会正确返回刚算出的 `thickness`，而该参考生成器的返回值存在下述缺陷。
 
 但函数实际结尾是：
 
@@ -626,7 +626,7 @@ allocate children in 256-record blocks as split progresses
 | 根结构 | 每 tile 两个 root | 整幅高度图两个 root | 同 Classic |
 | 节点布局 | `qcell` AoS + 裸指针 + qpool | `ClassicRoamNode` AoS + 裸指针，`unique_ptr` 拥有 | 多个连续 vector 的 SoA + index |
 | 几何存储 | 每节点复制 `ij/p/uv` | 节点只存 UV domain，按需采样世界坐标 | 同 Classic domain，字段分列 |
-| 误差预计算 | 离线 error-radius，疑似只剩 local midpoint | 运行前完整 variance tree，`max(local,left,right)` | 与 Classic 同口径 |
+| 误差预计算 | 离线 error-radius，疑似只剩 local midpoint | 运行前按论文公式 (1) 构建 nested wedgie tree | 与 Classic 同口径，共用公式实现 |
 | Split priority | object-space error 的 4096 bucket | 像素 SSE + frustum 的 max heap | 融合 active-leaf 扫描、像素 SSE + frustum |
 | Split closure | 一次函数原子拆完整 diamond | requested split + 递归 forced base split | 同语义，索引拓扑与部分 chunk 提交 |
 | Merge | 未实现，降低目标时全量重建 | 动态 diamond merge，同 Build 向上级联 | active internal 索引 + 并行预提交 + 动态级联 |
@@ -637,11 +637,11 @@ allocate children in 256-record blocks as split progresses
 | 并行 | 串行 | 串行 baseline | 批量扫描及安全 chunk 并行 |
 | 验证/统计 | 无 topology validator，只有 `ntri` 和 debug print | topology issue 与阶段统计 | 独立 root traversal 交叉验证活动索引 |
 
-当前项目的 Classic 不是对 `Qscene` 的逐行移植。它保留“对象式裸指针 bintree + forced split”的经典工程角色，同时补上了这份参考快照未完成的完整方差传播、view-dependent pixel SSE、frustum、动态 merge、持久拓扑、硬预算和验证。DOD 再把相同质量语义改成 SoA/index、活动索引和多线程阶段。
+当前项目的 Classic 不是对 `Qscene` 的逐行移植。它保留“对象式裸指针 bintree + forced split”的经典工程角色，同时补上了这份参考快照未完成的论文公式 (1) nested wedgie 传播、view-dependent pixel SSE、frustum、动态 merge、持久拓扑、硬预算和验证。DOD 再把相同质量语义改成 SoA/index、活动索引和多线程阶段。
 
 上述工程差异可直接定位到当前项目源码：
 
-- [`ClassicRoamMeshBuilder::BuildVarianceSubtree`](../../src/algorithms/classic_roam/ClassicRoamScoring.cpp#L175) 使用 `max(localError, leftError, rightError)` 把完整子树误差传播到父节点；
+- [`Roam::BuildNestedWedgieSubtree`](../../src/algorithms/RoamNestedWedgie.h#L60) 使用 `max(leftThickness,rightThickness)+abs(baseMidpointDisplacement)` 把论文公式 (1) 的累计 thickness 传播到父节点；
 - [`ClassicRoamMeshBuilder::ComputeScreenErrorScore`](../../src/algorithms/classic_roam/ClassicRoamScoring.cpp#L214) 使用 view depth、projection Y scale 和 drawable height 得到像素误差，并先执行 frustum 可见性判断；
 - [`ClassicRoamMeshBuilder::MergeWithDiamondQueue`](../../src/algorithms/classic_roam/ClassicRoamTopology.cpp#L180) 在持久拓扑上执行动态 diamond merge；
 - [`DataOrientedRoamState::ActiveLeafNodes`](../../src/algorithms/data_oriented_roam/DataOrientedRoamState.h#L215) 以连续索引数组维护活动叶；

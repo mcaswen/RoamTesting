@@ -1,6 +1,7 @@
 #include "algorithms/data_oriented_roam/DataOrientedRoamMeshBuilder.h"
 
 #include "algorithms/ITerrainLodAlgorithm.h"
+#include "algorithms/RoamNestedWedgie.h"
 #include "algorithms/data_oriented_roam/DataOrientedRoamState.h"
 #include "algorithms/data_oriented_roam/DataOrientedRoamThreadPool.h"
 
@@ -88,9 +89,14 @@ Terrain::TerrainMeshData DataOrientedRoamMeshBuilder::BuildInternal(
     DataOrientedRoamSettings normalizedSettings = settings;
     normalizedSettings.MaxDepth = std::clamp(normalizedSettings.MaxDepth, 0, MaximumSupportedDepth);
     normalizedSettings.TriangleBudget = std::max<std::size_t>(normalizedSettings.TriangleBudget, 2U);
+    const int varianceTreeDepth = Roam::ResolveNestedWedgieTreeDepth(
+        heightMap.Width(),
+        heightMap.Height(),
+        normalizedSettings.MaxDepth,
+        MaximumSupportedDepth);
     const bool resetTopology = NeedsTopologyReset(state, heightMap, terrainSize, heightScale, normalizedSettings);
     const bool rebuildVarianceTrees =
-        state.VarianceHeightMap != &heightMap || state.VarianceTreeMaxDepth != normalizedSettings.MaxDepth;
+        state.VarianceHeightMap != &heightMap || state.VarianceTreeMaxDepth != varianceTreeDepth;
     state.HeightMap = &heightMap;
     state.Settings = normalizedSettings;
     // merge 阈值不能高于 split 阈值
@@ -119,7 +125,7 @@ Terrain::TerrainMeshData DataOrientedRoamMeshBuilder::BuildInternal(
 
     if (rebuildVarianceTrees)
     {
-        RebuildVarianceTrees(state);
+        RebuildVarianceTrees(state, varianceTreeDepth);
     }
 
     ReserveNodePool(state);
@@ -130,7 +136,7 @@ Terrain::TerrainMeshData DataOrientedRoamMeshBuilder::BuildInternal(
     }
     else if (rebuildVarianceTrees)
     {
-        // 提高深度时保留拓扑，但已有节点必须刷新子树最大误差
+        // 预计算树扩深时保留拓扑，但已有节点必须刷新 nested wedgie thickness
         RefreshNodeVarianceErrors(state);
     }
     const auto prepareEnd = std::chrono::steady_clock::now();

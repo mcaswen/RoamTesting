@@ -1,6 +1,7 @@
 #include "algorithms/classic_roam/ClassicRoamMeshBuilder.h"
 
 #include "algorithms/ITerrainLodAlgorithm.h"
+#include "algorithms/RoamNestedWedgie.h"
 
 #include <algorithm>
 #include <chrono>
@@ -28,13 +29,18 @@ Terrain::TerrainMeshData ClassicRoamMeshBuilder::Build(
     const auto updateStart = std::chrono::steady_clock::now();
     ++_buildSequence;
     ClassicRoamSettings normalizedSettings = settings;
-    // 完整方差树的容量随深度指数增长，和现有 UI 的上限保持一致
+    // nested wedgie tree 的容量随深度指数增长，和现有 UI 的上限保持一致
     normalizedSettings.MaxDepth = std::clamp(normalizedSettings.MaxDepth, 0, MaximumSupportedDepth);
     normalizedSettings.TriangleBudget = std::max<std::size_t>(normalizedSettings.TriangleBudget, 2U);
+    const int varianceTreeDepth = Roam::ResolveNestedWedgieTreeDepth(
+        heightMap.Width(),
+        heightMap.Height(),
+        normalizedSettings.MaxDepth,
+        MaximumSupportedDepth);
     // reset 判定必须在写入本帧输入前完成
     const bool resetTopology = NeedsTopologyReset(heightMap, terrainSize, heightScale, normalizedSettings);
     const bool rebuildVarianceTrees =
-        _varianceHeightMap != &heightMap || _varianceTreeMaxDepth != normalizedSettings.MaxDepth;
+        _varianceHeightMap != &heightMap || _varianceTreeMaxDepth != varianceTreeDepth;
     _heightMap = &heightMap;
     _settings = normalizedSettings;
     // 持久化 bintree 只在输入不兼容时重置
@@ -66,8 +72,8 @@ Terrain::TerrainMeshData ClassicRoamMeshBuilder::Build(
 
     if (rebuildVarianceTrees)
     {
-        // topology 节点只缓存方差树结果，因此方差树必须先于节点创建或刷新
-        RebuildVarianceTrees();
+        // topology 节点只缓存 thickness，因此 nested wedgie tree 必须先于节点创建或刷新
+        RebuildVarianceTrees(varianceTreeDepth);
     }
 
     if (resetTopology)
@@ -77,7 +83,7 @@ Terrain::TerrainMeshData ClassicRoamMeshBuilder::Build(
     }
     else if (rebuildVarianceTrees)
     {
-        // 增大 MaxDepth 不需要丢弃拓扑，但已有节点必须读取新的子树最大误差
+        // 预计算树扩深时不需要丢弃拓扑，但已有节点必须读取新的 nested wedgie thickness
         RefreshNodeVarianceErrors();
     }
     const auto prepareEnd = std::chrono::steady_clock::now();

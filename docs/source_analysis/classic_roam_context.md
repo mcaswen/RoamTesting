@@ -1,6 +1,6 @@
 # Classic CPU ROAM 源码上下文
 
-> 分析代码基线：`57ce3cb`（本次文档提交之前的最后一个功能提交），静态阅读日期 2026-07-29。本文以实际执行代码为准；历史文档只作为工程背景，不反向推定实现。除特别注明外，行号均指该基线。
+> 分析代码基线：`eeb3f3a` 及 2026-08-03 的 nested wedgie 公式 (1) 实现。本文以实际执行代码为准；历史文档只作为工程背景，不反向推定实现。行号可能随后续提交变化，因此证据同时保留符号名。
 >
 > 证据标签约定：
 >
@@ -11,7 +11,7 @@
 
 ## 1. 一页概览
 
-**源码事实：** 当前 `Classic CPU ROAM` 是一个单线程、对象式、持久化二叉三角树（binary triangle tree，简称 bintree）实现。它通过 `ClassicRoamTerrainLodAlgorithm` 适配项目统一的 `ITerrainLodAlgorithm` 接口，实际拓扑由 `ClassicRoamMeshBuilder` 持有。初始化时为两个根预计算完整方差树；每次真正发生 LOD 构建时，先用动态最小堆级联合并低像素误差 diamond，预算接近满载时再有限交换低分 merge 与高分 split，随后在严格活动三角形预算内用最大堆处理高误差 split 候选，最后完整生成 CPU 顶点/索引数组。
+**源码事实：** 当前 `Classic CPU ROAM` 是一个单线程、对象式、持久化二叉三角树（binary triangle tree，简称 bintree）实现。它通过 `ClassicRoamTerrainLodAlgorithm` 适配项目统一的 `ITerrainLodAlgorithm` 接口，实际拓扑由 `ClassicRoamMeshBuilder` 持有。初始化时为两个根预计算论文公式 (1) 的 nested wedgie thickness tree；每次真正发生 LOD 构建时，先用动态最小堆级联合并低像素误差 diamond，预算接近满载时再有限交换低分 merge 与高分 split，随后在严格活动三角形预算内用最大堆处理高误差 split 候选，最后完整生成 CPU 顶点/索引数组。
 
 证据：
 
@@ -25,16 +25,16 @@
 | 统一输出模式 | `TerrainLodRenderMode::CpuMesh` |
 | 拓扑 | 两个根三角形 + 裸指针 parent/child/neighbor bintree |
 | 跨帧状态 | 持久化节点、活动 split 状态、`PathId` 迟滞历史 |
-| 误差 | 两棵完整方差树向父节点传播子树最大误差；构建时换算为像素误差 |
+| 误差 | 两棵 nested wedgie tree 按公式 (1) 累积 base-midpoint displacement；构建时换算为像素误差 |
 | 细分 | 可见 leaf 按像素误差最大堆排序；forced split 预留预算 token |
 | 合并 | 动态最小堆；成功 merge 后立即检查父层，可在同一 Build 向上级联 |
 | 裂缝约束 | 默认启用局部 `baseNeighbor` 传播；validator 只检查、不修复 |
 | Mesh | 每个活动叶输出 3 个独立顶点和 3 个索引；无顶点共享/去重 |
 | 并行 | Classic 核心没有并行 pass，统一统计固定报告 `CpuWorkerCount = 1` |
 | GPU 工作 | 无；CPU Mesh 之后由 OpenGL 或 D3D12 renderer 上传和绘制 |
-| 视锥感知 | 6 个 inward plane 与方差扩张世界 AABB 相交；视锥外 score 为 0 |
+| 视锥感知 | 6 个 inward plane 与 thickness 扩张世界 AABB 相交；视锥外 score 为 0 |
 | 三角形预算 | 默认 20,000 个活动 leaf；预算变化重置拓扑并重新分配 |
-| 经典方差树 | 两个二叉堆数组完整预计算到 `MaxDepth`；父值取局部/左右子树最大值 |
+| 论文 nested wedgie | 两个二叉堆数组预计算到 `max(MaxDepth, sourceDepth)`；最细层为 0，父值为 `max(left,right)+abs(base midpoint displacement)` |
 
 **源码事实：** “程序每帧调用更新入口”不等于“Classic 每帧重建”。普通交互中，`TerrainRenderer::UpdateForView` 在 mesh dirty、相机移动至少 `max(0.30, TerrainSize * 0.01)`、Classic 原地转向、投影/FOV 变化或 drawable 尺寸变化时调用 `RebuildTerrainLod`。运行时 benchmark 每帧主动 `RequestMeshRebuild()`，因此会绕过该缓存。
 
@@ -113,7 +113,7 @@ flowchart TD
 | `ClassicRoamMeshBuilder.h` | `TriangleDomain`、`ClassicRoamSettings`、`ClassicRoamStats`、`ClassicRoamNode`、`ClassicRoamMeshBuilder` | 全部 Classic 私有类型和状态声明 |
 | `ClassicRoamMeshBuilder.cpp` | `Build` | 单次更新的 pass 调度和计时 |
 | `ClassicRoamState.cpp` | `AddNode`、`ResetTopology`、leaf/path/stats 收集 | 持久状态、根节点、活动集合 |
-| `ClassicRoamScoring.cpp` | split 判断、几何误差、相机分数、世界坐标、法线 | LOD 评分与顶点派生属性 |
+| `ClassicRoamScoring.cpp` | split 判断、base midpoint displacement、相机分数、世界坐标、法线 | LOD 评分与顶点派生属性 |
 | `ClassicRoamTopology.cpp` | split/merge 队列、forced split、邻接重连 | 活动拓扑维护 |
 | `ClassicRoamMeshEmit.cpp` | `EmitLeafTriangles`、`EmitDomainTriangle` | 活动叶到 CPU Mesh |
 | `ClassicRoamValidation.cpp` | `ValidateTopology` | 可选 T-junction、邻接和 parent/child 检查 |
@@ -134,9 +134,9 @@ flowchart TD
 | `docs/parallel-roam/04-milestones.md` | 阶段 2 记录 | 有用的开发背景，但部分旧条目与当前代码冲突 |
 | `docs/parallel-roam/11-bug-fix-log.md` | BUG-004..010 等 | 说明 PathId、绕序、评分、持久拓扑入口等历史问题 |
 
-**源码事实：** `tests/CMakeLists.txt` 当前只注册注释覆盖、CBT 和 `TerrainLodView` 测试，没有 Classic 专用单元测试。Classic 的自动化正确性入口主要是 `TerrainLodBenchmark` smoke profile，而不是 `tests/` 下的测试目标。
+**源码事实：** `tests/CMakeLists.txt` 注册了共享 `roam_nested_wedgie` 属性测试，覆盖公式递推、最细层为 0、分辨率深度解析，并用一个小型几何 bintree 穷举每个 ancestor 对最细后代顶点的高度误差界；还注册 Classic/DOD 的 budget-reentry 回归。完整 Classic 拓扑正确性仍主要由 `TerrainLodBenchmark` smoke profile 验证。
 
-证据：文件：`tests/CMakeLists.txt`；代码范围：第 1-81 行。文件：`src/benchmark/TerrainLodBenchmark.cpp`；符号：`MakeScenario`、`ValidateFrame`；代码范围：第 154-200、245-302 行。
+证据：文件：`tests/CMakeLists.txt`；符号：`roam_nested_wedgie`、`roam_budget_reentry_classic`。文件：`tests/RoamNestedWedgieTests.cpp`；符号：`CheckNestedBounds`、`main`。文件：`src/benchmark/TerrainLodBenchmark.cpp`；符号：`MakeScenario`、`ValidateFrame`。
 
 ## 4. 初始化流程
 
@@ -152,13 +152,13 @@ flowchart TD
     F --> G[ClassicRoamTerrainLodAlgorithm::BuildRenderData]
     G --> H[ClassicRoamMeshBuilder::Build]
     H --> I[规范化 MaxDepth 与 TriangleBudget]
-    I --> J{方差树缓存兼容?}
+    I --> J{nested wedgie 缓存兼容?}
     J -->|否| K[RebuildVarianceTrees]
-    K --> L[递归计算两个根的完整方差树]
+    K --> L[递归计算两个根的 nested wedgie tree]
     J -->|是| M{NeedsTopologyReset?}
     L --> M
     M -->|首帧 true| N[ResetTopology]
-    N --> O[AddNode rootA/rootB 并读取方差树根值]
+    N --> O[AddNode rootA/rootB 并读取 thickness 根值]
     O --> P[两个 root 互设 BaseNeighbor]
     P --> Q[merge 无可回收节点]
     Q --> R[计算剩余活动 leaf 预算]
@@ -171,7 +171,8 @@ flowchart TD
 - 文件：`src/app/Application.cpp`；符号：`Application::Initialize`；代码范围：第 140-237 行。
 - 文件：`src/terrain/HeightMap.cpp`；符号：`HeightMap::LoadFromFile`；代码范围：第 32-66 行。
 - 文件：`src/algorithms/classic_roam/ClassicRoamMeshBuilder.cpp`；符号：`ClassicRoamMeshBuilder::Build`；代码范围：第 21-128 行。
-- 文件：`src/algorithms/classic_roam/ClassicRoamScoring.cpp`；符号：`RebuildVarianceTrees`、`BuildVarianceSubtree`；代码范围：第 151-200 行。
+- 文件：`src/algorithms/RoamNestedWedgie.h`；符号：`ResolveNestedWedgieTreeDepth`、`BuildNestedWedgieTree`、`BuildNestedWedgieSubtree`。
+- 文件：`src/algorithms/classic_roam/ClassicRoamScoring.cpp`；符号：`ComputeBaseMidpointDisplacement`、`RebuildVarianceTrees`。
 - 文件：`src/algorithms/classic_roam/ClassicRoamState.cpp`；符号：`AddNode`、`ResetTopology`；代码范围：第 20-78 行。
 
 ### 4.2 根三角形
@@ -198,18 +199,18 @@ rootB = A(1,0), B(0,1), C(1,1)
 
 证据：文件：`src/terrain/HeightMap.cpp`；符号：`LoadFromFile`、`SampleBilinear`；代码范围：第 32-66、83-113 行。
 
-**源码事实：** `RebuildVarianceTrees` 为两个根各分配一棵二叉堆数组，并递归到规范化后的 `MaxDepth`。每个条目保存 `max(localError,leftSubtreeError,rightSubtreeError)`；其中 `localError` 仍由三条边中点和重心相对线性插值的最大高度差产生。`AddNode` 只按 `VarianceTreeIndex/VarianceIndex` 读取预计算结果，不再临时采样局部误差。
+**源码事实：** `ResolveNestedWedgieTreeDepth` 令预计算最细深度为 `max(runtime MaxDepth, 2*ceil(log2(max(width-1,height-1))))`，再限制到 20；129x129 与 513x513 高度图分别得到深度 14 与 18。`RebuildVarianceTrees` 为两个根各构造一棵二叉堆数组：最细层写 0，其他层执行 `max(leftThickness,rightThickness)+abs(baseMidpointDisplacement)`。`AddNode` 只按 `VarianceTreeIndex/VarianceIndex` 读取预计算结果，不在热路径重新求 thickness。
 
-证据：文件：`src/algorithms/classic_roam/ClassicRoamScoring.cpp`；符号：`ComputeLocalGeometricError`、`RebuildVarianceTrees`、`BuildVarianceSubtree`；代码范围：第 123-200 行。文件：`ClassicRoamState.cpp`；符号：`AddNode`；代码范围：第 20-47 行。
+证据：文件：`src/algorithms/RoamNestedWedgie.h`；符号：`ResolveNestedWedgieTreeDepth`、`BuildNestedWedgieSubtree`。文件：`src/algorithms/classic_roam/ClassicRoamScoring.cpp`；符号：`ComputeBaseMidpointDisplacement`、`RebuildVarianceTrees`。文件：`ClassicRoamState.cpp`；符号：`AddNode`。
 
 ### 4.4 什么只做一次，什么按构建重做
 
 | 数据/工作 | 首次或输入变化 | 每次 Classic `Build` | 每个应用帧 |
 | --- | --- | --- | --- |
 | HeightMap 文件解码 | 加载/切图时 | 否 | 否 |
-| 两棵完整方差树 | HeightMap 对象或 `MaxDepth` 变化 | 条件执行；深度增加会刷新已有节点 error | 否 |
+| 两棵 nested wedgie tree | HeightMap 对象或解析出的预计算深度变化 | 条件执行；预计算树扩深会刷新已有节点 error | 否 |
 | 两个根节点 | 首次或 topology reset | 条件执行 | 否 |
-| 节点 `GeometricError` | 建节点时从方差树读取 | 方差树重建时可刷新 | 否 |
+| 节点 `GeometricError` | 建节点时从 nested tree 读取 | tree 重建时可刷新 | 否 |
 | 节点对象和 child 指针 | 首次走到该深度 | 跨 Build 复用 | 否 |
 | 相机相关 score/视锥测试 | 否 | 候选扫描/弹出时重算 | 只有触发 Build 才算 |
 | merge/split 活动状态 | 初始化粗拓扑 | 更新 | 只有触发 Build 才更新 |
@@ -217,9 +218,9 @@ rootB = A(1,0), B(0,1), C(1,1)
 | CPU Mesh | 否 | 完整重建 | 未触发 Build 时复用 |
 | GPU 上传 | 否 | CPU Mesh 成功后 | D3D12 还会按 frame slot 懒同步 |
 
-### 4.5 topology reset 与方差重建条件
+### 4.5 topology reset 与 nested tree 重建条件
 
-**源码事实：** `NeedsTopologyReset` 在没有根/节点、`HeightMap` 对象地址改变、新 `MaxDepth` 小于历史深度、预算改变、`terrainSize` 或 `heightScale` 改变时返回 true。预算降低因此会立即从根重新分配，不会遗留超过新上限的活动 leaf。单纯提高最大深度不清空拓扑，但会重建方差树并用 `RefreshNodeVarianceErrors` 刷新已有节点。
+**源码事实：** `NeedsTopologyReset` 在没有根/节点、`HeightMap` 对象地址改变、新 `MaxDepth` 小于历史深度、预算改变、`terrainSize` 或 `heightScale` 改变时返回 true。预算降低因此会立即从根重新分配，不会遗留超过新上限的活动 leaf。单纯提高最大深度不清空拓扑；只有它使 nested wedgie 预计算深度继续扩展时才重建树，并用 `RefreshNodeVarianceErrors` 刷新已有节点。
 
 证据：文件：`src/algorithms/classic_roam/ClassicRoamState.cpp`；符号：`NeedsTopologyReset`；代码范围：第 80-113 行。文件：`ClassicRoamMeshBuilder.cpp`；符号：`Build`；代码范围：第 21-75 行。
 
@@ -242,10 +243,10 @@ BuildRenderData(input)
 ClassicRoamMeshBuilder::Build(heightMap, scales, fullView, settings)
     ++buildSequence
     clamp MaxDepth 到 [0,20]；TriangleBudget 至少为 2
-    判断 topology reset 与 variance rebuild
+    判断 topology reset 与 nested tree rebuild
     写入 View/Projection/FrustumPlanes/DrawableHeight
-    必要时 RebuildVarianceTrees()
-    必要时 ResetTopology()，否则刷新已有节点的 variance error
+    必要时 RebuildVarianceTrees(finestDepth)
+    必要时 ResetTopology()，否则刷新已有节点的 thickness
     MergeWithDiamondQueue()             // 阈值级联合并；池满时有限交换低分 diamond
     CollectLeafNodes()                  // 得到 merge 后活动 leaf 数
     remainingBudget = budget - leafCount
@@ -264,10 +265,10 @@ ClassicRoamMeshBuilder::Build(heightMap, scales, fullView, settings)
 
 ### 5.3 各阶段的数据条件
 
-1. **输入与缓存。** 已有持久树、上一 Build 的 split path、新 `HeightMap/settings/view`。先判断缓存兼容性，再覆盖成员；方差树必须在 root/child 读取 `GeometricError` 前可用。
+1. **输入与缓存。** 已有持久树、上一 Build 的 split path、新 `HeightMap/settings/view`。先判断缓存兼容性，再覆盖成员；nested wedgie tree 必须在 root/child 读取 `GeometricError` 前可用。
 2. **Merge pass。** 动态最小堆先处理低像素误差 internal node。提交时重新验证；成功后立即把本侧与 base 对侧 parent 入队，所以孙层回收可以在同一 Build 使祖先继续成为候选。
 3. **预算重平衡与初始化。** 阈值 merge 稳定后收集全部活动 leaf；若可用 token 少于当前高分 split 需求，则以有限批次回收分数至少低一个迟滞区间的安全 diamond。随后用最终活动 leaf 数计算 `_remainingSplitBudget`；一次 leaf split 使活动 leaf 数净增 1，因此 token 数仍是准确硬上限。
-4. **Split pass。** 递归扫描当前 leaf；`ComputeScreenErrorScore` 先以方差扩张的世界 AABB做六平面测试，不可见节点得 0。可见候选按像素误差降序处理；forced split 会预留调用链所需 token，预算不足则拒绝整条不安全细分。
+4. **Split pass。** 递归扫描当前 leaf；`ComputeScreenErrorScore` 先以 thickness 扩张的世界 AABB做六平面测试，不可见节点得 0。可见候选按像素误差降序处理；forced split 会预留调用链所需 token，预算不足则拒绝整条不安全细分。
 5. **可选验证。** 用量化共线边检查 T-junction，再验证 active neighbor、共享边和 parent/child/root 不变量。validator 只报告，不修复。
 6. **Mesh emit。** 从两个 root 收集唯一活动 leaf；每叶追加三个独立顶点和三个索引。视锥只影响细分，视锥外粗 leaf 仍会输出并由后端裁剪。
 7. **统计/迟滞提交。** 统计节点池、leaf 分类、预算拒绝和各阶段时间；最终仍 split 的 `PathId` 成为下一 Build 的迟滞历史。
@@ -281,16 +282,16 @@ ClassicRoamMeshBuilder::Build(heightMap, scales, fullView, settings)
 | 函数 | 调用者 / 被调用者 | 输入与输出 | 修改状态 | 递归 | 热路径 |
 | --- | --- | --- | --- | --- | --- |
 | `BuildRenderData` | renderer / `Build`、stats 映射 | `TerrainLodBuildInput` -> packet/bool | adapter `_stats` | 否 | 是 |
-| `Build` | adapter / variance、reset、merge、split、emit | HeightMap/尺度/完整 view/settings -> Mesh | builder 本帧状态 | 否 | 是 |
-| `RebuildVarianceTrees` | `Build` / `BuildVarianceSubtree` | 两 root domain -> 两个 float 数组 | variance 缓存 | 子函数递归 | 条件 |
-| `BuildVarianceSubtree` | variance rebuild / 自身 | domain/depth/index -> subtree max | tree entry | 是 | 仅重建 |
+| `Build` | adapter / nested tree、reset、merge、split、emit | HeightMap/尺度/完整 view/settings -> Mesh | builder 本帧状态 | 否 | 是 |
+| `RebuildVarianceTrees` | `Build` / `Roam::BuildNestedWedgieTree` | 两 root domain + finest depth -> 两个 float 数组 | thickness 缓存 | 共享子函数递归 | 条件 |
+| `Roam::BuildNestedWedgieSubtree` | `BuildNestedWedgieTree` / 自身 | domain/depth/index -> nested thickness | tree entry | 是 | 仅重建 |
 | `NeedsTopologyReset` | `Build` | 新旧输入 -> bool | 无 | 否 | 是 |
-| `ResetTopology` / `AddNode` | `Build`、split | domain/variance index -> pointer | node pool/root | 否 | 条件/新节点 |
+| `ResetTopology` / `AddNode` | `Build`、split | domain/thickness index -> pointer | node pool/root | 否 | 条件/新节点 |
 | `MergeWithDiamondQueue` | `Build` / score、merge | 当前活动树 | `IsSplit`、邻接、stats | 初始扫描递归 | 是 |
 | `RefineWithSplitQueue` | `Build` / score、`SplitNode` | 两 root/预算 | 拓扑、预算、stats | 初始扫描递归 | 是 |
 | `SplitNode` | split queue/自身 | leaf/reason/reserved slots -> bool | child、邻接、预算 | forced split 递归 | 是 |
 | `CanMergeNode` / `MergeNodeOrDiamond` | merge queue | internal node -> bool | 一侧或 diamond 状态 | 否 | 是 |
-| `ComputeLocalGeometricError` | variance build | domain -> normalized local error | 无 | 否 | 仅方差构建 |
+| `ComputeBaseMidpointDisplacement` | nested wedgie build | domain -> normalized signed displacement | 无 | 否 | 仅误差树构建 |
 | `ComputeScreenErrorScore` / `IsNodeVisible` | merge/split | node/view/frustum -> pixels | 无 | 否 | 是且重复 |
 | `CollectLeafNodesFrom` | budget/validate/emit | node -> vector append | 输出 vector | 是 | 是 |
 | `ValidateTopology` | `Build` | 当前活动树 | validation stats | leaf 收集递归 | 可选 |
@@ -302,7 +303,7 @@ ClassicRoamMeshBuilder::Build(heightMap, scales, fullView, settings)
 
 ### 6.1 `TriangleDomain`
 
-**源码事实：** 只保存三个 `glm::vec2`：`A/B/C`，位于 HeightMap UV 空间。`A-B` 是 base edge，`B-C` 是 right edge，`C-A` 是 left edge；`SplitTriangleDomain` 是方差预计算和真实 split 共用的唯一几何派生规则。
+**源码事实：** 只保存三个 `glm::vec2`：`A/B/C`，位于 HeightMap UV 空间。`A-B` 是 base edge，`B-C` 是 right edge，`C-A` 是 left edge；`SplitTriangleDomain` 是 nested thickness 预计算和真实 split 共用的唯一几何派生规则。
 
 证据：文件：`src/algorithms/classic_roam/ClassicRoamMeshBuilder.h`；符号：`TriangleDomain`、`SplitTriangleDomain`；代码范围：第 22-38 行。文件：`ClassicRoamScoring.cpp`；符号：`SplitTriangleDomain`；代码范围：第 15-23 行。
 
@@ -314,8 +315,8 @@ ClassicRoamMeshBuilder::Build(heightMap, scales, fullView, settings)
 | `Parent` | 所属 bintree 父节点，root 为 null | `AddNode` 写一次 |
 | `LeftChild/RightChild` | 惰性创建的两个孩子；merge 后仍保留 | `SplitNode` 首次 split 写入 |
 | `BaseNeighbor/LeftNeighbor/RightNeighbor` | 跨 base/left/right edge 的活动拓扑邻居 | reset、split、merge 重连 |
-| `GeometricError` | 对应完整方差子树的最大归一化高度误差 | 建节点读取；方差重建可刷新 |
-| `VarianceTreeIndex` | 选择 rootA/rootB 的方差数组 | `AddNode` 写一次 |
+| `GeometricError` | 对应节点的归一化 nested wedgie thickness | 建节点读取；误差树重建可刷新 |
+| `VarianceTreeIndex` | 选择 rootA/rootB 的 thickness 数组；名称保留旧术语 | `AddNode` 写一次 |
 | `VarianceIndex` | 二叉堆索引：左 `2i+1`，右 `2i+2` | `AddNode` 写一次 |
 | `PathId` | 二叉路径稳定键，用于跨 Build 迟滞 | `AddNode` 写一次 |
 | 四个 Build ID | 创建、激活、split、merge 的时间戳 | 相应拓扑操作更新 |
@@ -335,8 +336,8 @@ ClassicRoamMeshBuilder::Build(heightMap, scales, fullView, settings)
 | --- | --- | --- |
 | `_heightMap`、`_settings`、`_terrainSize/_heightScale` | 地形和 Classic 参数快照 | 每次 Build 覆盖 |
 | `_view/_projection/_frustumPlanes/_drawableHeight` | 像素评分和可见性输入 | 每次 Build 覆盖 |
-| `_varianceTrees[2]` | 两个根的完整方差树 | HeightMap/MaxDepth 变化时重建 |
-| `_varianceHeightMap/_varianceTreeMaxDepth` | 方差缓存键 | 重建方差时更新 |
+| `_varianceTrees[2]` | 两个根的 nested wedgie tree | HeightMap/预计算深度变化时重建 |
+| `_varianceHeightMap/_varianceTreeMaxDepth` | nested tree 缓存键；名称保留旧术语 | 重建时更新 |
 | `_stats` | 最近一次 Build 统计 | 每次 Build 清零后重算 |
 | `_nodes` | `unique_ptr` 所有权池 | reset 前持续增长，merge 不删除 |
 | `_previousSplitPaths/_currentSplitPaths` | 最终 active internal path，用于迟滞 | Build 末尾轮换 |
@@ -384,7 +385,7 @@ LeftChild  = {C, A, M}
 RightChild = {B, C, M}
 ```
 
-两个 child 的面积各为父的一半；新的 base 分别是父的 left edge `C-A` 和 right edge `B-C`。`SplitTriangleDomain` 同时被方差预计算和 `SplitNode` 调用，避免预计算树与运行拓扑采用不同几何规则。
+两个 child 的面积各为父的一半；新的 base 分别是父的 left edge `C-A` 和 right edge `B-C`。`SplitTriangleDomain` 同时被 nested tree 预计算和 `SplitNode` 调用，避免误差树与运行拓扑采用不同几何规则。
 
 证据：文件：`src/algorithms/classic_roam/ClassicRoamScoring.cpp`；符号：`SplitTriangleDomain`；代码范围：第 15-23 行。文件：`ClassicRoamTopology.cpp`；符号：`SplitNode`；代码范围：第 237-350 行。
 
@@ -404,35 +405,45 @@ RightChild = {B, C, M}
 
 **根据实现推断：** 在 builder 的 `MaxDepth <= 20` 和 dyadic midpoint 下，float 精度足以区分这些 UV 端点；源码仍没有显式面积检查。退化 HeightMap 不会退化 XZ 三角形，但极端非法尺度仍需输入契约或测试约束。
 
-## 8. 方差与误差计算
+## 8. Nested Thickness 与像素误差计算
 
-### 8.1 完整 Variance Tree
+### 8.1 Nested Wedgie Tree
 
-**经典算法背景：** 经典 ROAM 常为每个 bintree 节点预计算方差/几何误差，并把子树最大误差向父节点传播，使父节点优先级保守地代表整片子域。
+**经典算法背景：** ROAM 的 nested wedgie（嵌套楔形误差界）用一个竖直 thickness segment 包住节点子树相对当前粗三角形平面的累计高度偏差。它不只是对子树局部误差取最大值，而要逐层加入 child plane 相对 parent plane 的位移。
 
-**源码事实：** 当前实现有两棵 `std::vector<float>` 方差树，分别对应两个根。数组使用二叉堆索引：root 为 0，left 为 `2i+1`，right 为 `2i+2`。每棵容量为 `2^(MaxDepth+1)-1`，且递归返回值满足：
-
-```text
-variance[i] = max(localError(i), variance[2i+1], variance[2i+2])
-```
-
-到达 `MaxDepth` 时只有 `localError`。这使粗父节点知道任意已预计算子域的最大采样误差。
-
-证据：文件：`src/algorithms/classic_roam/ClassicRoamScoring.cpp`；符号：`RebuildVarianceTrees`、`BuildVarianceSubtree`；代码范围：第 151-200 行。
-
-### 8.2 局部几何误差公式
-
-令 `h(P) = HeightMap::SampleBilinear(P.x,P.y)`，则对任一边 `(P,Q)`：
+**源码事实：** 当前实现有两棵 `std::vector<float>` nested wedgie tree，分别对应两个根。数组使用二叉堆索引：root 为 0，left 为 `2i+1`，right 为 `2i+2`。令 `D_v` 为预计算最细深度，则每棵容量为 `2^(D_v+1)-1`。最细层为 0，其他节点严格执行论文公式 (1)：
 
 ```text
-edgeError(P,Q) = abs(h((P+Q)/2) - (h(P)+h(Q))/2)
-centroid = (A+B+C)/3
-centroidError = abs(h(centroid) - (h(A)+h(B)+h(C))/3)
-    localError = max(
-    edgeError(A,B), edgeError(B,C), edgeError(C,A), centroidError)
+e[i] = max(e[2i+1], e[2i+2])
+     + abs(h((A+B)/2) - (h(A)+h(B))/2)
 ```
 
-**源码事实：** `localError` 与传播后的 `GeometricError` 都是归一化高度值；后者乘 `_heightScale` 成为世界高度误差。相机移动不重建方差树；HeightMap 对象或 `MaxDepth` 改变会重建，增深时已有 node 通过 `RefreshNodeVarianceErrors` 更新。
+其中 `A-B` 始终是当前 domain 的 base edge。`RoamNestedWedgie.h` 是 Classic/DOD 的共享递推实现；GPU ROAM-like 从 DOD snapshot 读取同一个 `GeometricError`，不在 shader 中另建误差树。
+
+证据：文件：`src/algorithms/RoamNestedWedgie.h`；符号：`BuildNestedWedgieSubtree`、`BuildNestedWedgieTree`。文件：`src/algorithms/classic_roam/ClassicRoamScoring.cpp`；符号：`RebuildVarianceTrees`。
+
+### 8.2 Base Midpoint Displacement 与预计算深度
+
+令 `h(P) = HeightMap::SampleBilinear(P.x,P.y)`，则当前节点的有符号局部位移为：
+
+```text
+M = (A+B)/2
+baseMidpointDisplacement = h(M) - (h(A)+h(B))/2
+```
+
+共享递推在累加时取其绝对值。`ComputeBaseMidpointDisplacement` 本身保留符号，是为了与论文中的 `z(v_c)-z_T(v_c)` 一一对应。
+
+**源码事实：** `ResolveNestedWedgieTreeDepth` 使用：
+
+```text
+sourceAxisLevel = max(ceil(log2(width-1)), ceil(log2(height-1)))
+sourceDepth = min(2 * sourceAxisLevel, 20)
+D_v = max(clamp(MaxDepth,0,20), sourceDepth)
+```
+
+bintree 每两个深度层级把地形两个轴的采样间隔各减半，所以 129x129 和 513x513 分别需要深度 14 与 18。这样即使运行时 `MaxDepth` 较小，祖先 thickness 仍能看到源网格更深的误差。`GeometricError` 的单位是归一化高度；乘 `_heightScale` 后成为世界高度误差。
+
+**根据实现推断：** 对 `2^k+1` 的规则 height map 且 `2k<=20`，最细层与源采样网格对齐。非该尺寸会向上取整到下一 dyadic extent；所需深度超过 20 时会被截断。因此当前实现忠实采用公式 (1)，但不能据此宣称任意尺寸、任意连续双线性曲面都已得到严格上界。
 
 ### 8.3 相机相关评分公式
 
@@ -482,7 +493,9 @@ merge 允许条件之一：parent score <= MergeThreshold
 
 **源码事实：** `IsNodeVisible` 以三角形三个世界顶点构造 AABB，并按 `node.GeometricError * HeightScale` 向上下扩张。对六个 inward plane，若 `centerDistance + projectedRadius < 0`，整个节点不可见，score 返回 0。forced split 不经过 score，可为可见边界继续细分对侧以保持无裂缝。
 
-**根据实现推断：** 完整方差树解决了“已递归采样子域误差不向上传播”的问题，但每个节点的局部误差仍只采三边中点和重心；它不是对任意连续曲面的严格解析误差界。AABB 的纵向扩张对当前采样模型是保守设计，其对任意双线性高度曲面的严格包围性仍需属性测试验证。
+**源码事实：** `GeometricError` 已按 nested wedgie 公式累积到源分辨率对应深度，而不是只取各层局部误差最大值。AABB 纵向扩张因此使用的是累计 thickness。
+
+**根据实现推断：** 该扩张对论文的离散 bintree terrain 模型具有保守意图；对非 `2^k+1` 尺寸、深度 20 截断以及把 `SampleBilinear` 视作连续曲面的情形，仍需专门的 bound 属性测试，当前不能作无条件形式化保证。
 
 ## 9. Split 与 Forced Split
 
@@ -498,7 +511,7 @@ merge 允许条件之一：parent score <= MergeThreshold
 2. 读取 `baseNeighbor`。
 3. 若启用局部约束且对侧不是互为 base 的合法关系，沿 base-neighbor 链递归 forced split，guard 上限为 `MaxDepth + 2`；递归参数把 `reservedSplitSlots` 加一，为尚未执行的调用者保留 token。
 4. 若最终 base neighbor 仍是 leaf 且不是 `forcedFrom`，先 forced split 它；`forcedFrom` 防止互为 base 的两个 leaf 无限回跳。
-5. 首次 split 通过 `SplitTriangleDomain` 创建两个 child，并传入左右方差堆索引；再次 split 复用旧 child。
+5. 首次 split 通过 `SplitTriangleDomain` 创建两个 child，并传入左右 thickness tree 的堆索引；再次 split 复用旧 child。
 6. `IsSplit=true`，清空 child 的旧 neighbor，更新 build/debug 字段。
 7. `LinkSplitNeighbors` 建立 sibling、父 left/right 外邻居以及对侧 split child 的四边连接。
 8. 消费一个 `_remainingSplitBudget` token，记录 split path 和统计；forced 原因额外增加 `ForcedSplitCount`。
@@ -706,8 +719,8 @@ TriangleCount = ActiveLeafCount
 
 | 事件 | 结果 |
 | --- | --- |
-| 普通相机/投影变化 | 节点、方差和 children 保留，只更新活动状态并重建 Mesh |
-| 提高 MaxDepth | 旧拓扑保留；方差树扩深并刷新已有节点 error |
+| 普通相机/投影变化 | 节点、nested thickness 和 children 保留，只更新活动状态并重建 Mesh |
+| 提高 MaxDepth | 旧拓扑保留；仅当超过当前预计算深度时扩树并刷新已有节点 error |
 | 降低 MaxDepth | `NeedsTopologyReset` 清树 |
 | 改像素 split/merge 阈值 | renderer 标 dirty；builder 不清树 |
 | 改 TriangleBudget | builder 清树，以新硬上限重新分配 |
@@ -737,8 +750,8 @@ TriangleCount = ActiveLeafCount
 | split 前 base 对侧尺度兼容 | `SplitNode` forced recursion | `LinkSplitNeighbors` | 无 assert；可选几何 validator | T-junction |
 | 每个非退化 split 生成两个等面积子域并覆盖父域 | 固定 domain 公式 | 完整覆盖 | 无显式检查 | 洞、重叠、长三角 |
 | `Depth <= MaxDepth` | queue/`SplitNode` | PathId/量化/资源规模 | benchmark 检查最终最大深度 | 无限/过量细分 |
-| `GeometricError == varianceTree[VarianceIndex]` | variance build/refresh、`AddNode` | SSE 与 frustum AABB | 无 assert | 父节点低估子域误差 |
-| 方差父值不小于左右 child 值 | `BuildVarianceSubtree` 的 `max` | 粗层保守评分 | 无 assert | 深层峰值无法向上传播 |
+| `GeometricError == varianceTree[VarianceIndex]` | nested tree build/refresh、`AddNode` | SSE 与 frustum AABB | 无 assert | 父节点低估子域误差 |
+| nested thickness 不小于左右 child | `BuildNestedWedgieSubtree` 的 `max(child)+abs(displacement)` | 粗层累计误差界 | 属性测试覆盖递推与叶层为 0 | 深层误差被低估 |
 | `ActiveTriangleCount <= TriangleBudget` | merge 后计数、`SplitNode` token | 内存/性能预算 | Classic/DOD benchmark 与双后端 GPU smoke 检查 | 超预算 |
 | `_remainingSplitBudget` 为未使用的净增 leaf 数 | `Build`、`SplitNode` | requested/forced split | 仅最终预算断言 | forced 链半完成或超预算 |
 | `_previousSplitPaths` 只代表上次最终 active internal | Build 末尾重新收集 | 迟滞判断 | 无 assert | 迟滞错误、拓扑抖动 |
@@ -763,7 +776,7 @@ TriangleCount = ActiveLeafCount
 | `TriangleBudget` | 20000 | 活动 leaf；内部最小 2，UI 2-200000 | 可调 | split 的硬上限；降低会 reset topology |
 | `EnableLocalConstraints` | true | bool | 可调 | 开启 forced split 防裂缝 |
 | `EnableTopologyValidation` | false | bool | 可调 | 开启全局 debug 扫描和 validation stats |
-| `MaximumSupportedDepth` | 20 | bintree 层，内部常量 | 不可调 | 限制方差树指数容量与 PathId 深度 |
+| `MaximumSupportedDepth` | 20 | bintree 层，内部常量 | 不可调 | 限制 nested tree 指数容量与 PathId 深度 |
 | `MinimumViewDepth` | 0.05 | view-space 世界距离 | 不可调 | 防止透视除零 |
 | `ProjectedEdgeWeight` | 0.20 | 像素边长权重 | 不可调 | 平坦近景仍保有几何密度 |
 | Projection/FOV | 来自相机 | `Projection[1][1]` | 间接可调 | 窄 FOV 提高像素误差 |
@@ -812,9 +825,9 @@ TriangleCount = ActiveLeafCount
 
 证据：`src/benchmark/TerrainLodBenchmark.cpp`；符号：`BuildBenchmarkView`、`MakeScenario`、`RunBenchmark`；代码范围：第 157-229、423-464 行。
 
-**运行观察（2026-07-29，CPU ROAM 统一口径后的重编译产物）：** Classic 与 DOD smoke 六帧均 PASS，所有 topology issue 为 0；两者活动三角形都依次为 `far=7072`、`center=528`、`away=2`、`near-corner=2110`、`far-return=376`、`center-return=528`。`center -> away` 同位置从 528 降至 2，隔离验证了方向/视锥影响；所有帧低于 20000 预算。数值依赖当前地形和阈值，不是算法常量。
+**运行观察（2026-08-03，nested wedgie 公式 (1) 接入后）：** Classic 与 DOD smoke 六帧均 PASS，所有 topology issue 为 0；两者活动三角形都依次为 `far=7072`、`center=528`、`away=36`、`near-corner=15980`、`far-return=1043`、`center-return=528`。`center -> away` 同位置从 528 降至 36，隔离验证了方向/视锥影响；所有帧低于 20000 预算。budget-reentry 的五帧均维持 512 leaf，并在每次小角度转向的首个 Build 同时发生 13-17 次等量 merge/split。513x513 standard 64 帧也通过，Classic/DOD 三角形范围均为 `12906..20000`。这些数值依赖当前地形、公式与阈值，不是算法常量，也不能与旧误差口径的报告直接比较。
 
-**运行观察（2026-07-29，GPU 统一口径后的重编译产物）：** RTX 5090 D 上 OpenGL 4.3 与 D3D12 `--gpu-smoke-test` 均以退出码 0 通过；smoke 断言覆盖 GPU packet 非空、最终三角形不超过共享预算，以及 CPU DOD 持久拓扑三类 issue 为零。无窗口 benchmark 没有已初始化图形上下文，因此 GPU 按 capability gate skip；这里没有据此虚构 GPU 六视点三角形序列或独立拓扑 validator 结果。
+**运行观察（2026-08-03）：** RTX 5090 D 上 OpenGL 4.3 与 D3D12 `--gpu-smoke-test` 均以退出码 0 通过；smoke 断言覆盖 GPU packet 非空、最终三角形不超过共享预算，以及 CPU DOD 持久拓扑三类 issue 为零。无窗口 benchmark 没有已初始化图形上下文，因此 GPU 按 capability gate skip；这里没有据此虚构 GPU 六视点三角形序列或独立拓扑 validator 结果。
 
 ### 15.5 运行时 benchmark
 
@@ -830,7 +843,7 @@ TriangleCount = ActiveLeafCount
 - merge 扫描 active internal tree并使用动态最小堆；成功后继续入队 parent。split 扫描 active leaf 并使用最大堆。
 - score 在 merge/split 收集和提交阶段多次重算，不缓存每帧 `ScreenError`。
 - Mesh 每次 Build 完整重建；每叶三个独立顶点；共享位置重复高度/法线采样。
-- 两棵方差树在 HeightMap/MaxDepth 变化时完整递归预计算；节点只缓存对应子树最大误差。
+- 两棵 nested wedgie tree 在 HeightMap/预计算深度变化时完整递归构建；节点只缓存对应公式 (1) thickness。
 - 活动 leaf 预算在 split 前计数，每次 split 消费一个 token。
 - validator 默认关闭；开启时构造 `unordered_map<line, endpoints>` 并排序每条线的端点。
 - renderer 的相机位移缓存减少普通交互的 Build/上传频率；benchmark 刻意禁用该收益。
@@ -841,7 +854,7 @@ TriangleCount = ActiveLeafCount
 
 | 阶段 | 推断复杂度 | 主要成本 |
 | --- | --- | --- |
-| 方差树重建 | `O(2^(D+1))` 时间和空间 | 递归、每节点 7 次左右高度采样；仅缓存失效时 |
+| nested wedgie 重建 | `O(2^(D_v+1))` 时间和空间 | 递归、每个非叶节点 3 次高度采样；仅缓存失效时 |
 | merge 动态堆 | `O(I + M log Q)` 加重复 score | 指针递归、视锥/SSE、过期候选 |
 | split 初始扫描和动态队列 | 约 `O(L + (候选+S) log Q)` | 重复 score、heap 分支、forced recursion |
 | leaf 收集 | `O(I+L)` | 递归指针遍历 |
@@ -849,9 +862,9 @@ TriangleCount = ActiveLeafCount
 | path 收集 | `O(I+L)` | 再一次树遍历、unordered_set 插入 |
 | validator | 约 `O(L log L)`，取决于同线端点分布 | hash、每线排序、邻接检查 |
 
-**源码事实：** 深度 20 时每棵方差树有 2,097,151 个 float，两棵约 16 MiB，且首次/换图/改深度时完整重算；默认深度 14 时两棵约 256 KiB。
+**源码事实：** 深度 20 时每棵树有 2,097,151 个 float，两棵约 16 MiB；129x129 的 `D_v=14` 时两棵约 256 KiB，513x513 的 `D_v=18` 时两棵约 4 MiB。运行时 `MaxDepth=14` 不会把 513x513 的预计算树截在 14。
 
-**根据实现推断：** 稳态瓶颈候选是重复 SSE/frustum 测试、每叶 18 次采样的 emit、离散节点 cache miss、两个 priority queue 和 CPU Mesh 上传；缓存失效帧还可能被方差树预计算主导。实际占比必须 profiler 确认。
+**根据实现推断：** 稳态瓶颈候选是重复 SSE/frustum 测试、每叶 18 次采样的 emit、离散节点 cache miss、两个 priority queue 和 CPU Mesh 上传；缓存失效帧还可能被 nested wedgie 预计算主导。实际占比必须 profiler 确认。
 
 ### 16.3 递归和分配
 
@@ -861,7 +874,7 @@ TriangleCount = ActiveLeafCount
 
 **根据实现推断：** 难点不是公式，而是 pointer-based 可变图：forced split 依赖邻居递归；一个 split 同时改多个节点的双向邻接；diamond merge 要原子地回收两侧 sibling pair；新节点分配和 priority queue 都有全局、数据相关顺序。这些写集合难以无冲突并行提交。
 
-**源码事实：** 项目的 DOD 版本已把字段拆为 SoA/index，并把 split/merge candidate marking、mesh emit 和部分 chunk interior commit 批处理；`ActiveLeafNodes` / `ActiveLeafNodePositions` 与 `ActiveInternalNodes` / `ActiveInternalNodePositions` 都由 split/merge 增量维护。CPU split 候选只扫描当前 active leaf，并在同一循环完成预算计数、像素 SSE/视锥评估、`ScreenErrors` 写入和 threshold 标记；预算满载时的重平衡预扫描也直接读取这份活动索引。拓扑稳定后，CPU emit、统计和 GPU snapshot 直接只读消费 `ActiveLeafNodes`，不再递归收集或复制最终 leaf；独立 root traversal 仅由 validator 用来交叉检查活动索引。merge candidate 则只扫描 active internal，而不是包含 inactive 历史节点的完整 node pool。它与 Classic 共用完整方差、像素 SSE、视锥、硬预算和级联合并语义。GPU 版本同样使用快照中的完整 `GeometricError`、像素 SSE、六平面视锥和剩余预算 token，但仍先由 CPU DOD 生成持久拓扑真值；GPU 的 merge candidate shader 只输出诊断列表，不提交 merge，split shader 只追加一轮独立边界 split 或直接 base-neighbor diamond pair，不递归传播完整 forced-split chain。随后 GPU 重建活动叶并 emit mesh/indirect draw。这直接反映评分口径已统一、拓扑所有权尚未完全迁移的边界。
+**源码事实：** 项目的 DOD 版本已把字段拆为 SoA/index，并把 split/merge candidate marking、mesh emit 和部分 chunk interior commit 批处理；`ActiveLeafNodes` / `ActiveLeafNodePositions` 与 `ActiveInternalNodes` / `ActiveInternalNodePositions` 都由 split/merge 增量维护。CPU split 候选只扫描当前 active leaf，并在同一循环完成预算计数、像素 SSE/视锥评估、`ScreenErrors` 写入和 threshold 标记；预算满载时的重平衡预扫描也直接读取这份活动索引。拓扑稳定后，CPU emit、统计和 GPU snapshot 直接只读消费 `ActiveLeafNodes`，不再递归收集或复制最终 leaf；独立 root traversal 仅由 validator 用来交叉检查活动索引。merge candidate 则只扫描 active internal，而不是包含 inactive 历史节点的完整 node pool。它与 Classic 共用同一个 `RoamNestedWedgie.h` 公式 (1) 实现、像素 SSE、视锥、硬预算和级联合并语义。GPU 版本同样使用 snapshot 中的 nested wedgie `GeometricError`、像素 SSE、六平面视锥和剩余预算 token，但仍先由 CPU DOD 生成持久拓扑真值；GPU 的 merge candidate shader 只输出诊断列表，不提交 merge，split shader 只追加一轮独立边界 split 或直接 base-neighbor diamond pair，不递归传播完整 forced-split chain。随后 GPU 重建活动叶并 emit mesh/indirect draw。这直接反映评分口径已统一、拓扑所有权尚未完全迁移的边界。
 
 ### 16.5 需要 profiler 才能确认
 
@@ -877,19 +890,19 @@ TriangleCount = ActiveLeafCount
 | 经典 ROAM 概念 | 当前项目中的对应实现 | 文件/符号 | 是否完全一致 |
 | --- | --- | --- | --- |
 | Binary Triangle Tree | 两 root；Node parent/child；沿 A-B base 二分 | `ClassicRoamNode`、`SplitNode` | 基本一致，但节点惰性创建 |
-| Variance Tree | 两个 heap-indexed float 数组；子树 max 传播到父 | `RebuildVarianceTrees`、`BuildVarianceSubtree` | 基本一致；局部指标为四点采样误差 |
+| Variance/Nested Wedgie Tree | 两个 heap-indexed float 数组；公式 (1) 自底向上累积 | `Roam::BuildNestedWedgieSubtree`、`RebuildVarianceTrees` | 公式一致；深度 20 截断和输入模型仍有限定 |
 | Split | 创建/复用两个 child，`IsSplit=true` | `SplitNode` | 是，带工程化状态字段 |
 | Forced Split | 递归 split `BaseNeighbor` | `SplitNode` 第 252-287 行 | 基本一致，有 `forcedFrom`/guard |
 | Diamond | 互为 base 的两个 parent 和四个 child | reset、`LinkSplitNeighbors` | 显式采用 |
 | Merge | sibling leaf，内部对侧成对回收并动态入队 parent | `MergeWithDiamondQueue`、`MergeNodeOrDiamond` | 基本一致；单 Build 可级联 |
-| Triangle Priority | 完整方差 + projected pixel SSE 最大堆 | `ComputeScreenErrorScore`、`RefineWithSplitQueue` | 有；使用中心深度近似 |
+| Triangle Priority | nested thickness + projected pixel SSE 最大堆 | `ComputeScreenErrorScore`、`RefineWithSplitQueue` | 有；使用中心深度近似 |
 | Crack Prevention | base-neighbor forced split | `SplitNode`、`LinkSplitNeighbors` | 默认有；可关闭；validator 不修复 |
 | Triangle Budget | 活动 leaf token 硬上限，forced 链预留；池满时有限低分 merge/高分 split 交换 | `TriangleBudget`、`MergeWithDiamondQueue`、`_remainingSplitBudget`、`SplitNode` | 已实现有界启发式；不是经典全局双队列最优平衡 |
 | Incremental Update | 持久 node/child、split/merge、PathId 迟滞 | `Build`、`_previousSplitPaths` | 已实现拓扑增量；Mesh 仍全量重建 |
-| View Frustum Culling | 方差扩张 AABB 对六平面测试，视锥外 score=0 | `IsNodeVisible` | LOD 感知已实现；Mesh 不裁掉视锥外 leaf |
+| View Frustum Culling | thickness 扩张 AABB 对六平面测试，视锥外 score=0 | `IsNodeVisible` | LOD 感知已实现；Mesh 不裁掉视锥外 leaf |
 | Screen-space Error | projection Y scale、drawable height、view depth | `ComputeScreenErrorScore` | 像素单位；不是逐采样点精确投影 |
 
-**结论：** 当前实现已具备 bintree、完整方差树、像素 SSE、优先队列、硬预算、diamond forced split/merge、迟滞、视锥感知和池满时的有界预算交换，是工程化 Classic ROAM baseline；仍不是经典论文的逐项复刻，例如没有一对长期维护的全局 split/merge 优先队列，也不做共享闭包成本下的全局最优交换，Mesh 仍全量重建。
+**结论：** 当前实现已具备 bintree、公式 (1) nested wedgie tree、像素 SSE、优先队列、硬预算、diamond forced split/merge、迟滞、视锥感知和池满时的有界预算交换，是工程化 Classic ROAM baseline；仍不是经典论文的逐项复刻，例如屏幕投影不是论文公式 (2)/(3)，没有一对长期维护的全局 split/merge 优先队列，也不做共享闭包成本下的全局最优交换，Mesh 仍全量重建。
 
 ## 18. 与项目中其他算法的接口比较
 
@@ -900,7 +913,7 @@ TriangleCount = ActiveLeafCount
 | 拓扑真值 | CPU Classic builder | CPU DOD state | 当前仍先由 CPU DOD 更新；GPU 有 split-only/compaction/emit 阶段 |
 | CPU Mesh | 是 | 是 | 否，返回 GPU buffer/indirect packet |
 | 跨帧拓扑 | 是 | 是 | CPU DOD 部分是；GPU frame resources 复用，但 GPU split 结果不回写 CPU 真值 |
-| error evaluation | 完整方差预计算；稳态串行像素 SSE + frustum，多次重算 | 相同完整方差与像素 SSE + frustum；融合 active-leaf split 扫描并缓存 `ScreenErrors` | 快照读取 DOD 完整 `GeometricError`；GLSL/HLSL 使用相同像素 SSE、显式双线性采样和六平面 frustum |
+| error evaluation | 共享公式 (1) 预计算；稳态串行像素 SSE + frustum，多次重算 | 相同 nested thickness 与像素 SSE + frustum；融合 active-leaf split 扫描并缓存 `ScreenErrors` | 快照读取 DOD nested `GeometricError`；GLSL/HLSL 使用相同像素 SSE、显式双线性采样和六平面 frustum |
 | 邻接表达 | 指针 | 索引 | packed NodeRecord/index |
 | 并行适配性 | 较差 | 较好，按 pass/chunk 分解 | 计算/emit 适合 GPU；动态拓扑仍受限 |
 | merge | CPU diamond merge，动态 parent queue | active internal 连续索引生成候选；安全 chunk 并行预提交后动态 parent queue 同帧级联 | 能力标记为 true，但 D3D12 注释明确 GPU merge candidate 尚未提交；CPU DOD 基线仍 merge |
@@ -964,15 +977,18 @@ TA.BaseNeighbor = TB
 TB.BaseNeighbor = TA
 ```
 
-每棵深度 1 的方差树有三个条目。两个 root 角点高度都是 0；共同 base 的 midpoint `(0.5,0.5)` 高度为 0.5，所以 root 的 `localError=0.5`。两个 child 的局部误差均不可能超过高度范围 0.5，因此父级传播后：
+虽然运行时 `MaxDepth=1`，5x5 输入有 4 个采样段，`ResolveNestedWedgieTreeDepth` 会选择 `D_v=2*ceil(log2(4))=4`，因此每棵预计算树有 31 个条目。两个 root 角点高度都是 0；共同 base midpoint `(0.5,0.5)` 高度为 0.5，root 的局部 displacement 绝对值为 0.5。沿包含中心尖峰的后代路径还会累计两个 0.25 位移，所以：
 
 ```text
-varianceA[0] = max(0.5, varianceA[1], varianceA[2]) = 0.5
-varianceB[0] = max(0.5, varianceB[1], varianceB[2]) = 0.5
-GeometricError(TA/TB) = varianceA/B[0] = 0.5
+depth 4 finest leaf thickness = 0
+depth 3 thickness = max(0,0) + 0.25 = 0.25
+depth 2 thickness = max(0.25,0) + 0.25 = 0.50
+depth 1 thickness = max(0.50,0.50) + 0 = 0.50
+root thickness    = max(0.50,0.50) + 0.50 = 1.00
+GeometricError(TA/TB) = 1.00
 ```
 
-重心处也可能有非零双线性高度，但不超过 0.5，所以 max 仍是 0.5。
+这也展示了 nested wedgie 的“厚度”可能大于实际最大高度：它逐层组合不同参考三角形平面之间的偏移，是保守界，不是简单的高度范围。
 
 ### 19.4 相机影响与 split 判断
 
@@ -981,9 +997,9 @@ GeometricError(TA/TB) = varianceA/B[0] = 0.5
 ```text
 Projection[1][1] = cot(60 degrees / 2) ≈ 1.732
 pixelsPerWorldUnit = (720 / 2) * 1.732 / 1 ≈ 623.5 px/world-unit
-heightErrorPixels = 0.5 * 1 * 623.5 ≈ 311.8 px
+heightErrorPixels = 1.0 * 1 * 623.5 ≈ 623.5 px
 edgeLengthPixels = sqrt(2) * 623.5 * 0.20 ≈ 176.4 px
-score = max(...) ≈ 311.8 px > SplitThreshold 4 px
+score = max(...) ≈ 623.5 px > SplitThreshold 4 px
 ```
 
 `TB` 对称，分数相同。两个 root leaf 使 `_remainingSplitBudget = 4-2 = 2`；两者都进入 split queue，`TA` 因较早 sequence 先弹出。
@@ -1046,7 +1062,7 @@ MaxDepthReached = 1
 - **三角形边和邻接：** base/left/right edge 与三个 neighbor 字段的对应，是理解 forced split 的核心。
 - **高度图与 UV：** 节点几何保存在 2D UV，高度和世界位置按需采样。
 - **LOD、split、merge 和迟滞：** 为什么近处展开、远处回收，以及双阈值如何减少抖动。
-- **方差树与自底向上最大值传播：** 父节点为何必须代表尚未展开的子域误差。
+- **nested wedgie 与自底向上累计传播：** 父节点为何要组合 child thickness 和本层 base-midpoint displacement。
 - **透视投影、像素尺度与视锥平面：** FOV、drawable 高度和 view depth 如何进入 split 分数，可见性为何只抑制主动细分。
 - **硬预算和 closure 成本：** 一次 requested split 可能连带 forced split，预算必须覆盖整条约束链。
 - **三角形绕序和叉积：** 为什么 emit 需要修正正 Y 朝向。
@@ -1076,10 +1092,10 @@ MaxDepthReached = 1
 | `ClassicRoamMeshBuilder.h` | `TriangleDomain`、`TriangleDomainChildren`、`SplitTriangleDomain` | 22-38 | UV 三角形和唯一父子派生规则 |
 | 同上 | `ClassicRoamSettings` | 45-65 | 像素阈值、预算、深度和约束参数 |
 | 同上 | `ClassicRoamStats` | 69-139 | Classic 私有统计 |
-| 同上 | `ClassicRoamMeshBuilder` / `ClassicRoamNode` / 成员状态 | 145-358 | 拓扑、方差、视图和预算所有者 |
+| 同上 | `ClassicRoamMeshBuilder` / `ClassicRoamNode` / 成员状态 | 145-358 | 拓扑、thickness、视图和预算所有者 |
 | `ClassicRoamMeshBuilder.cpp` | `Build` | 21-128 | 单次完整更新入口和 pass 调度 |
 | `ClassicRoamState.cpp` | `Stats` | 14-18 | 最近一次统计 |
-| 同上 | `AddNode` | 20-49 | 分配节点并读取方差树条目 |
+| 同上 | `AddNode` | 20-49 | 分配节点并读取 thickness 条目 |
 | 同上 | `ResetTopology` | 51-78 | 创建根 diamond |
 | 同上 | `NeedsTopologyReset` | 80-113 | 拓扑/预算缓存兼容判定 |
 | 同上 | `CollectLeafNodes*` | 115-142 | 活动叶快照 |
@@ -1088,9 +1104,10 @@ MaxDepthReached = 1
 | 同上 | `IsLeaf` | 196-205 | 活动状态基本判定 |
 | `ClassicRoamScoring.cpp` | `ShouldSplit*`、`WasSplitLastFrame` | 23-60 | 阈值和迟滞 |
 | 同上 | debug 分类/色彩 | 62-119 | LOD overlay 属性 |
-| 同上 | `ComputeLocalGeometricError` | 123-149 | 方差节点的局部四点采样误差 |
-| 同上 | `RebuildVarianceTrees`、`BuildVarianceSubtree` | 151-200 | 两棵完整方差树和子树 max 传播 |
-| 同上 | `RefreshNodeVarianceErrors`、`VarianceError` | 202-212 | 方差缓存查找/刷新 |
+| `src/algorithms/RoamNestedWedgie.h` | `ResolveNestedWedgieTreeDepth`、`BuildNestedWedgieSubtree` | 全文件 | 共享预计算深度和论文公式 (1) 递推 |
+| `ClassicRoamScoring.cpp` | `ComputeBaseMidpointDisplacement` | 125-134 | base midpoint 有符号高度位移 |
+| 同上 | `RebuildVarianceTrees` | 136-174 | 两棵 nested wedgie tree 的根域接入 |
+| 同上 | `RefreshNodeVarianceErrors`、`VarianceError` | 176-196 | thickness 缓存查找/刷新 |
 | 同上 | `ComputeScreenErrorScore`、`IsNodeVisible` | 214-273 | 像素评分与六平面 AABB 测试 |
 | 同上 | `DomainToWorld`、`SampleNormal` | 275-315 | 顶点位置/法线 |
 | `ClassicRoamTopology.cpp` | `RefineNode` | 26-51 | 未使用的递归替代路径 |
@@ -1165,16 +1182,16 @@ MaxDepthReached = 1
 ### 22.3 可能的 bug 或不变量风险
 
 1. **根据实现推断：** `score == MergeThreshold` 的比较边界可能同帧 merge 后按历史立即 split。
-2. **根据实现推断：** 方差已传播子树 max，但最深层及各局部节点仍只采三边中点和重心；未落在递归采样集合上的连续高频细节可能被低估。
+2. **根据实现推断：** 公式 (1) 已实现，但非 `2^k+1` 输入、源深度超过 20 以及把双线性插值面视为连续真值时，最细层为 0 是否仍构成严格 bound 尚未由属性测试证明。
 3. **根据实现推断：** 关闭 `EnableLocalConstraints` 会允许 T-junction；UI 文案应明确它是正确性机制，而不只是 debug/性能选项。
 4. **根据实现推断：** center-depth SSE 对跨越近远深度范围的大三角形可能低估靠近相机的一侧；需要和逐点投影误差对照。
 5. **根据实现推断：** `baseNeighbor == null/leaf` 时允许单侧 merge 的安全性依赖此前局部约束一直保持拓扑合法；切换约束设置后的持久树组合值得专门测试。
-6. **根据实现推断：** 方差缓存用 HeightMap 对象地址而不是内容版本判断失效；若原地修改同一对象后再次 Build，旧方差树会被复用。renderer 的 `LoadHeightMap` 会 reset 算法，正常切图路径规避了该问题。
-7. **根据实现推断：** AABB 只按方差值沿世界 Y 扩张；它对当前采样误差的保守性直观成立，但对任意双线性 patch 尚无形式化或属性测试证明。
+6. **根据实现推断：** nested tree 缓存仍用 HeightMap 对象地址而不是内容版本判断失效；若原地修改同一对象后再次 Build，旧 thickness 会被复用。renderer 的 `LoadHeightMap` 会 reset 算法，正常切图路径规避了该问题。
+7. **根据实现推断：** AABB 只按 nested thickness 沿世界 Y 扩张；它对离散 bintree terrain 有论文依据，但对任意双线性 patch 尚无形式化或属性测试证明。
 
 ### 22.4 需要 profiler 的问题
 
-1. 方差树重建、SSE/frustum 重算、emit 高度采样、节点 cache miss、两个 priority queue、Mesh 扩容和 GPU upload 各占多少。
+1. nested wedgie tree 重建、SSE/frustum 重算、emit 高度采样、节点 cache miss、两个 priority queue、Mesh 扩容和 GPU upload 各占多少。
 2. 动态 merge queue 中重复/过期候选的比例，以及级联收益是否大于 heap 成本。
 3. renderer 的位移阈值与方向/投影变化检测在不同地形尺度下是否造成 LOD 更新迟滞或跳变。
 4. validator 在接近 20000 leaf 预算时的 hash/sort 成本和内存峰值。
@@ -1185,6 +1202,6 @@ MaxDepthReached = 1
 - 增加 Classic 单元/属性测试：root 覆盖、父子面积、split 指针表、forced chain、diamond merge、重复 split/merge、PathId 唯一性。
 - 为活动 leaf 输出可选 domain/path/depth 日志，能按 `PathId` 重放某条 forced 链。
 - 增加 leaf edge overlay、diamond pair overlay 和 score heatmap；当前只有 leaf 分类/forced 激活色，不是完整拓扑可视化。
-- 增加 `GeometricError` 与真正 projected pixel error 的并排统计，验证启发式阈值。
+- 增加 nested `GeometricError` 与真正 projected pixel error 的并排统计，验证当前屏幕投影启发式。
 - 为 Mesh 顶点/索引按 `3*leafCount` reserve，并用 profiler 验证收益后再决定是否保留。
 - 记录节点池估算字节数、首次节点分配数、复用 child 数、score 评估次数和递归最大深度。

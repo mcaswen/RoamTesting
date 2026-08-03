@@ -57,7 +57,7 @@
 
   <rect x="400" y="340" width="300" height="64" rx="8" class="pass"/>
   <text x="550" y="366" text-anchor="middle" class="code">状态初始化与叶节点收集</text>
-  <text x="550" y="388" text-anchor="middle" class="small">预计算完整方差树并初始化 SoA roots</text>
+  <text x="550" y="388" text-anchor="middle" class="small">公式 (1) thickness → SoA roots</text>
   <path d="M550 404 L550 424" class="line"/>
 
   <rect x="400" y="424" width="300" height="64" rx="8" class="pass"/>
@@ -92,7 +92,7 @@
   <text x="895" y="544" text-anchor="middle" class="small">只在 EnableTopologyValidation 开启时运行</text>
   <line x1="760" y1="568" x2="1030" y2="568" stroke="#bfdbfe"/>
   <text x="895" y="595" text-anchor="middle" class="code">误差评分函数</text>
-  <text x="895" y="619" text-anchor="middle" class="small">完整方差 + 像素 SSE + 六平面视锥</text>
+  <text x="895" y="619" text-anchor="middle" class="small">Nested thickness + 像素 SSE + 六平面视锥</text>
   <text x="895" y="642" text-anchor="middle" class="small">与 Classic / GPU 共用质量和预算口径</text>
   <line x1="760" y1="666" x2="1030" y2="666" stroke="#bfdbfe"/>
   <text x="895" y="693" text-anchor="middle" class="caption">Topology commit 使用 chunk 统计区分 interior / boundary 候选</text>
