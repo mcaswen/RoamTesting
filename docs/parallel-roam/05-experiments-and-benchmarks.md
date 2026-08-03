@@ -62,7 +62,7 @@ Debug View 的价值不只是展示效果，也用于定位算法问题。比如
 - 同一活动三角形预算或离线质量目标
 ```
 
-三种 ROAM 的 `TriangleBudget` 都是最终活动 leaf 硬上限。Classic/DOD 的 requested、forced 和并行 chunk split 消费同一预算；当池接近满载且视点变化产生更高分 split 时，两者会用有界批次把低损失 diamond 的预算交换给新候选，避免新入屏区域等待旧视野完全越过 merge 阈值。GPU ROAM-like 先运行该 CPU DOD baseline，再由 compute counter 原子分配剩余 token：外边界单 split 消费 1，diamond pair 消费 2，提交失败时归还。原生 GPU pass 仍按候选 append 顺序竞争 token，不是全局误差 Top-K；固定预算能直接约束资源上限，但不代表三种实现做出了相同的全局预算分配。
+三种 ROAM 的 `TriangleBudget` 都是最终活动 leaf 硬上限。Classic 持久维护 `Q_s/Q_m`，预算满载时在统一循环比较最高 split 与最低 merge，并用 merge-first 事务为 forced closure 腾出 token；为适配尚未证明单调的项目扩展 priority，同一 Build 不允许刚提交的 split/merge 被立即反向执行。DOD 仍使用有限批次交换启发式。GPU ROAM-like 先运行 CPU DOD baseline，再由 compute counter 原子分配剩余 token：外边界单 split 消费 1，diamond pair 消费 2，提交失败时归还。原生 GPU pass 仍按候选 append 顺序竞争 token。Classic dual queues 没有共享 closure 去重或依赖成本建模，因此固定预算仍不代表已经实现本文研究的闭包感知全局资源分配。
 
 主要对比指标：
 
@@ -159,6 +159,11 @@ workerThreadCount
 cpuUtilizationPercent
 activeTriangleCount
 activeNodeCount
+candidatePeakCount
+persistentSplitQueueSize
+persistentMergeQueueSize
+queueCrossoverCount
+queueMembershipUpdateCount
 splitCount
 mergeCount
 maxActiveDepth
@@ -203,7 +208,7 @@ CPU 阶段按互斥执行区间记录，阶段和应接近 `cpuUpdateMs`；原�
 
 该表分析稳定帧热路径。nested wedgie tree / `GeometricError` rebuild 属于初始化、地形切换或预计算深度失效后的 reset 路径，当前没有独立阶段计时；不能从稳定帧表中推断其成本，若要比较必须另建 initialization benchmark。
 
-统一 benchmark harness 对 Classic、DOD 和 GPU 名称都应用预算与 `center -> away` 视锥回收断言；`budget-reentry` profile 另以低预算和原地小角度转向，要求 Classic/DOD 在转向后的第一次 Build 同时 merge 旧低分 diamond 并 split 新高分区域。无窗口模式因没有图形上下文通常跳过 GPU。应用级 `--gpu-smoke-test` 在 OpenGL 和 D3D12 上分别验证 GPU packet 非空、最终三角形不超预算，并检查 CPU DOD 持久拓扑的三类 issue 为零。这类正确性验证不替代 30-60 秒 runtime 性能采样。
+统一 benchmark harness 对 Classic、DOD 和 GPU 名称都应用预算与 `center -> away` 视锥回收断言；对启用持久双队列统计的 Classic，另外要求 `Q_s == ActiveTriangleCount <= TriangleBudget`，并要求单帧 `SplitCount + MergeCount <= ActiveNodeCount`，用于捕获同一 parent 在统一循环中反复逆转。`budget-reentry` profile 另以低预算和原地小角度转向，要求 Classic/DOD 在转向后的第一次 Build 同时 merge 旧低分 diamond 并 split 新高分区域。无窗口模式因没有图形上下文通常跳过 GPU。应用级 `--gpu-smoke-test` 在 OpenGL 和 D3D12 上分别验证 GPU packet 非空、最终三角形不超预算，并检查 CPU DOD 持久拓扑的三类 issue 为零。这类正确性验证不替代 30-60 秒 runtime 性能采样。
 
 ### DOD active internal 索引 A/B
 

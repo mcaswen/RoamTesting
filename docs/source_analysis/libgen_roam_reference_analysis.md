@@ -627,23 +627,23 @@ allocate children in 256-record blocks as split progresses
 | 节点布局 | `qcell` AoS + 裸指针 + qpool | `ClassicRoamNode` AoS + 裸指针，`unique_ptr` 拥有 | 多个连续 vector 的 SoA + index |
 | 几何存储 | 每节点复制 `ij/p/uv` | 节点只存 UV domain，按需采样世界坐标 | 同 Classic domain，字段分列 |
 | 误差预计算 | 离线 error-radius，疑似只剩 local midpoint | 运行前按论文公式 (1) 构建 nested wedgie tree | 与 Classic 同口径，共用公式实现 |
-| Split priority | object-space error 的 4096 bucket | 像素 SSE + frustum 的 max heap | 融合 active-leaf 扫描、像素 SSE + frustum |
+| Split priority | object-space error 的 4096 bucket | 像素 SSE + frustum 的持久 indexed `Q_s` | 融合 active-leaf 扫描、像素 SSE + frustum |
 | Split closure | 一次函数原子拆完整 diamond | requested split + 递归 forced base split | 同语义，索引拓扑与部分 chunk 提交 |
-| Merge | 未实现，降低目标时全量重建 | 动态 diamond merge，同 Build 向上级联 | active internal 索引 + 并行预提交 + 动态级联 |
-| 跨帧拓扑 | 无，每次 optimize flush | 持久 child/topology | 持久 index topology |
-| 预算 | `ntri >= ntrimax` 后停止，可超目标 | active leaf 硬上限 + forced token | 同硬上限，原子 token |
+| Merge | 未实现，降低目标时全量重建 | 持久 canonical `Q_m` + 动态 diamond merge | active internal 索引 + 并行预提交 + 动态级联 |
+| 跨帧拓扑 | 无，每次 optimize flush | 持久 child/topology 与 `Q_s/Q_m` membership | 持久 index topology |
+| 预算 | `ntri >= ntrimax` 后停止，可超目标 | active leaf 硬上限 + forced token + merge-first crossover | 同硬上限，原子 token |
 | 视锥/FOV/屏幕 | 未进入评分 | 公式 (2)/(3) 角点保守像素 bound + 可见性 | 同 Classic；shader 同口径 |
 | 输出 | OpenGL immediate mode，每 leaf 3 顶点 | 每帧 CPU Mesh 全量 emit | CPU Mesh 或 GPU snapshot，直接读 `ActiveLeafNodes` |
 | 并行 | 串行 | 串行 baseline | 批量扫描及安全 chunk 并行 |
 | 验证/统计 | 无 topology validator，只有 `ntri` 和 debug print | topology issue 与阶段统计 | 独立 root traversal 交叉验证活动索引 |
 
-当前项目的 Classic 不是对 `Qscene` 的逐行移植。它保留“对象式裸指针 bintree + forced split”的经典工程角色，同时补上了这份参考快照未完成的论文公式 (1) nested wedgie 传播、公式 (2)/(3) conservative pixel bound、frustum、动态 merge、持久拓扑、硬预算和验证。DOD 再把相同质量语义改成 SoA/index、活动索引和多线程阶段。
+当前项目的 Classic 不是对 `Qscene` 的逐行移植。它保留“对象式裸指针 bintree + forced split”的经典工程角色，同时补上了这份参考快照未完成的论文公式 (1) nested wedgie 传播、公式 (2)/(3) conservative pixel bound、frustum、动态 merge、持久 dual queues、hard-budget crossover 和验证。DOD 再把相同质量语义改成 SoA/index、活动索引和多线程阶段。
 
 上述工程差异可直接定位到当前项目源码：
 
 - [`Roam::BuildNestedWedgieSubtree`](../../src/algorithms/RoamNestedWedgie.h#L60) 使用 `max(leftThickness,rightThickness)+abs(baseMidpointDisplacement)` 把论文公式 (1) 的累计 thickness 传播到父节点；
 - [`Roam::ComputeConservativeScreenDistortionPixels`](../../src/algorithms/RoamScreenProjection.h) 使用完整 `ViewProjection`、drawable width/height 和三个角点的公式 (3) 分子/分母极值，并处理 near-plane crossing；[`ClassicRoamMeshBuilder::ComputeScreenErrorScore`](../../src/algorithms/classic_roam/ClassicRoamScoring.cpp) 先执行 frustum 可见性判断，再组合 geometric bound 与独立 edge-density；
-- [`ClassicRoamMeshBuilder::MergeWithDiamondQueue`](../../src/algorithms/classic_roam/ClassicRoamTopology.cpp#L180) 在持久拓扑上执行动态 diamond merge；
+- [`ClassicRoamMeshBuilder::OptimizeWithPersistentDualQueues`](../../src/algorithms/classic_roam/ClassicRoamQueues.cpp) 跨帧维护 `Q_s/Q_m`，并在 hard budget 下执行 merge-first crossover；
 - [`DataOrientedRoamState::ActiveLeafNodes`](../../src/algorithms/data_oriented_roam/DataOrientedRoamState.h#L215) 以连续索引数组维护活动叶；
 - [`CollectSplitCandidates`](../../src/algorithms/data_oriented_roam/DataOrientedRoamCandidateMarking.cpp#L110) 在同一活动叶扫描中完成可见性/误差评估和 split 候选标记；
 - [`DataOrientedRoamMeshBuilder::BuildInternal`](../../src/algorithms/data_oriented_roam/DataOrientedRoamMeshBuilder.cpp#L76) 在拓扑稳定后直接复用 `ActiveLeafNodes` 作为输出视图。

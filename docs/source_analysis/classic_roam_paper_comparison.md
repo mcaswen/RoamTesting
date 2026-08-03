@@ -1,6 +1,6 @@
 # ROAM 论文与当前 Classic CPU ROAM 实现详细对比
 
-> 对比基线：2026-08-03 当前源码，包含 nested wedgie 公式 (1) 与保守屏幕投影公式 (2)/(3)。
+> 对比基线：2026-08-03 当前源码，包含 nested wedgie 公式 (1)、保守屏幕投影公式 (2)/(3) 与持久双优先队列。
 > 论文依据：项目内转写文档 [`roaming_terrain_paper.md`](roaming_terrain_paper.md)，未重新解析 PDF。  
 > 实现范围：以 `src/algorithms/classic_roam` 为核心，并追踪统一 LOD 接口、渲染上传和 Benchmark。  
 > 本文讨论的是“论文描述的 ROAM”与“项目当前名为 Classic CPU ROAM 的实现”之间的对应关系，不把同名类型或函数自动视为论文机制的完整复现。
@@ -17,12 +17,12 @@
 - 跨帧保留 active topology；
 - 默认启用 local constraints 时，CPU 端生成目标为无 T-junction 的连续三角网格。
 
-它也实现了若干论文所需但早期版本曾缺失的工程能力：论文公式 (1) 的 nested wedgie thickness tree、公式 (2)/(3) 的保守像素投影、near-plane 人工最大优先级、FOV/aspect/drawable 感知、视锥感知、硬 Triangle Budget、split/merge 迟滞以及预算满载时的再平衡。
+它也实现了若干论文所需但早期版本曾缺失的工程能力：论文公式 (1) 的 nested wedgie thickness tree、公式 (2)/(3) 的保守像素投影、near-plane 人工最大优先级、FOV/aspect/drawable 感知、视锥感知、持久 `Q_s/Q_m`、统一 crossover、硬 Triangle Budget 和 split/merge 迟滞。
 
 但是，当前实现不能被严格称为论文算法的完整复现。最关键的差异有三项：
 
 1. 当前 geometric component 已是论文公式 (2)/(3) 的保守像素上界，但最终 `ComputeScreenErrorScore()` 仍取 `max(geometricBound, edgeDensity)`；后者是论文基础误差度量中不存在的项目扩展，且最终 priority 的 parent/child 单调性尚未验证。
-2. 当前每次 `Build()` 都重建临时 split/merge queue，并按“先 merge、后 split”的独立 pass 处理；没有论文的持久 `Q_s/Q_m`、split/merge crossover 比较和最小拓扑改动证明。
+2. 当前已持久维护 `Q_s/Q_m` 并在同一循环比较最高 split 与最低 merge，但以像素阈值和 hard upper bound 作为终止条件；满预算时采用 merge-first 事务，不实现论文的精确 target count、worst-case top-down fallback，也尚不能继承最小拓扑改动证明。
 3. 当前每次 `Build()` 仍完整收集活动叶、重建 CPU Mesh 并上传，不维护论文的增量 triangle strips 或现代等价的增量 indexed output。
 
 因此，以下论文结论目前不能直接套用到项目实现：
@@ -35,7 +35,7 @@
 
 更准确的项目定位是：
 
-> 当前 Classic CPU ROAM 是“采用经典 ROAM bintree/diamond 拓扑和公式 (1)-(3) 局部误差界的串行、对象式 CPU 基线”，其最终 LOD priority 仍叠加 edge-density、迟滞和硬预算变体，调度器也不是论文 dual-queue optimizer 的逐项复刻。
+> 当前 Classic CPU ROAM 是“采用经典 ROAM bintree/diamond 拓扑、公式 (1)-(3) 局部误差界和持久 dual queues 的串行、对象式 CPU 基线”。队列 membership 与拓扑一起跨帧保留，但最终 LOD priority、accuracy threshold 和严格容量事务仍是项目变体。
 
 ## 2. 判定口径
 
@@ -83,16 +83,16 @@
 必要时按源分辨率重建 nested wedgie trees 或重置 topology
         |
         v
-扫描 active internal nodes，构建临时 merge min-heap 并 merge
+刷新持久 Q_s/Q_m 中全部现有成员的 view-dependent priority
         |
         v
-扫描 active leaves，必要时为满预算视角切换再做一轮 merge
+统一 crossover 循环比较 max(Q_s) 与 min(Q_m)
         |
         v
-递归收集 active leaves，计算剩余 split tokens
+低于 MergeThreshold 时回收低误差 diamond
         |
         v
-扫描 active leaves，构建临时 split max-heap 并 split/forced split
+高于 SplitThreshold 时 split；预算满载则先 merge 低分 diamond 再提交 closure
         |
         v
 可选全局 topology validator
@@ -107,7 +107,7 @@
 统计、保存 split paths、整网格上传 GPU
 ```
 
-顺序证据集中在 [`ClassicRoamMeshBuilder::Build()`](../../src/algorithms/classic_roam/ClassicRoamMeshBuilder.cpp#L66)：先 `MergeWithDiamondQueue()`，再收集预算，之后 `RefineWithSplitQueue()`，最后收集并 `EmitLeafTriangles()`。
+入口证据集中在 [`ClassicRoamMeshBuilder::Build()`](../../src/algorithms/classic_roam/ClassicRoamMeshBuilder.cpp)；双队列调度位于 [`OptimizeWithPersistentDualQueues()`](../../src/algorithms/classic_roam/ClassicRoamQueues.cpp)。拓扑稳定后仍会递归收集 active leaves 并调用 `EmitLeafTriangles()`。
 
 ### 3.3 阶段级对应关系
 
@@ -115,10 +115,10 @@
 | --- | --- | --- | --- |
 | view-independent nested bounds 预计算 | `Roam::BuildNestedWedgieSubtree()` + `RebuildVarianceTrees()` | 已实现 | 最细层为 0；父层严格执行公式 (1)，深度上限为 20 |
 | incremental frustum update | `IsNodeVisible()` | 部分实现/变体 | 每次评分重新做 6-plane AABB 测试，没有跨帧标签和 subtree early-out 状态 |
-| deferred priority recomputation | split/merge candidate 扫描 | 未实现 | 每次 Build 对 active topology 全量重新评分，弹出候选时还会再次评分 |
-| persistent dual queues | 两个函数内的临时 heaps | 部分实现/变体 | 有 max split heap 和 min merge heap，但不持久、不交替、不做 crossover 终止判断 |
+| deferred priority recomputation | `RefreshPersistentQueuePriorities()` | 未实现 | membership 持久，但每次 Build 仍刷新两个队列全部成员的 priority |
+| persistent dual queues | intrusive indexed `Q_s/Q_m` | 已实现 | membership 跨帧保留，拓扑变更只局部维护；每帧 key refresh 仍为 O(N) |
 | forced split | `SplitNode()` | 已实现 | 使用递归传播和预算 token 预留；统计口径以单个 parent split 计数 |
-| diamond merge | `CanMergeNode()` + `MergeNodeOrDiamond()` | 已实现 | 支持同一 Build 向父级级联；调度方式不同于论文 `Q_m` |
+| diamond merge | `CanMergeNode()` + `MergeNodeOrDiamond()` | 已实现 | merge 后 parent 立即进入 `Q_s`，新可合并 diamond 局部进入 `Q_m` |
 | direct target triangle count | `TriangleBudget` | 部分实现/变体 | 当前参数是 hard upper bound，不是必须达到的 target count |
 | incremental T-stripping | `EmitLeafTriangles()` | 未实现 | 每次 Build 为每个 leaf 生成 3 个重复顶点和 3 个索引 |
 | progressive optimization | 无 | 未实现 | 没有 frame deadline 或可中断的优化工作预算 |
@@ -310,19 +310,17 @@ score = max(geometricBoundPixels, edgeDensityPixels)
 
 ### 9.1 Split priority queue
 
-[`RefineWithSplitQueue()`](../../src/algorithms/classic_roam/ClassicRoamTopology.cpp#L62) 实现 max-heap：
+[`ClassicRoamQueues.cpp`](../../src/algorithms/classic_roam/ClassicRoamQueues.cpp) 实现 intrusive indexed max-heap `Q_s`：
 
-1. 递归扫描两个根下的全部 active leaves；
-2. 计算 score，只把超过 split 条件的 leaf 入队；
-3. 弹出最高 score；
-4. 再次计算 score，丢弃过期或已被 forced split 消耗的候选；
-5. 执行 split；
-6. 把新 children 和可能被 forced split 的 base-neighbor children 入队；
-7. 直到队列为空或 split 因预算/深度失败。
+1. `ResetTopology()` 只在 base triangulation 初始化时插入两个 roots；
+2. `Q_s` 始终保存当前 triangulation 的全部 active leaves，而不是只保存超过 threshold 的候选；
+3. 每个 node 的 `SplitQueueIndex` 是稳定可删除 handle，同分时按 `PathId` 稳定排序；
+4. 每帧只遍历现有 `Q_s` 成员刷新 view-dependent score，并原地 heapify；
+5. split/forced split 局部删除 parent、插入两个 active children；
+6. merge 局部删除 children、插回 parent；
+7. 因 closure 预算不足而失败的 leaf 只在当前 Build 沉到 heap 底部，下一帧重新评分。
 
-**单帧 max split heap：已实现。** 这与论文 first-frame top-down split queue 的局部思想一致。
-
-**持久 `Q_s`：未实现。** heap 是函数局部变量，每次 `Build()` 从 active leaves 全量重建，上一帧 queue 元素和 priority 不保留。
+**持久 `Q_s`：已实现。** active membership 不再从 roots 递归发现；但是相机变化仍要求本实现刷新全部现有 queue keys，尚未实现论文 priority deferral。
 
 ### 9.2 Forced split
 
@@ -360,11 +358,11 @@ score = max(geometricBoundPixels, edgeDensityPixels)
 
 [`MergeNodeOrDiamond()`](../../src/algorithms/classic_roam/ClassicRoamTopology.cpp#L580) 对内部 base neighbor 成对 merge；terrain 边界或无需成对时只 merge 当前 node。外部邻居由 [`MergeSingleNode()`](../../src/algorithms/classic_roam/ClassicRoamTopology.cpp#L553) 改回 parent。
 
-[`MergeWithDiamondQueue()`](../../src/algorithms/classic_roam/ClassicRoamTopology.cpp#L180) 使用最低 score 优先的临时 heap。深层 merge 后会立即把双方 parent 放回 heap，因此一次 `Build()` 可以继续向上级联，不需要等待下一帧。
+`Q_m` 是 [`ClassicRoamQueues.cpp`](../../src/algorithms/classic_roam/ClassicRoamQueues.cpp) 中的持久 indexed min-heap。互为 base 的两个 parents 只选择较小 `PathId` 一侧作为 canonical representative；diamond 两侧都保存指向该 representative 的 association。priority 是两侧 parent score 的最大值。
 
 **拓扑 merge 状态：已实现。** 这部分与论文连续 bintree triangulation 语义一致。
 
-**merge 调度状态：部分实现/变体。** 当前 heap 每次全量重建，只按阈值执行；论文 `Q_m` 是持久的，并与 `Q_s` 在同一个 crossover 循环中共同决定下一次操作。
+**持久 `Q_m`：已实现。** split/merge 前先失效局部邻域中的旧 diamond membership，完成拓扑事务后只重新检查 node、parent、children 和直接邻接邻域。validator 会从 active topology 独立推导 canonical diamonds，并验证与 `Q_m` 一一对应。
 
 ## 11. Dual-Queue Optimization
 
@@ -382,28 +380,29 @@ score = max(geometricBoundPixels, edgeDensityPixels)
 
 ### 11.2 当前算法
 
-当前虽有两个 `std::priority_queue`，但执行模型是：
+当前执行模型是：
 
 ```text
-完整扫描 internal nodes -> 临时 Qm -> merge 到阈值
-完整扫描 leaves -> 必要时再平衡 merge
-完整扫描 leaves -> 临时 Qs -> split 到阈值/预算
-销毁两个 queues
+跨帧保留 active topology、Q_s membership、Q_m membership
+更新 Q_s/Q_m 全部现有成员的 priority 并 heapify
+while 仍有 accuracy demand 或可改善的预算交换:
+    min(Q_m) < MergeThreshold -> merge
+    max(Q_s) > SplitThreshold 且有 token -> forced split closure
+    预算不足且 max(Q_s) > min(Q_m) -> 先 merge，再重试 split closure
+局部更新两个 indexed heaps，保留到下一帧
 ```
 
-它没有：
+与论文仍有差异：
 
-- 跨帧保留 queue membership；
-- 局部增删 queue element；
-- 在同一循环中比较最高 split 与最低 merge；
-- 达到同等 priority crossover 后停止的判定；
+- `TriangleBudget` 是 hard upper bound，不要求把 mesh 填到精确 target count；
+- accuracy 停止条件使用 split/merge 双阈值和上一帧 path 迟滞；
+- 为保证固定容量绝不瞬时越界，crossover 使用 merge-first，而论文伪代码在目标大小时可能先 split 再 merge；
+- forced closure 通过 reserved leaf tokens 提交，没有论文的精确 representable-count 处理；
 - worst-case 变化过大时自动回退 top-down rebuild 的论文检测。
 
 ### 11.3 判定
 
-**状态：部分实现/变体。** 可以称为“split/merge priority-queue passes”，不应称为论文意义上的“完整 dual-queue incremental optimizer”。
-
-当前仍有一种较弱的 frame coherence：topology、children 和 split path 都跨帧保留。因此它不是每帧从两个 roots 重建 topology；但候选发现和 priority 管理仍是全量工作。
+**状态：部分实现/变体。** “持久 dual queues、局部 membership、统一 crossover”已经实现；“论文 exact target、最终最优性、priority deferral 和 worst-case fallback”尚未实现。固定相机时 topology 与 membership 更新可以为零，但每帧 priority refresh 和 CPU Mesh emit 仍是 O(N)。
 
 ## 12. Triangle Budget 与迟滞
 
@@ -438,11 +437,13 @@ score < MergeThreshold  -> coarse
 
 这是实用的抗抖动扩展。论文主要依赖小幅、按优先级进行的 topology changes，并另提 vertex morphing；当前明确的双阈值迟滞是项目设计，不是论文核心证明的一部分。
 
-### 12.4 满预算再平衡
+### 12.4 满预算 crossover
 
-[`MergeWithDiamondQueue()`](../../src/algorithms/classic_roam/ClassicRoamTopology.cpp#L274) 会扫描 active leaves 的新 split demand。当预算不足时，它用有限 batch 回收低 score diamonds，为新入视野的高 score leaves 腾出 token。该机制解决“离开视野的区域占满预算，转回来后无法立即细分”的工程问题。
+[`OptimizeWithPersistentDualQueues()`](../../src/algorithms/classic_roam/ClassicRoamQueues.cpp) 在预算不足时直接比较 `max(Q_s)` 和 `min(Q_m)`。只有最高 split score 大于最低 merge loss 才回收 diamond；回收释放的 leaf tokens 随后由同一循环中的 forced split closure 消费。旧版固定 `128` 的有限 batch 与 threshold-gap 再平衡已移除。
 
-**状态：项目扩展。** 它在目标上接近论文 `max split > min merge` 的交换思想，但采用 batch、threshold gap 和两阶段调度，不能替代论文的 optimal crossover 证明。
+同一 Build 还有一层反向事务保护：刚 split 的 parent 仍保留 `Q_m` membership，但 merge score 暂时置为最大值；刚 merge 回来的 parent 也保留在 `Q_s`，split score 暂时沉底。下一 Build 的 key refresh 自动恢复资格。这避免项目扩展 priority 不满足单调性时出现 split/merge 即刻互相撤销。
+
+**状态：论文结构已实现、容量事务与反向保护为项目变体。** 交换顺序采用 merge-first 以保证任何中间状态都不超过 hard budget。论文证明不需要这层同帧保护；当前需要它本身也是最终 priority 单调性尚未成立的工程证据。因此不能直接继承论文 optimal crossover 证明。
 
 ## 13. 视锥处理
 
@@ -574,16 +575,16 @@ OpenGL renderer 随后在 [`TerrainRenderer::RebuildTerrainLod()`](../../src/ren
 | Forced split | recursive `SplitNode()` | 已实现 | 是，受 `MaxDepth` 和 hard budget 限制 |
 | Mergeable diamond | `CanMergeNode()` | 已实现 | 是 |
 | Diamond merge | `MergeNodeOrDiamond()` | 已实现 | 是 |
-| 跨帧 active topology | persistent nodes + `IsSplit` | 已实现 | 只有 topology coherence |
+| 跨帧 active topology | persistent nodes + `Active/IsSplit` | 已实现 | topology 与 queue membership 均持久 |
 | View-independent error tree | two `_varianceTrees` + shared builder | 已实现 | 结构与公式 (1) 均成立，受输入/深度边界限制 |
 | Nested wedgie thickness | `Roam::BuildNestedWedgieSubtree()` | 已实现 | 可继承公式 (1) 的离散 bintree 语义；不自动包含 screen bound |
 | Conservative screen-distortion bound | `Roam::ComputeConservativeScreenDistortionPixels()` | 已实现 | 局部 geometric bound 是；最终 priority 另含 edge-density |
 | Monotonic priority | 无 invariant/check | 未实现 | 否，最优性证明前提缺失 |
-| Highest-priority split heap | `RefineWithSplitQueue()` | 已实现 | 只对当帧已发现候选成立 |
-| Lowest-priority merge heap | `MergeWithDiamondQueue()` | 已实现 | 只对当帧 merge pass 成立 |
-| Persistent `Q_s` | 无 | 未实现 | 否 |
-| Persistent `Q_m` | 无 | 未实现 | 否 |
-| Dual-queue crossover loop | 无 | 未实现 | 否 |
+| Highest-priority split heap | indexed `_splitQueue` | 已实现 | 保存全部 active leaves，key 每帧刷新 |
+| Lowest-priority merge heap | indexed `_mergeQueue` | 已实现 | canonical diamond priority 为两侧最大值 |
+| Persistent `Q_s` | `SplitQueueIndex` + local updates | 已实现 | membership 持久；priority deferral 未实现 |
+| Persistent `Q_m` | representative/partner + local updates | 已实现 | membership 持久并由 validator 独立核对 |
+| Dual-queue crossover loop | `OptimizeWithPersistentDualQueues()` | 部分实现/变体 | 比较两端 priority；使用 hard-budget merge-first 终止语义 |
 | 最小 `Delta N` topology changes | 无证明 | 未实现 | 否 |
 | Direct target triangle count | hard `TriangleBudget` | 部分实现/变体 | 只保证上限，不保证精确目标或最优分配 |
 | Error tolerance | Split/Merge pixel thresholds | 部分实现/变体 | 是启发式 tolerance，不是 guaranteed bound |
@@ -600,7 +601,7 @@ OpenGL renderer 随后在 [`TerrainRenderer::RebuildTerrainLod()`](../../src/ren
 | Backface/normal/texture/silhouette metrics | 无 | 未实现 | 否 |
 | Arbitrary manifold base mesh | 固定矩形双根 | 未实现 | 否 |
 | Split/Merge hysteresis | two thresholds + paths | 项目扩展 | 改善稳定性，但不属于论文最优性证明 |
-| Budget-full view rebalance | bounded extra merge pass | 项目扩展 | 改善转向响应，但不是论文 dual-queue 等价实现 |
+| Budget-full view rebalance | persistent queue crossover | 部分实现/变体 | 改善转向响应；exact target/optimality 前提仍缺失 |
 | Topology validator | `ValidateTopology()` | 项目扩展 | 提供诊断，不是运行时修复 |
 | 细分阶段 Benchmark | `ClassicRoamStats` | 项目扩展 | 有利于与 DOD/GPU 公平对比 |
 
@@ -694,27 +695,25 @@ FinalPriority = max(...)
 
 这样可以区分“地形近似误差”与“项目希望的最小几何密度”。
 
-### 20.3 P1：实现真正的 persistent dual queues
+### 20.3 已完成：persistent dual queues；仍需补 exact reference mode
 
-在误差/priority 语义稳定后，再实现：
+当前已完成：
 
-- 每个 active leaf 在 `Q_s` 中有稳定 handle 或 generation；
-- 每个 mergeable diamond 在 `Q_m` 中有稳定 handle；
-- split/merge 只局部增删受影响元素；
+- 每个 active leaf 通过 `SplitQueueIndex` 在 `Q_s` 中获得稳定 handle；
+- 每个 mergeable diamond 通过 canonical representative 在 `Q_m` 中唯一存在；
+- split/forced split/merge 只局部增删受影响元素；
 - 每帧从上一帧 topology 和 queues 继续；
 - 同一循环比较 `maxSplitPriority` 与 `minMergePriority`；
-- 支持 target count、error tolerance 两种终止条件；
-- forced split 返回完整 changed-node 集合，用于原子更新 queue membership；
-- 当候选 crossover 区间过大时，按论文建议回退 top-down rebuild。
+- strict hard capacity 下采用 merge-first crossover；
+- validator 独立检查 `Q_s == active cut`、`Q_m == canonical mergeable diamonds` 和 heap order。
 
-建议不要使用保存任意 `std::priority_queue` iterator 的设计，因为标准容器不提供稳定可删 handle。可选方案包括 indexed binary heap、intrusive heap，或带 `Generation` 的 lazy-invalidated heap。Classic 模式仍可保留对象指针作为 identity。
+仍需实现或验证：
 
-验收条件：
-
-- 固定相机稳定后，queue update 和 topology changes 接近 0；
-- 轻微相机移动时，priority 更新量和 topology changes 与全 active mesh 大小解耦；
-- 小地形穷举所有合法 bintree triangulations，验证给定 representable triangle count 下最大 bound 最小；
-- 与每帧从 roots top-down 重建的 reference 结果比较 crossover priority。
+- direct target-count reference mode；
+- 候选 crossover 区间过大时的 top-down fallback；
+- priority deferral，使轻微相机移动的评分量也从 O(N) 降到接近 O(Delta N)；
+- 小地形穷举合法 triangulations，对照 representable count 下的最大 bound；
+- 最终 priority 的 parent-child monotonicity。
 
 ### 20.4 P2：增量视锥与 priority deferral
 
@@ -774,8 +773,8 @@ LOS、object positioning、backface、normal、silhouette、fog 等 metric 建�
 | 已完成 | nested wedgie 公式 (1) | 恢复 world-space 累计 thickness 语义 | 无 | 已改变三种算法质量口径，历史数据需重跑 |
 | 已完成 | conservative projection 公式 (2)/(3) | 恢复局部 screen-space bound | nested thickness | 已覆盖 near-plane 与角点分子/分母极值 |
 | P0 | 单调性/上界自动测试 | 防止把 heuristic 当 theorem | 公式 (1) 已有递推测试 | 连续空间只能通过保守推导最终证明 |
-| P1 | persistent dual queues | 恢复 `Delta N` 级增量优化目标 | 稳定 priority | handle 失效、forced split 的多节点事务 |
-| P1 | target count/crossover | 接近论文预算下最优分配 | dual queues | 并非所有整数 count 都一定可由合法 topology 精确表示 |
+| 已完成 | persistent dual queues + hard-budget crossover | topology membership 局部更新、满预算资源交换 | intrusive indexed heaps | key refresh 仍为 O(N)，不能单独恢复完整 `Delta N` 证明 |
+| P1 | exact target-count reference 与 top-down fallback | 验证论文预算下的分配性质 | dual queues | 并非所有整数 count 都一定可由合法 topology 精确表示 |
 | P2 | incremental frustum flags | 减少重复 plane tests | 保守 bound | camera teleport 的状态失效 |
 | P2 | priority deferral | 固定/慢速相机显著减小评分工作 | monotonic conservative priority | 速度界错误会破坏正确性 |
 | P3 | incremental indexed output | 降低 emit/upload `O(N)` 成本 | changed-node tracking | buffer 碎片与跨帧资源生命周期 |
@@ -793,7 +792,7 @@ LOS、object positioning、backface、normal、silhouette、fog 等 metric 建�
 
 ### 22.2 不要把公式 (1)-(3) 已实现等同于完整 guaranteed bound
 
-旧 `max(local,left,right)` 与 center-depth projection 均已移除；公式 (1)-(3) 已给出局部 geometric bound，但最终 priority 还叠加 edge-density/visibility/hysteresis，且缺少 persistent dual queues 与 parent-child 单调性验证，不能据此宣称完整全局保证。
+旧 `max(local,left,right)` 与 center-depth projection 均已移除，persistent dual queues 也已实现；但最终 priority 还叠加 edge-density/visibility/hysteresis，且缺少 parent-child 单调性与 exact-target 对照验证，不能据此宣称完整全局保证。
 
 ### 22.3 不要只增加 worker 数来模拟论文增量性
 
@@ -850,7 +849,7 @@ LOS、object positioning、backface、normal、silhouette、fog 等 metric 建�
 ### 24.3 需要 profiler 才能确认
 
 - 当前场景究竟由 error scoring、heap 操作、pointer chasing、height sampling、mesh allocation 还是 upload 主导；
-- incremental queues 在典型 camera path 下是否比当前全量 scan 更快；
+- priority deferral 在典型 camera path 下是否能显著降低当前全队列 key refresh 成本；
 - triangle strips 在现代后端是否优于 indexed mesh；
 - vertex cache 去重的 CPU 成本能否抵消 upload 节省；
 - node pool 高水位对长时间运行的真实内存压力。
@@ -929,18 +928,16 @@ LOS、object positioning、backface、normal、silhouette、fog 等 metric 建�
 
 - Nested Wedgie Tree：公式 (1) 已实现，但非 dyadic 输入、深度 20 截断和连续双线性曲面仍需验证；
 - Screen Priority：geometric component 是 conservative distortion bound；最终值另含 edge-density 项；
-- Split/Merge Queues：各自有临时 heap，但不是 persistent dual queues；
+- Split/Merge Queues：持久 indexed heaps 与局部 membership 已实现，但 key 仍每帧全量刷新；
 - Triangle Budget：hard upper bound，不是 direct target count；
 - Frame Coherence：topology 持久，candidate/priority/output 不增量；
 - Frustum Culling：影响 priority，不维护增量 labels，也不剔除最终输出；
 - 抗 popping：有 hysteresis，没有 vertex morphing；
-- 预算质量再分配：有 bounded rebalance，不是论文 crossover optimizer。
+- 预算质量再分配：统一 crossover 已实现，但采用 hard-capacity merge-first 变体。
 
 ### 27.3 未实现
 
 - 可验证的 monotonic priority；
-- persistent `Q_s/Q_m` 和局部 queue maintenance；
-- split/merge crossover optimization；
 - 给定 triangle count 下的最优性；
 - guaranteed screen-space error bound；
 - incremental frustum flags/labels；
@@ -957,9 +954,9 @@ LOS、object positioning、backface、normal、silhouette、fog 等 metric 建�
 ### 27.4 建议优先实现
 
 1. 为公式 (1)-(3) 补真实 HeightMap ancestor bound、跨后端逐值一致性和最终 priority 单调性测试。
-2. 再实现 persistent dual queues、crossover 和 target-count reference mode。
+2. 为已实现的 persistent dual queues 增加 target-count reference、top-down fallback 和穷举对照。
 3. 然后实现 incremental frustum state 与 priority deferral，恢复 `O(Delta N)` 方向。
 4. 以现代 incremental indexed output 为主，triangle strips 作为论文复现实验模式。
 5. 最后加入 progressive optimization、vertex morphing、dynamic terrain 和高级 metrics。
 
-只有完成剩余的 monotonic priority、dual queues/crossover 并通过端到端性质测试后，项目文档才适合使用“论文级 guaranteed error bound”和“给定 bintree mesh 空间中的 optimal triangulation”等表述。
+只有完成剩余的 monotonic priority、exact-target reference 和端到端性质测试后，项目文档才适合使用“论文级 guaranteed error bound”和“给定 bintree mesh 空间中的 optimal triangulation”等表述。

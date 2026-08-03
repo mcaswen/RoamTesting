@@ -478,6 +478,10 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
     debugData.RoamCrackRiskCount = terrainStats.RoamCrackRiskCount;
     debugData.RoamConstraintPassCount = terrainStats.RoamConstraintPassCount;
     debugData.RoamCandidatePeakCount = terrainStats.RoamCandidatePeakCount;
+    debugData.RoamPersistentSplitQueueSize = terrainStats.RoamPersistentSplitQueueSize;
+    debugData.RoamPersistentMergeQueueSize = terrainStats.RoamPersistentMergeQueueSize;
+    debugData.RoamQueueCrossoverCount = terrainStats.RoamQueueCrossoverCount;
+    debugData.RoamQueueMembershipUpdateCount = terrainStats.RoamQueueMembershipUpdateCount;
     debugData.RoamRejectedSplitCount = terrainStats.RoamRejectedSplitCount;
     debugData.RoamBudgetRejectedSplitCount = terrainStats.RoamBudgetRejectedSplitCount;
     debugData.RoamRejectedMergeCount = terrainStats.RoamRejectedMergeCount;

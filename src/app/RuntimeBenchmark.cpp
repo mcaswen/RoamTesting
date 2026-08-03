@@ -336,7 +336,8 @@ void WriteDetailedCsv(
         << "maxDepthSetting,screenSpaceSplitThresholdPixels,"
         << "screenSpaceMergeThresholdPixels,triangleBudget,"
         << "timeSeconds,cameraX,cameraY,cameraZ,frameMilliseconds,triangles,nodes,"
-        << "activeSplits,splits,forcedSplits,merges,candidatePeak,budgetRejectedSplits,tjunctions,invalidNeighbors,"
+        << "activeSplits,splits,forcedSplits,merges,candidatePeak,persistentSplitQueueSize,persistentMergeQueueSize,"
+        << "queueCrossoverCount,queueMembershipUpdateCount,budgetRejectedSplits,tjunctions,invalidNeighbors,"
         << "invalidTopology,cpuWorkers,cpuUtilizationPercent,lodTotalMilliseconds,"
         << "cpuUpdateMilliseconds,cpuPrepareMilliseconds,cpuMergeCandidateMarkMilliseconds,"
         << "cpuMergeTopologyMilliseconds,cpuBudgetLeafCollectMilliseconds,cpuErrorEvalMilliseconds,"
@@ -388,6 +389,10 @@ void WriteDetailedCsv(
                 << stats.RoamForcedSplitCount << ','
                 << stats.RoamMergeCount << ','
                 << stats.RoamCandidatePeakCount << ','
+                << stats.RoamPersistentSplitQueueSize << ','
+                << stats.RoamPersistentMergeQueueSize << ','
+                << stats.RoamQueueCrossoverCount << ','
+                << stats.RoamQueueMembershipUpdateCount << ','
                 << stats.RoamBudgetRejectedSplitCount << ','
                 << stats.RoamTjunctionCount << ','
                 << stats.RoamInvalidNeighborCount << ','

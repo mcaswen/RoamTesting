@@ -74,6 +74,7 @@ if(PARALLEL_ROAM_BUILD_APP)
                 src/algorithms/classic_roam/ClassicRoamTerrainLodAlgorithm.cpp
                 src/algorithms/classic_roam/ClassicRoamMeshBuilder.cpp
                 src/algorithms/classic_roam/ClassicRoamMeshEmit.cpp
+                src/algorithms/classic_roam/ClassicRoamQueues.cpp
                 src/algorithms/classic_roam/ClassicRoamScoring.cpp
                 src/algorithms/classic_roam/ClassicRoamState.cpp
                 src/algorithms/classic_roam/ClassicRoamTopology.cpp
@@ -136,6 +137,7 @@ if(PARALLEL_ROAM_BUILD_APP)
                 src/algorithms/classic_roam/ClassicRoamTerrainLodAlgorithm.cpp
                 src/algorithms/classic_roam/ClassicRoamMeshBuilder.cpp
                 src/algorithms/classic_roam/ClassicRoamMeshEmit.cpp
+                src/algorithms/classic_roam/ClassicRoamQueues.cpp
                 src/algorithms/classic_roam/ClassicRoamScoring.cpp
                 src/algorithms/classic_roam/ClassicRoamState.cpp
                 src/algorithms/classic_roam/ClassicRoamTopology.cpp

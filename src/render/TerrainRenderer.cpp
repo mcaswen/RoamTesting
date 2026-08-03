@@ -487,6 +487,10 @@ TerrainRenderStats TerrainRenderer::Stats() const
     stats.RoamCrackRiskCount = _terrainLodStats.CrackRiskCount;
     stats.RoamConstraintPassCount = _terrainLodStats.ConstraintPassCount;
     stats.RoamCandidatePeakCount = _terrainLodStats.CandidatePeakCount;
+    stats.RoamPersistentSplitQueueSize = _terrainLodStats.PersistentSplitQueueSize;
+    stats.RoamPersistentMergeQueueSize = _terrainLodStats.PersistentMergeQueueSize;
+    stats.RoamQueueCrossoverCount = _terrainLodStats.QueueCrossoverCount;
+    stats.RoamQueueMembershipUpdateCount = _terrainLodStats.QueueMembershipUpdateCount;
     stats.RoamRejectedSplitCount = _terrainLodStats.RejectedSplitCount;
     stats.RoamBudgetRejectedSplitCount = _terrainLodStats.BudgetRejectedSplitCount;
     stats.RoamRejectedMergeCount = _terrainLodStats.RejectedMergeCount;

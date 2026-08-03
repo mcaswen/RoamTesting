@@ -308,5 +308,72 @@ void ClassicRoamMeshBuilder::ValidateTopology()
             ++_stats.InvalidTopologyCount;
         }
     }
+
+    ValidatePersistentQueues(leafNodes);
+}
+
+void ClassicRoamMeshBuilder::ValidatePersistentQueues(const std::vector<ClassicRoamNode*>& leafNodes)
+{
+    // Q_s 必须和 active cut 一一对应，不能包含 inactive 历史 child
+    std::unordered_set<const ClassicRoamNode*> splitMembers;
+    splitMembers.reserve(_splitQueue.size());
+    if (_splitQueue.size() != leafNodes.size() || _splitQueue.size() > _settings.TriangleBudget)
+    {
+        ++_stats.InvalidTopologyCount;
+    }
+    for (std::size_t index = 0U; index < _splitQueue.size(); ++index)
+    {
+        const ClassicRoamNode* node = _splitQueue[index].Node;
+        if (node == nullptr || !node->Active || !IsLeaf(node) || node->SplitQueueIndex != index ||
+            !splitMembers.insert(node).second)
+        {
+            ++_stats.InvalidTopologyCount;
+        }
+        if (index > 0U && SplitEntryPrecedes(_splitQueue[index], _splitQueue[(index - 1U) / 2U]))
+        {
+            ++_stats.InvalidTopologyCount;
+        }
+    }
+    for (const ClassicRoamNode* leaf : leafNodes)
+    {
+        if (!leaf->Active || splitMembers.find(leaf) == splitMembers.end())
+        {
+            ++_stats.InvalidTopologyCount;
+        }
+    }
+
+    // 从 active topology 独立推导 canonical diamonds，验证 Q_m 的局部维护没有漏项或重复项
+    std::unordered_set<const ClassicRoamNode*> expectedMergeMembers;
+    for (const std::unique_ptr<ClassicRoamNode>& ownedNode : _nodes)
+    {
+        ClassicRoamNode* representative = CanonicalMergeQueueNode(ownedNode.get());
+        if (representative != nullptr)
+        {
+            expectedMergeMembers.insert(representative);
+        }
+    }
+    if (expectedMergeMembers.size() != _mergeQueue.size())
+    {
+        ++_stats.InvalidTopologyCount;
+    }
+    for (std::size_t index = 0U; index < _mergeQueue.size(); ++index)
+    {
+        const ClassicRoamNode* representative = _mergeQueue[index].Node;
+        if (representative == nullptr || representative->MergeQueueIndex != index ||
+            representative->MergeQueueRepresentative != representative ||
+            expectedMergeMembers.find(representative) == expectedMergeMembers.end())
+        {
+            ++_stats.InvalidTopologyCount;
+        }
+        if (representative != nullptr && representative->MergeQueuePartner != nullptr &&
+            representative->MergeQueuePartner->MergeQueueRepresentative != representative)
+        {
+            ++_stats.InvalidTopologyCount;
+        }
+        if (index > 0U && MergeEntryPrecedes(_mergeQueue[index], _mergeQueue[(index - 1U) / 2U]))
+        {
+            ++_stats.InvalidTopologyCount;
+        }
+    }
 }
 } // 命名空间 ParallelRoam::Algorithms::ClassicRoam

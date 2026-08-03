@@ -107,6 +107,10 @@ struct DebugOverlayData
     // 约束传播次数越高表示 diamond split 触发越明显
     std::size_t RoamConstraintPassCount{0};
     std::size_t RoamCandidatePeakCount{0};
+    std::size_t RoamPersistentSplitQueueSize{0};
+    std::size_t RoamPersistentMergeQueueSize{0};
+    std::size_t RoamQueueCrossoverCount{0};
+    std::size_t RoamQueueMembershipUpdateCount{0};
     std::size_t RoamRejectedSplitCount{0};
     std::size_t RoamBudgetRejectedSplitCount{0};
     std::size_t RoamRejectedMergeCount{0};

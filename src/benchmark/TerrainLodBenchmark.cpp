@@ -380,6 +380,17 @@ bool ValidateFrame(
         return false;
     }
 
+    // Classic 的 Q_s 必须精确表示 active cut；其他算法目前保持这些字段为零
+    if (stats.PersistentSplitQueueSize != 0U &&
+        (stats.PersistentSplitQueueSize != stats.ActiveTriangleCount ||
+         stats.PersistentSplitQueueSize > scenario.Settings.TriangleBudget ||
+         stats.SplitCount + stats.MergeCount > stats.ActiveNodeCount))
+    {
+        // 每个 Classic parent 在同一 Build 最多执行一次正向或反向事务。
+        // 事件数超过持久节点池规模通常意味着 split/merge 发生了同帧振荡。
+        return false;
+    }
+
     return !scenario.RequireTopologyClean || !HasInvalidTopology(stats);
 }
 
@@ -650,6 +661,7 @@ bool WriteCsv(
            "heightMapWidth,heightMapHeight,terrainSize,heightScale,maxDepth,"
            "screenSpaceSplitThresholdPixels,screenSpaceMergeThresholdPixels,triangleBudget,"
            "activeTriangleCount,activeNodeCount,splitCount,forcedSplitCount,mergeCount,candidatePeakCount,"
+           "persistentSplitQueueSize,persistentMergeQueueSize,queueCrossoverCount,queueMembershipUpdateCount,"
            "budgetRejectedSplitCount,"
            "tjunctionCount,invalidNeighborCount,invalidTopologyCount,cpuWorkerCount,cpuUtilizationPercent,"
            "topologyCommitMinCandidateCount,splitTopologyCommitMinCandidateCount,"
@@ -700,6 +712,10 @@ bool WriteCsv(
                 << frame.Stats.ForcedSplitCount << ','
                 << frame.Stats.MergeCount << ','
                 << frame.Stats.CandidatePeakCount << ','
+                << frame.Stats.PersistentSplitQueueSize << ','
+                << frame.Stats.PersistentMergeQueueSize << ','
+                << frame.Stats.QueueCrossoverCount << ','
+                << frame.Stats.QueueMembershipUpdateCount << ','
                 << frame.Stats.BudgetRejectedSplitCount << ','
                 << frame.Stats.TjunctionCount << ','
                 << frame.Stats.InvalidNeighborCount << ','

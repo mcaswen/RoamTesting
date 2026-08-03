@@ -1,6 +1,6 @@
 # Classic CPU ROAM 源码上下文
 
-> 分析代码基线：`eeb3f3a` 及 2026-08-03 的 nested wedgie 公式 (1) 实现。本文以实际执行代码为准；历史文档只作为工程背景，不反向推定实现。行号可能随后续提交变化，因此证据同时保留符号名。
+> 分析代码基线：2026-08-03 当前工作树，包含 nested wedgie 公式 (1)、保守屏幕投影公式 (2)/(3) 和持久双优先队列。本文以实际执行代码为准；历史文档只作为工程背景，不反向推定实现。行号可能随后续提交变化，因此证据同时保留符号名。
 >
 > 证据标签约定：
 >
@@ -11,23 +11,23 @@
 
 ## 1. 一页概览
 
-**源码事实：** 当前 `Classic CPU ROAM` 是一个单线程、对象式、持久化二叉三角树（binary triangle tree，简称 bintree）实现。它通过 `ClassicRoamTerrainLodAlgorithm` 适配项目统一的 `ITerrainLodAlgorithm` 接口，实际拓扑由 `ClassicRoamMeshBuilder` 持有。初始化时为两个根预计算论文公式 (1) 的 nested wedgie thickness tree；每次真正发生 LOD 构建时，先用动态最小堆级联合并低像素误差 diamond，预算接近满载时再有限交换低分 merge 与高分 split，随后在严格活动三角形预算内用最大堆处理高误差 split 候选，最后完整生成 CPU 顶点/索引数组。
+**源码事实：** 当前 `Classic CPU ROAM` 是一个单线程、对象式、持久化二叉三角树（binary triangle tree，简称 bintree）实现。它通过 `ClassicRoamTerrainLodAlgorithm` 适配项目统一的 `ITerrainLodAlgorithm` 接口，实际拓扑由 `ClassicRoamMeshBuilder` 持有。初始化时为两个根预计算论文公式 (1) 的 nested wedgie thickness tree，并建立持久 `Q_s/Q_m`；普通 Build 只刷新现有队列成员的相机相关 priority，在统一 crossover 循环中局部执行 merge、split 和 forced split，最后完整生成 CPU 顶点/索引数组。
 
 证据：
 
 - 文件：`src/algorithms/classic_roam/ClassicRoamTerrainLodAlgorithm.h`；符号：`ClassicRoamTerrainLodAlgorithm`；代码范围：第 11-30 行。
 - 文件：`src/algorithms/classic_roam/ClassicRoamMeshBuilder.cpp`；符号：`ClassicRoamMeshBuilder::Build`；代码范围：第 21-128 行。
-- 文件：`src/algorithms/classic_roam/ClassicRoamTopology.cpp`；符号：`MergeWithDiamondQueue`、`RefineWithSplitQueue`；代码范围：第 53-235 行。
+- 文件：`src/algorithms/classic_roam/ClassicRoamQueues.cpp`；符号：`OptimizeWithPersistentDualQueues`、indexed heap 与局部 membership 维护。
 
 | 结论 | 当前实现 |
 | --- | --- |
 | 公共接口 | `ITerrainLodAlgorithm` |
 | 统一输出模式 | `TerrainLodRenderMode::CpuMesh` |
 | 拓扑 | 两个根三角形 + 裸指针 parent/child/neighbor bintree |
-| 跨帧状态 | 持久化节点、活动 split 状态、`PathId` 迟滞历史 |
+| 跨帧状态 | 持久化节点、活动 split 状态、`Q_s/Q_m` membership、`PathId` 迟滞历史 |
 | 误差 | 两棵 nested wedgie tree 按公式 (1) 累积 base-midpoint displacement；构建时换算为像素误差 |
-| 细分 | 可见 leaf 按像素误差最大堆排序；forced split 预留预算 token |
-| 合并 | 动态最小堆；成功 merge 后立即检查父层，可在同一 Build 向上级联 |
+| 细分 | 持久 `Q_s` 保存全部 active leaves；forced split 预留预算 token |
+| 合并 | 持久 `Q_m` 保存 canonical mergeable diamonds；与 `Q_s` 在同一循环 crossover |
 | 裂缝约束 | 默认启用局部 `baseNeighbor` 传播；validator 只检查、不修复 |
 | Mesh | 每个活动叶输出 3 个独立顶点和 3 个索引；无顶点共享/去重 |
 | 并行 | Classic 核心没有并行 pass，统一统计固定报告 `CpuWorkerCount = 1` |
@@ -160,9 +160,9 @@ flowchart TD
     M -->|首帧 true| N[ResetTopology]
     N --> O[AddNode rootA/rootB 并读取 thickness 根值]
     O --> P[两个 root 互设 BaseNeighbor]
-    P --> Q[merge 无可回收节点]
-    Q --> R[计算剩余活动 leaf 预算]
-    R --> S[视锥/像素误差 split queue]
+    P --> Q[初始化 Qs: 两个 roots; Qm: 空]
+    Q --> R[刷新持久队列 priority]
+    R --> S[dual-queue crossover 与 forced split]
     S --> T[收集叶并生成初始 CPU Mesh]
 ```
 
@@ -212,9 +212,9 @@ rootB = A(1,0), B(0,1), C(1,1)
 | 两个根节点 | 首次或 topology reset | 条件执行 | 否 |
 | 节点 `GeometricError` | 建节点时从 nested tree 读取 | tree 重建时可刷新 | 否 |
 | 节点对象和 child 指针 | 首次走到该深度 | 跨 Build 复用 | 否 |
-| 相机相关 score/视锥测试 | 否 | 候选扫描/弹出时重算 | 只有触发 Build 才算 |
+| 相机相关 score/视锥测试 | 否 | 刷新 `Q_s/Q_m` 全部现有成员 | 只有触发 Build 才算 |
 | merge/split 活动状态 | 初始化粗拓扑 | 更新 | 只有触发 Build 才更新 |
-| 活动叶快照 | 否 | merge 后计预算、最终 emit 前各收集一次 | 否 |
+| 活动叶快照 | 否 | 最终 emit 前收集一次；预算直接读取 `Q_s.size()` | 否 |
 | CPU Mesh | 否 | 完整重建 | 未触发 Build 时复用 |
 | GPU 上传 | 否 | CPU Mesh 成功后 | D3D12 还会按 frame slot 懒同步 |
 
@@ -247,10 +247,13 @@ ClassicRoamMeshBuilder::Build(heightMap, scales, fullView, settings)
     写入 View/Projection/FrustumPlanes/DrawableHeight
     必要时 RebuildVarianceTrees(finestDepth)
     必要时 ResetTopology()，否则刷新已有节点的 thickness
-    MergeWithDiamondQueue()             // 阈值级联合并；池满时有限交换低分 diamond
-    CollectLeafNodes()                  // 得到 merge 后活动 leaf 数
-    remainingBudget = budget - leafCount
-    RefineWithSplitQueue(rootA, rootB)  // 视锥内像素误差最大堆
+    OptimizeWithPersistentDualQueues()
+        刷新 Q_s/Q_m 全部现有成员的 priority 并 heapify
+        remainingBudget = budget - Q_s.size()
+        min(Q_m) < MergeThreshold 时回收低误差 diamond
+        max(Q_s) > SplitThreshold 且有 token 时提交 forced-split closure
+        预算不足且 max(Q_s) > min(Q_m) 时先 merge 再重试 split
+        split/merge 只局部更新两个 indexed heaps
     可选 ValidateTopology()
     CollectLeafNodes(activeLeaves)
     EmitLeafTriangles(meshData, activeLeaves)
@@ -266,9 +269,9 @@ ClassicRoamMeshBuilder::Build(heightMap, scales, fullView, settings)
 ### 5.3 各阶段的数据条件
 
 1. **输入与缓存。** 已有持久树、上一 Build 的 split path、新 `HeightMap/settings/view`。先判断缓存兼容性，再覆盖成员；nested wedgie tree 必须在 root/child 读取 `GeometricError` 前可用。
-2. **Merge pass。** 动态最小堆先处理低像素误差 internal node。提交时重新验证；成功后立即把本侧与 base 对侧 parent 入队，所以孙层回收可以在同一 Build 使祖先继续成为候选。
-3. **预算重平衡与初始化。** 阈值 merge 稳定后收集全部活动 leaf；若可用 token 少于当前高分 split 需求，则以有限批次回收分数至少低一个迟滞区间的安全 diamond。随后用最终活动 leaf 数计算 `_remainingSplitBudget`；一次 leaf split 使活动 leaf 数净增 1，因此 token 数仍是准确硬上限。
-4. **Split pass。** 递归扫描当前 leaf；`ComputeScreenErrorScore` 先以 thickness 扩张的世界 AABB做六平面测试，不可见节点得 0。可见候选按像素误差降序处理；forced split 会预留调用链所需 token，预算不足则拒绝整条不安全细分。
+2. **Priority refresh。** `Q_s` 已保存全部 active leaves，`Q_m` 已保存全部 canonical mergeable diamonds；本阶段只更新它们的 view-dependent score 并原地 heapify，不再递归发现 membership。
+3. **统一 dual-queue 优化。** `min(Q_m)` 低于 merge threshold 时先回收；`max(Q_s)` 高于 split threshold 时尝试 forced-split closure。预算满载或 closure token 不足时，只有 `max(Q_s) > min(Q_m)` 才先 merge 低损失 diamond，再在下一轮重试高收益 split。
+4. **局部队列维护。** 每次 split 删除 parent `Q_s` 项并加入 children；merge 执行反向操作。拓扑变更前失效局部 `Q_m` association，完成后只重新检查 node/parent/children/邻接邻域。
 5. **可选验证。** 用量化共线边检查 T-junction，再验证 active neighbor、共享边和 parent/child/root 不变量。validator 只报告，不修复。
 6. **Mesh emit。** 从两个 root 收集唯一活动 leaf；每叶追加三个独立顶点和三个索引。视锥只影响细分，视锥外粗 leaf 仍会输出并由后端裁剪。
 7. **统计/迟滞提交。** 统计节点池、leaf 分类、预算拒绝和各阶段时间；最终仍 split 的 `PathId` 成为下一 Build 的迟滞历史。
@@ -286,18 +289,18 @@ ClassicRoamMeshBuilder::Build(heightMap, scales, fullView, settings)
 | `RebuildVarianceTrees` | `Build` / `Roam::BuildNestedWedgieTree` | 两 root domain + finest depth -> 两个 float 数组 | thickness 缓存 | 共享子函数递归 | 条件 |
 | `Roam::BuildNestedWedgieSubtree` | `BuildNestedWedgieTree` / 自身 | domain/depth/index -> nested thickness | tree entry | 是 | 仅重建 |
 | `NeedsTopologyReset` | `Build` | 新旧输入 -> bool | 无 | 否 | 是 |
-| `ResetTopology` / `AddNode` | `Build`、split | domain/thickness index -> pointer | node pool/root | 否 | 条件/新节点 |
-| `MergeWithDiamondQueue` | `Build` / score、merge | 当前活动树 | `IsSplit`、邻接、stats | 初始扫描递归 | 是 |
-| `RefineWithSplitQueue` | `Build` / score、`SplitNode` | 两 root/预算 | 拓扑、预算、stats | 初始扫描递归 | 是 |
-| `SplitNode` | split queue/自身 | leaf/reason/reserved slots -> bool | child、邻接、预算 | forced split 递归 | 是 |
-| `CanMergeNode` / `MergeNodeOrDiamond` | merge queue | internal node -> bool | 一侧或 diamond 状态 | 否 | 是 |
+| `ResetTopology` / `AddNode` | `Build`、split | domain/thickness index -> pointer | node pool/root/初始 `Q_s` | 否 | 条件/新节点 |
+| `OptimizeWithPersistentDualQueues` | `Build` / score、split、merge | 持久 `Q_s/Q_m`、预算 | 拓扑、预算、stats | 否 | 是 |
+| `RefreshPersistentQueuePriorities` | optimizer / score、heapify | 现有 queue members | 两个 heap keys | 否 | 是 |
+| `SplitNode` | dual queue/自身 | leaf/reason/reserved slots -> bool | child、邻接、预算、局部 queues | forced split 递归 | 是 |
+| `CanMergeNode` / `MergeNodeOrDiamond` | dual queue | internal node -> bool | 一侧或 diamond 状态、局部 queues | 否 | 是 |
 | `ComputeBaseMidpointDisplacement` | nested wedgie build | domain -> normalized signed displacement | 无 | 否 | 仅误差树构建 |
 | `ComputeScreenErrorScore` / `IsNodeVisible` | merge/split | node/view/frustum -> pixels | 无 | 否 | 是且重复 |
 | `CollectLeafNodesFrom` | budget/validate/emit | node -> vector append | 输出 vector | 是 | 是 |
 | `ValidateTopology` | `Build` | 当前活动树 | validation stats | leaf 收集递归 | 可选 |
 | `EmitDomainTriangle` | emit | leaf -> mesh append | mesh vectors | 否 | 是 |
 
-**源码事实：** `RefineNode` 没有调用点；实际 split 路径是 `RefineWithSplitQueue`。它保留为未使用的递归参考实现。
+**源码事实：** 旧 `RefineNode`、`RefineWithSplitQueue` 和 `MergeWithDiamondQueue` 已移除；所有 topology 调度统一从 `OptimizeWithPersistentDualQueues` 进入。
 
 ## 6. 核心数据结构
 
@@ -319,14 +322,19 @@ ClassicRoamMeshBuilder::Build(heightMap, scales, fullView, settings)
 | `VarianceTreeIndex` | 选择 rootA/rootB 的 thickness 数组；名称保留旧术语 | `AddNode` 写一次 |
 | `VarianceIndex` | 二叉堆索引：左 `2i+1`，右 `2i+2` | `AddNode` 写一次 |
 | `PathId` | 二叉路径稳定键，用于跨 Build 迟滞 | `AddNode` 写一次 |
-| 四个 Build ID | 创建、激活、split、merge 的时间戳 | 相应拓扑操作更新 |
+| 四个 Build ID | 创建、激活、split、merge 的时间戳；`SplitBuildId/MergeBuildId` 还阻止同一 Build 立即反向执行刚提交的事务 | 相应拓扑操作更新；dual-queue eligibility 读取 |
+| `SplitBlockedBuildId` | closure 本帧无法提交时临时把该 leaf 沉到 `Q_s` 底部 | dual-queue optimizer |
 | `Depth` | root 为 0，child 为 parent+1 | `AddNode` 写一次 |
 | `ActivatedByForcedSplit` | 本次激活是否由 forced split | split/merge |
+| `Active` | 区分当前 triangulation 与对象池中等待复用的历史节点 | reset/split/merge |
 | `IsSplit` | 活动 leaf/internal 的唯一判据 | split=true，merge=false |
+| `SplitQueueIndex` | 当前 leaf 在持久 `Q_s` indexed heap 中的位置 | split/merge/heap swap |
+| `MergeQueueIndex` | canonical parent 在持久 `Q_m` 中的位置 | 局部 diamond 更新 |
+| `MergeQueueRepresentative/Partner` | diamond 两侧共享的唯一 `Q_m` identity | 局部 diamond 更新 |
 
 证据：文件：`src/algorithms/classic_roam/ClassicRoamMeshBuilder.h`；符号：`ClassicRoamNode`；代码范围：第 175-211 行。
 
-**源码事实：** leaf 判定只看 `!IsSplit`，不是看 child 指针是否为空。因此一个 merge 后的 leaf 可以仍有两个非空、当前 inactive 的 child。
+**源码事实：** leaf 判定只看 `!IsSplit`，不是看 child 指针是否为空；`Active` 另外区分当前 cut 和历史对象。因此一个 merge 后的 active leaf 可以仍有两个非空但 `Active=false` 的 child。
 
 证据：文件：`src/algorithms/classic_roam/ClassicRoamState.cpp`；符号：`IsLeaf`；代码范围：第 196-205 行。文件：`ClassicRoamTopology.cpp`；符号：`MergeSingleNode`；代码范围：第 473-498 行。
 
@@ -341,9 +349,11 @@ ClassicRoamMeshBuilder::Build(heightMap, scales, fullView, settings)
 | `_stats` | 最近一次 Build 统计 | 每次 Build 清零后重算 |
 | `_nodes` | `unique_ptr` 所有权池 | reset 前持续增长，merge 不删除 |
 | `_previousSplitPaths/_currentSplitPaths` | 最终 active internal path，用于迟滞 | Build 末尾轮换 |
-| `_activeLeaves` | 预算计数或最终 emit 的临时快照 | 每次 Build 重收集 |
+| `_activeLeaves` | 最终 emit/stats 的临时快照 | 每次 Build 最终收集一次 |
+| `_splitQueue` | 持久 `Q_s` indexed max-heap，保存全部 active leaves | reset 初始化；split/merge 局部更新 |
+| `_mergeQueue` | 持久 `Q_m` indexed min-heap，保存 canonical diamonds | split/merge 局部更新 |
 | `_rootA/_rootB` | 两棵活动树入口 | reset 创建 |
-| `_remainingSplitBudget` | 本次 split pass 剩余净增 leaf token | merge 后初始化，split 消费 |
+| `_remainingSplitBudget` | 剩余净增 leaf token | 由 `budget-Q_s.size()` 初始化；merge 增加、split 消费 |
 | `_topologyMaxDepth/_buildSequence` | 缓存兼容深度与单调 Build ID | Build 更新 |
 
 证据：文件：`src/algorithms/classic_roam/ClassicRoamMeshBuilder.h`；符号：`ClassicRoamMeshBuilder` 私有成员；代码范围：第 331-358 行。
@@ -489,7 +499,7 @@ merge 允许条件之一：parent score <= MergeThreshold
 
 证据：文件：`src/algorithms/classic_roam/ClassicRoamMeshBuilder.cpp`；符号：`Build`；代码范围：第 24-39 行。文件：`ClassicRoamScoring.cpp`；符号：`ShouldSplitWithScore`、`WasSplitLastFrame`；代码范围：第 34-60 行。
 
-**根据实现推断：** 恰好 `score == MergeThreshold` 时，merge 判定允许回收，但 split 判定落入迟滞区并可能因上一帧 split 而立即再次请求 split。浮点恰好相等不常见，但这是边界条件上的潜在同帧振荡点。
+**源码事实：** accuracy merge 使用严格的 `mergeScore < MergeThreshold`，因此 `score == MergeThreshold` 不会先被阈值 merge；预算满载 crossover 则独立比较 `max(Q_s) > min(Q_m)`。
 
 ### 8.5 视锥测试与误差边界
 
@@ -503,9 +513,9 @@ merge 允许条件之一：parent score <= MergeThreshold
 
 ### 9.1 谁决定 split
 
-**源码事实：** 热路径由 `RefineWithSplitQueue` 决定。它递归找到所有活动 leaf，计算 score，经 `ShouldSplitWithScore` 过滤后进入 `priority_queue`。最高 score 先弹出；同分时按入队 `Sequence` 稳定排序。弹出时重新确认 leaf 并重算 score。
+**源码事实：** 热路径由 `OptimizeWithPersistentDualQueues` 决定。`Q_s` 跨帧保存全部 active leaves；每帧刷新现有成员的 score 并 heapify，最高 score 位于队首，同分时按稳定 `PathId` 排序。低于阈值和达到 `MaxDepth` 的 leaf 仍保留 membership，只是不会触发 split。
 
-证据：文件：`src/algorithms/classic_roam/ClassicRoamTopology.cpp`；符号：`RefineWithSplitQueue`；代码范围：第 53-163 行。
+证据：文件：`src/algorithms/classic_roam/ClassicRoamQueues.cpp`；符号：`SplitQueueScore`、`RefreshPersistentQueuePriorities`、`OptimizeWithPersistentDualQueues`。
 
 ### 9.2 `SplitNode` 完整步骤
 
@@ -514,9 +524,11 @@ merge 允许条件之一：parent score <= MergeThreshold
 3. 若启用局部约束且对侧不是互为 base 的合法关系，沿 base-neighbor 链递归 forced split，guard 上限为 `MaxDepth + 2`；递归参数把 `reservedSplitSlots` 加一，为尚未执行的调用者保留 token。
 4. 若最终 base neighbor 仍是 leaf 且不是 `forcedFrom`，先 forced split 它；`forcedFrom` 防止互为 base 的两个 leaf 无限回跳。
 5. 首次 split 通过 `SplitTriangleDomain` 创建两个 child，并传入左右 thickness tree 的堆索引；再次 split 复用旧 child。
-6. `IsSplit=true`，清空 child 的旧 neighbor，更新 build/debug 字段。
-7. `LinkSplitNeighbors` 建立 sibling、父 left/right 外邻居以及对侧 split child 的四边连接。
-8. 消费一个 `_remainingSplitBudget` token，记录 split path 和统计；forced 原因额外增加 `ForcedSplitCount`。
+6. 失效局部 `Q_m` diamond association，并从 `Q_s` 删除 parent。
+7. `IsSplit=true`、children `Active=true`，清空 child 的旧 neighbor，更新 build/debug 字段。
+8. `LinkSplitNeighbors` 建立 sibling、父 left/right 外邻居以及对侧 split child 的四边连接。
+9. 把两个 children 加入 `Q_s`，只重新检查局部 `Q_m` membership。
+10. 消费一个 `_remainingSplitBudget` token，记录 split path 和统计；forced 原因额外增加 `ForcedSplitCount`。
 
 证据：文件：`src/algorithms/classic_roam/ClassicRoamTopology.cpp`；符号：`SplitNode`；代码范围：第 237-349 行。
 
@@ -572,9 +584,9 @@ split 后关键赋值：
 
 **源码事实：** forced split 的停止条件包括 null base neighbor、到达互为 base 的 diamond、遇到 `forcedFrom`、目标已不是 leaf、`Depth >= MaxDepth`、预算不足、递归失败或 while guard 到达 `MaxDepth+2`。代码没有固定节点池容量；内存分配失败仍以标准分配异常表现。
 
-**源码事实：** `TriangleBudget` 是活动 leaf 的硬上限且最小为 2。merge 后先计算 `budget-activeLeafCount`；每次成功 split 净增一个 leaf 并消费一个 token。预算拒绝单独计入 `BudgetRejectedSplitCount`。forced 调用通过预留 token 避免“先拆对侧、后发现调用者没预算”留下半完成约束链。
+**源码事实：** `TriangleBudget` 是活动 leaf 的硬上限且最小为 2。optimizer 直接用 `budget-Q_s.size()` 初始化 token；每个 parent merge 释放一个 token，每次成功 split 消费一个 token。forced 调用通过预留 token 避免“先拆对侧、后发现调用者没预算”留下半完成约束链。
 
-**源码事实：** 普通 merge 仍要求 parent/diamond 两侧不超过 `MergeThreshold`。当预算接近满载且存在 `score > SplitThreshold` 的 leaf 时，`MergeWithDiamondQueue` 计算最高 split 分数，并允许分数不超过“最高 split 分数减去 split/merge 迟滞差值”的安全 diamond 进入第二个低分队列。单次最多为 `min(128, max(1, TriangleBudget/32))` 个 split 需求释放 leaf；之后仍由原 split 最大堆和 forced-chain token 预留决定实际细分。该机制解决视野重入延迟，但不是全局最优预算求解器。
+**源码事实：** `Q_m` 保存所有结构上可合并的 canonical diamonds，不按阈值过滤 membership。accuracy 路径只在 `min(Q_m) < MergeThreshold` 时合并；预算不足时，若 `max(Q_s) > min(Q_m)`，则先回收最低损失 diamond，再重试 forced-split closure。该 merge-first 顺序保证任何中间状态都不超出 hard budget。
 
 ## 10. Diamond 与裂缝约束
 
@@ -614,35 +626,38 @@ split 后关键赋值：
 
 ### 11.1 merge 条件
 
-`CanMergeNode(node)` 要求：
+`IsMergeableTopology(node)` 先建立 `Q_m` membership，要求：
 
 1. `node` 是 active internal；
 2. 左右 child 都存在且都是 active leaf；
-3. parent 当前 score `<= MergeThreshold`；
-4. 若 `BaseNeighbor` 为 null 或 leaf，可单侧回收 sibling pair；
-5. 若 `BaseNeighbor` 也是 internal，双方必须互为 base；对侧两个 child 也必须是 leaf；对侧 parent score 也必须 `<= MergeThreshold`。
+3. 若 `BaseNeighbor` 为 null 或 active leaf，可单侧回收 sibling pair；
+4. 若 `BaseNeighbor` 也是 internal，双方必须互为 base，对侧两个 active children 也必须是 leaf。
+
+`CanMergeNode(node, maximumScore)` 再叠加双方 parent score 上限。accuracy merge 由 optimizer 使用 `MergeThreshold` 决定，预算 crossover 可在 `mergeScore < splitScore` 时回收高于 `MergeThreshold` 的 diamond。
 
 证据：文件：`src/algorithms/classic_roam/ClassicRoamTopology.cpp`；符号：`CanMergeNode`；代码范围：第 419-471 行。
 
 ### 11.2 merge 执行
 
-**源码事实：** `MergeSingleNode` 从两个 child 的 `BaseNeighbor` 恢复 parent 的 `LeftNeighbor/RightNeighbor`，把外部邻居中指向 child 的引用改回 parent，然后只执行 `node->IsSplit=false`。child 对象、parent/child 指针、child 旧 neighbor 指针均不释放；下次 split 会清空并重建 child neighbor。
+**源码事实：** `MergeSingleNode` 从两个 child 的 `BaseNeighbor` 恢复 parent 的 `LeftNeighbor/RightNeighbor`，把外部邻居中指向 child 的引用改回 parent，从 `Q_s` 删除 children，设置 children `Active=false`、parent `IsSplit=false`，再把 parent 加回 `Q_s` 并释放一个预算 token。child 对象和 parent/child 指针不释放；下次 split 会清空并重建 child neighbor。
 
 证据：文件：`src/algorithms/classic_roam/ClassicRoamTopology.cpp`；符号：`MergeSingleNode`；代码范围：第 473-498 行。
 
 **源码事实：** 对内部共享 base 的完整 diamond，`MergeNodeOrDiamond` 连续调用两次 `MergeSingleNode` 并恢复 parent base 互指。边界或对侧已是 leaf 时只回收当前 parent。
 
-### 11.3 每帧重建还是增量 merge
+### 11.3 持久 `Q_m` 与级联 merge
 
 **源码事实：** 拓扑是增量维护，不是每次清树；Mesh 却在每次 Classic Build 中完整重建。
 
-**源码事实：** merge 初始候选来自一次活动树扫描，但队列不是固定快照。每次 `MergeNodeOrDiamond` 成功后，立即尝试把 `nodeParent` 和对侧 `baseParent` 入队，因此深层回收可在同一 Build 向祖先级联，直至祖先不满足阈值或结构条件。
+**源码事实：** `Q_m` membership 与拓扑一起跨帧保留，不再从活动树扫描构建。每次 `MergeNodeOrDiamond` 成功后，局部邻域刷新会让刚满足条件的 ancestor diamond 立即进入 `Q_m`，因此深层回收可在同一 Build 向上级联。
 
-**根据实现推断：** 同一 node 可能因两侧后代回收多次被尝试入队，但弹出时 `CanMergeNode` 会重新验证，过期项不会提交错误拓扑；代价是额外 heap 操作。
+**源码事实：** 一个 diamond 只由较小 `PathId` 的 parent 作为 canonical representative，双方通过 `MergeQueueRepresentative` 指向同一项；validator 会独立推导所有 mergeable diamonds，检查无漏项和重复项。
 
 ### 11.4 split 与 merge 是否同帧发生
 
-**源码事实：** 可以。顺序固定为 merge 先、split 后；统计也可能同时非零。低误差 node 正常不会立即 requested split，但其他区域的 forced constraint 仍可能重新激活低误差邻居。
+**源码事实：** 可以。merge 和 split 位于同一 crossover 循环，不再是两个固定顺序 pass：低于 merge threshold 的 diamond 会先回收；有 split demand 且预算可用时会细分；满预算时则比较两端 priority 后执行 merge-first 交换。统计可能同时非零，但同一个 parent 在同一 Build 不能先 split 后 merge 或先 merge 后 split：`MergeQueueScore` 把 `SplitBuildId == _buildSequence` 的 diamond 临时沉到 `Q_m` 底部，`SplitQueueScore` 把 `MergeBuildId == _buildSequence` 的 leaf 沉到 `Q_s` 底部。membership 始终保留；下一 Build 的全队列 key refresh 自动恢复资格。
+
+**根据实现推断：** 该单 Build 事务保护用于弥补最终 priority 尚未证明 parent-child 单调的问题；否则统一循环可能反复撤销刚执行的拓扑操作，直到 iteration guard 才停止。它不是论文 dual-queue 最优性证明中的机制。
 
 证据：文件：`src/algorithms/classic_roam/ClassicRoamMeshBuilder.cpp`；符号：`Build`；代码范围：第 60-68 行。
 
@@ -793,14 +808,14 @@ TriangleCount = ActiveLeafCount
 `ClassicRoamStats` 包含：
 
 - 规模：`NodeCount`、`ActiveTriangleCount`、`Original/Subdivided/RebuiltTriangleCount`、`ActiveSplitCount`、`MaxDepthReached`。
-- 事件：`SplitCount`、`ForcedSplitCount`、`MergeCount`、`ConstraintPassCount`、`CandidatePeakCount`、`RejectedSplitCount`、`BudgetRejectedSplitCount`、`RejectedMergeCount`。
+- 队列与事件：`PersistentSplitQueueSize`、`PersistentMergeQueueSize`、`QueueCrossoverCount`、`QueueMembershipUpdateCount`、`SplitCount`、`ForcedSplitCount`、`MergeCount`、`ConstraintPassCount`、`CandidatePeakCount` 和各类拒绝计数。
 - 正确性：`CrackRiskCount`、`TjunctionCount`、`InvalidNeighborCount`、`InvalidTopologyCount`。
 - 互斥阶段时间：`PrepareMilliseconds`、`MergeCandidateMarkMilliseconds`、`MergeTopologyMilliseconds`、`BudgetLeafCollectMilliseconds`、`SplitInitialScanMilliseconds`、`SplitQueueTopologyMilliseconds`、`FinalLeafCollectMilliseconds`、`MeshEmitMilliseconds`、`ValidateMilliseconds`、`FinalizeMilliseconds`；这些阶段之和应接近外层 `UpdateMilliseconds`。
 - 原生 pass 包络时间：`SplitMilliseconds`、`MergeMilliseconds`、`EmitMilliseconds`、`ValidateMilliseconds`。它们与上述互斥阶段重叠，只用于观察实现原有 pass，不能再次相加到 `UpdateMilliseconds`。
 
 证据：文件：`src/algorithms/classic_roam/ClassicRoamMeshBuilder.h`；符号：`ClassicRoamStats`；代码范围：第 54-124 行。
 
-**源码事实：** adapter 映射到统一 `TerrainLodStats` 并设置 `CpuWorkerCount=1`。Classic 的 screen error 在 split 初始扫描和候选弹出时就地计算，因此没有伪造独立的 `CpuErrorEvalMilliseconds`：初始扫描/入队计入 `CpuSplitCandidateMarkMilliseconds`，队列重评估与拓扑提交计入 `CpuSplitTopologyMilliseconds`。预算前 leaf 收集、最终 leaf 收集和纯 mesh emit 分别计时。
+**源码事实：** adapter 映射到统一 `TerrainLodStats` 并设置 `CpuWorkerCount=1`。`CpuSplitCandidateMarkMilliseconds` 当前表示 `Q_s` key refresh/heapify，`CpuMergeCandidateMarkMilliseconds` 表示 `Q_m` key refresh/heapify；局部 topology 与 membership 操作分别进入 split/merge topology 字段。预算直接使用 `Q_s.size()`，因此 `CpuBudgetLeafCollectMilliseconds=0`；最终 leaf 收集和纯 mesh emit仍分别计时。
 
 **源码事实：** runtime Markdown 先给出总体结果，再以 ROAM 逻辑阶段为行，对照 Classic CPU、DOD CPU、GPU-like CPU baseline 与 GPU-like shader；随后分别列出 CPU 实现阶段、原生 Split/Merge/Emit/Validate 包络、GPU 物理 shader dispatch 和 GPU 编排/渲染。GPU-like 被明确标为混合路径：CPU DOD 先完成持久拓扑的 merge/split baseline，GPU 再追加一轮 split-only 和 mesh emit；未实现的 GPU merge topology 显示为 `N/A`，不会用零耗时冒充已实现。
 
@@ -832,7 +847,7 @@ TriangleCount = ActiveLeafCount
 
 ### 15.5 运行时 benchmark
 
-**源码事实：** UI/`--runtime-benchmark` 依次运行 Classic、DOD，并在后端支持时加入 GPU；每个算法 reset，从地形 Z+ 边中点平滑移动到中心，默认 10 秒，每个应用帧强制 mesh rebuild。输出 `benchmark-output/runtime-benchmark-<timestamp>.md/.csv`。CSV 逐帧记录 CPU 准备、merge 候选/提交、预算 leaf 收集、误差评估、split 扫描/标记、split 拓扑提交、最终 leaf 收集/输出视图、mesh emit、收尾与 upload；DOD 已将 split 前 leaf 遍历、预算计数和误差评估融合到 `Split scan/mark`，并在输出端直接复用增量维护的 `ActiveLeafNodes`，所以其独立预算收集、误差评估和最终 leaf collect 字段均为 0。GPU 路径仍分别记录 split 前 leaf collection、leaf error/frustum、split candidate marking、merge parent scoring、split/direct-diamond commit、leaf counter reset、split 后 leaf collection、mesh/draw-args emit 八段延迟设备时间，以及 snapshot/allocation/dispatch/query/readback/render 边界成本。OpenGL 使用八个非嵌套 query，D3D12 使用九个 timestamp 边界。
+**源码事实：** UI/`--runtime-benchmark` 依次运行 Classic、DOD，并在后端支持时加入 GPU；每个算法 reset，从地形 Z+ 边中点平滑移动到中心，默认 10 秒，每个应用帧强制 mesh rebuild。输出 `benchmark-output/runtime-benchmark-<timestamp>.md/.csv`。Classic 把历史字段 `merge candidate mark` / `split scan-mark` 分别解释为持久 `Q_m/Q_s` 的 key refresh，并额外输出两队列大小、crossover 和局部 membership 更新次数；预算 leaf collect 为 0。DOD 将 split 前 leaf 遍历、预算计数和误差评估融合到 `Split scan/mark`，最终直接复用 `ActiveLeafNodes`。GPU 路径仍记录各 compute 算法阶段及 snapshot/allocation/dispatch/query/readback/render 边界成本。
 
 证据：`Application.cpp` 第 640-784、850-879 行；`RuntimeBenchmark.cpp` 第 130-200、339-390、414-430 行。
 
@@ -841,11 +856,11 @@ TriangleCount = ActiveLeafCount
 ### 16.1 源码可以直接证明的事实
 
 - 节点是独立 heap 对象，热拓扑通过裸指针跳转；Classic 无线程池或并行算法。
-- merge 扫描 active internal tree并使用动态最小堆；成功后继续入队 parent。split 扫描 active leaf 并使用最大堆。
-- score 在 merge/split 收集和提交阶段多次重算，不缓存每帧 `ScreenError`。
+- `Q_s/Q_m` 是跨帧 indexed heaps；topology 变更只局部更新 membership，每帧仍刷新全部现有 queue keys。
+- score 在 queue refresh 与局部新项插入时计算；同一 Build 中未受影响的现有 entry 不重复评分。
 - Mesh 每次 Build 完整重建；每叶三个独立顶点；共享位置重复高度/法线采样。
 - 两棵 nested wedgie tree 在 HeightMap/预计算深度变化时完整递归构建；节点只缓存对应公式 (1) thickness。
-- 活动 leaf 预算在 split 前计数，每次 split 消费一个 token。
+- 活动 leaf 数直接等于 `Q_s.size()`；每个 merge parent 释放一个 token，每次 split 消费一个 token。
 - validator 默认关闭；开启时构造 `unordered_map<line, endpoints>` 并排序每条线的端点。
 - renderer 的相机位移缓存减少普通交互的 Build/上传频率；benchmark 刻意禁用该收益。
 
@@ -856,8 +871,8 @@ TriangleCount = ActiveLeafCount
 | 阶段 | 推断复杂度 | 主要成本 |
 | --- | --- | --- |
 | nested wedgie 重建 | `O(2^(D_v+1))` 时间和空间 | 递归、每个非叶节点 3 次高度采样；仅缓存失效时 |
-| merge 动态堆 | `O(I + M log Q)` 加重复 score | 指针递归、视锥/SSE、过期候选 |
-| split 初始扫描和动态队列 | 约 `O(L + (候选+S) log Q)` | 重复 score、heap 分支、forced recursion |
+| `Q_m` key refresh + topology | `O(Q_m + M log Q_m)` | score/frustum、局部 indexed-heap 更新 |
+| `Q_s` key refresh + topology | `O(L + S log L)` 加 forced closure | score/frustum、heapify、邻接递归 |
 | leaf 收集 | `O(I+L)` | 递归指针遍历 |
 | emit | `O(L)` | vector append、大量双线性采样 |
 | path 收集 | `O(I+L)` | 再一次树遍历、unordered_set 插入 |
@@ -865,11 +880,11 @@ TriangleCount = ActiveLeafCount
 
 **源码事实：** 深度 20 时每棵树有 2,097,151 个 float，两棵约 16 MiB；129x129 的 `D_v=14` 时两棵约 256 KiB，513x513 的 `D_v=18` 时两棵约 4 MiB。运行时 `MaxDepth=14` 不会把 513x513 的预计算树截在 14。
 
-**根据实现推断：** 稳态瓶颈候选是重复 SSE/frustum 测试、每叶 18 次采样的 emit、离散节点 cache miss、两个 priority queue 和 CPU Mesh 上传；缓存失效帧还可能被 nested wedgie 预计算主导。实际占比必须 profiler 确认。
+**根据实现推断：** 稳态瓶颈候选是 `Q_s/Q_m` 全成员的 SSE/frustum key refresh、每叶 18 次采样的 emit、离散节点 cache miss、indexed heap 维护和 CPU Mesh 上传；缓存失效帧还可能被 nested wedgie 预计算主导。实际占比必须 profiler 确认。
 
 ### 16.3 递归和分配
 
-**源码事实：** 递归发生在 active tree 收集、merge candidate 收集、active path 收集和 forced split。深度受 `MaxDepth` 限制；UI 最大 20，栈深通常有限。每个首次 split 会产生两个独立 heap allocation；之后 merge/re-split复用。Mesh vectors 没有预分配，候选 priority queue/vector 会动态分配。
+**源码事实：** 递归发生在 active tree 最终收集、active path 收集和 forced split，不再用于每帧发现 queue membership。深度受 `MaxDepth` 限制；UI 最大 20。每个首次 split 会产生两个独立 node allocation；之后 merge/re-split 复用。indexed heaps 使用 vector，Mesh vectors 仍没有按 leaf 数预分配。
 
 ### 16.4 为什么难直接迁移 GPU
 
@@ -895,15 +910,15 @@ TriangleCount = ActiveLeafCount
 | Split | 创建/复用两个 child，`IsSplit=true` | `SplitNode` | 是，带工程化状态字段 |
 | Forced Split | 递归 split `BaseNeighbor` | `SplitNode` 第 252-287 行 | 基本一致，有 `forcedFrom`/guard |
 | Diamond | 互为 base 的两个 parent 和四个 child | reset、`LinkSplitNeighbors` | 显式采用 |
-| Merge | sibling leaf，内部对侧成对回收并动态入队 parent | `MergeWithDiamondQueue`、`MergeNodeOrDiamond` | 基本一致；单 Build 可级联 |
-| Triangle Priority | nested thickness 的公式 (2)/(3) 保守投影 + edge-density 最大堆 | `ComputeScreenErrorScore`、`RefineWithSplitQueue` | geometric bound 一致；最终 priority 是项目扩展 |
+| Merge | sibling leaf，内部对侧成对回收并局部维护 `Q_s/Q_m` | `MergeNodeOrDiamond`、`RefreshMergeQueueNeighborhood` | 基本一致；单 Build 可级联 |
+| Triangle Priority | nested thickness 的公式 (2)/(3) 保守投影 + edge-density indexed heap | `ComputeScreenErrorScore`、`OptimizeWithPersistentDualQueues` | geometric bound 一致；最终 priority 是项目扩展 |
 | Crack Prevention | base-neighbor forced split | `SplitNode`、`LinkSplitNeighbors` | 默认有；可关闭；validator 不修复 |
-| Triangle Budget | 活动 leaf token 硬上限，forced 链预留；池满时有限低分 merge/高分 split 交换 | `TriangleBudget`、`MergeWithDiamondQueue`、`_remainingSplitBudget`、`SplitNode` | 已实现有界启发式；不是经典全局双队列最优平衡 |
+| Triangle Budget | 活动 leaf token 硬上限，forced 链预留；池满时 dual-queue merge-first crossover | `TriangleBudget`、`OptimizeWithPersistentDualQueues`、`_remainingSplitBudget`、`SplitNode` | 双队列结构已实现；exact target/最优性前提仍缺失 |
 | Incremental Update | 持久 node/child、split/merge、PathId 迟滞 | `Build`、`_previousSplitPaths` | 已实现拓扑增量；Mesh 仍全量重建 |
 | View Frustum Culling | thickness 扩张 AABB 对六平面测试，视锥外 score=0 | `IsNodeVisible` | LOD 感知已实现；Mesh 不裁掉视锥外 leaf |
 | Screen-space Error | 角点齐次投影分子/分母极值、drawable width/height、near crossing | `Roam::ComputeConservativeScreenDistortionPixels` | 论文公式 (2)/(3) 的局部保守像素界 |
 
-**结论：** 当前实现已具备 bintree、公式 (1) nested wedgie tree、公式 (2)/(3) 保守像素投影、优先队列、硬预算、diamond forced split/merge、迟滞、视锥感知和池满时的有界预算交换，是工程化 Classic ROAM baseline；仍不是经典论文的逐项复刻，因为最终 priority 还包含 edge-density，没有一对长期维护的全局 split/merge 优先队列，也不做共享闭包成本下的全局最优交换，Mesh 仍全量重建。
+**结论：** 当前实现已具备 bintree、公式 (1) nested wedgie tree、公式 (2)/(3) 保守像素投影、持久 `Q_s/Q_m`、统一 crossover、硬预算、diamond forced split/merge、迟滞和视锥感知，是工程化 Classic ROAM baseline。它仍不是论文逐项复刻：最终 priority 还包含 edge-density，exact target、priority deferral、top-down fallback 和增量 Mesh 未实现，也不做共享闭包去重下的全局资源选择。
 
 ## 18. 与项目中其他算法的接口比较
 
@@ -914,11 +929,11 @@ TriangleCount = ActiveLeafCount
 | 拓扑真值 | CPU Classic builder | CPU DOD state | 当前仍先由 CPU DOD 更新；GPU 有 split-only/compaction/emit 阶段 |
 | CPU Mesh | 是 | 是 | 否，返回 GPU buffer/indirect packet |
 | 跨帧拓扑 | 是 | 是 | CPU DOD 部分是；GPU frame resources 复用，但 GPU split 结果不回写 CPU 真值 |
-| error evaluation | 共享公式 (1) 预计算；稳态串行像素 SSE + frustum，多次重算 | 相同 nested thickness 与像素 SSE + frustum；融合 active-leaf split 扫描并缓存 `ScreenErrors` | 快照读取 DOD nested `GeometricError`；GLSL/HLSL 使用相同像素 SSE、显式双线性采样和六平面 frustum |
+| error evaluation | 共享公式 (1) 预计算；每 Build 刷新持久 `Q_s/Q_m` keys | 相同 nested thickness 与像素 SSE + frustum；融合 active-leaf split 扫描并缓存 `ScreenErrors` | 快照读取 DOD nested `GeometricError`；GLSL/HLSL 使用相同像素 SSE、显式双线性采样和六平面 frustum |
 | 邻接表达 | 指针 | 索引 | packed NodeRecord/index |
 | 并行适配性 | 较差 | 较好，按 pass/chunk 分解 | 计算/emit 适合 GPU；动态拓扑仍受限 |
-| merge | CPU diamond merge，动态 parent queue | active internal 连续索引生成候选；安全 chunk 并行预提交后动态 parent queue 同帧级联 | 能力标记为 true，但 D3D12 注释明确 GPU merge candidate 尚未提交；CPU DOD 基线仍 merge |
-| 活动三角形预算 | 串行 token 硬上限；池满时有界预算交换 | 原子 token 硬上限，覆盖并行 commit 与 forced closure；使用相同有界交换 | CPU DOD 快照先重平衡并占用预算；GPU 原子分配剩余 token，边界 split=1、diamond pair=2，最终输出受同一上限 |
+| merge | CPU diamond merge + 持久 canonical `Q_m` | active internal 连续索引生成候选；安全 chunk 并行预提交后动态 parent queue 同帧级联 | 能力标记为 true，但 D3D12 注释明确 GPU merge candidate 尚未提交；CPU DOD 基线仍 merge |
+| 活动三角形预算 | 串行 token 硬上限；持久 dual-queue merge-first crossover | 原子 token 硬上限，覆盖并行 commit 与 forced closure；使用有限批次交换 | CPU DOD 快照先重平衡并占用预算；GPU 原子分配剩余 token，边界 split=1、diamond pair=2，最终输出受同一上限 |
 | 输出统计 | 统一 stats，worker=1 | 统一 stats + 多 pass/worker 内部统计 | 统一 CPU/GPU timing/resource stats |
 | 工程角色 | 对象式正确性/性能 baseline | 数据导向 CPU 对照 | 实验性 GPU 管线 |
 
@@ -1003,7 +1018,7 @@ geometricBoundPixels = artificial maximum
 score = artificial maximum > SplitThreshold 4 px
 ```
 
-这是论文规定的 near-plane 特例，公式 (3) 的 denominator 不再求值。`TB` 对称，分数相同。两个 root leaf 使 `_remainingSplitBudget = 4-2 = 2`；两者都进入 split queue，`TA` 因较早 sequence 先弹出。
+这是论文规定的 near-plane 特例，公式 (3) 的 denominator 不再求值。`TB` 对称，分数相同。两个 root leaf 在 reset 时已经进入持久 `Q_s`，所以 `_remainingSplitBudget = 4-Q_s.size() = 2`；同分时较小 `PathId` 的 `TA` 位于队首。
 
 ### 19.5 forced split 与指针更新
 
@@ -1025,7 +1040,7 @@ TAR = {(1,0),(0,0),(0.5,0.5)}
 
 5. sibling：`TAL.Left=TAR`、`TAR.Right=TAL`；`TBL.Left=TBR`、`TBR.Right=TBL`。
 6. 跨原对角线：`TAL.Right=TBR`、`TBR.Left=TAL`；`TAR.Left=TBL`、`TBL.Right=TAR`。
-7. `TB` 与 `TA` 各消费一个 token，剩余预算为 0。两个 parent 仍互为 base，四个 child 均为活动 leaf；原 queue 中 `TB` 候选弹出时发现它已不是 leaf，于是跳过。
+7. `TB` 与 `TA` 各消费一个 token，剩余预算为 0。每次 split 都从 `Q_s` 删除 parent 并加入 children；最终两个 parent 形成一个 canonical `Q_m` diamond，四个 child 构成 `Q_s`。
 
 ### 19.6 最终活动叶和 Mesh
 
@@ -1044,7 +1059,10 @@ ActiveSplitCount = 2         // TA、TB
 SplitCount = 2
 ForcedSplitCount = 1         // TB
 ConstraintPassCount = 1
-CandidatePeakCount = 2
+PersistentSplitQueueSize = 4
+PersistentMergeQueueSize = 1
+CandidatePeakCount = 5        // Q_s + Q_m 的成员总量峰值
+QueueMembershipUpdateCount > 0
 BudgetRejectedSplitCount = 0
 RebuiltTriangleCount = 4     // child 均在当前 Build 激活
 VertexCount = 12
@@ -1095,6 +1113,9 @@ MaxDepthReached = 1
 | 同上 | `ClassicRoamStats` | 69-139 | Classic 私有统计 |
 | 同上 | `ClassicRoamMeshBuilder` / `ClassicRoamNode` / 成员状态 | 145-358 | 拓扑、thickness、视图和预算所有者 |
 | `ClassicRoamMeshBuilder.cpp` | `Build` | 21-128 | 单次完整更新入口和 pass 调度 |
+| `ClassicRoamQueues.cpp` | `InitializePersistentQueues`、indexed heap helpers | 全文件 | `Q_s/Q_m` 生命周期、稳定 handle 与 heap order |
+| 同上 | `RefreshPersistentQueuePriorities` | 全文件 | 每帧刷新现有成员 key，不重建 membership |
+| 同上 | `OptimizeWithPersistentDualQueues` | 全文件 | accuracy threshold、hard-budget crossover 和统一 topology 调度 |
 | `ClassicRoamState.cpp` | `Stats` | 14-18 | 最近一次统计 |
 | 同上 | `AddNode` | 20-49 | 分配节点并读取 thickness 条目 |
 | 同上 | `ResetTopology` | 51-78 | 创建根 diamond |
@@ -1113,10 +1134,7 @@ MaxDepthReached = 1
 | 同上 | `RefreshNodeVarianceErrors`、`VarianceError` | 176-196 | thickness 缓存查找/刷新 |
 | 同上 | `ComputeScreenErrorScore`、`IsNodeVisible` | 214-273 | 像素评分与六平面 AABB 测试 |
 | 同上 | `DomainToWorld`、`SampleNormal` | 275-315 | 顶点位置/法线 |
-| `ClassicRoamTopology.cpp` | `RefineNode` | 26-51 | 未使用的递归替代路径 |
-| 同上 | `RefineWithSplitQueue` | 53-163 | 实际预算 split hot path |
-| 同上 | `MergeWithDiamondQueue` | 165-235 | 动态级联 merge hot path |
-| 同上 | `SplitNode` | 237-349 | 预算预留、forced split、child 创建/复用 |
+| `ClassicRoamTopology.cpp` | `SplitNode` | 全文件 | 预算预留、forced split、child 创建/复用和局部 queue 更新 |
 | 同上 | `LinkSplitNeighbors` | 351-389 | split 后邻接 |
 | 同上 | `ReplaceNeighborReference` | 391-417 | 邻居反向引用修复 |
 | 同上 | `CanMergeNode` | 419-471 | merge 安全条件 |
@@ -1124,7 +1142,7 @@ MaxDepthReached = 1
 | 同上 | `MergeNodeOrDiamond` | 500-531 | 单侧/成对 diamond merge |
 | `ClassicRoamMeshEmit.cpp` | `EmitLeafTriangles`、`EmitNode`、`EmitDomainTriangle` | 7-68 | CPU Mesh 追加 |
 | `ClassicRoamValidation.cpp` | validator 辅助类型/量化 | 18-147 | 几何边检测准备 |
-| 同上 | `ValidateTopology` | 149-310 | 可选不变量检查 |
+| 同上 | `ValidateTopology`、`ValidatePersistentQueues` | 全文件 | 拓扑、active cut、queue membership 和 heap order 检查 |
 | `ClassicRoamTerrainLodAlgorithm.cpp` | `Info`、`Capabilities` | 9-28 | 算法注册信息 |
 | 同上 | `BuildRenderData` | 30-68 | 公共 adapter 入口和完整 view 转发 |
 | 同上 | `Stats`、`Reset` | 69-80 | 公共生命周期 |
@@ -1195,8 +1213,8 @@ MaxDepthReached = 1
 
 ### 22.4 需要 profiler 的问题
 
-1. nested wedgie tree 重建、SSE/frustum 重算、emit 高度采样、节点 cache miss、两个 priority queue、Mesh 扩容和 GPU upload 各占多少。
-2. 动态 merge queue 中重复/过期候选的比例，以及级联收益是否大于 heap 成本。
+1. nested wedgie tree 重建、全队列 priority refresh、emit 高度采样、节点 cache miss、indexed heap 局部更新、Mesh 扩容和 GPU upload 各占多少。
+2. 持久 membership 相比旧全树候选发现节省多少，以及每帧 key refresh 是否仍是主要瓶颈。
 3. renderer 的位移阈值与方向/投影变化检测在不同地形尺度下是否造成 LOD 更新迟滞或跳变。
 4. validator 在接近 20000 leaf 预算时的 hash/sort 成本和内存峰值。
 

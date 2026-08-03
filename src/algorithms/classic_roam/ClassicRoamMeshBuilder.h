@@ -8,6 +8,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <unordered_set>
 #include <vector>
@@ -101,8 +102,18 @@ struct ClassicRoamStats
     // ConstraintPassCount 统计 baseNeighbor 约束传播次数
     std::size_t ConstraintPassCount{0};
 
-    // CandidatePeakCount 记录 split queue 峰值，观察候选队列压力
+    // CandidatePeakCount 记录两个持久队列的成员总量峰值
     std::size_t CandidatePeakCount{0};
+
+    // PersistentSplitQueueSize / PersistentMergeQueueSize 是本帧结束后的持久 membership 数量
+    std::size_t PersistentSplitQueueSize{0};
+    std::size_t PersistentMergeQueueSize{0};
+
+    // QueueCrossoverCount 统计预算满载时由低损失 merge 为高收益 split 腾位的次数
+    std::size_t QueueCrossoverCount{0};
+
+    // QueueMembershipUpdateCount 统计本帧 topology 事务产生的局部入队和出队次数
+    std::size_t QueueMembershipUpdateCount{0};
 
     // RejectedSplitCount 表示约束传播或过期候选导致的 split 失败
     std::size_t RejectedSplitCount{0};
@@ -202,14 +213,39 @@ private:
         std::uint64_t PathId{0};
         std::uint64_t CreatedBuildId{0};
         std::uint64_t ActivatedBuildId{0};
+        // SplitBuildId / MergeBuildId 也用于禁止同一 Build 立即逆转刚提交的拓扑事务。
         std::uint64_t SplitBuildId{0};
         std::uint64_t MergeBuildId{0};
+        std::uint64_t SplitBlockedBuildId{0};
         int Depth{0};
         std::uint8_t VarianceTreeIndex{0};
         bool ActivatedByForcedSplit{false};
 
+        // Active 区分当前 triangulation 与对象池中等待复用的历史节点
+        bool Active{false};
+
         // IsSplit 决定 child 当前是否参与 active topology
         bool IsSplit{false};
+
+        // intrusive heap index 让持久队列可以 O(log N) 删除任意 topology 节点
+        std::size_t SplitQueueIndex{std::numeric_limits<std::size_t>::max()};
+        std::size_t MergeQueueIndex{std::numeric_limits<std::size_t>::max()};
+
+        // 一个 diamond 只在 Q_m 中保存 canonical parent；两侧都指向同一 representative
+        ClassicRoamNode* MergeQueueRepresentative{nullptr};
+        ClassicRoamNode* MergeQueuePartner{nullptr};
+    };
+
+    struct SplitQueueEntry
+    {
+        ClassicRoamNode* Node{nullptr};
+        float Score{0.0F};
+    };
+
+    struct MergeQueueEntry
+    {
+        ClassicRoamNode* Node{nullptr};
+        float Score{0.0F};
     };
 
     [[nodiscard]] ClassicRoamNode* AddNode(
@@ -235,14 +271,47 @@ private:
         float heightScale,
         const ClassicRoamSettings& settings) const;
 
-    // 递归执行 split 决策，保留 Classic ROAM 的二叉三角树语义
-    void RefineNode(ClassicRoamNode* node);
+    // 论文 dual-queue optimizer：跨帧保留 Q_s/Q_m，并在一个 crossover 循环中更新 topology
+    void OptimizeWithPersistentDualQueues();
 
-    // 使用 priority queue 处理 split candidate，避免纯递归一次展开过深
-    void RefineWithSplitQueue(ClassicRoamNode* rootA, ClassicRoamNode* rootB);
+    // 重置时从 base triangulation 初始化队列；普通帧只更新已有成员的 priority
+    void InitializePersistentQueues();
+    void RefreshPersistentQueuePriorities();
 
-    // 执行符合 diamond 约束的 merge
-    void MergeWithDiamondQueue();
+    [[nodiscard]] float SplitQueueScore(const ClassicRoamNode& node) const;
+    [[nodiscard]] float MergeQueueScore(const ClassicRoamNode& node) const;
+
+    // Q_s 保存当前 triangulation 的全部 active leaves
+    void InsertSplitQueueNode(ClassicRoamNode* node);
+    void RemoveSplitQueueNode(ClassicRoamNode* node);
+    void UpdateSplitQueueScore(ClassicRoamNode* node, float score);
+    [[nodiscard]] ClassicRoamNode* TopSplitQueueNode() const;
+
+    // Q_m 保存当前全部 mergeable diamonds，每个 diamond 只保留一个 canonical parent
+    [[nodiscard]] bool IsMergeableTopology(const ClassicRoamNode* node) const;
+    [[nodiscard]] ClassicRoamNode* CanonicalMergeQueueNode(ClassicRoamNode* node) const;
+    void InsertMergeQueueNodeIfEligible(ClassicRoamNode* node);
+    void RemoveMergeQueueCandidate(ClassicRoamNode* node);
+    [[nodiscard]] ClassicRoamNode* TopMergeQueueNode() const;
+
+    // topology 变更前后只失效和重建局部 diamond membership
+    void AppendQueueNeighborhood(ClassicRoamNode* seed, std::vector<ClassicRoamNode*>& nodes) const;
+    void InvalidateMergeQueueNeighborhood(const std::vector<ClassicRoamNode*>& nodes);
+    void RefreshMergeQueueNeighborhood(const std::vector<ClassicRoamNode*>& nodes);
+
+    // indexed binary heap 的局部维护函数
+    [[nodiscard]] bool SplitEntryPrecedes(const SplitQueueEntry& left, const SplitQueueEntry& right) const;
+    [[nodiscard]] bool MergeEntryPrecedes(const MergeQueueEntry& left, const MergeQueueEntry& right) const;
+    void SwapSplitQueueEntries(std::size_t left, std::size_t right);
+    void SwapMergeQueueEntries(std::size_t left, std::size_t right);
+    void SiftSplitQueueUp(std::size_t index);
+    void SiftSplitQueueDown(std::size_t index);
+    void SiftMergeQueueUp(std::size_t index);
+    void SiftMergeQueueDown(std::size_t index);
+    void RestoreSplitQueueAt(std::size_t index);
+    void RestoreMergeQueueAt(std::size_t index);
+    void HeapifySplitQueue();
+    void HeapifyMergeQueue();
 
     // 沿 base edge split，生成两个 child triangle
     [[nodiscard]] bool SplitNode(
@@ -283,6 +352,7 @@ private:
 
     // validator 只检查当前拓扑，不在默认路径修复裂缝
     void ValidateTopology();
+    void ValidatePersistentQueues(const std::vector<ClassicRoamNode*>& leafNodes);
 
     // 遍历 leaf 节点并输出渲染用 mesh
     void EmitLeafTriangles(
@@ -349,6 +419,9 @@ private:
     std::unordered_set<std::uint64_t> _currentSplitPaths;
     // _activeLeaves 是拓扑稳定后的最终 leaf 快照，emit 和 stats 共用
     std::vector<ClassicRoamNode*> _activeLeaves;
+    // 两个 indexed heaps 和 active topology 一起跨帧保留
+    std::vector<SplitQueueEntry> _splitQueue;
+    std::vector<MergeQueueEntry> _mergeQueue;
     ClassicRoamNode* _rootA{nullptr};
     ClassicRoamNode* _rootB{nullptr};
     glm::mat4 _viewProjection{1.0F};

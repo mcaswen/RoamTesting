@@ -12,7 +12,7 @@ TerrainLodAlgorithmInfo ClassicRoamTerrainLodAlgorithm::Info() const
         TerrainLodAlgorithmId::ClassicCpuRoam,
         "classic_cpu_roam",
         "Classic CPU ROAM",
-        "Object-style CPU ROAM baseline with persistent bintree topology",
+        "Object-style CPU ROAM baseline with persistent bintree topology and dual priority queues",
     };
 }
 
@@ -110,6 +110,10 @@ TerrainLodStats ClassicRoamTerrainLodAlgorithm::ToTerrainLodStats(const ClassicR
     lodStats.CrackRiskCount = stats.CrackRiskCount;
     lodStats.ConstraintPassCount = stats.ConstraintPassCount;
     lodStats.CandidatePeakCount = stats.CandidatePeakCount;
+    lodStats.PersistentSplitQueueSize = stats.PersistentSplitQueueSize;
+    lodStats.PersistentMergeQueueSize = stats.PersistentMergeQueueSize;
+    lodStats.QueueCrossoverCount = stats.QueueCrossoverCount;
+    lodStats.QueueMembershipUpdateCount = stats.QueueMembershipUpdateCount;
     lodStats.RejectedSplitCount = stats.RejectedSplitCount;
     lodStats.BudgetRejectedSplitCount = stats.BudgetRejectedSplitCount;
     lodStats.RejectedMergeCount = stats.RejectedMergeCount;

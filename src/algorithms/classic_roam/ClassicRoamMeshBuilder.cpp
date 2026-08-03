@@ -88,24 +88,8 @@ Terrain::TerrainMeshData ClassicRoamMeshBuilder::Build(
     }
     const auto prepareEnd = std::chrono::steady_clock::now();
 
-    const auto mergeStart = std::chrono::steady_clock::now();
-    // merge 先运行，避免刚 split 的 child 在同一帧被低阈值立即回收
-    MergeWithDiamondQueue();
-    const auto mergeEnd = std::chrono::steady_clock::now();
-
-    // 每次 leaf split 会让活动三角形数量增加 1，剩余预算由 split 递归共同消费
-    const auto budgetCollectStart = std::chrono::steady_clock::now();
-    CollectLeafNodes(_activeLeaves);
-    _remainingSplitBudget = _settings.TriangleBudget > _activeLeaves.size()
-        ? _settings.TriangleBudget - _activeLeaves.size()
-        : 0U;
-    _activeLeaves.clear();
-    const auto budgetCollectEnd = std::chrono::steady_clock::now();
-
-    const auto splitStart = std::chrono::steady_clock::now();
-    // 候选队列驱动 split，避免纯递归一次展开过多节点
-    RefineWithSplitQueue(_rootA, _rootB);
-    const auto splitEnd = std::chrono::steady_clock::now();
+    // Q_s/Q_m membership 与 active topology 一起跨帧保留；本帧只刷新 priority 并局部改队列
+    OptimizeWithPersistentDualQueues();
 
     if (_settings.EnableTopologyValidation)
     {
@@ -126,11 +110,14 @@ Terrain::TerrainMeshData ClassicRoamMeshBuilder::Build(
 
     const auto finalizeStart = std::chrono::steady_clock::now();
     AccumulateLeafStats(meshData, _activeLeaves);
-    _stats.MergeMilliseconds = ElapsedMilliseconds(mergeStart, mergeEnd);
-    _stats.SplitMilliseconds = ElapsedMilliseconds(splitStart, splitEnd);
+    _stats.MergeMilliseconds =
+        _stats.MergeCandidateMarkMilliseconds + _stats.MergeTopologyMilliseconds;
+    _stats.SplitMilliseconds =
+        _stats.SplitInitialScanMilliseconds + _stats.SplitQueueTopologyMilliseconds;
     _stats.EmitMilliseconds = ElapsedMilliseconds(finalCollectStart, meshEmitEnd);
     _stats.PrepareMilliseconds = ElapsedMilliseconds(updateStart, prepareEnd);
-    _stats.BudgetLeafCollectMilliseconds = ElapsedMilliseconds(budgetCollectStart, budgetCollectEnd);
+    // 活动 leaf 数由持久 Q_s 直接给出，不再为预算单独递归收集
+    _stats.BudgetLeafCollectMilliseconds = 0.0F;
     _stats.FinalLeafCollectMilliseconds = ElapsedMilliseconds(finalCollectStart, finalCollectEnd);
     _stats.MeshEmitMilliseconds = ElapsedMilliseconds(meshEmitStart, meshEmitEnd);
 

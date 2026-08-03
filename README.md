@@ -42,7 +42,7 @@ cost(S) = | union(P_i), i in S |
 
 | 路径 | 数据与执行方式 | 当前能力 | 边界 |
 | --- | --- | --- | --- |
-| Classic CPU ROAM | 对象式节点、裸指针 bintree、串行优先队列 | split、forced split、diamond merge、视锥感知、固定 leaf 预算、CPU Mesh | 每帧仍有全量扫描/emit，不是论文 persistent dual queues |
+| Classic CPU ROAM | 对象式节点、裸指针 bintree、串行 indexed heaps | 持久 `Q_s/Q_m`、统一 crossover、split、forced split、diamond merge、视锥感知、固定 leaf 预算、CPU Mesh | 每帧刷新队列 priority 并完整 emit；以单 Build 反向事务保护约束尚未证明单调的最终 priority |
 | Data-Oriented CPU ROAM | SoA 节点池、索引邻接、活动集合、批量 pass 与条件并行 | 与 Classic 共享质量合同；融合 leaf 扫描、误差评估和候选标记 | 拓扑依赖限制并行度，最终仍生成 CPU Mesh |
 | GPU ROAM-like | CPU DOD 持久拓扑快照 + compute shader | GPU leaf compaction、误差评估、候选标记、单轮 split、mesh emit、indirect draw | 混合管线；GPU merge 只评分不提交，GPU split 不回写 CPU 持久真值 |
 | CBT 2024 | D3D12、OCBT 位域/归约树、GPU 基础二分器资源 | 四档 OCBT、基础拓扑、程序化间接绘制及专项验证 | 动态 split/merge、兼容传播和高度图自适应路径尚待实现 |
@@ -245,7 +245,7 @@ powershell -ExecutionPolicy Bypass -File scripts/setup_cbt_dx12_dependencies.ps1
 - 兼容闭包感知调度器尚未实现，H1-H5 仍待实验验证；
 - CBT 2024 当前只到基础拓扑和程序化绘制，完整动态 split/merge 尚未接入；
 - GPU ROAM-like 是 CPU DOD + GPU split-only/emit 的混合路径，仅供当前实验探索和参考；
-- ROAM 最终 priority 还包含 edge-density、视锥置零和迟滞，且没有论文提出的持久化双队列，因此不宣称完整的全局最优性；
+- Classic 已实现论文结构的持久化双队列和 crossover，但最终 priority 还包含 edge-density、视锥置零和迟滞，parent-child 单调性尚未证明，因此不宣称完整的全局最优性；
 - 当前正式场景数量和 DEM 多样性不足，旧性能数据也需要在新误差口径下重跑；
 
 ## 路线图

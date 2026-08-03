@@ -358,6 +358,13 @@ void DrawDetailedPerformanceMetrics(const DebugOverlayData& data)
     DrawMetricSize("Merge 数", data.RoamMergeCount);
     DrawMetricSize("约束传播", data.RoamConstraintPassCount);
     DrawMetricSize("队列峰值", data.RoamCandidatePeakCount);
+    if (data.TerrainLodAlgorithm == Algorithms::TerrainLodAlgorithmId::ClassicCpuRoam)
+    {
+        DrawMetricSize("持久 Qs", data.RoamPersistentSplitQueueSize);
+        DrawMetricSize("持久 Qm", data.RoamPersistentMergeQueueSize);
+        DrawMetricSize("队列交换", data.RoamQueueCrossoverCount);
+        DrawMetricSize("队列局部更新", data.RoamQueueMembershipUpdateCount);
+    }
     DrawMetricSize("Split 拒绝", data.RoamRejectedSplitCount);
     DrawMetricSize("预算拒绝", data.RoamBudgetRejectedSplitCount);
     DrawMetricSize("Merge 拒绝", data.RoamRejectedMergeCount);

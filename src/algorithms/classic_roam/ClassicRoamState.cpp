@@ -49,6 +49,8 @@ ClassicRoamMeshBuilder::ClassicRoamNode* ClassicRoamMeshBuilder::AddNode(
 void ClassicRoamMeshBuilder::ResetTopology()
 {
     // ResetTopology 是唯一清空 node pool 的入口，避免普通 frame 破坏持久化拓扑
+    _splitQueue.clear();
+    _mergeQueue.clear();
     _nodes.clear();
     _previousSplitPaths.clear();
     _currentSplitPaths.clear();
@@ -74,6 +76,9 @@ void ClassicRoamMeshBuilder::ResetTopology()
     // 根节点跨共享 base edge 互为 base neighbor
     _rootA->BaseNeighbor = _rootB;
     _rootB->BaseNeighbor = _rootA;
+    _rootA->Active = true;
+    _rootB->Active = true;
+    InitializePersistentQueues();
     _topologyMaxDepth = _settings.MaxDepth;
 }
 

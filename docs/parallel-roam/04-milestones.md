@@ -164,11 +164,11 @@ assets/textures/Tex_Terrain_Debug_Diffuse.ppm
 - 两个根各有一棵 nested wedgie tree，按二叉堆索引预计算到 `max(MaxDepth, sourceDepth)`，最细层为 0，父值严格执行论文公式 (1) `max(left,right)+abs(base midpoint displacement)`；
 - `ComputeScreenErrorScore` 使用论文公式 (2)/(3) 对 nested thickness 做角点保守投影；完整 `ViewProjection`、drawable width/height 和 near-plane 特例共同决定像素 priority；
 - 六个 inward frustum planes 用于方差扩张 AABB 测试；视锥外节点不主动 split，但仍允许 forced split 维持邻接约束；
-- split 使用像素误差最大堆，并受默认 20,000 活动 leaf 硬预算限制；forced split 为调用链预留预算 token；
-- merge 使用动态最小堆，成功后立即检查两侧 parent，可在一次 Build 内从深层向上级联；
+- split 使用持久 indexed max-heap `Q_s`，保存全部 active leaves，并受默认 20,000 活动 leaf 硬预算限制；forced split 为调用链预留预算 token；
+- merge 使用持久 canonical diamond min-heap `Q_m`；两队列在统一 crossover 循环中调度，满预算时以 merge-first 事务回收低损失区域并为高收益 closure 腾位；同一 Build 禁止刚 split 的 parent 立即 merge、刚 merge 的 parent 立即 split，避免非单调扩展 priority 造成事务振荡；
 - `PathId`、split/merge 双阈值和最终 active path 共同提供跨 Build 迟滞；
 - CPU Mesh 仍按活动 leaf 全量生成，每个 leaf 输出三个独立顶点；OpenGL/D3D12 renderer 负责上传和绘制；
-- ImGui 已让 Classic、DOD 和 GPU ROAM-like 共用像素阈值与预算；同时显示预算拒绝、拓扑和阶段耗时统计；
+- ImGui 已让 Classic、DOD 和 GPU ROAM-like 共用像素阈值与预算；Classic 额外显示持久 `Q_s/Q_m` 大小、crossover 和局部 membership 更新次数；
 - Classic smoke 使用 6 个视点验证预算、视锥方向变化、单 Build 级联合并和 topology issue；当前 OpenGL/D3D12 构建与 smoke 均通过；
 - 阶段 2 的算法基线已封版。diamond/score heatmap 等更完整 debug draw 是后续可视化增强，不作为阶段完成阻塞项。
 
