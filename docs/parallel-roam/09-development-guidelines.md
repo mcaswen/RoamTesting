@@ -66,7 +66,7 @@ ParallelROAM/
 2. Shader 统一放在 `assets/shaders/`。
 3. Height Map 统一放在 `assets/heightmaps/`。
 4. 固定相机路径和 benchmark 参数由 `Application`、命令行覆盖项或专用实验脚本统一管理；新增外部 scenario 格式前不要创建临时目录约定。
-5. 项目主题文档统一放在 `docs/`；根目录只保留总入口 `Parallel_ROAM_Project_Plan.md`。
+5. 项目主题文档统一放在 `docs/`；根目录只保留项目入口 `README.md` 和总计划 `Parallel_ROAM_Project_Plan.md`。
 6. 第三方依赖统一放在 `third_party/`，并保留来源和许可证说明。
 7. 新增文件时优先加入已有模块目录；确实没有合适目录时再新建，并使用有意义的模块名。
 8. 不确定文件应该放在哪个文件夹时，先查本文档，仍不确定再让 AI 基于本文档给建议。
