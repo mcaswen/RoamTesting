@@ -69,14 +69,14 @@ cbuffer GpuRoamConstants : register(b0)
     float MergeThreshold;
     // 最终活动 leaf 的统一硬上限
     uint TriangleBudget;
+    // NDC 到像素坐标所需的 drawable 宽度
+    uint DrawableWidth;
     // 像素投影尺度所需的 drawable 高度
     uint DrawableHeight;
-    // 投影矩阵 Y 缩放
-    float ProjectionScaleY;
-    // 正交投影不除以 view depth
-    uint IsOrthographic;
-    // 世界空间到 view 空间
-    float4x4 View;
+    // 保持后续矩阵从 16 字节边界开始
+    uint ConstantsReserved;
+    // 世界空间到齐次裁剪空间
+    float4x4 ViewProjection;
     // 向内法线的六个世界空间视锥平面
     float4 FrustumPlanes[6];
 };
@@ -141,6 +141,81 @@ bool IsNodeVisible(NodeRecord node, float3 a, float3 b, float3 c)
     return true;
 }
 
+bool WedgieIntersectsNearPlane(float worldError, float3 a, float3 b, float3 c)
+{
+    // TerrainLodFrustumPlane::Near 的固定索引为 4。
+    float4 nearPlane = FrustumPlanes[4];
+    float thicknessRadius = abs(nearPlane.y) * worldError;
+    return dot(nearPlane.xyz, a) + nearPlane.w <= thicknessRadius ||
+        dot(nearPlane.xyz, b) + nearPlane.w <= thicknessRadius ||
+        dot(nearPlane.xyz, c) + nearPlane.w <= thicknessRadius;
+}
+
+float ConservativeScreenDistortion(float worldError, float3 a, float3 b, float3 c)
+{
+    static const float ArtificialMaximumScreenError = 3.402823466e+38;
+    static const float ProjectionEpsilon = 1.0e-7;
+    if (WedgieIntersectsNearPlane(worldError, a, b, c))
+    {
+        return ArtificialMaximumScreenError;
+    }
+
+    float4 thicknessClip = mul(ViewProjection, float4(0.0, worldError, 0.0, 0.0));
+    float3 vertices[3] = {a, b, c};
+    float halfWidth = float(max(DrawableWidth, 1u)) * 0.5;
+    float halfHeight = float(max(DrawableHeight, 1u)) * 0.5;
+    float minimumDenominator = ArtificialMaximumScreenError;
+    float maximumNumeratorSquared = 0.0;
+    [unroll]
+    for (uint vertexIndex = 0u; vertexIndex < 3u; ++vertexIndex)
+    {
+        float4 clip = mul(ViewProjection, float4(vertices[vertexIndex], 1.0));
+        float denominator = clip.w * clip.w - thicknessClip.w * thicknessClip.w;
+        if (!isfinite(denominator) || denominator <= ProjectionEpsilon)
+        {
+            return ArtificialMaximumScreenError;
+        }
+        float horizontal = halfWidth * (thicknessClip.x * clip.w - thicknessClip.w * clip.x);
+        float vertical = halfHeight * (thicknessClip.y * clip.w - thicknessClip.w * clip.y);
+        float numeratorSquared = horizontal * horizontal + vertical * vertical;
+        if (!isfinite(numeratorSquared))
+        {
+            return ArtificialMaximumScreenError;
+        }
+        minimumDenominator = min(minimumDenominator, denominator);
+        maximumNumeratorSquared = max(maximumNumeratorSquared, numeratorSquared);
+    }
+    return 2.0 * sqrt(maximumNumeratorSquared) / minimumDenominator;
+}
+
+float ProjectedLongestEdge(float3 a, float3 b, float3 c)
+{
+    static const float ArtificialMaximumScreenError = 3.402823466e+38;
+    static const float ProjectionEpsilon = 1.0e-7;
+    float3 vertices[3] = {a, b, c};
+    float2 screenPositions[3];
+    float2 halfDrawable = float2(
+        float(max(DrawableWidth, 1u)) * 0.5,
+        float(max(DrawableHeight, 1u)) * 0.5);
+    [unroll]
+    for (uint vertexIndex = 0u; vertexIndex < 3u; ++vertexIndex)
+    {
+        float4 clip = mul(ViewProjection, float4(vertices[vertexIndex], 1.0));
+        if (!isfinite(clip.w) || abs(clip.w) <= ProjectionEpsilon)
+        {
+            return ArtificialMaximumScreenError;
+        }
+        screenPositions[vertexIndex] = halfDrawable * clip.xy / clip.w;
+        if (!all(isfinite(screenPositions[vertexIndex])))
+        {
+            return ArtificialMaximumScreenError;
+        }
+    }
+    return max(
+        max(length(screenPositions[0] - screenPositions[1]), length(screenPositions[1] - screenPositions[2])),
+        length(screenPositions[2] - screenPositions[0]));
+}
+
 float ScoreNode(uint nodeIndex)
 {
     // 完整方差由 CPU DOD 快照写入 DomainCAndErrors.z，这里只做逐帧像素投影。
@@ -155,15 +230,15 @@ float ScoreNode(uint nodeIndex)
     {
         return 0.0;
     }
-    float3 center = (a + b + c) / 3.0;
     float worldError = node.DomainCAndErrors.z * HeightScale;
-    float longestEdge = max(max(length(a - b), length(b - c)), length(c - a));
-    float4 viewCenter = mul(View, float4(center, 1.0));
-    float depthScale = IsOrthographic != 0u ? 1.0 : max(abs(viewCenter.z), 0.05);
-    float pixelsPerWorldUnit = float(max(DrawableHeight, 1u)) * 0.5 * abs(ProjectionScaleY) / depthScale;
-    return max(
-        worldError * pixelsPerWorldUnit,
-        longestEdge * pixelsPerWorldUnit * 0.20);
+    // 公式 (3) 的分子最大值和分母最小值分别从三个角点取得。
+    float geometricBoundPixels = ConservativeScreenDistortion(worldError, a, b, c);
+    if (geometricBoundPixels == 3.402823466e+38)
+    {
+        return geometricBoundPixels;
+    }
+    // edge-density 是项目额外项，使用真实端点投影而不是中心深度近似。
+    return max(geometricBoundPixels, ProjectedLongestEdge(a, b, c) * 0.20);
 }
 
 // 扫描节点池并以原子追加方式压缩活动叶节点

@@ -46,9 +46,9 @@ Debug View 的价值不只是展示效果，也用于定位算法问题。比如
 
 > 当前边界：本实验继续用于 Classic CPU、Data-Oriented CPU 和 GPU ROAM-like 的成熟路径对比。CBT 2024 在完整 split/merge、高度图几何和统计接入完成前只运行专用正确性验证，不进入本表性能排名。
 
-> ROAM 口径更新（2026-08-03）：Classic 与 DOD 共用论文公式 (1) 的 nested wedgie thickness tree，预计算深度覆盖 height map 源分辨率并限制到 20；GPU ROAM-like 从 DOD snapshot 读取同一 `GeometricError`。三者还共享像素 SSE、六平面视锥感知和活动 leaf 硬预算。GPU 路径的持久拓扑仍由 CPU DOD 更新；原生 compute 只在快照上追加一轮 split-only，GPU merge candidate 尚不提交，GPU 新 child 也不写回下一帧 CPU 真值。因此内部 world-error 口径已经对齐，但 screen projection 仍是中心深度近似，跨架构质量结论仍应使用最终网格的公共离线指标。
+> ROAM 口径更新（2026-08-03）：Classic 与 DOD 共用论文公式 (1) 的 nested wedgie thickness tree，并共用公式 (2)/(3) 的保守像素投影 helper；GPU ROAM-like 从 DOD snapshot 读取同一 `GeometricError`，OpenGL/D3D12 compute 以相同齐次角点公式评估。三者共享 near-plane 人工最大优先级、直接投影的 edge-density 扩展、六平面视锥感知和活动 leaf 硬预算。GPU 路径的持久拓扑仍由 CPU DOD 更新；原生 compute 只在快照上追加一轮 split-only，GPU merge candidate 尚不提交，GPU 新 child 也不写回下一帧 CPU 真值。内部 LOD 口径已经对齐，但最终画质比较仍应使用独立于算法决策器的公共离线指标。
 
-> 数据可比性：公式 (1) 替换了旧的 `max(local,left,right)` 四点采样误差。2026-08-03 之前生成的 runtime 报告仍可描述当时的 CPU/GPU 阶段成本，但其三角形数量、score 分布和画质不能与新实现直接横向比较。需要用当前二进制重跑正式性能表。
+> 数据可比性：公式 (1) 替换了旧的 `max(local,left,right)` 四点采样误差，公式 (2)/(3) 又替换了 center-depth pixel heuristic。两次变更之前生成的 runtime 报告仍可描述当时的 CPU/GPU 阶段成本，但其三角形数量、score 分布和画质不能与当前实现直接横向比较。需要用当前二进制重跑正式性能表。
 
 统一控制变量：
 

@@ -1,6 +1,6 @@
 # ROAM 论文与当前 Classic CPU ROAM 实现详细对比
 
-> 对比基线：仓库提交 `eeb3f3a` 及 2026-08-03 的 nested wedgie 公式 (1) 实现。
+> 对比基线：2026-08-03 当前源码，包含 nested wedgie 公式 (1) 与保守屏幕投影公式 (2)/(3)。
 > 论文依据：项目内转写文档 [`roaming_terrain_paper.md`](roaming_terrain_paper.md)，未重新解析 PDF。  
 > 实现范围：以 `src/algorithms/classic_roam` 为核心，并追踪统一 LOD 接口、渲染上传和 Benchmark。  
 > 本文讨论的是“论文描述的 ROAM”与“项目当前名为 Classic CPU ROAM 的实现”之间的对应关系，不把同名类型或函数自动视为论文机制的完整复现。
@@ -17,17 +17,17 @@
 - 跨帧保留 active topology；
 - 默认启用 local constraints 时，CPU 端生成目标为无 T-junction 的连续三角网格。
 
-它也实现了若干论文所需但早期版本曾缺失的工程能力：论文公式 (1) 的 nested wedgie thickness tree、像素单位阈值、FOV/投影和 drawable height 感知、视锥感知、硬 Triangle Budget、split/merge 迟滞以及预算满载时的再平衡。
+它也实现了若干论文所需但早期版本曾缺失的工程能力：论文公式 (1) 的 nested wedgie thickness tree、公式 (2)/(3) 的保守像素投影、near-plane 人工最大优先级、FOV/aspect/drawable 感知、视锥感知、硬 Triangle Budget、split/merge 迟滞以及预算满载时的再平衡。
 
 但是，当前实现不能被严格称为论文算法的完整复现。最关键的差异有三项：
 
-1. 当前 `ComputeScreenErrorScore()` 是像素单位的启发式评分，不是论文公式 (2)/(3) 对 wedgie thickness segment 的保守投影上界；它还加入了论文基础误差度量中不存在的 projected edge length 项。
+1. 当前 geometric component 已是论文公式 (2)/(3) 的保守像素上界，但最终 `ComputeScreenErrorScore()` 仍取 `max(geometricBound, edgeDensity)`；后者是论文基础误差度量中不存在的项目扩展，且最终 priority 的 parent/child 单调性尚未验证。
 2. 当前每次 `Build()` 都重建临时 split/merge queue，并按“先 merge、后 split”的独立 pass 处理；没有论文的持久 `Q_s/Q_m`、split/merge crossover 比较和最小拓扑改动证明。
 3. 当前每次 `Build()` 仍完整收集活动叶、重建 CPU Mesh 并上传，不维护论文的增量 triangle strips 或现代等价的增量 indexed output。
 
 因此，以下论文结论目前不能直接套用到项目实现：
 
-- 不能声称具有 guaranteed screen-space error bound；
+- 不能把局部 geometric bound 直接扩张为完整管线的 guaranteed screen-space error bound；
 - 不能声称在给定三角形数下最小化最大误差；
 - 不能声称每帧更新复杂度与 `Delta N` 成正比；
 - 不能声称可以精确达到指定 triangle count；
@@ -35,7 +35,7 @@
 
 更准确的项目定位是：
 
-> 当前 Classic CPU ROAM 是“采用经典 ROAM bintree/diamond 拓扑的串行、对象式 CPU 基线”，其 LOD 选择器是项目自定义的像素评分、迟滞和硬预算变体，而不是论文 dual-queue optimizer 的逐项复刻。
+> 当前 Classic CPU ROAM 是“采用经典 ROAM bintree/diamond 拓扑和公式 (1)-(3) 局部误差界的串行、对象式 CPU 基线”，其最终 LOD priority 仍叠加 edge-density、迟滞和硬预算变体，调度器也不是论文 dual-queue optimizer 的逐项复刻。
 
 ## 2. 判定口径
 
@@ -254,47 +254,53 @@ thickness = max(leftThickness, rightThickness)
 
 ### 7.2 当前公式
 
-[`ComputeScreenErrorScore()`](../../src/algorithms/classic_roam/ClassicRoamScoring.cpp#L213) 先计算 triangle 三个世界坐标和 center，再计算：
+共享 [`ComputeConservativeScreenDistortionPixels()`](../../src/algorithms/RoamScreenProjection.h) 令世界高度 thickness vector 为 `(0, worldError, 0, 0)`，并把 triangle corner 与该方向乘 `ViewProjection`。对每个角点，以齐次裁剪坐标的 `clip.x/clip.y/clip.w` 作为已包含 projection scale 的 `(p,q,r)`，以 `thicknessClip.x/thicknessClip.y/thicknessClip.w` 作为 `(a,b,c)`。实现分别求：
 
 ```text
-pixelsPerWorldUnit = 0.5 * DrawableHeight * abs(Projection[1][1]) / depthScale
-heightErrorPixels  = GeometricError * HeightScale * pixelsPerWorldUnit
-edgeLengthPixels   = LongestWorldEdge * pixelsPerWorldUnit * 0.20
-score              = max(heightErrorPixels, edgeLengthPixels)
+denominator_i = r_i^2 - c^2
+numerator_i^2 = (0.5*width *(a*r_i-c*p_i))^2
+              + (0.5*height*(b*r_i-c*q_i))^2
+
+geometricBoundPixels = 2 * sqrt(max_i(numerator_i^2))
+                         / min_i(denominator_i)
 ```
 
-透视投影的 `depthScale=max(abs(viewCenter.z), 0.05)`；正交投影则取 1。视锥外节点直接得到 0。
+这就是论文公式 (3) 的角点保守组合，只是提前把 projection 和 NDC-to-pixel scale 合入变量。齐次写法同时覆盖 perspective、orthographic、D3D/OpenGL depth convention 和非方形 drawable。若 wedgie 触碰或穿过 inward near plane，返回 `std::numeric_limits<float>::max()`；完全位于视锥外的节点仍先由 `IsNodeVisible()` 得 0。
+
+项目仍保留独立的平坦区域密度项：三个 triangle corner 直接投影到 pixel 后求最长边 `projectedLongestEdgePixels`，最终：
+
+```text
+edgeDensityPixels = projectedLongestEdgePixels * 0.20
+score = max(geometricBoundPixels, edgeDensityPixels)
+```
 
 ### 7.3 已实现的能力
 
-**像素单位：已实现。** `DrawableHeight` 和 `Projection[1][1]` 使阈值随分辨率高度和垂直 FOV 改变。统一输入定义在 [`TerrainLodViewInput`](../../src/algorithms/ITerrainLodAlgorithm.h#L95)，adapter 映射见 [`ToClassicSettings()`](../../src/algorithms/classic_roam/ClassicRoamTerrainLodAlgorithm.cpp#L82)。
+**像素单位：已实现。** `ViewProjection` 与 `DrawableWidth/DrawableHeight` 共同把齐次投影差换算到实际 pixel。统一输入定义在 [`TerrainLodViewInput`](../../src/algorithms/ITerrainLodAlgorithm.h#L95)，adapter 映射见 [`ToClassicSettings()`](../../src/algorithms/classic_roam/ClassicRoamTerrainLodAlgorithm.cpp#L82)。
 
-**距离感知：已实现。** 透视情况下 score 随 center view depth 近似反比变化。
+**完整投影感知：已实现。** score 使用三个角点的齐次深度和投影后的 thickness direction，不再用 center depth 近似；FOV、aspect、相机 pitch/roll、drawable width/height 都参与结果。
 
 **平坦近景几何密度：项目扩展。** 即使 height error 为 0，projected edge term 仍会细分过大的近景三角形。这有利于视觉网格密度和其他非高度误差，但它不是论文的基础 geometric distortion bound。
 
 ### 7.4 与论文的关键差异
 
-1. 使用 triangle center 的单一深度，不求 triangle/wedgie 范围内 denominator 极值。
-2. 世界竖直误差没有先经 view matrix 变换成论文中的 camera-space `(a,b,c)` thickness vector。
-3. 对 near-plane 交叉不设置人工最大 priority，而是对 center depth 取绝对值并 clamp。
-4. `edgeLengthPixels` 是启发式 tessellation density，不是地形近似误差上界。
-5. score 没有归一化到论文示例的 `[0,1]`，这本身不是问题，但反映当前 threshold 驱动语义。
-6. parent 与 child 使用不同 center depth；即使 parent `GeometricError >= child.GeometricError`，screen score 也未被证明单调。
+1. `edgeDensityPixels` 是额外 tessellation density，不是地形近似误差上界。
+2. score 没有归一化到论文示例的 `[0,1]`；项目直接使用 pixel threshold，这不影响公式的保守性。
+3. geometric component 对应论文局部 bound，但最终 `max(geometricBound, edgeDensity)`、visibility 置零和 hysteresis 共同作用后的 queue priority 尚无 parent/child 单调性测试。
+4. CPU 共享实现与两个 GPU shader 目前是三份等价表达，不是由同一 shader include 生成；后续修改必须用跨后端数值测试防止漂移。
 
 ### 7.5 判定
 
-**状态：部分实现/变体。** 当前名称 `ComputeScreenErrorScore` 是准确的，因为输出确实以 pixel 为单位；但它应理解为 `view-weighted pixel score`，而不是 `conservative screen distortion bound`。
+**状态：公式 (2)/(3) 已实现，最终 priority 仍是项目变体。** `geometricBoundPixels` 可以称为 `conservative screen distortion bound`；包含 edge-density 后的 `ComputeScreenErrorScore` 应继续称为 `screen-space priority`。
 
 ## 8. 单调性与论文最优性证明是否适用
 
-论文 greedy 最优性依赖 `child priority <= parent priority`，见 [`Dual-Queue Optimization`](roaming_terrain_paper.md#L178)。当前实现只能证明 world error array 满足 parent value 不小于 child value，不能证明最终 screen score 单调，原因包括：
+论文 greedy 最优性依赖 `child priority <= parent priority`，见 [`Dual-Queue Optimization`](roaming_terrain_paper.md#L178)。公式 (1) 的 nested thickness 和公式 (2)/(3) 的局部投影现在已经具备；near-plane crossing 也按论文设人工最大值。当前仍不能证明**最终** screen priority 单调，原因包括：
 
-- child center 可能比 parent center 更靠近相机；
-- child/parent 的 projected edge term 不只由 nested thickness 决定；
-- visibility 从 parent/child 的 AABB 测试结果参与 score；
-- near-plane clamp 是启发式而不是论文的保守处理；
-- hysteresis 区间内还会根据上一帧 path 状态改变 split 决策。
+- child/parent 的额外 projected edge-density 项不只由 nested thickness 决定；
+- visibility 会把完全离开视锥的 parent/child priority 直接置 0；
+- hysteresis 区间内还会根据上一帧 path 状态改变 split 决策；
+- 新测试验证了公式 (3) 对 triangle 内密集公式 (2) 采样的保守性，并覆盖一个带 midpoint displacement 的公式 (1) parent/child 构造；真实 HeightMap 全树与包含 edge-density 的最终 priority 尚未穷举。
 
 因此当前 split max-heap 能把“已发现候选中的当前最高 score”优先处理，但不能据此推出论文的全局最优 triangulation。
 
@@ -571,7 +577,7 @@ OpenGL renderer 随后在 [`TerrainRenderer::RebuildTerrainLod()`](../../src/ren
 | 跨帧 active topology | persistent nodes + `IsSplit` | 已实现 | 只有 topology coherence |
 | View-independent error tree | two `_varianceTrees` + shared builder | 已实现 | 结构与公式 (1) 均成立，受输入/深度边界限制 |
 | Nested wedgie thickness | `Roam::BuildNestedWedgieSubtree()` | 已实现 | 可继承公式 (1) 的离散 bintree 语义；不自动包含 screen bound |
-| Conservative screen-distortion bound | `ComputeScreenErrorScore()` | 部分实现/变体 | 否，当前是像素启发式 score |
+| Conservative screen-distortion bound | `Roam::ComputeConservativeScreenDistortionPixels()` | 已实现 | 局部 geometric bound 是；最终 priority 另含 edge-density |
 | Monotonic priority | 无 invariant/check | 未实现 | 否，最优性证明前提缺失 |
 | Highest-priority split heap | `RefineWithSplitQueue()` | 已实现 | 只对当帧已发现候选成立 |
 | Lowest-priority merge heap | `MergeWithDiamondQueue()` | 已实现 | 只对当帧 merge pass 成立 |
@@ -616,11 +622,12 @@ forced split 是保持连续性的最小必要 refinement
 给定 bintree mesh 空间内的最大误差最优性与全局误差上界
 ```
 
-当前公式 (1)、forced split 和连续 topology 已基本具备，但 conservative screen projection、priority monotonicity 与持久 dual-queue 调度仍未完整实现。因此即使视觉结果很好、阈值单位是 pixel、active triangle 不超过 budget，最终 screen-space quality 仍只能称为经验质量约束，不能升级为完整数学保证。
+当前公式 (1)-(3)、near-plane 处理、forced split 和连续 topology 已基本具备，但最终 priority monotonicity 与持久 dual-queue 调度仍未完整实现。因此即使局部 geometric component 已有保守像素上界、active triangle 不超过 budget，整条 LOD 管线仍不能升级为论文的完整全局数学保证。
 
 建议在 UI、报告和代码注释中使用以下术语：
 
-- `Screen-space error score (px)`：适合当前实现；
+- `Conservative geometric bound (px)`：适合公式 (2)/(3) 分量；
+- `Screen-space priority (px)`：适合包含 edge-density 的最终分数；
 - `Split/Merge threshold (px)`：适合当前实现；
 - `Triangle budget upper bound`：比 `target triangle count` 更准确；
 - `ROAM topology baseline`：比 `paper-complete ROAM` 更准确；
@@ -665,15 +672,15 @@ Classic/DOD 的旧 `_varianceTrees`/`VarianceTrees` 成员名保留以减少结�
 
 仍应补充：通过项目 `HeightMap` 类型加载真实小图的同类穷举、非 `2^k+1` 输入、深度截断，以及未来动态地形局部更新与全量重建一致性。
 
-#### 建议 2：实现保守 screen-space wedgie projection
+#### 已完成 2：实现保守 screen-space wedgie projection
 
-按论文公式 (2)/(3) 把世界高度 thickness vector 变换到 camera space，求 triangle corners 上 numerator/denominator 的保守组合；wedgie 穿 near plane 时给 artificial maximum priority。
+共享 `RoamScreenProjection.h` 按论文公式 (2)/(3) 把世界高度 thickness vector 变换到 homogeneous clip space，求 triangle corners 上 numerator/denominator 的保守组合；wedgie 触碰或穿越 near plane 时给 artificial maximum priority。Classic/DOD 调用同一 CPU helper，OpenGL/D3D12 compute 使用相同代数和参数。
 
 验收条件：
 
-- 随机 triangle/camera 下，用密集采样得到的实际 projected displacement 不超过计算 bound；
-- 改变 FOV、drawable height、camera pitch/roll 后仍成立；
-- parent/child priority monotonicity 有自动测试和统计。
+- `RoamScreenProjectionTests.cpp` 已验证多组 triangle/camera 的密集公式 (2) 采样不超过公式 (3) bound；
+- FOV、aspect、drawable width/height、camera pitch/roll、perspective/orthographic 与 near crossing 已覆盖；
+- 已有一个带 child-plane displacement 的 parent/child geometric-bound 单调构造；最终 priority 的随机/全树测试和运行时统计仍待实现。
 
 #### 建议 3：把 edge density 与 error bound 分开
 
@@ -765,7 +772,7 @@ LOS、object positioning、backface、normal、silhouette、fog 等 metric 建�
 | 优先级 | 工作 | 首要收益 | 前置依赖 | 主要风险 |
 | --- | --- | --- | --- | --- |
 | 已完成 | nested wedgie 公式 (1) | 恢复 world-space 累计 thickness 语义 | 无 | 已改变三种算法质量口径，历史数据需重跑 |
-| P0 | conservative projection 公式 (2)/(3) | 恢复 screen-space bound | nested thickness | near-plane 与分母极值处理复杂 |
+| 已完成 | conservative projection 公式 (2)/(3) | 恢复局部 screen-space bound | nested thickness | 已覆盖 near-plane 与角点分子/分母极值 |
 | P0 | 单调性/上界自动测试 | 防止把 heuristic 当 theorem | 公式 (1) 已有递推测试 | 连续空间只能通过保守推导最终证明 |
 | P1 | persistent dual queues | 恢复 `Delta N` 级增量优化目标 | 稳定 priority | handle 失效、forced split 的多节点事务 |
 | P1 | target count/crossover | 接近论文预算下最优分配 | dual queues | 并非所有整数 count 都一定可由合法 topology 精确表示 |
@@ -784,9 +791,9 @@ LOS、object positioning、backface、normal、silhouette、fog 等 metric 建�
 
 名称不会带来持久 membership、局部更新、crossover 或 `Delta N` 复杂度。应先定义 queue invariant 和 topology transaction。
 
-### 22.2 不要把公式 (1) 已实现等同于完整 guaranteed bound
+### 22.2 不要把公式 (1)-(3) 已实现等同于完整 guaranteed bound
 
-旧 `max(local,left,right)` 已移除；但只有 world-space thickness 还不足以证明最终像素误差，因为公式 (2)/(3)、near-plane 处理和 priority monotonicity 尚未实现。
+旧 `max(local,left,right)` 与 center-depth projection 均已移除；公式 (1)-(3) 已给出局部 geometric bound，但最终 priority 还叠加 edge-density/visibility/hysteresis，且缺少 persistent dual queues 与 parent-child 单调性验证，不能据此宣称完整全局保证。
 
 ### 22.3 不要只增加 worker 数来模拟论文增量性
 
@@ -802,7 +809,7 @@ LOS、object positioning、backface、normal、silhouette、fog 等 metric 建�
 
 ## 23. 测试缺口与验证建议
 
-当前 `tests/RoamNestedWedgieTests.cpp` 已覆盖共享公式递推、叶层为 0 和分辨率深度解析；Classic/DOD budget-reentry 测试与 smoke benchmark 覆盖拓扑合同。但这些仍不能替代以下验证：
+当前 `tests/RoamNestedWedgieTests.cpp` 已覆盖共享公式递推、叶层为 0 和分辨率深度解析；`tests/RoamScreenProjectionTests.cpp` 已覆盖公式 (3) 对密集公式 (2) 采样的保守性、投影/相机变化、正交投影和 near crossing；Classic/DOD budget-reentry 测试与 smoke benchmark 覆盖拓扑合同。但这些仍不能替代以下验证：
 
 1. `SplitTriangleDomain()` 在多层后仍覆盖 parent、无重叠、winding 一致。
 2. root diamond 和任意 forced split chain 后无 T-junction。
@@ -811,7 +818,7 @@ LOS、object positioning、backface、normal、silhouette、fog 等 metric 建�
 5. forced split 在预算边界上不突破 hard limit，失败后 topology 仍合法。
 6. 视锥快速旋转时，新入视野高 score 区域在同一 Build 获得预算。
 7. nested wedgie 对真实 height samples 的 ancestor bound property。
-8. screen bound 对密集投影采样的 conservativeness。
+8. CPU helper、OpenGL GLSL、D3D12 HLSL 在相同输入上的逐值一致性。
 9. priority parent-child monotonicity。
 10. persistent dual queues 与 top-down reference 在小输入上的最终 priority/triangle set 对照。
 11. incremental emit 与 full emit 的 triangle set 对照。
@@ -885,6 +892,7 @@ LOS、object positioning、backface、normal、silhouette、fog 等 metric 建�
 | [`docs/source_analysis/roaming_terrain_paper.md`](roaming_terrain_paper.md) | §4-§7 | 论文拓扑、双队列、误差和性能增强依据 |
 | [`ClassicRoamMeshBuilder.h`](../../src/algorithms/classic_roam/ClassicRoamMeshBuilder.h) | `TriangleDomain`, `ClassicRoamNode`, settings/stats | Classic 核心状态和合同 |
 | [`ClassicRoamMeshBuilder.cpp`](../../src/algorithms/classic_roam/ClassicRoamMeshBuilder.cpp) | `ClassicRoamMeshBuilder::Build` | 当前每次 Build 的真实 pass 顺序 |
+| [`RoamScreenProjection.h`](../../src/algorithms/RoamScreenProjection.h) | `ComputeConservativeScreenDistortionPixels`, `ComputeProjectedLongestEdgePixels` | 公式 (2)/(3)、near crossing 与独立 edge-density 投影 |
 | [`ClassicRoamState.cpp`](../../src/algorithms/classic_roam/ClassicRoamState.cpp) | `AddNode`, `ResetTopology`, leaf/path collect | 根 diamond、node ownership、持久 topology |
 | [`ClassicRoamScoring.cpp`](../../src/algorithms/classic_roam/ClassicRoamScoring.cpp) | base displacement、score、frustum | 当前误差公式和 view weighting |
 | [`ClassicRoamTopology.cpp`](../../src/algorithms/classic_roam/ClassicRoamTopology.cpp) | split queue, merge queue, forced split, diamond merge | 动态 topology 更新 |
@@ -910,7 +918,8 @@ LOS、object positioning、backface、normal、silhouette、fog 等 metric 建�
 - 受深度 20 上限约束的 view-independent nested tree 数据结构；
 - 论文公式 (1) nested wedgie thickness，包括 finest leaf 为 0 和跨层累计；
 - Classic/DOD 共享公式实现，GPU snapshot 继承相同 `GeometricError`；
-- FOV、投影、drawable height 和距离参与 pixel score；
+- 论文公式 (2)/(3) 的保守 pixel bound 与 near-plane artificial maximum；
+- FOV、aspect、投影、drawable width/height 和三角形角点齐次深度参与 priority；
 - frustum-aware LOD priority；
 - active leaf hard upper budget；
 - CPU mesh、法线、UV、winding 输出；
@@ -919,7 +928,7 @@ LOS、object positioning、backface、normal、silhouette、fog 等 metric 建�
 ### 27.2 部分实现或项目变体
 
 - Nested Wedgie Tree：公式 (1) 已实现，但非 dyadic 输入、深度 20 截断和连续双线性曲面仍需验证；
-- Screen Error：单位为 pixel，但不是 conservative distortion bound；
+- Screen Priority：geometric component 是 conservative distortion bound；最终值另含 edge-density 项；
 - Split/Merge Queues：各自有临时 heap，但不是 persistent dual queues；
 - Triangle Budget：hard upper bound，不是 direct target count；
 - Frame Coherence：topology 持久，candidate/priority/output 不增量；
@@ -929,7 +938,6 @@ LOS、object positioning、backface、normal、silhouette、fog 等 metric 建�
 
 ### 27.3 未实现
 
-- 论文公式 (2)/(3) screen-space conservative bound；
 - 可验证的 monotonic priority；
 - persistent `Q_s/Q_m` 和局部 queue maintenance；
 - split/merge crossover optimization；
@@ -948,10 +956,10 @@ LOS、object positioning、backface、normal、silhouette、fog 等 metric 建�
 
 ### 27.4 建议优先实现
 
-1. 在已完成公式 (1) 的基础上，实现 conservative projection 公式 (2)/(3)，并补 ancestor bound/单调性测试。
+1. 为公式 (1)-(3) 补真实 HeightMap ancestor bound、跨后端逐值一致性和最终 priority 单调性测试。
 2. 再实现 persistent dual queues、crossover 和 target-count reference mode。
 3. 然后实现 incremental frustum state 与 priority deferral，恢复 `O(Delta N)` 方向。
 4. 以现代 incremental indexed output 为主，triangle strips 作为论文复现实验模式。
 5. 最后加入 progressive optimization、vertex morphing、dynamic terrain 和高级 metrics。
 
-只有完成剩余的 conservative screen bound、dual queues/crossover 并通过性质测试后，项目文档才适合使用“论文级 guaranteed error bound”和“给定 bintree mesh 空间中的 optimal triangulation”等表述。
+只有完成剩余的 monotonic priority、dual queues/crossover 并通过端到端性质测试后，项目文档才适合使用“论文级 guaranteed error bound”和“给定 bintree mesh 空间中的 optimal triangulation”等表述。

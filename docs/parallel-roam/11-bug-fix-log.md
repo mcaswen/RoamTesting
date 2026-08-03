@@ -325,7 +325,18 @@
 - 定位：Classic 的 `ClassicRoamMeshBuilder::BuildVarianceSubtree` 与 DOD scoring 文件中的同名匿名递推各维护一份旧公式；GPU ROAM-like 从 DOD snapshot 读取 `GeometricError`，因此也继承旧语义。
 - 解决方案：新增共享 `RoamNestedWedgie.h`。`ResolveNestedWedgieTreeDepth` 按 `max(MaxDepth, 2*ceil(log2(max(width-1,height-1))))` 选择预计算深度并限制到 20；`BuildNestedWedgieSubtree` 把最细层设为 0，其他节点执行 `max(leftThickness,rightThickness)+abs(baseMidpointDisplacement)`。Classic/DOD 删除各自旧递推，共用同一公式；GPU snapshot 自动继承新 thickness。
 - 验证：新增 `roam_nested_wedgie` 属性测试，覆盖最细层为 0、有符号位移取绝对值、多层累计、129/513 source depth，并穷举小型几何 bintree 中每个 ancestor 对最细后代顶点的高度误差界；RelWithDebInfo CTest 7/7 通过。Classic/DOD smoke、budget-reentry 与 513x513 standard 64 帧均 PASS，逐帧输出规模保持一致且 topology issue 为 0；standard 三角形范围均为 `12906..20000`。RTX 5090 D 上 OpenGL 4.3 与 D3D12 `--gpu-smoke-test` 均以退出码 0 完成。
-- 后续：仍需增加真实小型 HeightMap 的 ancestor bound 穷举测试，并明确验证非 `2^k+1` 输入、source depth 超过 20 和连续双线性曲面解释。论文公式 (2)/(3) 的 conservative screen projection 尚未实现，不能因为公式 (1) 完成就宣称完整 guaranteed screen-space error。
+- 后续：仍需增加真实小型 HeightMap 的 ancestor bound 穷举测试，并明确验证非 `2^k+1` 输入、source depth 超过 20 和连续双线性曲面解释。公式 (2)/(3) 已由 BUG-027 后续实现，但不能仅凭局部公式 (1)-(3) 宣称完整 guaranteed screen-space error。
+
+### BUG-027：Center-Depth SSE 不是论文公式 (2)/(3) 的保守屏幕投影
+
+- 状态：`Fixed`
+- 严重级别：`高`
+- 发生阶段：Classic/DOD CPU error evaluation、OpenGL/D3D12 GPU error 与 merge candidate evaluation
+- 现象：旧评分只用 triangle center 的 `view-space Z`、`Projection[1][1]` 和 drawable height 估计整片像素尺度。跨越较大深度范围的粗 triangle 可能低估近端；相机 pitch/roll 后，世界高度 thickness 在 camera depth 上的分量也未进入公式；wedgie 穿越 near plane 时只靠 `abs(depth)` 与 `0.05` clamp，不能继承论文局部 bound。
+- 定位：Classic/DOD 的 `ComputeScreenErrorScore`、OpenGL `GpuRoamErrorEvaluation`/`GpuRoamCandidateMarking` 以及 `GpuRoamLike.hlsl::ScoreNode` 各自复制了 center-depth heuristic。GPU 常量只上传 `View`、`ProjectionScaleY` 与 `DrawableHeight`，没有完整 `ViewProjection` 和 drawable width。
+- 解决方案：新增共享 `RoamScreenProjection.h`，把 triangle corners 与世界高度方向 `(0,worldThickness,0,0)` 变换到 homogeneous clip space，以 `clip.x/clip.y/clip.w` 和 `thicknessClip.x/thicknessClip.y/thicknessClip.w` 直接实现公式 (3)。三个角点分别求最小 denominator 与最大 pixel-scaled numerator；wedgie 触碰或穿越 inward near plane 时返回 `float max`。Classic/DOD 共用 helper；OpenGL/D3D12 shader 使用相同代数和常量布局。保留的平坦区域 `edge-density` 明确作为独立扩展，并改成三个端点的真实像素投影，不再复用 center depth。
+- 验证：新增 `roam_screen_projection` 测试，对多组 FOV、aspect、camera pitch/roll、drawable 尺寸和 perspective/orthographic 投影在 triangle 内密集采样公式 (2)，所有样本均不超过公式 (3) bound；near-plane crossing 返回人工最大值，分辨率双倍时 bound 双倍。OpenGL/D3D12 RelWithDebInfo 构建通过，DXC 成功编译全部 GPU ROAM shader，OpenGL `--gpu-smoke-test` 退出码为 0。
+- 后续：补 CPU/GLSL/HLSL score buffer 逐值一致性测试，以及真实 nested parent/child 最终 priority 单调性测试。最终 score 仍是 `max(geometricBound, edgeDensity)`，调度仍非 persistent dual queues，因此不能把局部保守 bound 直接表述为完整论文最优性保证。
 
 ## 模板
 

@@ -22,11 +22,10 @@ struct GpuRoamErrorEvaluationPassInput
     std::size_t ActiveLeafCount{0};
     float TerrainSize{0.0F};
     float HeightScale{0.0F};
-    glm::mat4 View{1.0F};
+    glm::mat4 ViewProjection{1.0F};
     std::array<glm::vec4, 6U> FrustumPlanes{};
-    float ProjectionScaleY{1.0F};
+    std::uint32_t DrawableWidth{1U};
     std::uint32_t DrawableHeight{1U};
-    bool IsOrthographic{false};
 };
 
 [[nodiscard]] bool EnsureGpuRoamErrorEvaluationProgram(

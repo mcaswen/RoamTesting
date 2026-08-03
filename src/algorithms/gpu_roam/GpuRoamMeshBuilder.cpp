@@ -700,13 +700,10 @@ bool GpuRoamMeshBuilder::RunGpuAlgorithmPasses(
     errorInput.ActiveLeafCount = activeLeafCount;
     errorInput.TerrainSize = input.Settings.TerrainSize;
     errorInput.HeightScale = input.Settings.HeightScale;
-    errorInput.View = input.View.View;
+    errorInput.ViewProjection = input.View.ViewProjection;
     errorInput.FrustumPlanes = input.View.FrustumPlanes;
-    // projection Y 项和 drawable height 共同决定每个世界单位覆盖的像素数。
-    errorInput.ProjectionScaleY = std::abs(input.View.Projection[1][1]);
+    errorInput.DrawableWidth = std::max(input.View.DrawableWidth, 1U);
     errorInput.DrawableHeight = std::max(input.View.DrawableHeight, 1U);
-    errorInput.IsOrthographic =
-        std::abs(input.View.Projection[3][3] - 1.0F) <= std::numeric_limits<float>::epsilon();
     glBeginQuery(
         GL_TIME_ELAPSED,
         slot.TimerQueryIds[GpuPassIndex(GpuRoamGpuPass::ErrorEvaluation)]);
@@ -731,11 +728,10 @@ bool GpuRoamMeshBuilder::RunGpuAlgorithmPasses(
     candidateInput.SplitThreshold = input.Settings.ScreenSpaceSplitThresholdPixels;
     // merge 只输出 GPU 统计；真正的动态级联合并已在本帧 DOD baseline 中提交。
     candidateInput.MergeThreshold = input.Settings.ScreenSpaceMergeThresholdPixels;
-    candidateInput.View = input.View.View;
+    candidateInput.ViewProjection = errorInput.ViewProjection;
     candidateInput.FrustumPlanes = input.View.FrustumPlanes;
-    candidateInput.ProjectionScaleY = errorInput.ProjectionScaleY;
+    candidateInput.DrawableWidth = errorInput.DrawableWidth;
     candidateInput.DrawableHeight = errorInput.DrawableHeight;
-    candidateInput.IsOrthographic = errorInput.IsOrthographic;
     candidateInput.Kind = GpuRoamCandidateKind::Split;
     glBeginQuery(
         GL_TIME_ELAPSED,

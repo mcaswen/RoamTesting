@@ -1,6 +1,8 @@
 #include "algorithms/data_oriented_roam/DataOrientedRoamState.h"
 
+#include "algorithms/ITerrainLodAlgorithm.h"
 #include "algorithms/RoamNestedWedgie.h"
+#include "algorithms/RoamScreenProjection.h"
 
 #include <algorithm>
 #include <cmath>
@@ -10,7 +12,6 @@ namespace ParallelRoam::Algorithms::DataOrientedRoam
 {
 namespace
 {
-constexpr float MinimumViewDepth = 0.05F;
 constexpr float ProjectedEdgeWeight = 0.20F;
 
 bool IsNodeVisible(
@@ -226,22 +227,32 @@ float ComputeScreenErrorScore(const DataOrientedRoamState& state, DataOrientedRo
         return 0.0F;
     }
 
-    const glm::vec3 center = (a + b + c) / 3.0F;
     const float worldError = node.GeometricError * state.HeightScale;
-    const float longestEdgeLength = std::max({
-        glm::length(a - b),
-        glm::length(b - c),
-        glm::length(c - a),
+    const std::array<glm::vec3, 3U> triangle{a, b, c};
+    // near plane 使用统一视图输入中的固定枚举顺序，和 GPU shader 的索引 4 对齐。
+    const std::size_t nearPlaneIndex = static_cast<std::size_t>(TerrainLodFrustumPlane::Near);
+    // 共享投影器在齐次 clip x/y/w 中实现公式 (3)，不再依赖中心 view depth。
+    const float geometricBoundPixels = Roam::ComputeConservativeScreenDistortionPixels({
+        triangle,
+        state.ViewProjection,
+        state.FrustumPlanes[nearPlaneIndex],
+        worldError,
+        state.DrawableWidth,
+        state.DrawableHeight,
     });
-    const glm::vec4 viewCenter = state.View * glm::vec4{center, 1.0F};
-    const float projectionScaleY = std::abs(state.Projection[1][1]);
-    const float halfDrawableHeight = static_cast<float>(state.DrawableHeight) * 0.5F;
-    const bool isOrthographic = std::abs(state.Projection[3][3] - 1.0F) <= std::numeric_limits<float>::epsilon();
-    const float depthScale = isOrthographic ? 1.0F : std::max(std::abs(viewCenter.z), MinimumViewDepth);
-    const float pixelsPerWorldUnit = halfDrawableHeight * projectionScaleY / depthScale;
-    const float heightErrorPixels = worldError * pixelsPerWorldUnit;
-    const float edgeLengthPixels = longestEdgeLength * pixelsPerWorldUnit * ProjectedEdgeWeight;
-    return std::max(heightErrorPixels, edgeLengthPixels);
+    if (geometricBoundPixels == Roam::ArtificialMaximumScreenError)
+    {
+        // near-plane crossing 必须优先细分，不能被额外 edge-density 项覆盖。
+        return geometricBoundPixels;
+    }
+
+    // 端点投影只服务项目的平坦区域密度需求，不改变 geometric bound 的保守性。
+    const float edgeDensityPixels = Roam::ComputeProjectedLongestEdgePixels(
+        triangle,
+        state.ViewProjection,
+        state.DrawableWidth,
+        state.DrawableHeight) * ProjectedEdgeWeight;
+    return std::max(geometricBoundPixels, edgeDensityPixels);
 }
 
 glm::vec3 DomainToWorld(const DataOrientedRoamState& state, const glm::vec2& uv)

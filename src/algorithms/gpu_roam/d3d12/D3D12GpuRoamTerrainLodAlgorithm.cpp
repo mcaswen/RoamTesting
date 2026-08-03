@@ -110,17 +110,17 @@ struct GpuConstants
     float SplitThreshold{0.0F};
     float MergeThreshold{0.0F};
     std::uint32_t TriangleBudget{2U};
+    std::uint32_t DrawableWidth{1U};
     std::uint32_t DrawableHeight{1U};
-    float ProjectionScaleY{1.0F};
-    std::uint32_t IsOrthographic{0U};
-    glm::mat4 View{1.0F};
+    std::uint32_t Reserved{0U};
+    glm::mat4 ViewProjection{1.0F};
     std::array<glm::vec4, 6U> FrustumPlanes{};
 };
 
 // 锁定 CPU 回读布局和共享顶点布局，防止着色器侧索引错位
 static_assert(sizeof(GpuCounters) == 32U);
 static_assert(sizeof(GpuConstants) <= ConstantBufferBytes);
-static_assert(offsetof(GpuConstants, View) == 64U);
+static_assert(offsetof(GpuConstants, ViewProjection) == 64U);
 static_assert(offsetof(GpuConstants, FrustumPlanes) == 128U);
 static_assert(sizeof(Terrain::TerrainMeshVertex) == 13U * sizeof(float));
 
@@ -1054,11 +1054,9 @@ bool D3D12GpuRoamTerrainLodAlgorithm::BuildRenderData(
         input.Settings.ScreenSpaceMergeThresholdPixels,
         input.Settings.ScreenSpaceSplitThresholdPixels);
     constants.TriangleBudget = SaturateToUint32(NormalizedTriangleBudget(input));
+    constants.DrawableWidth = std::max(input.View.DrawableWidth, 1U);
     constants.DrawableHeight = std::max(input.View.DrawableHeight, 1U);
-    constants.ProjectionScaleY = std::abs(input.View.Projection[1][1]);
-    constants.IsOrthographic =
-        std::abs(input.View.Projection[3][3] - 1.0F) <= std::numeric_limits<float>::epsilon() ? 1U : 0U;
-    constants.View = input.View.View;
+    constants.ViewProjection = input.View.ViewProjection;
     constants.FrustumPlanes = input.View.FrustumPlanes;
     std::memset(frame.MappedConstants, 0, ConstantBufferBytes);
     std::memcpy(frame.MappedConstants, &constants, sizeof(constants));

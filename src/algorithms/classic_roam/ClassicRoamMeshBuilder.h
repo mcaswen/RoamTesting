@@ -351,9 +351,9 @@ private:
     std::vector<ClassicRoamNode*> _activeLeaves;
     ClassicRoamNode* _rootA{nullptr};
     ClassicRoamNode* _rootB{nullptr};
-    glm::mat4 _view{1.0F};
-    glm::mat4 _projection{1.0F};
+    glm::mat4 _viewProjection{1.0F};
     std::array<glm::vec4, 6> _frustumPlanes{};
+    std::uint32_t _drawableWidth{1U};
     std::uint32_t _drawableHeight{1U};
     std::size_t _remainingSplitBudget{0U};
     float _terrainSize{1.0F};

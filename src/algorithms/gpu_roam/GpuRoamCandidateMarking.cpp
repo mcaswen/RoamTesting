@@ -77,16 +77,16 @@ uniform float uTerrainSize;
 uniform float uHeightScale;
 uniform float uSplitThreshold;
 uniform float uMergeThreshold;
-uniform mat4 uView;
+uniform mat4 uViewProjection;
 uniform vec4 uFrustumPlanes[6];
-uniform float uProjectionScaleY;
+uniform uint uDrawableWidth;
 uniform uint uDrawableHeight;
-uniform uint uIsOrthographic;
 uniform uint uCandidateKind;
 
-const float minimumViewDepth = 0.05;
 // 与 error pass 保持完全相同，避免 split 和 merge 使用不同评分函数
 const float projectedEdgeWeight = 0.20;
+const float artificialMaximumScreenError = 3.402823466e+38;
+const float projectionEpsilon = 1.0e-7;
 
 float sampleHeight(vec2 uv)
 {
@@ -140,6 +140,81 @@ bool isNodeVisible(NodeRecord node, vec3 a, vec3 b, vec3 c)
     return true;
 }
 
+bool wedgieIntersectsNearPlane(float worldError, vec3 a, vec3 b, vec3 c)
+{
+    // 固定索引 4 对应 CPU 构建的 inward near plane。
+    vec4 nearPlane = uFrustumPlanes[4];
+    // thickness 沿世界 Y 轴，abs(normal.y) 给出平面距离半径。
+    float thicknessRadius = abs(nearPlane.y) * worldError;
+    return dot(nearPlane.xyz, a) + nearPlane.w <= thicknessRadius ||
+        dot(nearPlane.xyz, b) + nearPlane.w <= thicknessRadius ||
+        dot(nearPlane.xyz, c) + nearPlane.w <= thicknessRadius;
+}
+
+float conservativeScreenDistortion(float worldError, vec3 a, vec3 b, vec3 c)
+{
+    if (wedgieIntersectsNearPlane(worldError, a, b, c))
+    {
+        return artificialMaximumScreenError;
+    }
+
+    // 以 w=0 变换方向，避免 view translation 污染 thickness。
+    vec4 thicknessClip = uViewProjection * vec4(0.0, worldError, 0.0, 0.0);
+    vec3 vertices[3] = vec3[3](a, b, c);
+    float halfWidth = float(max(uDrawableWidth, 1u)) * 0.5;
+    float halfHeight = float(max(uDrawableHeight, 1u)) * 0.5;
+    float minimumDenominator = artificialMaximumScreenError;
+    float maximumNumeratorSquared = 0.0;
+    for (uint vertexIndex = 0u; vertexIndex < 3u; ++vertexIndex)
+    {
+        vec4 clip = uViewProjection * vec4(vertices[vertexIndex], 1.0);
+        // 齐次 clip.w 形式把透视、正交和 API 深度约定统一到公式 (3)。
+        float denominator = clip.w * clip.w - thicknessClip.w * thicknessClip.w;
+        if (isnan(denominator) || isinf(denominator) || denominator <= projectionEpsilon)
+        {
+            return artificialMaximumScreenError;
+        }
+        // X/Y 分别使用 drawable 宽高，结果直接以 pixel 为单位。
+        float horizontal = halfWidth * (thicknessClip.x * clip.w - thicknessClip.w * clip.x);
+        float vertical = halfHeight * (thicknessClip.y * clip.w - thicknessClip.w * clip.y);
+        float numeratorSquared = horizontal * horizontal + vertical * vertical;
+        if (isnan(numeratorSquared) || isinf(numeratorSquared))
+        {
+            return artificialMaximumScreenError;
+        }
+        // 分开组合角点极值，避免 center depth 对粗三角形近端的低估。
+        minimumDenominator = min(minimumDenominator, denominator);
+        maximumNumeratorSquared = max(maximumNumeratorSquared, numeratorSquared);
+    }
+    return 2.0 * sqrt(maximumNumeratorSquared) / minimumDenominator;
+}
+
+float projectedLongestEdge(vec3 a, vec3 b, vec3 c)
+{
+    // edge-density 与 geometric bound 独立，只共享最终 max priority。
+    vec3 vertices[3] = vec3[3](a, b, c);
+    vec2 screenPositions[3];
+    vec2 halfDrawable = vec2(
+        float(max(uDrawableWidth, 1u)) * 0.5,
+        float(max(uDrawableHeight, 1u)) * 0.5);
+    for (uint vertexIndex = 0u; vertexIndex < 3u; ++vertexIndex)
+    {
+        vec4 clip = uViewProjection * vec4(vertices[vertexIndex], 1.0);
+        if (isnan(clip.w) || isinf(clip.w) || abs(clip.w) <= projectionEpsilon)
+        {
+            return artificialMaximumScreenError;
+        }
+        screenPositions[vertexIndex] = halfDrawable * clip.xy / clip.w;
+        if (any(isnan(screenPositions[vertexIndex])) || any(isinf(screenPositions[vertexIndex])))
+        {
+            return artificialMaximumScreenError;
+        }
+    }
+    return max(
+        max(length(screenPositions[0] - screenPositions[1]), length(screenPositions[1] - screenPositions[2])),
+        length(screenPositions[2] - screenPositions[0]));
+}
+
 float scoreNode(uint nodeIndex)
 {
     // 此实现必须与 GpuRoamErrorEvaluation 的 scoreNode 同步修改
@@ -156,17 +231,14 @@ float scoreNode(uint nodeIndex)
         // 零分不会产生主动 split，并允许 DOD baseline 在本 Build 回收旧拓扑。
         return 0.0;
     }
-    vec3 center = (a + b + c) / 3.0;
     float worldError = node.domainCAndErrors.z * uHeightScale;
-    float longestEdgeLength = max(max(length(a - b), length(b - c)), length(c - a));
-    // View 和 ProjectionScaleY 来自生成 frustum planes 的同一帧输入。
-    vec4 viewCenter = uView * vec4(center, 1.0);
-    float depthScale = uIsOrthographic != 0u ? 1.0 : max(abs(viewCenter.z), minimumViewDepth);
-    float pixelsPerWorldUnit = float(max(uDrawableHeight, 1u)) * 0.5 * abs(uProjectionScaleY) / depthScale;
-    // max 语义与 CPU ROAM 保持一致，不把高度项和边长项重复累加。
-    return max(
-        worldError * pixelsPerWorldUnit,
-        longestEdgeLength * pixelsPerWorldUnit * projectedEdgeWeight);
+    float geometricBoundPixels = conservativeScreenDistortion(worldError, a, b, c);
+    if (geometricBoundPixels == artificialMaximumScreenError)
+    {
+        return geometricBoundPixels;
+    }
+    // max 语义与 CPU ROAM 保持一致，不把 geometric bound 和 edge-density 重复累加。
+    return max(geometricBoundPixels, projectedLongestEdge(a, b, c) * projectedEdgeWeight);
 }
 
 void main()
@@ -254,15 +326,14 @@ void RunGpuRoamCandidateMarkingPass(const GpuRoamCandidateMarkingPassInput& inpu
     SetGpuRoamProgramFloat(input.ProgramId, "uSplitThreshold", input.SplitThreshold);
     // C++ 再次钳制 merge 阈值，防止 UI 或 benchmark 输入破坏 hysteresis
     SetGpuRoamProgramFloat(input.ProgramId, "uMergeThreshold", std::min(input.MergeThreshold, input.SplitThreshold));
-    SetGpuRoamProgramMat4(input.ProgramId, "uView", input.View);
+    SetGpuRoamProgramMat4(input.ProgramId, "uViewProjection", input.ViewProjection);
     SetGpuRoamProgramVec4Array(
         input.ProgramId,
         "uFrustumPlanes",
         input.FrustumPlanes.data(),
         input.FrustumPlanes.size());
-    SetGpuRoamProgramFloat(input.ProgramId, "uProjectionScaleY", input.ProjectionScaleY);
+    SetGpuRoamProgramUInt(input.ProgramId, "uDrawableWidth", input.DrawableWidth);
     SetGpuRoamProgramUInt(input.ProgramId, "uDrawableHeight", input.DrawableHeight);
-    SetGpuRoamProgramUInt(input.ProgramId, "uIsOrthographic", input.IsOrthographic ? 1U : 0U);
     SetGpuRoamProgramUInt(
         input.ProgramId,
         "uCandidateKind",

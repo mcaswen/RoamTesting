@@ -219,9 +219,9 @@ struct DataOrientedRoamState
     DataOrientedRoamNodeIndex RootA{InvalidDataOrientedRoamNodeIndex};
     DataOrientedRoamNodeIndex RootB{InvalidDataOrientedRoamNodeIndex};
 
-    glm::mat4 View{1.0F};
-    glm::mat4 Projection{1.0F};
+    glm::mat4 ViewProjection{1.0F};
     std::array<glm::vec4, 6> FrustumPlanes{};
+    std::uint32_t DrawableWidth{1U};
     std::uint32_t DrawableHeight{1U};
     // 并行 split commit 通过原子 token 共享同一硬预算
     std::atomic<std::size_t> RemainingSplitBudget{0U};

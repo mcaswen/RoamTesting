@@ -335,7 +335,7 @@ ClassicRoamMeshBuilder::Build(heightMap, scales, fullView, settings)
 | 成员 | 角色 | 生命周期 |
 | --- | --- | --- |
 | `_heightMap`、`_settings`、`_terrainSize/_heightScale` | 地形和 Classic 参数快照 | 每次 Build 覆盖 |
-| `_view/_projection/_frustumPlanes/_drawableHeight` | 像素评分和可见性输入 | 每次 Build 覆盖 |
+| `_viewProjection/_frustumPlanes/_drawableWidth/_drawableHeight` | 公式 (2)/(3) 像素投影和可见性输入 | 每次 Build 覆盖 |
 | `_varianceTrees[2]` | 两个根的 nested wedgie tree | HeightMap/预计算深度变化时重建 |
 | `_varianceHeightMap/_varianceTreeMaxDepth` | nested tree 缓存键；名称保留旧术语 | 重建时更新 |
 | `_stats` | 最近一次 Build 统计 | 每次 Build 清零后重算 |
@@ -447,30 +447,32 @@ bintree 每两个深度层级把地形两个轴的采样间隔各减半，所以
 
 ### 8.3 相机相关评分公式
 
-下面公式是**根据实现推导**，变量名与代码一致：
+下面公式是**源码事实**，变量名与共享 `RoamScreenProjection.h` 一致。项目世界高度轴为 Y，所以论文的 world thickness vector 映射为 `(0, worldError, 0, 0)`：
 
 ```text
 a,b,c = DomainToWorld(node.Domain.A/B/C)
 if !IsNodeVisible(node,a,b,c): return 0
-center = (a+b+c)/3
-viewCenter = View * vec4(center,1)
-projectionScaleY = abs(Projection[1][1])
-halfDrawableHeight = DrawableHeight * 0.5
-depthScale = orthographic ? 1 : max(abs(viewCenter.z), 0.05)
-pixelsPerWorldUnit = halfDrawableHeight * projectionScaleY / depthScale
-
 worldError = node.GeometricError * HeightScale
-longestEdgeLength = max(|a-b|, |b-c|, |c-a|)
-heightErrorPixels = worldError * pixelsPerWorldUnit
-edgeLengthPixels = longestEdgeLength * pixelsPerWorldUnit * 0.20
-screenErrorScore = max(heightErrorPixels, edgeLengthPixels)
+thicknessClip = ViewProjection * vec4(0,worldError,0,0)
+
+对三个 corner i：
+  clip_i = ViewProjection * vec4(vertex_i,1)
+  denominator_i = clip_i.w^2 - thicknessClip.w^2
+  numerator_i^2 = (0.5*DrawableWidth *(thicknessClip.x*clip_i.w-thicknessClip.w*clip_i.x))^2
+                + (0.5*DrawableHeight*(thicknessClip.y*clip_i.w-thicknessClip.w*clip_i.y))^2
+
+geometricBoundPixels = 2*sqrt(max(numerator_i^2))/min(denominator_i)
+edgeDensityPixels = ProjectedLongestTriangleEdgePixels * 0.20
+screenErrorScore = max(geometricBoundPixels, edgeDensityPixels)
 ```
 
-证据：文件：`src/algorithms/classic_roam/ClassicRoamScoring.cpp`；符号：`MinimumViewDepth`、`ProjectedEdgeWeight`、`ComputeScreenErrorScore`；代码范围：第 11-13、214-243 行。
+如果 thickness 扩张后的 wedgie 触碰或穿越 near plane，`geometricBoundPixels` 直接取 `std::numeric_limits<float>::max()`，跳过分母计算。完全在视锥外则仍先返回 0。齐次 clip 写法把论文公式 (2)/(3) 的 camera/projection 变换、X/Y 像素尺度和 perspective/orthographic 统一在同一表达式中。
 
-**源码事实：** 评分同时读取投影矩阵纵向比例、drawable 高度和 view-space 深度，因此阈值单位是纵向像素。FOV、窗口分辨率和相机深度都会改变 LOD 决策；正交投影不除深度。
+证据：文件：`src/algorithms/RoamScreenProjection.h`；符号：`WedgieIntersectsNearPlane`、`ComputeConservativeScreenDistortionPixels`、`ComputeProjectedLongestEdgePixels`。文件：`src/algorithms/classic_roam/ClassicRoamScoring.cpp`；符号：`ComputeScreenErrorScore`。
 
-**根据实现推断：** 这是中心深度上的像素尺度近似，而不是把三角形每个误差点真正投影后计算精确像素偏移。跨越较大深度范围的粗三角形会存在近似误差；但两个 score 分量已统一为像素单位。
+**源码事实：** `geometricBoundPixels` 是论文 projected thickness segment 的保守像素上界；`edgeDensityPixels` 是项目额外的平坦区域细分压力，不应称为几何近似误差。自动测试对多组 FOV、aspect、pitch/roll、透视/正交和 drawable 尺寸密集采样公式 (2)，确认样本不超过公式 (3) bound；另有一个带 midpoint displacement 的公式 (1) parent/child 构造验证 child geometric bound 不超过 parent。
+
+**尚无法确认：** CPU helper、OpenGL GLSL 与 D3D12 HLSL 当前代数一致且分别通过构建/smoke，但尚无读取 GPU score buffer 后逐值对比 CPU 的自动测试。
 
 ### 8.4 split、merge 和迟滞
 
@@ -777,13 +779,12 @@ TriangleCount = ActiveLeafCount
 | `EnableLocalConstraints` | true | bool | 可调 | 开启 forced split 防裂缝 |
 | `EnableTopologyValidation` | false | bool | 可调 | 开启全局 debug 扫描和 validation stats |
 | `MaximumSupportedDepth` | 20 | bintree 层，内部常量 | 不可调 | 限制 nested tree 指数容量与 PathId 深度 |
-| `MinimumViewDepth` | 0.05 | view-space 世界距离 | 不可调 | 防止透视除零 |
 | `ProjectedEdgeWeight` | 0.20 | 像素边长权重 | 不可调 | 平坦近景仍保有几何密度 |
-| Projection/FOV | 来自相机 | `Projection[1][1]` | 间接可调 | 窄 FOV 提高像素误差 |
-| `DrawableHeight` | 当前窗口 | 像素，最小 1 | 随窗口 | 分辨率越高，同一世界误差像素值越大 |
+| View/Projection/FOV/aspect | 来自相机 | 完整 `ViewProjection` | 间接可调 | 改变 thickness direction、角点齐次分母和投影尺度 |
+| `DrawableWidth/DrawableHeight` | 当前窗口 | 像素，最小 1 | 随窗口 | 分别缩放 X/Y 投影误差；分辨率越高 bound 越大 |
 | renderer rebuild threshold | 位移 `max(0.30,TerrainSize*0.01)`，另含方向/投影/尺寸变化 | 混合 | 不可调 | 决定普通交互何时真正运行算法 |
 
-参数证据：`ITerrainLodAlgorithm.h` 第 70-83 行；`ClassicRoamMeshBuilder.h` 第 45-65 行；`ClassicRoamScoring.cpp` 第 11-13、214-243 行；`TerrainRenderer.h` 第 51-72 行；`ImGuiLayer.cpp` 第 726-750 行。
+参数证据：`ITerrainLodAlgorithm.h`，符号 `TerrainLodSettings` / `TerrainLodViewInput`；`ClassicRoamMeshBuilder.h`，符号 `ClassicRoamSettings`；`RoamScreenProjection.h`，符号 `ConservativeScreenProjectionInput`；`TerrainRenderer.h` 与 `ImGuiLayer.cpp`。
 
 **源码事实：** 统一 `TerrainLodSettings` 对 Classic、DOD 和 GPU ROAM-like 只暴露 `ScreenSpaceSplitThresholdPixels`、`ScreenSpaceMergeThresholdPixels` 与 `TriangleBudget`；旧式 `SplitThreshold/MergeThreshold/DistanceScale` 已从公共设置、renderer、UI 和 runtime benchmark schema 移除。三种 ROAM 在 UI 中共享同一组像素阈值与预算。
 
@@ -895,14 +896,14 @@ TriangleCount = ActiveLeafCount
 | Forced Split | 递归 split `BaseNeighbor` | `SplitNode` 第 252-287 行 | 基本一致，有 `forcedFrom`/guard |
 | Diamond | 互为 base 的两个 parent 和四个 child | reset、`LinkSplitNeighbors` | 显式采用 |
 | Merge | sibling leaf，内部对侧成对回收并动态入队 parent | `MergeWithDiamondQueue`、`MergeNodeOrDiamond` | 基本一致；单 Build 可级联 |
-| Triangle Priority | nested thickness + projected pixel SSE 最大堆 | `ComputeScreenErrorScore`、`RefineWithSplitQueue` | 有；使用中心深度近似 |
+| Triangle Priority | nested thickness 的公式 (2)/(3) 保守投影 + edge-density 最大堆 | `ComputeScreenErrorScore`、`RefineWithSplitQueue` | geometric bound 一致；最终 priority 是项目扩展 |
 | Crack Prevention | base-neighbor forced split | `SplitNode`、`LinkSplitNeighbors` | 默认有；可关闭；validator 不修复 |
 | Triangle Budget | 活动 leaf token 硬上限，forced 链预留；池满时有限低分 merge/高分 split 交换 | `TriangleBudget`、`MergeWithDiamondQueue`、`_remainingSplitBudget`、`SplitNode` | 已实现有界启发式；不是经典全局双队列最优平衡 |
 | Incremental Update | 持久 node/child、split/merge、PathId 迟滞 | `Build`、`_previousSplitPaths` | 已实现拓扑增量；Mesh 仍全量重建 |
 | View Frustum Culling | thickness 扩张 AABB 对六平面测试，视锥外 score=0 | `IsNodeVisible` | LOD 感知已实现；Mesh 不裁掉视锥外 leaf |
-| Screen-space Error | projection Y scale、drawable height、view depth | `ComputeScreenErrorScore` | 像素单位；不是逐采样点精确投影 |
+| Screen-space Error | 角点齐次投影分子/分母极值、drawable width/height、near crossing | `Roam::ComputeConservativeScreenDistortionPixels` | 论文公式 (2)/(3) 的局部保守像素界 |
 
-**结论：** 当前实现已具备 bintree、公式 (1) nested wedgie tree、像素 SSE、优先队列、硬预算、diamond forced split/merge、迟滞、视锥感知和池满时的有界预算交换，是工程化 Classic ROAM baseline；仍不是经典论文的逐项复刻，例如屏幕投影不是论文公式 (2)/(3)，没有一对长期维护的全局 split/merge 优先队列，也不做共享闭包成本下的全局最优交换，Mesh 仍全量重建。
+**结论：** 当前实现已具备 bintree、公式 (1) nested wedgie tree、公式 (2)/(3) 保守像素投影、优先队列、硬预算、diamond forced split/merge、迟滞、视锥感知和池满时的有界预算交换，是工程化 Classic ROAM baseline；仍不是经典论文的逐项复刻，因为最终 priority 还包含 edge-density，没有一对长期维护的全局 split/merge 优先队列，也不做共享闭包成本下的全局最优交换，Mesh 仍全量重建。
 
 ## 18. 与项目中其他算法的接口比较
 
@@ -992,17 +993,17 @@ GeometricError(TA/TB) = 1.00
 
 ### 19.4 相机影响与 split 判断
 
-对 `TA`，三个世界角点为 `(-0.5,0,0.5)`、`(0.5,0,-0.5)`、`(-0.5,0,-0.5)`；中心约 `(-1/6,0,-1/6)`。它在向下相机的视锥内，中心 view depth 约为 1：
+对 `TA`，三个世界角点为 `(-0.5,0,0.5)`、`(0.5,0,-0.5)`、`(-0.5,0,-0.5)`。相机在 `(0,1,0)` 向下观察，near distance 为 0.05；root 的 `worldError=1`，所以 wedgie 的最高端达到世界 `y=1`，已经越过位于 `y=0.95` 的 near plane：
 
 ```text
-Projection[1][1] = cot(60 degrees / 2) ≈ 1.732
-pixelsPerWorldUnit = (720 / 2) * 1.732 / 1 ≈ 623.5 px/world-unit
-heightErrorPixels = 1.0 * 1 * 623.5 ≈ 623.5 px
-edgeLengthPixels = sqrt(2) * 623.5 * 0.20 ≈ 176.4 px
-score = max(...) ≈ 623.5 px > SplitThreshold 4 px
+nearPlaneDistance(root corner) = 0.95
+thicknessRadius = abs(nearPlane.normal.y) * worldError = 1.0
+nearPlaneDistance <= thicknessRadius
+geometricBoundPixels = artificial maximum
+score = artificial maximum > SplitThreshold 4 px
 ```
 
-`TB` 对称，分数相同。两个 root leaf 使 `_remainingSplitBudget = 4-2 = 2`；两者都进入 split queue，`TA` 因较早 sequence 先弹出。
+这是论文规定的 near-plane 特例，公式 (3) 的 denominator 不再求值。`TB` 对称，分数相同。两个 root leaf 使 `_remainingSplitBudget = 4-2 = 2`；两者都进入 split queue，`TA` 因较早 sequence 先弹出。
 
 ### 19.5 forced split 与指针更新
 
@@ -1105,6 +1106,8 @@ MaxDepthReached = 1
 | `ClassicRoamScoring.cpp` | `ShouldSplit*`、`WasSplitLastFrame` | 23-60 | 阈值和迟滞 |
 | 同上 | debug 分类/色彩 | 62-119 | LOD overlay 属性 |
 | `src/algorithms/RoamNestedWedgie.h` | `ResolveNestedWedgieTreeDepth`、`BuildNestedWedgieSubtree` | 全文件 | 共享预计算深度和论文公式 (1) 递推 |
+| `src/algorithms/RoamScreenProjection.h` | `WedgieIntersectsNearPlane`、`ComputeConservativeScreenDistortionPixels` | 全文件 | 共享论文公式 (2)/(3) 与 near-plane 特例 |
+| 同上 | `ComputeProjectedLongestEdgePixels` | 全文件 | 独立 edge-density 端点投影 |
 | `ClassicRoamScoring.cpp` | `ComputeBaseMidpointDisplacement` | 125-134 | base midpoint 有符号高度位移 |
 | 同上 | `RebuildVarianceTrees` | 136-174 | 两棵 nested wedgie tree 的根域接入 |
 | 同上 | `RefreshNodeVarianceErrors`、`VarianceError` | 176-196 | thickness 缓存查找/刷新 |
@@ -1126,6 +1129,7 @@ MaxDepthReached = 1
 | 同上 | `BuildRenderData` | 30-68 | 公共 adapter 入口和完整 view 转发 |
 | 同上 | `Stats`、`Reset` | 69-80 | 公共生命周期 |
 | 同上 | settings/stats 映射 | 82-132 | 像素阈值、预算和统一统计映射 |
+| `tests/RoamScreenProjectionTests.cpp` | dense formula (2) sampling | 全文件 | 验证公式 (3) 保守性、投影变化和 near crossing |
 
 ### 21.2 外围符号
 
@@ -1149,7 +1153,7 @@ MaxDepthReached = 1
 ### 21.3 关键成员变量索引
 
 - `ClassicRoamNode`：`Domain`；parent/children/neighbors；`GeometricError`；`VarianceTreeIndex/VarianceIndex`；`PathId`；四个 Build ID；`Depth`；`ActivatedByForcedSplit`；`IsSplit`。
-- `ClassicRoamMeshBuilder`：地形/settings/stats；`_varianceTrees` 与缓存键；node pool/path/roots；`_view/_projection/_frustumPlanes/_drawableHeight`；`_remainingSplitBudget`；尺度、深度和 build sequence。
+- `ClassicRoamMeshBuilder`：地形/settings/stats；`_varianceTrees` 与缓存键；node pool/path/roots；`_viewProjection/_frustumPlanes/_drawableWidth/_drawableHeight`；`_remainingSplitBudget`；尺度、深度和 build sequence。
 - `ClassicRoamTerrainLodAlgorithm`：`_builder`；`_stats`。
 - `TerrainRenderer` 相关所有者：`_heightMap`；`_meshData`；`_terrainLodAlgorithm`；`_terrainLodStats`；`_settings`；上次 build 相机位置和 dirty 状态。
 
@@ -1165,7 +1169,7 @@ MaxDepthReached = 1
 
 ### 22.1 命名和文档问题
 
-1. **源码事实：** `ComputeScreenErrorScore` 现在输出像素，但它使用 triangle center 的 view depth；名称没有错，精度层级应在注释中继续说明。
+1. **源码事实：** `ComputeScreenErrorScore` 的 geometric component 已是公式 (2)/(3) 保守像素界，但最终还取了 projected edge-density 的 `max`；教学和统计应区分 `geometric bound` 与 `final priority`。
 2. **源码事实：** `CrackRiskCount` 注释与唯一写入点不一致；当前它等于 validator 发现的 T-junction 次数，而不是“最大深度修复失败”。
 3. **源码事实：** `RefineNode` 没有调用点，容易让读者误以为存在两条运行模式。应删除或明确标注 legacy/reference。
 4. **源码事实：** 三种 ROAM 已共用像素 SSE 和活动 leaf 预算；`DistanceScale` 已从活跃公共设置与报告 schema 移除。历史 benchmark 原始数据仍记录旧字段，不能与当前 `HEAD` 的三角形数量直接比较。
@@ -1184,7 +1188,7 @@ MaxDepthReached = 1
 1. **根据实现推断：** `score == MergeThreshold` 的比较边界可能同帧 merge 后按历史立即 split。
 2. **根据实现推断：** 公式 (1) 已实现，但非 `2^k+1` 输入、源深度超过 20 以及把双线性插值面视为连续真值时，最细层为 0 是否仍构成严格 bound 尚未由属性测试证明。
 3. **根据实现推断：** 关闭 `EnableLocalConstraints` 会允许 T-junction；UI 文案应明确它是正确性机制，而不只是 debug/性能选项。
-4. **根据实现推断：** center-depth SSE 对跨越近远深度范围的大三角形可能低估靠近相机的一侧；需要和逐点投影误差对照。
+4. **根据实现推断：** 公式 (3) 的 CPU 密集采样测试已通过，但 GLSL/HLSL 尚未做 GPU buffer 数值回读对照；跨后端浮点差异是否会让阈值附近候选集合分叉仍需测试。
 5. **根据实现推断：** `baseNeighbor == null/leaf` 时允许单侧 merge 的安全性依赖此前局部约束一直保持拓扑合法；切换约束设置后的持久树组合值得专门测试。
 6. **根据实现推断：** nested tree 缓存仍用 HeightMap 对象地址而不是内容版本判断失效；若原地修改同一对象后再次 Build，旧 thickness 会被复用。renderer 的 `LoadHeightMap` 会 reset 算法，正常切图路径规避了该问题。
 7. **根据实现推断：** AABB 只按 nested thickness 沿世界 Y 扩张；它对离散 bintree terrain 有论文依据，但对任意双线性 patch 尚无形式化或属性测试证明。

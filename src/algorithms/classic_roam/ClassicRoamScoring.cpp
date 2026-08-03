@@ -1,6 +1,8 @@
 #include "algorithms/classic_roam/ClassicRoamMeshBuilder.h"
 
 #include "algorithms/RoamNestedWedgie.h"
+#include "algorithms/RoamScreenProjection.h"
+#include "algorithms/ITerrainLodAlgorithm.h"
 
 #include <algorithm>
 #include <cmath>
@@ -10,7 +12,6 @@ namespace ParallelRoam::Algorithms::ClassicRoam
 {
 namespace
 {
-constexpr float MinimumViewDepth = 0.05F;
 constexpr float ProjectedEdgeWeight = 0.20F;
 } // namespace
 
@@ -196,24 +197,30 @@ float ClassicRoamMeshBuilder::ComputeScreenErrorScore(const ClassicRoamNode& nod
         return 0.0F;
     }
 
-    const glm::vec3 center = (a + b + c) / 3.0F;
     const float worldError = node.GeometricError * _heightScale;
-    const float longestEdgeLength = std::max({
-        glm::length(a - b),
-        glm::length(b - c),
-        glm::length(c - a),
+    const std::array<glm::vec3, 3U> triangle{a, b, c};
+    const std::size_t nearPlaneIndex = static_cast<std::size_t>(TerrainLodFrustumPlane::Near);
+    const float geometricBoundPixels = Roam::ComputeConservativeScreenDistortionPixels({
+        triangle,
+        _viewProjection,
+        _frustumPlanes[nearPlaneIndex],
+        worldError,
+        _drawableWidth,
+        _drawableHeight,
     });
-    const glm::vec4 viewCenter = _view * glm::vec4{center, 1.0F};
-    const float projectionScaleY = std::abs(_projection[1][1]);
-    const float halfDrawableHeight = static_cast<float>(_drawableHeight) * 0.5F;
-    const bool isOrthographic = std::abs(_projection[3][3] - 1.0F) <= std::numeric_limits<float>::epsilon();
-    const float depthScale = isOrthographic ? 1.0F : std::max(std::abs(viewCenter.z), MinimumViewDepth);
-    // 标准透视投影中 Projection[1][1] = cot(FovY / 2)，因此结果单位是像素
-    const float pixelsPerWorldUnit = halfDrawableHeight * projectionScaleY / depthScale;
-    const float heightErrorPixels = worldError * pixelsPerWorldUnit;
-    // edge 项同样使用像素单位，让平坦近景仍保有足够几何密度
-    const float edgeLengthPixels = longestEdgeLength * pixelsPerWorldUnit * ProjectedEdgeWeight;
-    return std::max(heightErrorPixels, edgeLengthPixels);
+    if (geometricBoundPixels == Roam::ArtificialMaximumScreenError)
+    {
+        // 论文要求 wedgie 触碰或穿越 near plane 时跳过公式并给人工最大 priority。
+        return geometricBoundPixels;
+    }
+
+    // edge-density 是项目额外质量项，不属于论文 geometric distortion bound。
+    const float edgeDensityPixels = Roam::ComputeProjectedLongestEdgePixels(
+        triangle,
+        _viewProjection,
+        _drawableWidth,
+        _drawableHeight) * ProjectedEdgeWeight;
+    return std::max(geometricBoundPixels, edgeDensityPixels);
 }
 
 bool ClassicRoamMeshBuilder::IsNodeVisible(

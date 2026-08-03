@@ -49,16 +49,15 @@ layout(binding = 0) uniform sampler2D uHeightMap;
 uniform uint uActiveLeafCount;
 uniform float uTerrainSize;
 uniform float uHeightScale;
-uniform mat4 uView;
+uniform mat4 uViewProjection;
 uniform vec4 uFrustumPlanes[6];
-uniform float uProjectionScaleY;
+uniform uint uDrawableWidth;
 uniform uint uDrawableHeight;
-uniform uint uIsOrthographic;
 
-// 与 CPU ROAM 评分保持相同的近裁深度下限
-const float minimumViewDepth = 0.05;
 // 长边项补偿低高度差平坦区域的屏幕覆盖
 const float projectedEdgeWeight = 0.20;
+const float artificialMaximumScreenError = 3.402823466e+38;
+const float projectionEpsilon = 1.0e-7;
 
 float sampleHeight(vec2 uv)
 {
@@ -112,6 +111,84 @@ bool isNodeVisible(NodeRecord node, vec3 a, vec3 b, vec3 c)
     return true;
 }
 
+bool wedgieIntersectsNearPlane(float worldError, vec3 a, vec3 b, vec3 c)
+{
+    // TerrainLodFrustumPlane::Near 的固定索引为 4；平面法线朝向视锥内部。
+    vec4 nearPlane = uFrustumPlanes[4];
+    // 世界 thickness 沿 Y 轴，投影到 near-plane normal 后得到有符号距离半径。
+    float thicknessRadius = abs(nearPlane.y) * worldError;
+    // 平面距离和 thickness 都是仿射量，三角形内部最小值必在角点取得。
+    return dot(nearPlane.xyz, a) + nearPlane.w <= thicknessRadius ||
+        dot(nearPlane.xyz, b) + nearPlane.w <= thicknessRadius ||
+        dot(nearPlane.xyz, c) + nearPlane.w <= thicknessRadius;
+}
+
+float conservativeScreenDistortion(float worldError, vec3 a, vec3 b, vec3 c)
+{
+    if (wedgieIntersectsNearPlane(worldError, a, b, c))
+    {
+        // 论文要求 wedgie 触碰或穿越 near plane 时跳过公式并设人工最大优先级。
+        return artificialMaximumScreenError;
+    }
+
+    // direction 的 w=0，确保平移不影响论文 camera-space thickness vector。
+    vec4 thicknessClip = uViewProjection * vec4(0.0, worldError, 0.0, 0.0);
+    vec3 vertices[3] = vec3[3](a, b, c);
+    // NDC [-1,1] 的半 drawable 尺度把公式结果转换成像素。
+    float halfWidth = float(max(uDrawableWidth, 1u)) * 0.5;
+    float halfHeight = float(max(uDrawableHeight, 1u)) * 0.5;
+    float minimumDenominator = artificialMaximumScreenError;
+    float maximumNumeratorSquared = 0.0;
+    for (uint vertexIndex = 0u; vertexIndex < 3u; ++vertexIndex)
+    {
+        vec4 clip = uViewProjection * vec4(vertices[vertexIndex], 1.0);
+        // clip.w 与 thicknessClip.w 分别对应公式 (3) 的 r 与 c。
+        float denominator = clip.w * clip.w - thicknessClip.w * thicknessClip.w;
+        if (isnan(denominator) || isinf(denominator) || denominator <= projectionEpsilon)
+        {
+            return artificialMaximumScreenError;
+        }
+        // 分子分别乘 X/Y 像素尺度，支持非方形 drawable 和任意 aspect。
+        float horizontal = halfWidth * (thicknessClip.x * clip.w - thicknessClip.w * clip.x);
+        float vertical = halfHeight * (thicknessClip.y * clip.w - thicknessClip.w * clip.y);
+        float numeratorSquared = horizontal * horizontal + vertical * vertical;
+        if (isnan(numeratorSquared) || isinf(numeratorSquared))
+        {
+            return artificialMaximumScreenError;
+        }
+        // 最大分子和最小分母允许来自不同角点，这是保守性的关键。
+        minimumDenominator = min(minimumDenominator, denominator);
+        maximumNumeratorSquared = max(maximumNumeratorSquared, numeratorSquared);
+    }
+    return 2.0 * sqrt(maximumNumeratorSquared) / minimumDenominator;
+}
+
+float projectedLongestEdge(vec3 a, vec3 b, vec3 c)
+{
+    // 透视变换保持直线，边的屏幕长度可由两个投影端点直接得到。
+    vec3 vertices[3] = vec3[3](a, b, c);
+    vec2 screenPositions[3];
+    vec2 halfDrawable = vec2(
+        float(max(uDrawableWidth, 1u)) * 0.5,
+        float(max(uDrawableHeight, 1u)) * 0.5);
+    for (uint vertexIndex = 0u; vertexIndex < 3u; ++vertexIndex)
+    {
+        vec4 clip = uViewProjection * vec4(vertices[vertexIndex], 1.0);
+        if (isnan(clip.w) || isinf(clip.w) || abs(clip.w) <= projectionEpsilon)
+        {
+            return artificialMaximumScreenError;
+        }
+        screenPositions[vertexIndex] = halfDrawable * clip.xy / clip.w;
+        if (any(isnan(screenPositions[vertexIndex])) || any(isinf(screenPositions[vertexIndex])))
+        {
+            return artificialMaximumScreenError;
+        }
+    }
+    return max(
+        max(length(screenPositions[0] - screenPositions[1]), length(screenPositions[1] - screenPositions[2])),
+        length(screenPositions[2] - screenPositions[0]));
+}
+
 float scoreNode(uint nodeIndex)
 {
     // GPU 节点直接携带 CPU 按论文公式 (1) 传播后的 nested wedgie thickness。
@@ -130,19 +207,16 @@ float scoreNode(uint nodeIndex)
         return 0.0;
     }
 
-    vec3 center = (a + b + c) / 3.0;
     float worldError = node.domainCAndErrors.z * uHeightScale;
-    // 平坦区域仍由最长边的投影覆盖率驱动继续细分。
-    float longestEdgeLength = max(max(length(a - b), length(b - c)), length(c - a));
-    // CPU 与 GPU 都以三角形中心的 view-space Z 近似整片深度。
-    vec4 viewCenter = uView * vec4(center, 1.0);
-    // 正交投影的像素密度与深度无关，透视投影才除以深度。
-    float depthScale = uIsOrthographic != 0u ? 1.0 : max(abs(viewCenter.z), minimumViewDepth);
-    // projectionScaleY 已包含 FOV；drawable height 把 NDC 尺度换算为像素。
-    float pixelsPerWorldUnit = float(max(uDrawableHeight, 1u)) * 0.5 * abs(uProjectionScaleY) / depthScale;
-    float heightErrorPixels = worldError * pixelsPerWorldUnit;
-    float edgeLengthPixels = longestEdgeLength * pixelsPerWorldUnit * projectedEdgeWeight;
-    return max(heightErrorPixels, edgeLengthPixels);
+    // 公式 (3) 分别取三个角点上的最小分母和最大分子，得到整片 wedgie 的保守像素上界。
+    float geometricBoundPixels = conservativeScreenDistortion(worldError, a, b, c);
+    if (geometricBoundPixels == artificialMaximumScreenError)
+    {
+        return geometricBoundPixels;
+    }
+    // edge-density 继续作为项目额外项，但不再复用中心深度近似。
+    float edgeDensityPixels = projectedLongestEdge(a, b, c) * projectedEdgeWeight;
+    return max(geometricBoundPixels, edgeDensityPixels);
 }
 
 void main()
@@ -189,15 +263,14 @@ void RunGpuRoamErrorEvaluationPass(const GpuRoamErrorEvaluationPassInput& input)
     SetGpuRoamProgramUInt(input.ProgramId, "uActiveLeafCount", static_cast<std::uint32_t>(input.ActiveLeafCount));
     SetGpuRoamProgramFloat(input.ProgramId, "uTerrainSize", input.TerrainSize);
     SetGpuRoamProgramFloat(input.ProgramId, "uHeightScale", input.HeightScale);
-    SetGpuRoamProgramMat4(input.ProgramId, "uView", input.View);
+    SetGpuRoamProgramMat4(input.ProgramId, "uViewProjection", input.ViewProjection);
     SetGpuRoamProgramVec4Array(
         input.ProgramId,
         "uFrustumPlanes",
         input.FrustumPlanes.data(),
         input.FrustumPlanes.size());
-    SetGpuRoamProgramFloat(input.ProgramId, "uProjectionScaleY", input.ProjectionScaleY);
+    SetGpuRoamProgramUInt(input.ProgramId, "uDrawableWidth", input.DrawableWidth);
     SetGpuRoamProgramUInt(input.ProgramId, "uDrawableHeight", input.DrawableHeight);
-    SetGpuRoamProgramUInt(input.ProgramId, "uIsOrthographic", input.IsOrthographic ? 1U : 0U);
     // dispatch 只覆盖活动 leaf 数量，不按完整节点池容量浪费工作
     glDispatchCompute(GpuRoamWorkGroupCount(input.ActiveLeafCount), 1U, 1U);
     // candidate pass 随后读取 screenErrors，SSBO barrier 建立写后读顺序

@@ -104,9 +104,9 @@ Terrain::TerrainMeshData DataOrientedRoamMeshBuilder::BuildInternal(
     state.Settings.MergeThreshold = std::min(state.Settings.MergeThreshold, state.Settings.SplitThreshold);
     state.Stats = {};
     state.CurrentSplitPaths.clear();
-    state.View = view.View;
-    state.Projection = view.Projection;
+    state.ViewProjection = view.ViewProjection;
     state.FrustumPlanes = view.FrustumPlanes;
+    state.DrawableWidth = std::max(view.DrawableWidth, 1U);
     state.DrawableHeight = std::max(view.DrawableHeight, 1U);
     state.TerrainSize = terrainSize;
     state.HeightScale = heightScale;

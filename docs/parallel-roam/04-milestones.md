@@ -162,7 +162,7 @@ assets/textures/Tex_Terrain_Debug_Diffuse.ppm
 - `ClassicRoamMeshBuilder` 使用两个根三角形、裸指针 parent/child/neighbor 和持久化 binary triangle tree；
 - 默认防裂缝路径是局部 `baseNeighbor` forced split；全局 validator 只检查并计数，不参与修复；
 - 两个根各有一棵 nested wedgie tree，按二叉堆索引预计算到 `max(MaxDepth, sourceDepth)`，最细层为 0，父值严格执行论文公式 (1) `max(left,right)+abs(base midpoint displacement)`；
-- `ComputeScreenErrorScore` 使用 View、Projection、drawable height 和 view-space depth 输出像素误差，FOV 与分辨率会影响 LOD；
+- `ComputeScreenErrorScore` 使用论文公式 (2)/(3) 对 nested thickness 做角点保守投影；完整 `ViewProjection`、drawable width/height 和 near-plane 特例共同决定像素 priority；
 - 六个 inward frustum planes 用于方差扩张 AABB 测试；视锥外节点不主动 split，但仍允许 forced split 维持邻接约束；
 - split 使用像素误差最大堆，并受默认 20,000 活动 leaf 硬预算限制；forced split 为调用链预留预算 token；
 - merge 使用动态最小堆，成功后立即检查两侧 parent，可在一次 Build 内从深层向上级联；
@@ -201,7 +201,7 @@ assets/textures/Tex_Terrain_Debug_Diffuse.ppm
 2I：误差队列与 split 策略（已完成）
 
 - Classic/DOD 共用 `RoamNestedWedgie.h`，按论文公式 (1) 预计算累计 thickness；
-- 以像素为单位的 screen-space error 纳入 FOV、drawable height 和 view depth；
+- 以像素为单位的 geometric bound 纳入完整投影、drawable width/height 和角点齐次分母极值；near-plane crossing 使用人工最大 priority；
 - max heap 管理 split candidate，六平面视锥测试抑制不可见区域的主动细分；
 - 最大深度、双阈值和活动三角形硬预算共同限制细分规模；
 - 记录候选峰值、实际/forced split、普通拒绝和预算拒绝。
@@ -239,7 +239,7 @@ assets/textures/Tex_Terrain_Debug_Diffuse.ppm
 ### 当前实现状态（2026-08-03）
 
 - 两个根分别预计算 heap-indexed nested wedgie tree，节点用 `VarianceTreeIndex/VarianceIndex` 从 SoA 缓存公式 (1) thickness；预计算深度覆盖源分辨率且上限为 20；
-- `ComputeScreenErrorScore` 与 Classic 同样消费 View、Projection、drawable height 和六个 inward frustum planes，输出像素误差并抑制视锥外主动 split；
+- `ComputeScreenErrorScore` 与 Classic 共用公式 (2)/(3) CPU helper，消费完整 `ViewProjection`、drawable width/height 和六个 inward frustum planes，输出保守像素 bound 并抑制视锥外主动 split；
 - `TriangleBudget` 默认 20,000，活动 leaf 每次 split 原子领取一个 token；并行 interior commit 与 forced split closure 共用同一硬上限；
 - merge 保留安全 interior chunk 并行预提交，成功后把新满足条件的 parent 放回动态最小堆，可在同一 Build 向上级联；
 - UI 对 Classic、DOD 和 GPU ROAM-like 显示同一组像素 split/merge 阈值和预算；renderer 在 FOV、朝向或 drawable 尺寸变化时触发三种 ROAM 重建；

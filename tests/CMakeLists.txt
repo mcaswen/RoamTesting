@@ -80,6 +80,27 @@ if(NOT TARGET ParallelROAM::GLM)
 endif()
 
 add_executable(
+    parallel_roam_screen_projection_tests
+    RoamScreenProjectionTests.cpp
+    ../src/algorithms/TerrainLodView.cpp
+)
+
+target_include_directories(
+    parallel_roam_screen_projection_tests
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+)
+
+target_link_libraries(
+    parallel_roam_screen_projection_tests
+    PRIVATE
+        parallel_roam_project_options
+        parallel_roam_project_warnings
+        ParallelROAM::GLM
+)
+
+add_test(NAME roam_screen_projection COMMAND parallel_roam_screen_projection_tests)
+
+add_executable(
     parallel_roam_terrain_lod_view_tests
     TerrainLodViewTests.cpp
     ../src/algorithms/TerrainLodView.cpp
