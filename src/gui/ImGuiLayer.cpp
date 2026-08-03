@@ -364,6 +364,10 @@ void DrawDetailedPerformanceMetrics(const DebugOverlayData& data)
         DrawMetricSize("持久 Qm", data.RoamPersistentMergeQueueSize);
         DrawMetricSize("队列交换", data.RoamQueueCrossoverCount);
         DrawMetricSize("队列局部更新", data.RoamQueueMembershipUpdateCount);
+        DrawMetricSize("Mesh 全量重建", data.RoamCpuMeshFullRebuildCount);
+        DrawMetricSize("Mesh 更新三角形", data.RoamCpuMeshUpdatedTriangleCount);
+        DrawMetricSize("Mesh 复用三角形", data.RoamCpuMeshReusedTriangleCount);
+        DrawMetricSize("Mesh 更新区间", data.RoamCpuMeshDirtyRangeCount);
     }
     DrawMetricSize("Split 拒绝", data.RoamRejectedSplitCount);
     DrawMetricSize("预算拒绝", data.RoamBudgetRejectedSplitCount);

@@ -14,6 +14,7 @@
 6. **源码事实：** 当前 priority 只取离线几何误差 `q->e`，不读取相机、投影、屏幕尺寸或视锥。`QSTATE_OUT` 和 `setfrustum()` 只留下接口痕迹，没有可执行实现。
 7. **疑似源码缺陷：** `compute_error` 写入 `e[bi] = max(childError) + localError`，却返回 `e1` 而不是 `e[bi]`。由于基例返回 0，可由递归归纳证明所有返回值均为 0，实际父节点不会得到深层误差传播。
 8. **工程结论：** 这份代码非常适合确认论文式 bintree、bucket queue 和 diamond split 的原始数据结构；但不能直接当作“论文完整 ROAM”的可执行性能基线，因为 merge、视点相关评分、视锥、帧间增量优化和 incremental triangle stripping 在此快照中都未完成。
+9. **项目口径：** 当前项目使用该源码和论文校准误差公式、拓扑关系与阶段职责，不以逐格式复刻或恢复完整最优性证明为目标。项目的持久双队列与增量 indexed Mesh 是现代工程实现，应按各阶段的真实复杂度和拓扑验证结果评价，不能借参考源码名称扩张为论文全套保证。
 
 本文使用以下标签：
 
@@ -633,17 +634,18 @@ allocate children in 256-record blocks as split progresses
 | 跨帧拓扑 | 无，每次 optimize flush | 持久 child/topology 与 `Q_s/Q_m` membership | 持久 index topology |
 | 预算 | `ntri >= ntrimax` 后停止，可超目标 | active leaf 硬上限 + forced token + merge-first crossover | 同硬上限，原子 token |
 | 视锥/FOV/屏幕 | 未进入评分 | 公式 (2)/(3) 角点保守像素 bound + 可见性 | 同 Classic；shader 同口径 |
-| 输出 | OpenGL immediate mode，每 leaf 3 顶点 | 每帧 CPU Mesh 全量 emit | CPU Mesh 或 GPU snapshot，直接读 `ActiveLeafNodes` |
+| 输出 | OpenGL immediate mode，每 leaf 3 顶点 | 持久 dense slots + dirty ranges 的增量 indexed CPU Mesh | CPU Mesh 或 GPU snapshot，直接读 `ActiveLeafNodes` |
 | 并行 | 串行 | 串行 baseline | 批量扫描及安全 chunk 并行 |
 | 验证/统计 | 无 topology validator，只有 `ntri` 和 debug print | topology issue 与阶段统计 | 独立 root traversal 交叉验证活动索引 |
 
-当前项目的 Classic 不是对 `Qscene` 的逐行移植。它保留“对象式裸指针 bintree + forced split”的经典工程角色，同时补上了这份参考快照未完成的论文公式 (1) nested wedgie 传播、公式 (2)/(3) conservative pixel bound、frustum、动态 merge、持久 dual queues、hard-budget crossover 和验证。DOD 再把相同质量语义改成 SoA/index、活动索引和多线程阶段。
+当前项目的 Classic 不是对 `Qscene` 的逐行移植。它保留“对象式裸指针 bintree + forced split”的经典工程角色，同时补上了这份参考快照未完成的论文公式 (1) nested wedgie 传播、公式 (2)/(3) conservative pixel bound、frustum、动态 merge、持久 dual queues、hard-budget crossover、增量 indexed Mesh 和验证。DOD 再把相同质量语义改成 SoA/index、活动索引和多线程阶段。
 
 上述工程差异可直接定位到当前项目源码：
 
 - [`Roam::BuildNestedWedgieSubtree`](../../src/algorithms/RoamNestedWedgie.h#L60) 使用 `max(leftThickness,rightThickness)+abs(baseMidpointDisplacement)` 把论文公式 (1) 的累计 thickness 传播到父节点；
 - [`Roam::ComputeConservativeScreenDistortionPixels`](../../src/algorithms/RoamScreenProjection.h) 使用完整 `ViewProjection`、drawable width/height 和三个角点的公式 (3) 分子/分母极值，并处理 near-plane crossing；[`ClassicRoamMeshBuilder::ComputeScreenErrorScore`](../../src/algorithms/classic_roam/ClassicRoamScoring.cpp) 先执行 frustum 可见性判断，再组合 geometric bound 与独立 edge-density；
 - [`ClassicRoamMeshBuilder::OptimizeWithPersistentDualQueues`](../../src/algorithms/classic_roam/ClassicRoamQueues.cpp) 跨帧维护 `Q_s/Q_m`，并在 hard budget 下执行 merge-first crossover；
+- [`ClassicRoamMeshBuilder::ApplyIncrementalMeshUpdates`](../../src/algorithms/classic_roam/ClassicRoamMeshEmit.cpp) 按 split/merge edit 维护 dense slots，并将 dirty ranges 交给 OpenGL/D3D12 renderer 部分上传；
 - [`DataOrientedRoamState::ActiveLeafNodes`](../../src/algorithms/data_oriented_roam/DataOrientedRoamState.h#L215) 以连续索引数组维护活动叶；
 - [`CollectSplitCandidates`](../../src/algorithms/data_oriented_roam/DataOrientedRoamCandidateMarking.cpp#L110) 在同一活动叶扫描中完成可见性/误差评估和 split 候选标记；
 - [`DataOrientedRoamMeshBuilder::BuildInternal`](../../src/algorithms/data_oriented_roam/DataOrientedRoamMeshBuilder.cpp#L76) 在拓扑稳定后直接复用 `ActiveLeafNodes` 作为输出视图。

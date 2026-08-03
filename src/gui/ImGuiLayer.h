@@ -111,6 +111,10 @@ struct DebugOverlayData
     std::size_t RoamPersistentMergeQueueSize{0};
     std::size_t RoamQueueCrossoverCount{0};
     std::size_t RoamQueueMembershipUpdateCount{0};
+    std::size_t RoamCpuMeshFullRebuildCount{0};
+    std::size_t RoamCpuMeshUpdatedTriangleCount{0};
+    std::size_t RoamCpuMeshReusedTriangleCount{0};
+    std::size_t RoamCpuMeshDirtyRangeCount{0};
     std::size_t RoamRejectedSplitCount{0};
     std::size_t RoamBudgetRejectedSplitCount{0};
     std::size_t RoamRejectedMergeCount{0};

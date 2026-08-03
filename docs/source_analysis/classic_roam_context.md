@@ -11,7 +11,7 @@
 
 ## 1. 一页概览
 
-**源码事实：** 当前 `Classic CPU ROAM` 是一个单线程、对象式、持久化二叉三角树（binary triangle tree，简称 bintree）实现。它通过 `ClassicRoamTerrainLodAlgorithm` 适配项目统一的 `ITerrainLodAlgorithm` 接口，实际拓扑由 `ClassicRoamMeshBuilder` 持有。初始化时为两个根预计算论文公式 (1) 的 nested wedgie thickness tree，并建立持久 `Q_s/Q_m`；普通 Build 只刷新现有队列成员的相机相关 priority，在统一 crossover 循环中局部执行 merge、split 和 forced split，最后完整生成 CPU 顶点/索引数组。
+**源码事实：** 当前 `Classic CPU ROAM` 是一个单线程、对象式、持久化二叉三角树（binary triangle tree，简称 bintree）实现。它通过 `ClassicRoamTerrainLodAlgorithm` 适配项目统一的 `ITerrainLodAlgorithm` 接口，实际拓扑由 `ClassicRoamMeshBuilder` 持有。初始化时为两个根预计算论文公式 (1) 的 nested wedgie thickness tree，并建立持久 `Q_s/Q_m`；普通 Build 刷新现有队列成员的相机相关 priority，在统一 crossover 循环中局部执行 merge、split 和 forced split，再把拓扑 edit 增量应用到持久 CPU indexed mesh，只重写受影响的 dense triangle slots。
 
 证据：
 
@@ -29,7 +29,7 @@
 | 细分 | 持久 `Q_s` 保存全部 active leaves；forced split 预留预算 token |
 | 合并 | 持久 `Q_m` 保存 canonical mergeable diamonds；与 `Q_s` 在同一循环 crossover |
 | 裂缝约束 | 默认启用局部 `baseNeighbor` 传播；validator 只检查、不修复 |
-| Mesh | 每个活动叶输出 3 个独立顶点和 3 个索引；无顶点共享/去重 |
+| Mesh | 每个活动叶占一个稳定 dense slot，每槽 3 个独立顶点和 3 个索引；split/merge 只重写受影响槽位，无顶点共享/去重 |
 | 并行 | Classic 核心没有并行 pass，统一统计固定报告 `CpuWorkerCount = 1` |
 | GPU 工作 | 无；CPU Mesh 之后由 OpenGL 或 D3D12 renderer 上传和绘制 |
 | 视锥感知 | 6 个 inward plane 与 thickness 扩张世界 AABB 相交；视锥外 score 为 0 |
@@ -67,8 +67,8 @@ flowchart TD
     C --> D[CreateTerrainLodAlgorithm]
     D --> E[ClassicRoamTerrainLodAlgorithm]
     E --> F[ClassicRoamMeshBuilder]
-    F --> G[TerrainLodRenderPacket::CpuMesh]
-    G --> H[TerrainRenderer::UploadMesh]
+    F --> G[TerrainLodRenderPacket::BorrowedCpuMesh + dirty ranges]
+    G --> H[TerrainRenderer::UploadMeshData]
     H --> I[TerrainRenderer::Render]
 ```
 
@@ -96,7 +96,7 @@ flowchart TD
 
 ### 2.3 最终向渲染层提供什么
 
-**源码事实：** Classic 直接生成 `Terrain::TerrainMeshData`，adapter 把它移动到 `TerrainLodRenderPacket::CpuMesh`，设置 `Mode = CpuMesh`、`ActiveTriangleCount` 和 `IndexCount`。它不返回 GPU buffer ID、原生 D3D12 资源或 indirect args。
+**源码事实：** Classic 直接维护 `Terrain::TerrainMeshData`。adapter 不再复制或移动整张 Mesh，而是通过 `TerrainLodRenderPacket::BorrowedCpuMesh` 借用 builder 的持久数据，声明生命周期到下一次 Build/Reset，并附带 `CpuMeshGeneration`、`CpuMeshRequiresFullUpload` 和合并后的 `CpuMeshUpdateRanges`。它不返回 GPU buffer ID、原生 D3D12 资源或 indirect args。
 
 证据：
 
@@ -115,7 +115,7 @@ flowchart TD
 | `ClassicRoamState.cpp` | `AddNode`、`ResetTopology`、leaf/path/stats 收集 | 持久状态、根节点、活动集合 |
 | `ClassicRoamScoring.cpp` | split 判断、base midpoint displacement、相机分数、世界坐标、法线 | LOD 评分与顶点派生属性 |
 | `ClassicRoamTopology.cpp` | split/merge 队列、forced split、邻接重连 | 活动拓扑维护 |
-| `ClassicRoamMeshEmit.cpp` | `EmitLeafTriangles`、`EmitDomainTriangle` | 活动叶到 CPU Mesh |
+| `ClassicRoamMeshEmit.cpp` | `ApplyIncrementalMeshUpdates`、`ReplaceMeshLeafWithChildren`、`ReplaceMeshChildrenWithLeaf`、`WriteMeshLeaf` | 持久 Mesh 槽位、拓扑 edit replay 和 dirty range 生成 |
 | `ClassicRoamValidation.cpp` | `ValidateTopology` | 可选 T-junction、邻接和 parent/child 检查 |
 
 ### 3.2 目录外直接依赖
@@ -163,7 +163,7 @@ flowchart TD
     P --> Q[初始化 Qs: 两个 roots; Qm: 空]
     Q --> R[刷新持久队列 priority]
     R --> S[dual-queue crossover 与 forced split]
-    S --> T[收集叶并生成初始 CPU Mesh]
+    S --> T[应用 split/merge edit 并初始化/更新 CPU Mesh 槽位]
 ```
 
 证据：
@@ -214,9 +214,9 @@ rootB = A(1,0), B(0,1), C(1,1)
 | 节点对象和 child 指针 | 首次走到该深度 | 跨 Build 复用 | 否 |
 | 相机相关 score/视锥测试 | 否 | 刷新 `Q_s/Q_m` 全部现有成员 | 只有触发 Build 才算 |
 | merge/split 活动状态 | 初始化粗拓扑 | 更新 | 只有触发 Build 才更新 |
-| 活动叶快照 | 否 | 最终 emit 前收集一次；预算直接读取 `Q_s.size()` | 否 |
-| CPU Mesh | 否 | 完整重建 | 未触发 Build 时复用 |
-| GPU 上传 | 否 | CPU Mesh 成功后 | D3D12 还会按 frame slot 懒同步 |
+| 活动叶 dense view | topology reset 时由两个 root 初始化 | split/merge 同步维护 `_meshSlotOwners` | 否 |
+| CPU Mesh | topology reset 时全量初始化 | 只重写 dirty slots；无变化时完整复用 | 未触发 Build 时复用 |
+| GPU 上传 | 首次/容量增长时全量 | OpenGL 上传 dirty ranges；D3D12 为每个 frame slot 延迟消费累计 ranges | 否 |
 
 ### 4.5 topology reset 与 nested tree 重建条件
 
@@ -254,14 +254,17 @@ ClassicRoamMeshBuilder::Build(heightMap, scales, fullView, settings)
         max(Q_s) > SplitThreshold 且有 token 时提交 forced-split closure
         预算不足且 max(Q_s) > min(Q_m) 时先 merge 再重试 split
         split/merge 只局部更新两个 indexed heaps
-    可选 ValidateTopology()
-    CollectLeafNodes(activeLeaves)
-    EmitLeafTriangles(meshData, activeLeaves)
-    AccumulateLeafStats(...)
+    ApplyIncrementalMeshUpdates()
+        清除上次 Rebuilt 调试属性
+        按提交顺序 replay split/merge mesh edits
+    FinalizeIncrementalMeshUpdate()
+        合并 dirty slots 为 update ranges
+    可选 ValidateTopology()，同时交叉检查 leaf 与 mesh slot owners
+    AccumulateLeafStats(meshData, meshSlotOwners)
     CollectActiveSplitPaths()
     previousSplitPaths = currentSplitPaths
     return meshData
-映射 TerrainLodStats；写入 CpuMesh/ActiveTriangleCount/IndexCount
+映射 TerrainLodStats；借用持久 CpuMesh 并发布 update ranges/generation
 ```
 
 证据：文件：`src/algorithms/classic_roam/ClassicRoamTerrainLodAlgorithm.cpp`；符号：`BuildRenderData`；代码范围：第 30-68 行。文件：`ClassicRoamMeshBuilder.cpp`；符号：`Build`；代码范围：第 21-128 行。
@@ -272,8 +275,8 @@ ClassicRoamMeshBuilder::Build(heightMap, scales, fullView, settings)
 2. **Priority refresh。** `Q_s` 已保存全部 active leaves，`Q_m` 已保存全部 canonical mergeable diamonds；本阶段只更新它们的 view-dependent score 并原地 heapify，不再递归发现 membership。
 3. **统一 dual-queue 优化。** `min(Q_m)` 低于 merge threshold 时先回收；`max(Q_s)` 高于 split threshold 时尝试 forced-split closure。预算满载或 closure token 不足时，只有 `max(Q_s) > min(Q_m)` 才先 merge 低损失 diamond，再在下一轮重试高收益 split。
 4. **局部队列维护。** 每次 split 删除 parent `Q_s` 项并加入 children；merge 执行反向操作。拓扑变更前失效局部 `Q_m` association，完成后只重新检查 node/parent/children/邻接邻域。
-5. **可选验证。** 用量化共线边检查 T-junction，再验证 active neighbor、共享边和 parent/child/root 不变量。validator 只报告，不修复。
-6. **Mesh emit。** 从两个 root 收集唯一活动 leaf；每叶追加三个独立顶点和三个索引。视锥只影响细分，视锥外粗 leaf 仍会输出并由后端裁剪。
+5. **增量 Mesh emit。** split 把 parent slot 改写为 left child，并为 right child 追加一槽；merge 用一个 child slot 写 parent，删除另一槽，必要时把末槽搬入空洞。只有这些槽及上一 Build 的调试高亮过渡槽会重采样顶点。
+6. **可选验证。** 用量化共线边检查 T-junction，再验证 active neighbor、共享边和 parent/child/root 不变量；同时要求每个 active leaf 恰好拥有一个合法 `MeshSlot`，slot owner 与 index 范围一致。validator 只报告，不修复。
 7. **统计/迟滞提交。** 统计节点池、leaf 分类、预算拒绝和各阶段时间；最终仍 split 的 `PathId` 成为下一 Build 的迟滞历史。
 
 证据：Merge/Split：`src/algorithms/classic_roam/ClassicRoamTopology.cpp` 第 53-235、237-531 行；评分：`ClassicRoamScoring.cpp` 第 214-273 行；emit/stats：`ClassicRoamMeshEmit.cpp` 第 7-68 行、`ClassicRoamState.cpp` 第 115-194 行。
@@ -296,9 +299,10 @@ ClassicRoamMeshBuilder::Build(heightMap, scales, fullView, settings)
 | `CanMergeNode` / `MergeNodeOrDiamond` | dual queue | internal node -> bool | 一侧或 diamond 状态、局部 queues | 否 | 是 |
 | `ComputeBaseMidpointDisplacement` | nested wedgie build | domain -> normalized signed displacement | 无 | 否 | 仅误差树构建 |
 | `ComputeScreenErrorScore` / `IsNodeVisible` | merge/split | node/view/frustum -> pixels | 无 | 否 | 是且重复 |
-| `CollectLeafNodesFrom` | budget/validate/emit | node -> vector append | 输出 vector | 是 | 是 |
+| `CollectLeafNodesFrom` | validator | node -> vector append | 验证快照 | 是 | 仅验证开启时 |
 | `ValidateTopology` | `Build` | 当前活动树 | validation stats | leaf 收集递归 | 可选 |
-| `EmitDomainTriangle` | emit | leaf -> mesh append | mesh vectors | 否 | 是 |
+| `ApplyIncrementalMeshUpdates` | `Build` / slot replace、write | topology edit log -> persistent mesh | mesh/slot owners/dirty slots | 否 | 是 |
+| `WriteMeshLeaf` | incremental emit | leaf + slot -> 3 vertices/indices | 固定 mesh 区间 | 否 | 仅 dirty slot |
 
 **源码事实：** 旧 `RefineNode`、`RefineWithSplitQueue` 和 `MergeWithDiamondQueue` 已移除；所有 topology 调度统一从 `OptimizeWithPersistentDualQueues` 进入。
 
@@ -331,6 +335,7 @@ ClassicRoamMeshBuilder::Build(heightMap, scales, fullView, settings)
 | `SplitQueueIndex` | 当前 leaf 在持久 `Q_s` indexed heap 中的位置 | split/merge/heap swap |
 | `MergeQueueIndex` | canonical parent 在持久 `Q_m` 中的位置 | 局部 diamond 更新 |
 | `MergeQueueRepresentative/Partner` | diamond 两侧共享的唯一 `Q_m` identity | 局部 diamond 更新 |
+| `MeshSlot` | active leaf 在持久 dense CPU Mesh 中拥有的三角形槽；非 active leaf 为无效值 | 初始化、split/merge 和末槽压缩更新 |
 
 证据：文件：`src/algorithms/classic_roam/ClassicRoamMeshBuilder.h`；符号：`ClassicRoamNode`；代码范围：第 175-211 行。
 
@@ -349,7 +354,10 @@ ClassicRoamMeshBuilder::Build(heightMap, scales, fullView, settings)
 | `_stats` | 最近一次 Build 统计 | 每次 Build 清零后重算 |
 | `_nodes` | `unique_ptr` 所有权池 | reset 前持续增长，merge 不删除 |
 | `_previousSplitPaths/_currentSplitPaths` | 最终 active internal path，用于迟滞 | Build 末尾轮换 |
-| `_activeLeaves` | 最终 emit/stats 的临时快照 | 每次 Build 最终收集一次 |
+| `_meshData/_meshSlotOwners` | 持久 CPU Mesh 与 dense active-leaf view | reset 初始化；split/merge 增量维护 |
+| `_meshTopologyEdits` | 本次 Build 按 topology commit 顺序记录的 split/merge | Build 开头清空，emit 阶段 replay |
+| `_dirtyMeshSlots/_meshUpdateRanges` | 被重写槽及其合并区间 | 每次 Build 重建；交给 renderer 部分上传 |
+| `_debugTransitionLeaves` | 上一 Build 的 Rebuilt leaf，用于下一次恢复普通调试色 | 跨一个 Build 保留 |
 | `_splitQueue` | 持久 `Q_s` indexed max-heap，保存全部 active leaves | reset 初始化；split/merge 局部更新 |
 | `_mergeQueue` | 持久 `Q_m` indexed min-heap，保存 canonical diamonds | split/merge 局部更新 |
 | `_rootA/_rootB` | 两棵活动树入口 | reset 创建 |
@@ -411,7 +419,7 @@ RightChild = {B, C, M}
 
 **源码事实：** `TriangleDomain` 的存储次序不是最终 culling 契约。emit 后用世界空间 `cross(edge0,edge1).y` 检查朝向；负 Y 时交换后两个索引，保证最终面朝正 Y。
 
-证据：文件：`src/algorithms/classic_roam/ClassicRoamMeshEmit.cpp`；符号：`EmitDomainTriangle`；代码范围：第 49-67 行。
+证据：文件：`src/algorithms/classic_roam/ClassicRoamMeshEmit.cpp`；符号：`WriteMeshLeaf`。
 
 **根据实现推断：** 在 builder 的 `MaxDepth <= 20` 和 dyadic midpoint 下，float 精度足以区分这些 UV 端点；源码仍没有显式面积检查。退化 HeightMap 不会退化 XZ 三角形，但极端非法尺度仍需输入契约或测试约束。
 
@@ -647,7 +655,7 @@ split 后关键赋值：
 
 ### 11.3 持久 `Q_m` 与级联 merge
 
-**源码事实：** 拓扑是增量维护，不是每次清树；Mesh 却在每次 Classic Build 中完整重建。
+**源码事实：** 拓扑与 Mesh 都跨 Build 增量维护。split/merge 在提交拓扑后记录 edit，Mesh 阶段按相同顺序 replay；只有 topology reset、首帧或 GPU buffer 容量增长才要求全量上传。
 
 **源码事实：** `Q_m` membership 与拓扑一起跨帧保留，不再从活动树扫描构建。每次 `MergeNodeOrDiamond` 成功后，局部邻域刷新会让刚满足条件的 ancestor diamond 立即进入 `Q_m`，因此深层回收可在同一 Build 向上级联。
 
@@ -665,18 +673,18 @@ split 后关键赋值：
 
 ```mermaid
 flowchart LR
-    A[rootA/rootB 活动 bintree] --> B[CollectLeafNodesFrom]
-    B --> C[vector ClassicRoamNode* activeLeaves]
-    C --> D[EmitLeafTriangles]
-    D --> E[TerrainMeshData Vertices/Indices]
-    E --> F[TerrainLodRenderPacket CpuMesh]
-    F --> G[TerrainRenderer UploadMesh]
+    A[SplitNode/MergeSingleNode] --> B[MeshTopologyEdit log]
+    B --> C[ApplyIncrementalMeshUpdates]
+    C --> D[dense MeshSlot owners + persistent TerrainMeshData]
+    D --> E[coalesced dirty ranges]
+    E --> F[borrowed TerrainLodRenderPacket]
+    F --> G[TerrainRenderer partial upload]
     G --> H[glDrawElements 或 DrawIndexedInstanced]
 ```
 
 ### 12.1 leaf 到顶点/索引
 
-**源码事实：** `CollectLeafNodesFrom` 从 `rootA` 再 `rootB` 做深度优先 left-then-right 遍历；遇到 `!IsSplit` 就加入快照。每个 leaf 的 `EmitDomainTriangle` 追加 3 个新顶点和 3 个索引。因此：
+**源码事实：** 每个 active leaf 恰好拥有一个 `MeshSlot`，`_meshSlotOwners[slot]` 必须反向指向该 leaf。每槽固定占 3 个顶点和 3 个索引，因此：
 
 ```text
 VertexCount = 3 * ActiveLeafCount
@@ -684,11 +692,17 @@ IndexCount  = 3 * ActiveLeafCount
 TriangleCount = ActiveLeafCount
 ```
 
-没有共享顶点、顶点哈希或去重。
+没有共享顶点、顶点哈希或去重，但 Mesh 数组本身不再每次 Build 清空重建。
 
-证据：文件：`src/algorithms/classic_roam/ClassicRoamState.cpp`；符号：`CollectLeafNodesFrom`；代码范围：第 112-128 行。文件：`ClassicRoamMeshEmit.cpp`；符号：`EmitLeafTriangles`、`EmitDomainTriangle`；代码范围：第 7-68 行。
+证据：文件：`src/algorithms/classic_roam/ClassicRoamMeshEmit.cpp`；符号：`AppendMeshLeaf`、`RemoveMeshLeaf`、`WriteMeshLeaf`。文件：`src/algorithms/classic_roam/ClassicRoamValidation.cpp`；符号：`ValidateIncrementalMesh`。
 
-### 12.2 顶点属性
+### 12.2 split、merge 与 dense compaction
+
+**源码事实：** split 复用 parent 槽写 left child，再在末尾为 right child 追加一槽，净增长一个三角形。merge 选择一个 child 槽写 parent，并删除另一个 child；如果待删除槽不是末槽，`RemoveMeshLeaf` 把最后一个 owner 和三顶点/索引搬进空洞并修正 owner 的 `MeshSlot`。若某个 child 本来就在末槽，merge 优先删除它，避免 compaction 覆盖刚写入的 parent。
+
+**源码事实：** `MarkMeshSlotDirty` 用 generation 去重；`FinalizeIncrementalMeshUpdate` 排序 dirty slots 并合并连续槽，产生 vertex/index 对齐的 `ClassicRoamMeshUpdateRange`。稳定拓扑且调试色不再过渡时，range 数和 updated triangle 数都为 0。
+
+### 12.3 顶点属性
 
 | 字段 | 生成方式 |
 | --- | --- |
@@ -699,19 +713,19 @@ TriangleCount = ActiveLeafCount
 | `DebugColor` | Original/Subdivided/Rebuilt + depth；forced rebuilt 为粉红色系 |
 | `DebugHighlight` | Original 0.35、Subdivided 0.70、Rebuilt 1.0 |
 
-证据：`ClassicRoamScoring.cpp` 第 62-119、175-207 行；`ClassicRoamMeshEmit.cpp` 第 26-47 行；`TerrainMeshBuilder.h` 第 15-23 行。
+证据：`ClassicRoamScoring.cpp`，符号 `DomainToWorld`、`SampleNormal`、debug helpers；`ClassicRoamMeshEmit.cpp`，符号 `WriteMeshLeaf`、`RefreshMeshLeafDebugAttributes`；`TerrainMeshBuilder.h`，符号 `TerrainMeshVertex`。
 
-### 12.3 裂缝、法线和容量
+### 12.4 裂缝、法线和容量
 
 **源码事实：** Mesh emit 本身不焊接或添加 skirt；无裂缝依赖拓扑阶段的 leaf 边匹配。法线直接由 HeightMap 梯度采样，所以重复顶点通常得到相同法线，不依赖相邻活动三角形。
 
-**源码事实：** 新 `TerrainMeshData` 的两个 vector 没有按 leaf 数 `reserve`。`_activeLeaves` 会 `reserve(_nodes.size())`，但 Mesh 顶点/索引可能在 push_back 中多次扩容。
+**源码事实：** Mesh vectors 与 slot-owner vector 持久复用容量；split 只在末尾增长，merge 只缩小 size。没有独立 freelist，因为 dense compaction 立即消除洞。容量不足时 vector 仍可能扩容，但不会因每次 Build 从空数组开始而反复分配。
 
 **根据实现推断：** 单个 leaf emit 至少执行 18 次 `SampleBilinear`（每个顶点：Position 1 + Normal 4 + Height 1，共 6；三个顶点），且共享 UV 也重复采样。这可能是较大的热路径成本，但占比需要 profiler。
 
-### 12.4 渲染消费
+### 12.5 渲染消费
 
-**源码事实：** OpenGL `UploadMesh` 在容量不足时 `glBufferData` 扩容，否则 `glBufferSubData` 更新，最后 `glDrawElements`。D3D12 使用逐 frame slot 的持久映射上传资源，Classic `CpuMesh` 分支最终 `DrawIndexedInstanced`。
+**源码事实：** adapter 发布借用 Mesh 和 dirty ranges，避免把持久 vectors 复制进 packet。OpenGL `UploadMeshData` 在首次/容量增长时全量上传，否则只对 ranges 调用 `glBufferSubData`。D3D12 把 full/ranges 分别挂到所有 frame resources；某个 frame slot 再次可用时才写其持久映射资源，并对该 slot 跨多个 Build 积累的 vertex/index ranges 分别求并集，保证交换链轮转既不会漏掉更新，也不会重复复制重叠区间。最终分别调用 `glDrawElements` 或 `DrawIndexedInstanced`。
 
 证据：
 
@@ -811,11 +825,12 @@ TriangleCount = ActiveLeafCount
 - 队列与事件：`PersistentSplitQueueSize`、`PersistentMergeQueueSize`、`QueueCrossoverCount`、`QueueMembershipUpdateCount`、`SplitCount`、`ForcedSplitCount`、`MergeCount`、`ConstraintPassCount`、`CandidatePeakCount` 和各类拒绝计数。
 - 正确性：`CrackRiskCount`、`TjunctionCount`、`InvalidNeighborCount`、`InvalidTopologyCount`。
 - 互斥阶段时间：`PrepareMilliseconds`、`MergeCandidateMarkMilliseconds`、`MergeTopologyMilliseconds`、`BudgetLeafCollectMilliseconds`、`SplitInitialScanMilliseconds`、`SplitQueueTopologyMilliseconds`、`FinalLeafCollectMilliseconds`、`MeshEmitMilliseconds`、`ValidateMilliseconds`、`FinalizeMilliseconds`；这些阶段之和应接近外层 `UpdateMilliseconds`。
+- 增量输出计数：`MeshFullRebuildCount`、`MeshUpdatedTriangleCount`、`MeshReusedTriangleCount`、`MeshDirtyRangeCount`。
 - 原生 pass 包络时间：`SplitMilliseconds`、`MergeMilliseconds`、`EmitMilliseconds`、`ValidateMilliseconds`。它们与上述互斥阶段重叠，只用于观察实现原有 pass，不能再次相加到 `UpdateMilliseconds`。
 
 证据：文件：`src/algorithms/classic_roam/ClassicRoamMeshBuilder.h`；符号：`ClassicRoamStats`；代码范围：第 54-124 行。
 
-**源码事实：** adapter 映射到统一 `TerrainLodStats` 并设置 `CpuWorkerCount=1`。`CpuSplitCandidateMarkMilliseconds` 当前表示 `Q_s` key refresh/heapify，`CpuMergeCandidateMarkMilliseconds` 表示 `Q_m` key refresh/heapify；局部 topology 与 membership 操作分别进入 split/merge topology 字段。预算直接使用 `Q_s.size()`，因此 `CpuBudgetLeafCollectMilliseconds=0`；最终 leaf 收集和纯 mesh emit仍分别计时。
+**源码事实：** adapter 映射到统一 `TerrainLodStats` 并设置 `CpuWorkerCount=1`。`CpuSplitCandidateMarkMilliseconds` 当前表示 `Q_s` key refresh/heapify，`CpuMergeCandidateMarkMilliseconds` 表示 `Q_m` key refresh/heapify；局部 topology 与 membership 操作分别进入 split/merge topology 字段。预算直接使用 `Q_s.size()`，因此 `CpuBudgetLeafCollectMilliseconds=0`；最终 leaf view 直接使用 `_meshSlotOwners`，因此 `CpuFinalLeafCollectMilliseconds=0`；`CpuMeshEmitMilliseconds` 只计算 edit replay、dirty slot 写入和 range 合并。
 
 **源码事实：** runtime Markdown 先给出总体结果，再以 ROAM 逻辑阶段为行，对照 Classic CPU、DOD CPU、GPU-like CPU baseline 与 GPU-like shader；随后分别列出 CPU 实现阶段、原生 Split/Merge/Emit/Validate 包络、GPU 物理 shader dispatch 和 GPU 编排/渲染。GPU-like 被明确标为混合路径：CPU DOD 先完成持久拓扑的 merge/split baseline，GPU 再追加一轮 split-only 和 mesh emit；未实现的 GPU merge topology 显示为 `N/A`，不会用零耗时冒充已实现。
 
@@ -837,7 +852,7 @@ TriangleCount = ActiveLeafCount
 
 ### 15.4 无窗口 benchmark
 
-**源码事实：** `--benchmark --algorithm classic|dod|gpu|all --profile smoke|budget-reentry|standard [--csv path]` 为每个关键帧用 1280x720、60 度透视视图调用一次 `BuildRenderData`。Smoke 使用 129 高度图、6 个视点并开启 validator：`away` 与 `center` 位置相同但向上看，用于验证视锥；`far-return` 用于验证一次 Build 的向上级联合并。`budget-reentry` 使用 512 leaf 预算和同位置小角度转向，要求第一次 Build 就同时发生 merge/split。无窗口 GPU 因缺少已初始化图形后端通常按 capability skip。Standard 使用 513 高度图、64 帧闭合路径并关闭 validator。
+**源码事实：** `--benchmark --algorithm classic|dod|gpu|all --profile smoke|budget-reentry|incremental-emit|standard [--csv path]` 为每个关键帧用 1280x720、60 度透视视图调用一次 `BuildRenderData`。Smoke 使用 129 高度图、6 个视点并开启 validator：`away` 与 `center` 位置相同但向上看，用于验证视锥；`far-return` 用于验证一次 Build 的向上级联合并。`budget-reentry` 使用 512 leaf 预算和同位置小角度转向，要求第一次 Build 就同时发生 merge/split。`incremental-emit` 连续三次使用相同视点，要求第一帧恰好一次 full rebuild、第二帧仍为增量、第三帧零 dirty range 且全部 leaf 复用。无窗口 GPU 因缺少已初始化图形后端通常按 capability skip。Standard 使用 513 高度图、64 帧闭合路径并关闭 validator。
 
 证据：`src/benchmark/TerrainLodBenchmark.cpp`；符号：`BuildBenchmarkView`、`MakeScenario`、`RunBenchmark`；代码范围：第 157-229、423-464 行。
 
@@ -847,7 +862,7 @@ TriangleCount = ActiveLeafCount
 
 ### 15.5 运行时 benchmark
 
-**源码事实：** UI/`--runtime-benchmark` 依次运行 Classic、DOD，并在后端支持时加入 GPU；每个算法 reset，从地形 Z+ 边中点平滑移动到中心，默认 10 秒，每个应用帧强制 mesh rebuild。输出 `benchmark-output/runtime-benchmark-<timestamp>.md/.csv`。Classic 把历史字段 `merge candidate mark` / `split scan-mark` 分别解释为持久 `Q_m/Q_s` 的 key refresh，并额外输出两队列大小、crossover 和局部 membership 更新次数；预算 leaf collect 为 0。DOD 将 split 前 leaf 遍历、预算计数和误差评估融合到 `Split scan/mark`，最终直接复用 `ActiveLeafNodes`。GPU 路径仍记录各 compute 算法阶段及 snapshot/allocation/dispatch/query/readback/render 边界成本。
+**源码事实：** UI/`--runtime-benchmark` 依次运行 Classic、DOD，并在后端支持时加入 GPU；每个算法 reset，从地形 Z+ 边中点平滑移动到中心，默认 10 秒，每个应用帧强制 LOD Build。输出 `benchmark-output/runtime-benchmark-<timestamp>.md/.csv`。Classic 把历史字段 `merge candidate mark` / `split scan-mark` 分别解释为持久 `Q_m/Q_s` 的 key refresh，并额外输出两队列大小、crossover、局部 membership 更新次数和四个增量 Mesh 计数；预算与最终 leaf collect 均为 0。renderer 的 `CpuGpuUploadBytes` 记录实际 full/range 上传字节。DOD 将 split 前 leaf 遍历、预算计数和误差评估融合到 `Split scan/mark`，最终直接复用 `ActiveLeafNodes`，但仍完整 emit CPU Mesh。GPU 路径仍记录各 compute 算法阶段及 snapshot/allocation/dispatch/query/readback/render 边界成本。
 
 证据：`Application.cpp` 第 640-784、850-879 行；`RuntimeBenchmark.cpp` 第 130-200、339-390、414-430 行。
 
@@ -858,7 +873,7 @@ TriangleCount = ActiveLeafCount
 - 节点是独立 heap 对象，热拓扑通过裸指针跳转；Classic 无线程池或并行算法。
 - `Q_s/Q_m` 是跨帧 indexed heaps；topology 变更只局部更新 membership，每帧仍刷新全部现有 queue keys。
 - score 在 queue refresh 与局部新项插入时计算；同一 Build 中未受影响的现有 entry 不重复评分。
-- Mesh 每次 Build 完整重建；每叶三个独立顶点；共享位置重复高度/法线采样。
+- Mesh 与 dense slot owners 跨 Build 保留；每叶仍有三个独立顶点，但只对 dirty slots 重复高度/法线采样。
 - 两棵 nested wedgie tree 在 HeightMap/预计算深度变化时完整递归构建；节点只缓存对应公式 (1) thickness。
 - 活动 leaf 数直接等于 `Q_s.size()`；每个 merge parent 释放一个 token，每次 split 消费一个 token。
 - validator 默认关闭；开启时构造 `unordered_map<line, endpoints>` 并排序每条线的端点。
@@ -873,18 +888,18 @@ TriangleCount = ActiveLeafCount
 | nested wedgie 重建 | `O(2^(D_v+1))` 时间和空间 | 递归、每个非叶节点 3 次高度采样；仅缓存失效时 |
 | `Q_m` key refresh + topology | `O(Q_m + M log Q_m)` | score/frustum、局部 indexed-heap 更新 |
 | `Q_s` key refresh + topology | `O(L + S log L)` 加 forced closure | score/frustum、heapify、邻接递归 |
-| leaf 收集 | `O(I+L)` | 递归指针遍历 |
-| emit | `O(L)` | vector append、大量双线性采样 |
+| leaf 输出视图 | `O(1)` | 直接使用 `_meshSlotOwners`；validator 开启时另有 `O(I+L)` 递归交叉检查 |
+| incremental emit | `O(E + R log R)`，最坏 `O(L)` | `E` 为本帧 topology edits，`R` 为 dirty slots；首次/reset 为全量 |
 | path 收集 | `O(I+L)` | 再一次树遍历、unordered_set 插入 |
 | validator | 约 `O(L log L)`，取决于同线端点分布 | hash、每线排序、邻接检查 |
 
 **源码事实：** 深度 20 时每棵树有 2,097,151 个 float，两棵约 16 MiB；129x129 的 `D_v=14` 时两棵约 256 KiB，513x513 的 `D_v=18` 时两棵约 4 MiB。运行时 `MaxDepth=14` 不会把 513x513 的预计算树截在 14。
 
-**根据实现推断：** 稳态瓶颈候选是 `Q_s/Q_m` 全成员的 SSE/frustum key refresh、每叶 18 次采样的 emit、离散节点 cache miss、indexed heap 维护和 CPU Mesh 上传；缓存失效帧还可能被 nested wedgie 预计算主导。实际占比必须 profiler 确认。
+**根据实现推断：** 稳态瓶颈候选已从“每叶 emit/upload”转向 `Q_s/Q_m` 全成员的 SSE/frustum key refresh、离散节点 cache miss、indexed heap 维护和 active path 收集；topology 大幅变化时 dirty-slot 高度/法线采样与部分上传仍可能显著，缓存失效帧还可能被 nested wedgie 预计算主导。实际占比必须 profiler 确认。
 
 ### 16.3 递归和分配
 
-**源码事实：** 递归发生在 active tree 最终收集、active path 收集和 forced split，不再用于每帧发现 queue membership。深度受 `MaxDepth` 限制；UI 最大 20。每个首次 split 会产生两个独立 node allocation；之后 merge/re-split 复用。indexed heaps 使用 vector，Mesh vectors 仍没有按 leaf 数预分配。
+**源码事实：** 递归发生在 validator leaf 收集、active path 收集和 forced split，不再用于正常 Mesh 输出或每帧发现 queue membership。深度受 `MaxDepth` 限制；UI 最大 20。每个首次 split 会产生两个独立 node allocation；之后 merge/re-split 复用。indexed heaps、Mesh vectors 和 slot-owner vector 都保留容量。
 
 ### 16.4 为什么难直接迁移 GPU
 
@@ -894,7 +909,7 @@ TriangleCount = ActiveLeafCount
 
 ### 16.5 需要 profiler 才能确认
 
-- emit 是否超过 split/merge 成为最大 CPU 桶；
+- topology 大幅变化时 dirty-slot emit 是否超过 split/merge 成为最大 CPU 桶；
 - `SampleBilinear`、heap allocation、priority queue、unordered_set 各自占比；
 - pointer cache miss 与分支预测失败率；
 - OpenGL `glBufferSubData` 或 D3D12 frame upload 是否是总帧瓶颈；
@@ -914,11 +929,11 @@ TriangleCount = ActiveLeafCount
 | Triangle Priority | nested thickness 的公式 (2)/(3) 保守投影 + edge-density indexed heap | `ComputeScreenErrorScore`、`OptimizeWithPersistentDualQueues` | geometric bound 一致；最终 priority 是项目扩展 |
 | Crack Prevention | base-neighbor forced split | `SplitNode`、`LinkSplitNeighbors` | 默认有；可关闭；validator 不修复 |
 | Triangle Budget | 活动 leaf token 硬上限，forced 链预留；池满时 dual-queue merge-first crossover | `TriangleBudget`、`OptimizeWithPersistentDualQueues`、`_remainingSplitBudget`、`SplitNode` | 双队列结构已实现；exact target/最优性前提仍缺失 |
-| Incremental Update | 持久 node/child、split/merge、PathId 迟滞 | `Build`、`_previousSplitPaths` | 已实现拓扑增量；Mesh 仍全量重建 |
+| Incremental Update | 持久 node/child、split/merge、PathId 迟滞、dense mesh slots 与 dirty ranges | `Build`、`ApplyIncrementalMeshUpdates`、`_previousSplitPaths` | topology 与 indexed Mesh 增量；priority/frustum 仍全量刷新 |
 | View Frustum Culling | thickness 扩张 AABB 对六平面测试，视锥外 score=0 | `IsNodeVisible` | LOD 感知已实现；Mesh 不裁掉视锥外 leaf |
 | Screen-space Error | 角点齐次投影分子/分母极值、drawable width/height、near crossing | `Roam::ComputeConservativeScreenDistortionPixels` | 论文公式 (2)/(3) 的局部保守像素界 |
 
-**结论：** 当前实现已具备 bintree、公式 (1) nested wedgie tree、公式 (2)/(3) 保守像素投影、持久 `Q_s/Q_m`、统一 crossover、硬预算、diamond forced split/merge、迟滞和视锥感知，是工程化 Classic ROAM baseline。它仍不是论文逐项复刻：最终 priority 还包含 edge-density，exact target、priority deferral、top-down fallback 和增量 Mesh 未实现，也不做共享闭包去重下的全局资源选择。
+**结论：** 当前实现已具备 bintree、公式 (1) nested wedgie tree、公式 (2)/(3) 保守像素投影、持久 `Q_s/Q_m`、统一 crossover、硬预算、diamond forced split/merge、迟滞、视锥感知和增量 indexed Mesh 输出，是工程化 Classic ROAM baseline。它不追求论文逐项复刻或完整最优性证明：公式与连续拓扑对应论文的主要几何效果，拓扑 membership 和 Mesh emit/upload 具有按局部变化更新的成本特征；最终 priority 仍含 edge-density，每次 Build 仍刷新全部队列优先级，输出采用现代 indexed slots/ranges 而不是 triangle strips，因此这些局部对应不能扩张为整帧严格 `O(Delta N)` 或全局最优网格声明。
 
 ## 18. 与项目中其他算法的接口比较
 
@@ -1099,7 +1114,7 @@ MaxDepthReached = 1
 ### 可以暂时视为黑箱
 
 - GPU descriptor、compute/UAV/indirect draw：只在 GPU ROAM-like/CBT 路径中重要。
-- 经典 ROAM 论文对全局双优先队列和预算最优性的证明：当前工程实现没有完整复刻，第一遍可视为背景。
+- 经典 ROAM 论文对全局双优先队列和预算最优性的证明：当前工程实现只借鉴其结构与局部性质，不以补齐完整证明为目标，第一遍可视为背景。
 - DOD chunk 并发提交：是后续对照实现，不是理解 Classic 主流程的前提。
 
 ## 21. 文件与符号索引
@@ -1140,7 +1155,7 @@ MaxDepthReached = 1
 | 同上 | `CanMergeNode` | 419-471 | merge 安全条件 |
 | 同上 | `MergeSingleNode` | 473-498 | sibling 回收和邻接恢复 |
 | 同上 | `MergeNodeOrDiamond` | 500-531 | 单侧/成对 diamond merge |
-| `ClassicRoamMeshEmit.cpp` | `EmitLeafTriangles`、`EmitNode`、`EmitDomainTriangle` | 7-68 | CPU Mesh 追加 |
+| `ClassicRoamMeshEmit.cpp` | incremental mesh 初始化、edit replay、slot replace/compact、dirty range finalize | 全文件 | 增量 CPU Mesh 输出 |
 | `ClassicRoamValidation.cpp` | validator 辅助类型/量化 | 18-147 | 几何边检测准备 |
 | 同上 | `ValidateTopology`、`ValidatePersistentQueues` | 全文件 | 拓扑、active cut、queue membership 和 heap order 检查 |
 | `ClassicRoamTerrainLodAlgorithm.cpp` | `Info`、`Capabilities` | 9-28 | 算法注册信息 |
@@ -1155,7 +1170,7 @@ MaxDepthReached = 1
 | --- | --- | ---: | --- |
 | `src/algorithms/ITerrainLodAlgorithm.h` | `TerrainLodSettings` | 68-79 | 跨算法参数 |
 | 同上 | `TerrainLodViewInput` / `TerrainLodBuildInput` | 98-118 | 每次构建输入 |
-| 同上 | `TerrainLodRenderPacket` | 153-282 | CPU/GPU 统一输出契约 |
+| 同上 | `TerrainLodRenderPacket`、`TerrainLodCpuMeshUpdateRange` | 公共类型定义 | 借用 CPU Mesh、generation、dirty ranges 与 CPU/GPU 统一输出契约 |
 | 同上 | `TerrainLodStats` | 287-331 | 统一统计 |
 | 同上 | `ITerrainLodAlgorithm` | 336-354 | 抽象接口 |
 | `src/terrain/HeightMap.cpp` | `LoadFromFile`、`SampleBilinear` | 32-66、83-113 | 高度资源和采样 |
@@ -1170,10 +1185,10 @@ MaxDepthReached = 1
 
 ### 21.3 关键成员变量索引
 
-- `ClassicRoamNode`：`Domain`；parent/children/neighbors；`GeometricError`；`VarianceTreeIndex/VarianceIndex`；`PathId`；四个 Build ID；`Depth`；`ActivatedByForcedSplit`；`IsSplit`。
-- `ClassicRoamMeshBuilder`：地形/settings/stats；`_varianceTrees` 与缓存键；node pool/path/roots；`_viewProjection/_frustumPlanes/_drawableWidth/_drawableHeight`；`_remainingSplitBudget`；尺度、深度和 build sequence。
+- `ClassicRoamNode`：`Domain`；parent/children/neighbors；`GeometricError`；`VarianceTreeIndex/VarianceIndex`；`PathId`；`MeshSlot`；四个 Build ID；`Depth`；`ActivatedByForcedSplit`；`IsSplit`。
+- `ClassicRoamMeshBuilder`：地形/settings/stats；`_varianceTrees` 与缓存键；node pool/path/roots；持久 Mesh、slot owners、edit log、dirty slots/ranges；`_viewProjection/_frustumPlanes/_drawableWidth/_drawableHeight`；`_remainingSplitBudget`；尺度、深度和 build/mesh generation。
 - `ClassicRoamTerrainLodAlgorithm`：`_builder`；`_stats`。
-- `TerrainRenderer` 相关所有者：`_heightMap`；`_meshData`；`_terrainLodAlgorithm`；`_terrainLodStats`；`_settings`；上次 build 相机位置和 dirty 状态。
+- `TerrainRenderer` 相关所有者：`_heightMap`；常规/DOD owned `_meshData`；Classic `_borrowedCpuMeshData`；`_terrainLodAlgorithm`；`_terrainLodStats`；后端 buffer capacity/pending ranges；`_settings`；上次 build 相机位置和 dirty 状态。
 
 ### 21.4 外部依赖
 
@@ -1213,7 +1228,7 @@ MaxDepthReached = 1
 
 ### 22.4 需要 profiler 的问题
 
-1. nested wedgie tree 重建、全队列 priority refresh、emit 高度采样、节点 cache miss、indexed heap 局部更新、Mesh 扩容和 GPU upload 各占多少。
+1. nested wedgie tree 重建、全队列 priority refresh、dirty-slot 高度采样、节点 cache miss、indexed heap 局部更新、Mesh 扩容和部分 GPU upload 各占多少。
 2. 持久 membership 相比旧全树候选发现节省多少，以及每帧 key refresh 是否仍是主要瓶颈。
 3. renderer 的位移阈值与方向/投影变化检测在不同地形尺度下是否造成 LOD 更新迟滞或跳变。
 4. validator 在接近 20000 leaf 预算时的 hash/sort 成本和内存峰值。
@@ -1225,5 +1240,5 @@ MaxDepthReached = 1
 - 为活动 leaf 输出可选 domain/path/depth 日志，能按 `PathId` 重放某条 forced 链。
 - 增加 leaf edge overlay、diamond pair overlay 和 score heatmap；当前只有 leaf 分类/forced 激活色，不是完整拓扑可视化。
 - 增加 nested `GeometricError` 与真正 projected pixel error 的并排统计，验证当前屏幕投影启发式。
-- 为 Mesh 顶点/索引按 `3*leafCount` reserve，并用 profiler 验证收益后再决定是否保留。
+- 增加 full-emit reference，对随机 split/merge 轨迹逐帧比较 triangle set、winding、属性和 slot owner 不变量。
 - 记录节点池估算字节数、首次节点分配数、复用 child 数、score 评估次数和递归最大深度。

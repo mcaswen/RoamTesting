@@ -59,8 +59,8 @@ struct BenchmarkScenario
     bool RequireImmediateBudgetReallocation{false};
 };
 
-// smoke 和 budget-reentry 偏回归测试，standard 偏性能样本
-// 三者共用同一套 frame result 和 CSV 字段
+// smoke、budget-reentry 和 incremental-emit 偏回归测试，standard 偏性能样本
+// 四者共用同一套 frame result 和 CSV 字段
 struct BenchmarkFrameResult
 {
     std::string AlgorithmName;
@@ -100,6 +100,8 @@ std::string ToString(BenchmarkProfile profile)
         return "smoke";
     case BenchmarkProfile::BudgetReentry:
         return "budget-reentry";
+    case BenchmarkProfile::IncrementalEmit:
+        return "incremental-emit";
     case BenchmarkProfile::Standard:
         return "standard";
     }
@@ -270,6 +272,24 @@ BenchmarkScenario MakeScenario(BenchmarkProfile profile)
         return scenario;
     }
 
+    if (profile == BenchmarkProfile::IncrementalEmit)
+    {
+        scenario.HeightMapPath = "assets/heightmaps/Hm_Terrain_Test_129.pgm";
+        scenario.Settings.EnableTopologyValidation = true;
+        scenario.RequireTopologyClean = true;
+        const BenchmarkCameraKeyframe stableCamera{
+            "stable-center",
+            glm::vec3{0.0F, 4.0F, 0.0F},
+            0.0F,
+        };
+        scenario.CameraPath = {stableCamera, stableCamera, stableCamera};
+        scenario.CameraPath[1].Name = "stable-center-debug-transition";
+        scenario.CameraPath[1].TimeSeconds = 1.0F;
+        scenario.CameraPath[2].Name = "stable-center-reuse";
+        scenario.CameraPath[2].TimeSeconds = 2.0F;
+        return scenario;
+    }
+
     // Standard 使用更大 HeightMap 和较长路径
     // 不要求每帧拓扑验证
     // 重点是记录稳定的各 pass 耗时分布
@@ -350,8 +370,9 @@ bool ValidateFrame(
         return false;
     }
 
+    const Terrain::TerrainMeshData* cpuMesh = renderPacket.ResolveCpuMesh();
     if (renderPacket.Mode == Algorithms::TerrainLodRenderMode::CpuMesh &&
-        (renderPacket.CpuMesh.Vertices.empty() || renderPacket.CpuMesh.Indices.empty()))
+        (cpuMesh == nullptr || cpuMesh->Vertices.empty() || cpuMesh->Indices.empty()))
     {
         // 当前 Classic 和 DOD 都必须输出 CPU mesh
         return false;
@@ -380,11 +401,23 @@ bool ValidateFrame(
         return false;
     }
 
+    if (renderPacket.Mode == Algorithms::TerrainLodRenderMode::CpuMesh &&
+        (cpuMesh->Vertices.size() != stats.ActiveTriangleCount * 3U ||
+         cpuMesh->Indices.size() != stats.ActiveTriangleCount * 3U ||
+         renderPacket.IndexCount != cpuMesh->Indices.size()))
+    {
+        return false;
+    }
+
     // Classic 的 Q_s 必须精确表示 active cut；其他算法目前保持这些字段为零
     if (stats.PersistentSplitQueueSize != 0U &&
         (stats.PersistentSplitQueueSize != stats.ActiveTriangleCount ||
          stats.PersistentSplitQueueSize > scenario.Settings.TriangleBudget ||
-         stats.SplitCount + stats.MergeCount > stats.ActiveNodeCount))
+         stats.SplitCount + stats.MergeCount > stats.ActiveNodeCount ||
+         stats.CpuMeshFullRebuildCount > 1U ||
+         stats.CpuMeshUpdatedTriangleCount + stats.CpuMeshReusedTriangleCount !=
+             stats.ActiveTriangleCount ||
+         stats.CpuMeshDirtyRangeCount > stats.CpuMeshUpdatedTriangleCount))
     {
         // 每个 Classic parent 在同一 Build 最多执行一次正向或反向事务。
         // 事件数超过持久节点池规模通常意味着 split/merge 发生了同帧振荡。
@@ -444,6 +477,24 @@ bool ValidateRunShape(const BenchmarkScenario& scenario, std::vector<BenchmarkFr
             frames[index].Passed = frames[index].Passed && reallocatedInOneBuild;
             passed = passed && reallocatedInOneBuild;
         }
+    }
+
+    if (scenario.Name == "incremental-emit" && frames.size() >= 3U &&
+        frames.front().AlgorithmName == "classic_cpu_roam")
+    {
+        const bool initializedOnce = frames[0].Stats.CpuMeshFullRebuildCount == 1U;
+        const bool secondBuildStayedIncremental = frames[1].Stats.CpuMeshFullRebuildCount == 0U;
+        const bool stableBuildReusedEverything =
+            frames[2].Stats.CpuMeshFullRebuildCount == 0U &&
+            frames[2].Stats.SplitCount == 0U &&
+            frames[2].Stats.MergeCount == 0U &&
+            frames[2].Stats.CpuMeshUpdatedTriangleCount == 0U &&
+            frames[2].Stats.CpuMeshDirtyRangeCount == 0U &&
+            frames[2].Stats.CpuMeshReusedTriangleCount == frames[2].Stats.ActiveTriangleCount;
+        frames[0].Passed = frames[0].Passed && initializedOnce;
+        frames[1].Passed = frames[1].Passed && secondBuildStayedIncremental;
+        frames[2].Passed = frames[2].Passed && stableBuildReusedEverything;
+        passed = passed && initializedOnce && secondBuildStayedIncremental && stableBuildReusedEverything;
     }
 
     return passed;
@@ -518,8 +569,9 @@ BenchmarkAlgorithmRun RunAlgorithm(
         frame.CameraPosition = camera.Position;
         frame.HeightMapWidth = heightMap.Width();
         frame.HeightMapHeight = heightMap.Height();
-        frame.VertexCount = renderPacket.Mode == Algorithms::TerrainLodRenderMode::CpuMesh ?
-            renderPacket.CpuMesh.Vertices.size() :
+        const Terrain::TerrainMeshData* cpuMesh = renderPacket.ResolveCpuMesh();
+        frame.VertexCount = renderPacket.Mode == Algorithms::TerrainLodRenderMode::CpuMesh && cpuMesh != nullptr ?
+            cpuMesh->Vertices.size() :
             renderPacket.ActiveTriangleCount * 3U;
         frame.IndexCount = renderPacket.IndexCount;
         frame.TriangleCount = stats.ActiveTriangleCount;
@@ -662,6 +714,7 @@ bool WriteCsv(
            "screenSpaceSplitThresholdPixels,screenSpaceMergeThresholdPixels,triangleBudget,"
            "activeTriangleCount,activeNodeCount,splitCount,forcedSplitCount,mergeCount,candidatePeakCount,"
            "persistentSplitQueueSize,persistentMergeQueueSize,queueCrossoverCount,queueMembershipUpdateCount,"
+           "cpuMeshFullRebuildCount,cpuMeshUpdatedTriangleCount,cpuMeshReusedTriangleCount,cpuMeshDirtyRangeCount,"
            "budgetRejectedSplitCount,"
            "tjunctionCount,invalidNeighborCount,invalidTopologyCount,cpuWorkerCount,cpuUtilizationPercent,"
            "topologyCommitMinCandidateCount,splitTopologyCommitMinCandidateCount,"
@@ -716,6 +769,10 @@ bool WriteCsv(
                 << frame.Stats.PersistentMergeQueueSize << ','
                 << frame.Stats.QueueCrossoverCount << ','
                 << frame.Stats.QueueMembershipUpdateCount << ','
+                << frame.Stats.CpuMeshFullRebuildCount << ','
+                << frame.Stats.CpuMeshUpdatedTriangleCount << ','
+                << frame.Stats.CpuMeshReusedTriangleCount << ','
+                << frame.Stats.CpuMeshDirtyRangeCount << ','
                 << frame.Stats.BudgetRejectedSplitCount << ','
                 << frame.Stats.TjunctionCount << ','
                 << frame.Stats.InvalidNeighborCount << ','
@@ -817,6 +874,12 @@ bool ParseProfile(std::string_view value, BenchmarkProfile& outProfile)
     if (value == "budget-reentry")
     {
         outProfile = BenchmarkProfile::BudgetReentry;
+        return true;
+    }
+
+    if (value == "incremental-emit")
+    {
+        outProfile = BenchmarkProfile::IncrementalEmit;
         return true;
     }
 
@@ -980,6 +1043,6 @@ int RunTerrainLodBenchmarkFromCommandLine(int argc, char** argv)
 std::string BenchmarkUsage()
 {
     return "Usage: ParallelROAM --benchmark [--algorithm classic|dod|gpu|all] "
-           "[--profile smoke|budget-reentry|standard] [--csv path]\n";
+           "[--profile smoke|budget-reentry|incremental-emit|standard] [--csv path]\n";
 }
 } // 命名空间 ParallelRoam::Benchmark

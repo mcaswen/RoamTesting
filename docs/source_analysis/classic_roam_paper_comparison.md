@@ -1,6 +1,6 @@
 # ROAM 论文与当前 Classic CPU ROAM 实现详细对比
 
-> 对比基线：2026-08-03 当前源码，包含 nested wedgie 公式 (1)、保守屏幕投影公式 (2)/(3) 与持久双优先队列。
+> 对比基线：2026-08-03 当前源码，包含 nested wedgie 公式 (1)、保守屏幕投影公式 (2)/(3)、持久双优先队列与增量 indexed Mesh 输出。
 > 论文依据：项目内转写文档 [`roaming_terrain_paper.md`](roaming_terrain_paper.md)，未重新解析 PDF。  
 > 实现范围：以 `src/algorithms/classic_roam` 为核心，并追踪统一 LOD 接口、渲染上传和 Benchmark。  
 > 本文讨论的是“论文描述的 ROAM”与“项目当前名为 Classic CPU ROAM 的实现”之间的对应关系，不把同名类型或函数自动视为论文机制的完整复现。
@@ -19,11 +19,11 @@
 
 它也实现了若干论文所需但早期版本曾缺失的工程能力：论文公式 (1) 的 nested wedgie thickness tree、公式 (2)/(3) 的保守像素投影、near-plane 人工最大优先级、FOV/aspect/drawable 感知、视锥感知、持久 `Q_s/Q_m`、统一 crossover、硬 Triangle Budget 和 split/merge 迟滞。
 
-但是，当前实现不能被严格称为论文算法的完整复现。最关键的差异有三项：
+当前实现采用工程等价复现口径，不把“逐项还原论文格式和证明”作为目标。与论文严格版本相比，最关键的差异有三项：
 
 1. 当前 geometric component 已是论文公式 (2)/(3) 的保守像素上界，但最终 `ComputeScreenErrorScore()` 仍取 `max(geometricBound, edgeDensity)`；后者是论文基础误差度量中不存在的项目扩展，且最终 priority 的 parent/child 单调性尚未验证。
 2. 当前已持久维护 `Q_s/Q_m` 并在同一循环比较最高 split 与最低 merge，但以像素阈值和 hard upper bound 作为终止条件；满预算时采用 merge-first 事务，不实现论文的精确 target count、worst-case top-down fallback，也尚不能继承最小拓扑改动证明。
-3. 当前每次 `Build()` 仍完整收集活动叶、重建 CPU Mesh 并上传，不维护论文的增量 triangle strips 或现代等价的增量 indexed output。
+3. 当前已经按 topology changes 增量维护 CPU indexed Mesh 并部分上传，但不是论文的 incremental triangle-strip 数据结构；priority 与 frustum 状态仍会全量刷新，所以端到端复杂度尚未达到论文的 `O(Delta N)` 目标。
 
 因此，以下论文结论目前不能直接套用到项目实现：
 
@@ -33,9 +33,11 @@
 - 不能声称可以精确达到指定 triangle count；
 - 不能声称运行时拓扑内存始终与当前 output mesh 大小成正比。
 
+这不表示当前实现只具有外形相似性。公式 (1)-(3) 已恢复论文的嵌套几何误差和保守像素投影；forced split、diamond merge 与邻接维护实现了相同的连续拓扑目标；持久队列 membership、拓扑 edit 和增量 indexed Mesh 使相应阶段的工作量主要随局部变化增长。项目接受每次 Build 仍有全队列优先级刷新这一 `O(N)` 边界，不再以补齐完整证明、triangle strips 或端到端严格 `O(Delta N)` 为后续目标。
+
 更准确的项目定位是：
 
-> 当前 Classic CPU ROAM 是“采用经典 ROAM bintree/diamond 拓扑、公式 (1)-(3) 局部误差界和持久 dual queues 的串行、对象式 CPU 基线”。队列 membership 与拓扑一起跨帧保留，但最终 LOD priority、accuracy threshold 和严格容量事务仍是项目变体。
+> 当前 Classic CPU ROAM 是“采用经典 ROAM bintree/diamond 拓扑、公式 (1)-(3) 局部误差界、持久 dual queues 和增量 indexed output 的串行、对象式 CPU 基线”。队列 membership、拓扑与 Mesh 槽位一起跨帧保留，但最终 LOD priority、accuracy threshold、严格容量事务和输出格式仍是项目变体。
 
 ## 2. 判定口径
 
@@ -98,16 +100,16 @@
 可选全局 topology validator
         |
         v
-再次递归收集全部 active leaves
+按 topology commit 顺序 replay split/merge Mesh edits
         |
         v
-完整重建 CPU vertex/index arrays
+只重写 dirty triangle slots 并合并 update ranges
         |
         v
-统计、保存 split paths、整网格上传 GPU
+统计、保存 split paths、借用持久 Mesh 并部分上传
 ```
 
-入口证据集中在 [`ClassicRoamMeshBuilder::Build()`](../../src/algorithms/classic_roam/ClassicRoamMeshBuilder.cpp)；双队列调度位于 [`OptimizeWithPersistentDualQueues()`](../../src/algorithms/classic_roam/ClassicRoamQueues.cpp)。拓扑稳定后仍会递归收集 active leaves 并调用 `EmitLeafTriangles()`。
+入口证据集中在 [`ClassicRoamMeshBuilder::Build()`](../../src/algorithms/classic_roam/ClassicRoamMeshBuilder.cpp)；双队列调度位于 [`OptimizeWithPersistentDualQueues()`](../../src/algorithms/classic_roam/ClassicRoamQueues.cpp)，增量输出位于 [`ClassicRoamMeshEmit.cpp`](../../src/algorithms/classic_roam/ClassicRoamMeshEmit.cpp)。正常输出不再递归收集 active leaves；只有 validator 会独立遍历 roots 与 dense slot owners 交叉核对。
 
 ### 3.3 阶段级对应关系
 
@@ -120,7 +122,7 @@
 | forced split | `SplitNode()` | 已实现 | 使用递归传播和预算 token 预留；统计口径以单个 parent split 计数 |
 | diamond merge | `CanMergeNode()` + `MergeNodeOrDiamond()` | 已实现 | merge 后 parent 立即进入 `Q_s`，新可合并 diamond 局部进入 `Q_m` |
 | direct target triangle count | `TriangleBudget` | 部分实现/变体 | 当前参数是 hard upper bound，不是必须达到的 target count |
-| incremental T-stripping | `EmitLeafTriangles()` | 未实现 | 每次 Build 为每个 leaf 生成 3 个重复顶点和 3 个索引 |
+| incremental output | stable `MeshSlot` + edit replay + dirty ranges | 部分实现/现代等价 | 工作量按受影响 slots 变化，但输出仍是每叶 3 顶点/3 索引，不是 triangle strips |
 | progressive optimization | 无 | 未实现 | 没有 frame deadline 或可中断的优化工作预算 |
 | vertex morphing | 无 | 未实现 | split/merge 后顶点立即跳到真实高度 |
 
@@ -302,9 +304,7 @@ score = max(geometricBoundPixels, edgeDensityPixels)
 - hysteresis 区间内还会根据上一帧 path 状态改变 split 决策；
 - 新测试验证了公式 (3) 对 triangle 内密集公式 (2) 采样的保守性，并覆盖一个带 midpoint displacement 的公式 (1) parent/child 构造；真实 HeightMap 全树与包含 edge-density 的最终 priority 尚未穷举。
 
-因此当前 split max-heap 能把“已发现候选中的当前最高 score”优先处理，但不能据此推出论文的全局最优 triangulation。
-
-建议增加一个仅在测试/调试中启用的 monotonicity audit：遍历预计算 bintree 和代表性相机集合，记录所有 `score(child) > score(parent) + epsilon`。该检查不能证明连续空间上的严格单调性，但可以快速暴露当前 metric 与论文证明前提的偏差规模。
+因此当前 split max-heap 能把“已发现候选中的当前最高 score”优先处理，但不能据此推出论文的全局最优 triangulation。项目不再把补齐这项证明作为完成条件；若以后需要研究最终 priority 的数学性质，可以增加父子优先级单调性检查，但它属于可选研究工具，不进入当前路线图。
 
 ## 9. Split Queue 与 Forced Split
 
@@ -402,7 +402,7 @@ while 仍有 accuracy demand 或可改善的预算交换:
 
 ### 11.3 判定
 
-**状态：部分实现/变体。** “持久 dual queues、局部 membership、统一 crossover”已经实现；“论文 exact target、最终最优性、priority deferral 和 worst-case fallback”尚未实现。固定相机时 topology 与 membership 更新可以为零，但每帧 priority refresh 和 CPU Mesh emit 仍是 O(N)。
+**状态：部分实现/变体。** “持久 dual queues、局部 membership、统一 crossover”已经实现；“论文 exact target、最终最优性、priority deferral 和 worst-case fallback”尚未实现。固定相机时 topology、membership 和最终 Mesh dirty ranges 可以为零，但每次 Build 的 priority refresh 仍是 O(N)。
 
 ## 12. Triangle Budget 与迟滞
 
@@ -460,7 +460,7 @@ score < MergeThreshold  -> coarse
 - 视锥外 leaf 不会主动占用新的 split budget；
 - 已细分的视锥外区域会因 merge score 为 0 而回收，从而把预算让给屏幕内区域。
 
-但是 [`EmitLeafTriangles()`](../../src/algorithms/classic_roam/ClassicRoamMeshEmit.cpp#L7) 遍历并输出所有 active leaves，没有跳过视锥外 leaf。因此当前实现的是“frustum-aware LOD priority”，不是完整 draw culling。全地形仍由 active leaves 覆盖并上传、提交绘制。
+但是持久 Mesh 仍为所有 active leaves 保留槽位，没有跳过视锥外 leaf。因此当前实现的是“frustum-aware LOD priority”，不是完整 draw culling。全地形仍由 active leaves 覆盖并提交绘制；只有实际发生变化的槽位会重新 emit/upload。
 
 ### 13.3 正确性限制
 
@@ -472,23 +472,23 @@ AABB 的 Y 扩张使用公式 (1) 的 nested thickness，已经消除旧 `max(lo
 
 **论文增量 culling：未实现。** 没有 per-node flags、跨帧 label、parent flag inheritance 或 subtree 状态缓存。
 
-**最终渲染裁剪：未实现。** CPU mesh emit 和 upload 仍包含整个 terrain topology。
+**最终渲染裁剪：未实现。** CPU Mesh 仍包含整个 terrain topology，尽管增量帧只上传 dirty ranges。
 
 ## 14. Mesh 输出与 Triangle Stripping
 
 ### 14.1 当前输出
 
-[`EmitLeafTriangles()`](../../src/algorithms/classic_roam/ClassicRoamMeshEmit.cpp#L7) 使用最终 `_activeLeaves` 快照。每个 leaf 由 [`EmitDomainTriangle()`](../../src/algorithms/classic_roam/ClassicRoamMeshEmit.cpp#L26)：
+[`ClassicRoamMeshEmit.cpp`](../../src/algorithms/classic_roam/ClassicRoamMeshEmit.cpp) 维护持久 `_meshData` 和 dense `_meshSlotOwners`。每个 active leaf 通过 `MeshSlot` 对应 3 个独立 vertices 和 3 个 indices：
 
-- 即时采样 3 个位置；
-- 每个顶点重新采样法线、高度、UV 和 debug 数据；
-- append 3 个独立 vertices；
-- append 3 个 indices；
-- 根据 world-space cross product 统一 winding。
+- split 复用 parent slot 写 left child，再追加 right child；
+- merge 用一个 child slot 写 parent，删除另一 child slot；
+- 删除非末槽时把末槽搬入空洞，并同步 owner 的 `MeshSlot`；
+- `WriteMeshLeaf()` 只为 dirty slot 采样位置、法线、高度、UV/debug 数据并修正 winding；
+- `FinalizeIncrementalMeshUpdate()` 把连续 dirty slots 合并为 ranges。
 
-相邻 triangle 不共享 vertex，也没有 vertex cache 或 strip。每次 Build 都从空 `TerrainMeshData` 完整重建。
+相邻 triangle 仍不共享 vertex，也没有 vertex cache 或 strip；增量性来自稳定槽位与局部覆盖，不来自顶点去重。
 
-OpenGL renderer 随后在 [`TerrainRenderer::RebuildTerrainLod()`](../../src/render/TerrainRenderer.cpp#L587) 接收 CPU mesh，并在 [`TerrainRenderer::UploadMesh()`](../../src/render/TerrainRenderer.cpp#L704) 对完整 vertex/index range 调用 `glBufferSubData()`。D3D12 CPU mesh 路径也按帧上传当前 mesh。
+[`ClassicRoamTerrainLodAlgorithm::BuildRenderData()`](../../src/algorithms/classic_roam/ClassicRoamTerrainLodAlgorithm.cpp) 通过 `BorrowedCpuMesh` 发布 builder 持有的 Mesh，避免复制 vectors。OpenGL [`UploadMeshData()`](../../src/render/TerrainRenderer.cpp) 只对 dirty ranges 调用 `glBufferSubData()`；D3D12 为所有 frame slots 记录 full/range pending state，在各 slot 再次可用时先合并跨多个 Build 的重叠 vertex/index ranges，再写入对应持久映射资源。首次初始化或 buffer 扩容仍需全量上传。
 
 ### 14.2 论文输出
 
@@ -498,11 +498,11 @@ OpenGL renderer 随后在 [`TerrainRenderer::RebuildTerrainLod()`](../../src/ren
 
 **生成可渲染连续 mesh：已实现。**
 
-**incremental T-stripping：未实现。**
+**incremental T-stripping：未实现。** 当前没有 strip link、strip continuation 或论文式局部 strip relink。
 
-**增量 GPU 更新：未实现。**
+**现代等价的增量 indexed output：已实现。** topology edit replay、stable dense slots、dirty ranges、借用 packet 和两个 renderer 的部分上传共同覆盖论文“只修改受影响输出”的职责。
 
-当前 full emit 适合作为 Classic 与 DOD 的 CPU mesh 基线，但它的每帧成本是 `O(active leaves)`，与论文“主要成本随 topology changes 数量变化”的目标不同。
+**复杂度边界：** 无拓扑/调试属性变化时 Mesh updated triangles 与 upload bytes 可以为 0；变化帧的 CPU emit 约为 `O(edits + dirty slots log dirty slots)`，最坏 reset 仍为 `O(active leaves)`。由于 priority refresh 未增量化，不能据此声称整次 Build 为 `O(Delta N)`。
 
 ## 15. Priority 延期与 Progressive Optimization
 
@@ -524,7 +524,7 @@ OpenGL renderer 随后在 [`TerrainRenderer::RebuildTerrainLod()`](../../src/ren
 
 论文允许 optimizer 在接近 frame deadline 时停止，并保证已完成的操作仍按重要性排序，见 [`§7.4`](roaming_terrain_paper.md#L361)。
 
-当前 `Build()` 没有时间预算、deadline、最大 topology operations 或可恢复 continuation。只要调用开始，就会执行完整 merge、split、collect、emit 和统计流程。
+当前 `Build()` 没有时间预算、deadline、最大 topology operations 或可恢复 continuation。只要调用开始，就会完成本轮 priority refresh、merge/split crossover、增量 emit 和统计流程。
 
 **状态：未实现。** `TriangleBudget` 限制空间规模，不限制本帧 CPU 时间；再平衡的 batch limit 也只限制额外回收数量，不是 deadline。
 
@@ -561,7 +561,7 @@ OpenGL renderer 随后在 [`TerrainRenderer::RebuildTerrainLod()`](../../src/ren
 
 该 validator 默认关闭，只统计不修复。它是很有价值的项目扩展，因为 forced split/merge 的裸指针拓扑最容易在局部改动后出现静默错误。
 
-[`ClassicRoamStats`](../../src/algorithms/classic_roam/ClassicRoamMeshBuilder.h#L68) 还把 merge candidate、merge topology、budget leaf collect、split scan、split topology、final leaf collect、mesh emit 等阶段分别计时，并经 [`ToTerrainLodStats()`](../../src/algorithms/classic_roam/ClassicRoamTerrainLodAlgorithm.cpp#L96) 接入统一 Benchmark。这比论文结果章节的粗粒度统计更适合当前 Classic/DOD/GPU 对照实验。
+[`ClassicRoamStats`](../../src/algorithms/classic_roam/ClassicRoamMeshBuilder.h) 还把 merge candidate、merge topology、budget leaf collect、split scan、split topology、final leaf collect、mesh emit 等阶段分别计时，并记录 full rebuild、updated/reused triangles 和 dirty ranges，经 [`ToTerrainLodStats()`](../../src/algorithms/classic_roam/ClassicRoamTerrainLodAlgorithm.cpp) 接入 UI、CSV 与运行时 Markdown。这比论文结果章节的粗粒度统计更适合当前 Classic/DOD/GPU 对照实验。
 
 ## 18. 完整实现状态矩阵
 
@@ -590,10 +590,11 @@ OpenGL renderer 随后在 [`TerrainRenderer::RebuildTerrainLod()`](../../src/ren
 | Error tolerance | Split/Merge pixel thresholds | 部分实现/变体 | 是启发式 tolerance，不是 guaranteed bound |
 | Frustum-aware priority | `IsNodeVisible()` 返回 0 score | 已实现 | 功能上成立 |
 | Incremental frustum labels | 无 | 未实现 | 否 |
-| Draw culling outside frustum | emit 全部 active leaves | 未实现 | 否 |
+| Draw culling outside frustum | Mesh 保留全部 active leaves | 未实现 | 否 |
 | Priority deferral lists | 无 | 未实现 | 否 |
-| Incremental T-strips | 无 | 未实现 | 否 |
-| Incremental GPU mesh update | 每次完整 upload | 未实现 | 否 |
+| Incremental T-strips | 无 strip 数据结构 | 未实现 | 否；未复刻论文输出格式 |
+| Incremental indexed Mesh | stable `MeshSlot`、edit replay、dirty ranges | 已实现/现代等价 | 覆盖变化量输出职责，不继承 strip 特性 |
+| Incremental GPU mesh update | OpenGL range upload；D3D12 per-frame pending ranges | 已实现 | 首次/容量增长仍全量上传 |
 | Progressive time-bounded optimization | 无 | 未实现 | 否 |
 | Vertex morphing | 无 | 未实现 | 否 |
 | Dynamic terrain local update | 无 | 未实现 | 否 |
@@ -605,7 +606,7 @@ OpenGL renderer 随后在 [`TerrainRenderer::RebuildTerrainLod()`](../../src/ren
 | Topology validator | `ValidateTopology()` | 项目扩展 | 提供诊断，不是运行时修复 |
 | 细分阶段 Benchmark | `ClassicRoamStats` | 项目扩展 | 有利于与 DOD/GPU 公平对比 |
 
-## 19. 为什么当前实现不能直接使用“Optimal”与“Guaranteed”
+## 19. 论文强结论的使用边界
 
 论文的两个强结论不是单一模块提供的，而是一条依赖链：
 
@@ -623,7 +624,9 @@ forced split 是保持连续性的最小必要 refinement
 给定 bintree mesh 空间内的最大误差最优性与全局误差上界
 ```
 
-当前公式 (1)-(3)、near-plane 处理、forced split 和连续 topology 已基本具备，但最终 priority monotonicity 与持久 dual-queue 调度仍未完整实现。因此即使局部 geometric component 已有保守像素上界、active triangle 不超过 budget，整条 LOD 管线仍不能升级为论文的完整全局数学保证。
+当前公式 (1)-(3)、near-plane 处理、forced split、连续 topology、持久双队列结构与增量 Mesh 输出已经具备，但最终 priority、hard budget、迟滞和输出格式仍是项目变体。因此即使局部 geometric component 已有保守像素上界、active triangle 不超过 budget，整条 LOD 管线也不表述为论文的完整全局数学保证。
+
+这是一项主动的工程范围选择，不再作为待修复缺口处理。项目只继承能够由当前实现直接支持的局部结论：几何误差分量是保守投影界、局部约束维持连续拓扑、持久状态避免从根重建 topology、增量 Mesh 避免重写和上传全部活动三角形。其余结论均按 benchmark 与拓扑验证结果描述，不借用论文证明扩大表述。
 
 建议在 UI、报告和代码注释中使用以下术语：
 
@@ -632,25 +635,17 @@ forced split 是保持连续性的最小必要 refinement
 - `Split/Merge threshold (px)`：适合当前实现；
 - `Triangle budget upper bound`：比 `target triangle count` 更准确；
 - `ROAM topology baseline`：比 `paper-complete ROAM` 更准确；
-- 避免在未实现后续建议前使用 `guaranteed error bound` 或 `optimal mesh`。
+- 当前文档不使用 `guaranteed error bound` 或 `optimal mesh`；公式与局部更新的工程效果不能替代论文完整证明。
 
-## 20. 建议实现路线
+## 20. 当前工程路线与非目标
 
-### 20.1 先明确产品/研究目标
+### 20.1 当前目标
 
-有两种合理目标，但不应混成一个结果：
-
-#### 目标 A：论文忠实基线
-
-用于回答“经典论文 ROAM 与 DOD + 现代优化相比如何”。此模式应优先恢复论文证明依赖，并保留单线程、对象式、裸指针拓扑，避免把 DOD 的数据布局和并行优化移入 Classic。
-
-#### 目标 B：统一质量口径的工程基线
-
-用于在相同 pixel score、相同 hysteresis、相同 budget 下比较 Classic、DOD 和 GPU 的执行效率。当前实现更接近此目标。
+项目只保留“统一质量口径的工程基线”这一目标：在相同像素优先级、迟滞、预算和相机输入下，比较 Classic、DOD 和 GPU 的执行效率与拓扑效果。Classic 保留单线程、对象式和裸指针特征；DOD 负责连续布局、批处理和多核优化。论文忠实模式、完整最优性证明与逐格式 triangle strips 不再进入当前实施路线。
 
 公式 (1) 已同时接入 Classic、DOD 和由 DOD snapshot 驱动的 GPU ROAM-like，因此三条路径没有发生 quality contract 分裂。但 thickness 数值改变后，旧 benchmark 的 `4 px/2 px` 与新结果不再是同一误差语义；性能趋势可以保留作历史记录，三角形数量和画质结论必须重跑。
 
-### 20.2 P0：公式 (1) 已完成，继续补齐误差正确性验证
+### 20.2 已完成的误差公式与保留验证
 
 #### 已完成 1：实现论文 nested wedgie thickness
 
@@ -671,7 +666,7 @@ Classic/DOD 的旧 `_varianceTrees`/`VarianceTrees` 成员名保留以减少结�
 - 小型几何 bintree 中，每个 ancestor thickness 覆盖所有最细后代顶点相对 ancestor plane 的高度偏差；
 - 129/513 输入深度解析与深度 20 上限。
 
-仍应补充：通过项目 `HeightMap` 类型加载真实小图的同类穷举、非 `2^k+1` 输入、深度截断，以及未来动态地形局部更新与全量重建一致性。
+若以后扩展输入范围，可以补充真实小图、非 `2^k+1` 输入和深度截断测试；这些验证不阻塞当前固定高度图实验范围。
 
 #### 已完成 2：实现保守 screen-space wedgie projection
 
@@ -683,7 +678,7 @@ Classic/DOD 的旧 `_varianceTrees`/`VarianceTrees` 成员名保留以减少结�
 - FOV、aspect、drawable width/height、camera pitch/roll、perspective/orthographic 与 near crossing 已覆盖；
 - 已有一个带 child-plane displacement 的 parent/child geometric-bound 单调构造；最终 priority 的随机/全树测试和运行时统计仍待实现。
 
-#### 建议 3：把 edge density 与 error bound 分开
+#### 口径 3：把 edge density 与 error bound 分开
 
 如果仍需要平坦近景细分，保留 `edgeLengthPixels` 作为独立可选 quality term，但不要把其结果称为论文 geometric error bound。可以同时报告：
 
@@ -695,7 +690,7 @@ FinalPriority = max(...)
 
 这样可以区分“地形近似误差”与“项目希望的最小几何密度”。
 
-### 20.3 已完成：persistent dual queues；仍需补 exact reference mode
+### 20.3 已完成：persistent dual queues
 
 当前已完成：
 
@@ -707,7 +702,7 @@ FinalPriority = max(...)
 - strict hard capacity 下采用 merge-first crossover；
 - validator 独立检查 `Q_s == active cut`、`Q_m == canonical mergeable diamonds` 和 heap order。
 
-仍需实现或验证：
+以下论文机制不再作为当前路线要求，只保留为能力边界：
 
 - direct target-count reference mode；
 - 候选 crossover 区间过大时的 top-down fallback；
@@ -715,74 +710,48 @@ FinalPriority = max(...)
 - 小地形穷举合法 triangulations，对照 representable count 下的最大 bound；
 - 最终 priority 的 parent-child monotonicity。
 
-### 20.4 P2：增量视锥与 priority deferral
+### 20.4 非当前目标：增量视锥状态与优先级延期
 
-在 node 中加入论文的六平面 flags 及 `OUT/ALL_IN/DONT_KNOW` label，并记录上次验证的 view/frustum generation。只测试 parent 未确定的 planes，并允许整个 subtree early-out。
+论文用六平面状态、`OUT/ALL_IN/DONT_KNOW` 标签和未来重算列表减少重复裁剪与优先级计算。这两项能把完整帧更新进一步推向 `O(changes)`，但当前项目接受全队列优先级刷新成本，不再计划实现。现有视锥测试继续用于抑制屏幕外主动细分，不将其表述为论文的增量裁剪。
 
-随后实现 deferral lists：
+### 20.5 已完成的现代增量输出与剩余验证
 
-- 先定义相机速度/角速度上界；
-- 为 priority 建立随时间变化的保守区间；
-- 只有区间可能跨越当前 crossover 时才安排重算；
-- 对 teleports 或 FOV 突变清空 deferral state 并全量 refresh。
+论文在 1997 年硬件上选择 triangle strips。项目现在实现的是现代 indexed 等价路径：每个 active leaf 拥有 dense stable slot，split/merge 记录 edit，emit 阶段只重写 dirty slots，renderer 只上传 dirty ranges。D3D12 还为交换链每个 frame slot 保留 pending ranges，避免轮转时漏更新。
 
-这两项是论文从 `O(active topology)` 向 `O(changes)` 靠近的关键，优先级高于 triangle strips，且应增加独立统计：tested nodes、culled subtrees、deferred/recomputed priorities。
+已通过 `incremental-emit` 回归验证：相同视点连续三次 Build 时，首帧全量初始化，第二帧只清除一次 Rebuilt 调试属性，第三帧 `updated triangles=0`、`dirty ranges=0`、全部 leaf 复用。
 
-### 20.5 P3：增量输出，而不是优先照搬旧式 strips
+当前仍应完成的工程正确性验证：
 
-论文在 1997 年硬件上选择 triangle strips。当前 OpenGL/D3D12 更适合先评估：
+- 建立独立 full-emit reference，与增量输出逐帧比较 triangle set、属性和 winding；
+- 在随机 split/merge、末槽移动和 topology reset 序列上做性质测试；
+- 用 runtime benchmark 验证小幅移动时 CPU emit 与 GPU upload bytes 随 changed slots 缩放；
+- triangle strips 不再进入当前路线；现代 indexed slots/ranges 是项目确定采用的输出方案。
 
-- 稳定 shared-vertex/index cache；
-- split/merge changed ranges；
-- persistently mapped/ring upload buffer；
-- indirect draw 或 meshlet/cluster 输出；
-- 只更新受 topology changes 影响的局部 index blocks。
+### 20.6 非当前目标：按时间逐步优化与顶点渐变
 
-如果研究目标是“严格复现论文”，可以实现 incremental T-strips 作为独立实验模式；如果目标是现代性能，建议实现“增量 indexed mesh”并在文档中明确它对应论文的增量输出职责，而不是数据格式复刻。
+论文允许在合法 split/merge 事务之间按剩余帧时间暂停，并用 midpoint 渐变减轻跳变。当前项目使用完整 Build 和 split/merge 迟滞，不增加事务截止时间或顶点渐变状态；相关字段、同步规则和性能结论不属于当前实现范围。
 
-验收条件：
+### 20.7 非当前目标：动态地形与高级误差项
 
-- 固定相机时 CPU emit bytes 和 GPU upload bytes 接近 0；
-- 小幅移动时上传量与 changed triangles 成正比；
-- full rebuild reference 与 incremental output 的最终 triangle set、winding 和 crack 状态完全一致。
+论文还讨论动态地形、视线、背面、法线、轮廓和雾等扩展。当前实验使用固定高度图和统一几何优先级，这些扩展不进入项目路线，也不作为 Classic、DOD、GPU 对比的完成条件。
 
-### 20.6 P4：Progressive Optimization 与 Vertex Morphing
-
-Persistent queues 建立后，加入每帧 topology operation budget 或 deadline：每次完成一个可恢复的 split/merge transaction 后检查剩余时间，下一帧继续。
-
-Vertex morphing 需要为新 midpoint 保存：
-
-- coarse midpoint position/height；
-- fine target position/height；
-- morph direction（split/merge）；
-- start time/duration；
-- merge 延迟回收规则。
-
-要保证 forced diamond 两侧共享 midpoint 使用同一 morph state，否则会在过渡期间产生几何裂缝。
-
-### 20.7 P5：动态地形与高级 Metrics
-
-在 bound 正确后维护“height sample -> dependent bintree nodes”映射，样本变化时只更新依赖链；同时使 active queue priorities 和 frustum bounds 失效。
-
-LOS、object positioning、backface、normal、silhouette、fog 等 metric 建议作为 priority modifier 插件实现，不应硬编码进 `ComputeScreenErrorScore()`。它们对当前 Classic/DOD/GPU 数据布局研究不是近期阻塞项。
-
-## 21. 建议的实施优先级与收益
+## 21. 实现状态与工程取舍
 
 | 优先级 | 工作 | 首要收益 | 前置依赖 | 主要风险 |
 | --- | --- | --- | --- | --- |
 | 已完成 | nested wedgie 公式 (1) | 恢复 world-space 累计 thickness 语义 | 无 | 已改变三种算法质量口径，历史数据需重跑 |
 | 已完成 | conservative projection 公式 (2)/(3) | 恢复局部 screen-space bound | nested thickness | 已覆盖 near-plane 与角点分子/分母极值 |
-| P0 | 单调性/上界自动测试 | 防止把 heuristic 当 theorem | 公式 (1) 已有递推测试 | 连续空间只能通过保守推导最终证明 |
+| 可选研究 | 父子优先级单调性检查 | 研究最终 priority 的数学性质 | 公式 (1) 已有递推测试 | 不属于当前完成条件 |
 | 已完成 | persistent dual queues + hard-budget crossover | topology membership 局部更新、满预算资源交换 | intrusive indexed heaps | key refresh 仍为 O(N)，不能单独恢复完整 `Delta N` 证明 |
-| P1 | exact target-count reference 与 top-down fallback | 验证论文预算下的分配性质 | dual queues | 并非所有整数 count 都一定可由合法 topology 精确表示 |
-| P2 | incremental frustum flags | 减少重复 plane tests | 保守 bound | camera teleport 的状态失效 |
-| P2 | priority deferral | 固定/慢速相机显著减小评分工作 | monotonic conservative priority | 速度界错误会破坏正确性 |
-| P3 | incremental indexed output | 降低 emit/upload `O(N)` 成本 | changed-node tracking | buffer 碎片与跨帧资源生命周期 |
-| P3 | incremental T-strips 实验模式 | 论文复现实验 | changed-node tracking | 对现代 GPU 未必有正收益 |
-| P4 | progressive optimization | 严格 frame-time 控制 | persistent queues | 中断点必须保持合法 topology |
-| P4 | vertex morphing | 减少 popping | 稳定 shared midpoint identity | split/merge 和 forced diamond 同步 |
-| P5 | dynamic terrain local updates | 支持实时地形修改 | dependency graph + bounds | 失效传播复杂 |
-| P5 | LOS/其他 metrics | 扩展应用语义 | metric plugin contract | 难以保持 monotonicity |
+| 非当前目标 | exact target-count reference 与 top-down fallback | 论文严格预算语义 | dual queues | 当前采用 hard upper bound |
+| 非当前目标 | incremental frustum flags | 减少重复 plane tests | 保守 bound | 当前接受每次评分重新测试 |
+| 非当前目标 | priority deferral | 固定/慢速相机减少评分工作 | monotonic conservative priority | 当前接受全队列 key refresh |
+| 已完成 | incremental indexed output | 降低 emit/upload `O(N)` 成本 | topology edit log + stable slots | full-reference 随机轨迹对照仍待补齐 |
+| 非当前目标 | incremental T-strips | 论文历史输出格式 | changed-node tracking | 当前采用增量 indexed Mesh |
+| 非当前目标 | progressive optimization | 严格 frame-time 控制 | persistent queues | 当前按完整 Build 统计 |
+| 非当前目标 | vertex morphing | 减少 popping | 稳定 shared midpoint identity | 当前使用迟滞 |
+| 非当前目标 | dynamic terrain local updates | 支持实时地形修改 | dependency graph + bounds | 当前地形在一次实验中固定 |
+| 非当前目标 | LOS/其他 metrics | 扩展应用语义 | metric plugin contract | 不属于当前研究问题 |
 
 ## 22. 不建议直接做的改动
 
@@ -804,11 +773,11 @@ LOS、object positioning、backface、normal、silhouette、fog 等 metric 建�
 
 ### 22.5 不要让 Classic、DOD、GPU 静默使用不同误差语义
 
-若项目要比较数据布局和执行平台，三条路径必须共享可验证的 quality contract。新论文模式应同时规划 DOD/GPU 对应公式，或明确它是单独的 reference 模式，不进入同口径性能表。
+若项目要比较数据布局和执行平台，三条路径必须共享可验证的 quality contract。当前统一公式、像素阈值、迟滞与硬预算就是正式对比口径，不再规划额外的论文严格模式。
 
 ## 23. 测试缺口与验证建议
 
-当前 `tests/RoamNestedWedgieTests.cpp` 已覆盖共享公式递推、叶层为 0 和分辨率深度解析；`tests/RoamScreenProjectionTests.cpp` 已覆盖公式 (3) 对密集公式 (2) 采样的保守性、投影/相机变化、正交投影和 near crossing；Classic/DOD budget-reentry 测试与 smoke benchmark 覆盖拓扑合同。但这些仍不能替代以下验证：
+当前 `tests/RoamNestedWedgieTests.cpp` 已覆盖共享公式递推、叶层为 0 和分辨率深度解析；`tests/RoamScreenProjectionTests.cpp` 已覆盖公式 (3) 对密集公式 (2) 采样的保守性、投影/相机变化、正交投影和 near crossing；Classic/DOD budget-reentry 测试与 smoke benchmark 覆盖拓扑合同。下面 1-8、11-12 属于工程正确性增强；9-10 只服务论文证明研究，已不再是当前完成条件：
 
 1. `SplitTriangleDomain()` 在多层后仍覆盖 parent、无重叠、winding 一致。
 2. root diamond 和任意 forced split chain 后无 T-junction。
@@ -830,33 +799,29 @@ LOS、object positioning、backface、normal、silhouette、fog 等 metric 建�
 ### 24.1 源码可直接确认
 
 - nested wedgie rebuild 是完整深度递归，复杂度与完整预计算 bintree 节点数成正比；
-- merge candidate mark 每次扫描 active internal topology；
-- budget rebalance 至少收集并扫描 active leaves；
-- split candidate mark 每次扫描 active leaves；
-- final leaf collect 再递归一次；
+- 每次 Build 仍刷新持久 `Q_s/Q_m` 的全部现有 keys；
+- budget 和最终 leaf view 分别直接读取 `Q_s.size()` 与 dense Mesh slot owners，不再递归收集；
 - active split paths 再递归一次 internal topology；
-- mesh emit 为每个 leaf 重新采样并 append 3 个 vertices；
-- CPU mesh 每次完整上传；
+- mesh emit 只为 dirty slots 重采样 3 个 vertices，连续 slots 合并为 ranges；
+- CPU mesh 通过 borrowed packet 发布，OpenGL/D3D12 只上传 ranges；首次、reset 或 buffer 扩容全量上传；
 - candidate heaps 带来 `push/pop` 的对数因子；
 - score 在扫描、合法性检查和 candidate pop 处可能重复计算。
 
 ### 24.2 基于结构的推断
 
-固定相机且 topology 不变化时，当前仍需多次 `O(N)` traversal/scoring/emit/upload，所以无法呈现论文“几乎无变化时成本接近零”的核心优势。
+固定相机且 topology 不变化时，Mesh emit/upload 已可降为 0，但 queue key refresh 与 active split path 遍历仍是 `O(N)`，所以整次 Build 还不能呈现论文“几乎无变化时成本接近零”的完整优势。
 
 裸指针 node 在堆上分散，merge/split/validation traversal 的 cache locality 通常弱于连续 SoA/DOD；但实际最大瓶颈需要 profiler 确认，不能只凭结构断言。
 
 ### 24.3 需要 profiler 才能确认
 
 - 当前场景究竟由 error scoring、heap 操作、pointer chasing、height sampling、mesh allocation 还是 upload 主导；
-- priority deferral 在典型 camera path 下是否能显著降低当前全队列 key refresh 成本；
-- triangle strips 在现代后端是否优于 indexed mesh；
 - vertex cache 去重的 CPU 成本能否抵消 upload 节省；
 - node pool 高水位对长时间运行的真实内存压力。
 
 ## 25. 对 Classic 与 DOD 比较口径的影响
 
-如果研究问题是“论文经典实现 vs DOD + 优化”，应把差异拆成两类：
+当前研究问题采用“对象式串行 Classic 工程基线 vs DOD 与 GPU 优化版本”的口径，不再宣称前者是论文逐项复刻。差异仍拆成算法语义和现代 CPU 优化两类：
 
 ### 25.1 Classic ROAM 算法语义
 
@@ -864,8 +829,8 @@ LOS、object positioning、backface、normal、silhouette、fog 等 metric 建�
 - conservative screen priority；
 - forced split/diamond merge；
 - persistent dual queues；
-- incremental culling/priority/output；
-- progressive frame control。
+- hard budget 与 split/merge 迟滞；
+- topology 与 indexed Mesh 增量更新。
 
 ### 25.2 DOD/现代 CPU 优化
 
@@ -877,12 +842,7 @@ LOS、object positioning、backface、normal、silhouette、fog 等 metric 建�
 - 批量 candidate mark 与 topology commit；
 - 更可控的容量、内存访问和 worker 调度。
 
-当前 Classic 已具备第一类中的 topology 子集，但没有论文全部增量优化；同时又加入了项目统一 pixel score、hysteresis、hard budget 和 rebalance。因此现有性能差不能被简单解释为“经典论文算法 vs DOD”。它同时包含：数据布局差异、并行差异、pass 组织差异，以及论文机制缺失造成的差异。
-
-建议未来报告至少包含两组对照：
-
-1. `ClassicPaperRoam` vs `DODPaperSemantics`：相同 bound、priority、target/crossover，比较数据布局与并行。
-2. `ClassicCurrent` vs `DODCurrent` vs `GPUCurrent`：相同当前 pixel score、hysteresis 和 hard budget，比较当前工程实现。
+Classic、DOD 和 GPU 继续共享当前 pixel score、hysteresis、hard budget 和相机输入。报告比较真实阶段成本、三角形数量、拓扑错误和画质，不再设置 `ClassicPaperRoam` 或 `DODPaperSemantics` 模式。结论应写成“Classic 工程基线与 DOD/GPU 优化版本对比”，并明确哪些收益来自数据布局、并行、阶段融合、局部拓扑维护或增量 Mesh 输出。
 
 ## 26. 文件与符号索引
 
@@ -895,11 +855,12 @@ LOS、object positioning、backface、normal、silhouette、fog 等 metric 建�
 | [`ClassicRoamState.cpp`](../../src/algorithms/classic_roam/ClassicRoamState.cpp) | `AddNode`, `ResetTopology`, leaf/path collect | 根 diamond、node ownership、持久 topology |
 | [`ClassicRoamScoring.cpp`](../../src/algorithms/classic_roam/ClassicRoamScoring.cpp) | base displacement、score、frustum | 当前误差公式和 view weighting |
 | [`ClassicRoamTopology.cpp`](../../src/algorithms/classic_roam/ClassicRoamTopology.cpp) | split queue, merge queue, forced split, diamond merge | 动态 topology 更新 |
-| [`ClassicRoamMeshEmit.cpp`](../../src/algorithms/classic_roam/ClassicRoamMeshEmit.cpp) | `EmitLeafTriangles`, `EmitDomainTriangle` | full CPU mesh rebuild |
+| [`ClassicRoamMeshEmit.cpp`](../../src/algorithms/classic_roam/ClassicRoamMeshEmit.cpp) | edit replay、slot replace/compact、`WriteMeshLeaf`、range finalize | 增量 CPU indexed Mesh |
 | [`ClassicRoamValidation.cpp`](../../src/algorithms/classic_roam/ClassicRoamValidation.cpp) | `ValidateTopology` | T-junction、邻接和树不变量诊断 |
 | [`ClassicRoamTerrainLodAlgorithm.cpp`](../../src/algorithms/classic_roam/ClassicRoamTerrainLodAlgorithm.cpp) | adapter, stats mapping | 接入统一算法接口和 Benchmark |
 | [`ITerrainLodAlgorithm.h`](../../src/algorithms/ITerrainLodAlgorithm.h) | settings, view input, stats, render packet | 三种 ROAM 路径的共享质量和统计口径 |
-| [`TerrainRenderer.cpp`](../../src/render/TerrainRenderer.cpp) | `BuildRenderData` 消费、`UploadMesh` | CPU mesh 的完整 GPU 上传路径 |
+| [`TerrainRenderer.cpp`](../../src/render/TerrainRenderer.cpp) | `BuildRenderData` 消费、`UploadMeshData` | OpenGL CPU Mesh full/range 上传 |
+| [`D3D12TerrainRenderer.cpp`](../../src/render/D3D12TerrainRenderer.cpp) | `UploadMeshData`、`UploadMeshForFrame` | D3D12 per-frame pending full/range 上传 |
 
 ## 27. 最终分类清单
 
@@ -921,6 +882,7 @@ LOS、object positioning、backface、normal、silhouette、fog 等 metric 建�
 - FOV、aspect、投影、drawable width/height 和三角形角点齐次深度参与 priority；
 - frustum-aware LOD priority；
 - active leaf hard upper budget；
+- stable dense Mesh slots、topology edit replay、dirty ranges 与增量 GPU upload；
 - CPU mesh、法线、UV、winding 输出；
 - topology validator 和阶段统计。
 
@@ -930,7 +892,7 @@ LOS、object positioning、backface、normal、silhouette、fog 等 metric 建�
 - Screen Priority：geometric component 是 conservative distortion bound；最终值另含 edge-density 项；
 - Split/Merge Queues：持久 indexed heaps 与局部 membership 已实现，但 key 仍每帧全量刷新；
 - Triangle Budget：hard upper bound，不是 direct target count；
-- Frame Coherence：topology 持久，candidate/priority/output 不增量；
+- Frame Coherence：topology、queue membership 与 indexed output 增量；priority/frustum state 不增量；
 - Frustum Culling：影响 priority，不维护增量 labels，也不剔除最终输出；
 - 抗 popping：有 hysteresis，没有 vertex morphing；
 - 预算质量再分配：统一 crossover 已实现，但采用 hard-capacity merge-first 变体。
@@ -943,7 +905,6 @@ LOS、object positioning、backface、normal、silhouette、fog 等 metric 建�
 - incremental frustum flags/labels；
 - priority deferral lists；
 - incremental T-stripping；
-- incremental indexed mesh/GPU upload；
 - progressive deadline-based optimization；
 - vertex morphing；
 - dynamic terrain 局部 bound 更新；
@@ -951,12 +912,11 @@ LOS、object positioning、backface、normal、silhouette、fog 等 metric 建�
 - 任意 manifold base mesh；
 - 对实际 HeightMap ancestor bound 的完整性质测试。
 
-### 27.4 建议优先实现
+### 27.4 当前维护重点
 
-1. 为公式 (1)-(3) 补真实 HeightMap ancestor bound、跨后端逐值一致性和最终 priority 单调性测试。
-2. 为已实现的 persistent dual queues 增加 target-count reference、top-down fallback 和穷举对照。
-3. 然后实现 incremental frustum state 与 priority deferral，恢复 `O(Delta N)` 方向。
-4. 以现代 incremental indexed output 为主，triangle strips 作为论文复现实验模式。
-5. 最后加入 progressive optimization、vertex morphing、dynamic terrain 和高级 metrics。
+1. 保持 Classic、DOD 和 GPU 的公式、阈值、预算与相机输入一致。
+2. 加强随机 split/merge、增量 Mesh 与跨后端数值一致性测试。
+3. 按真实阶段记录误差计算、拓扑提交、Mesh 输出、上传和 GPU 工作，不用总耗时掩盖算法差异。
+4. 在统一场景下重新采集性能与画质数据，为闭包感知预算调度研究提供稳定基线。
 
-只有完成剩余的 monotonic priority、exact-target reference 和端到端性质测试后，项目文档才适合使用“论文级 guaranteed error bound”和“给定 bintree mesh 空间中的 optimal triangulation”等表述。
+项目不再补齐最终 priority 单调性、exact target、增量 triangle strips 或论文完整最优性证明。文档继续避免使用“论文级 guaranteed error bound”和“给定 bintree mesh 空间中的 optimal triangulation”，改用“保守几何误差分量”“连续拓扑”“局部变化量更新”和“工程基线”等可由当前源码与测试支持的表述。

@@ -17,6 +17,21 @@ const ClassicRoamStats& ClassicRoamMeshBuilder::Stats() const
     return _stats;
 }
 
+const std::vector<ClassicRoamMeshUpdateRange>& ClassicRoamMeshBuilder::MeshUpdateRanges() const
+{
+    return _meshUpdateRanges;
+}
+
+bool ClassicRoamMeshBuilder::MeshRequiresFullUpload() const
+{
+    return _meshRequiresFullUpload;
+}
+
+std::uint64_t ClassicRoamMeshBuilder::MeshGeneration() const
+{
+    return _meshGeneration;
+}
+
 ClassicRoamMeshBuilder::ClassicRoamNode* ClassicRoamMeshBuilder::AddNode(
     const TriangleDomain& domain,
     ClassicRoamNode* parent,
@@ -54,7 +69,6 @@ void ClassicRoamMeshBuilder::ResetTopology()
     _nodes.clear();
     _previousSplitPaths.clear();
     _currentSplitPaths.clear();
-    _activeLeaves.clear();
 
     // rootA 和 rootB 分别覆盖同一正方形的两半
     // 两个根三角形共享对角线 base edge，构成 Classic ROAM 的根 diamond

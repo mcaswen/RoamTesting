@@ -17,12 +17,13 @@ enum class BenchmarkAlgorithmSelection
 };
 
 /// <summary>
-/// benchmark 内置场景，覆盖通用 smoke、预算重入回归和较长相机路径统计
+/// benchmark 内置场景，覆盖 smoke、预算重入、增量 emit 回归和较长相机路径统计
 /// </summary>
 enum class BenchmarkProfile
 {
     Smoke,
     BudgetReentry,
+    IncrementalEmit,
     Standard,
 };
 

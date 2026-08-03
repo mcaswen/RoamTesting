@@ -325,7 +325,7 @@
 - 定位：Classic 的 `ClassicRoamMeshBuilder::BuildVarianceSubtree` 与 DOD scoring 文件中的同名匿名递推各维护一份旧公式；GPU ROAM-like 从 DOD snapshot 读取 `GeometricError`，因此也继承旧语义。
 - 解决方案：新增共享 `RoamNestedWedgie.h`。`ResolveNestedWedgieTreeDepth` 按 `max(MaxDepth, 2*ceil(log2(max(width-1,height-1))))` 选择预计算深度并限制到 20；`BuildNestedWedgieSubtree` 把最细层设为 0，其他节点执行 `max(leftThickness,rightThickness)+abs(baseMidpointDisplacement)`。Classic/DOD 删除各自旧递推，共用同一公式；GPU snapshot 自动继承新 thickness。
 - 验证：新增 `roam_nested_wedgie` 属性测试，覆盖最细层为 0、有符号位移取绝对值、多层累计、129/513 source depth，并穷举小型几何 bintree 中每个 ancestor 对最细后代顶点的高度误差界；RelWithDebInfo CTest 7/7 通过。Classic/DOD smoke、budget-reentry 与 513x513 standard 64 帧均 PASS，逐帧输出规模保持一致且 topology issue 为 0；standard 三角形范围均为 `12906..20000`。RTX 5090 D 上 OpenGL 4.3 与 D3D12 `--gpu-smoke-test` 均以退出码 0 完成。
-- 后续：仍需增加真实小型 HeightMap 的 ancestor bound 穷举测试，并明确验证非 `2^k+1` 输入、source depth 超过 20 和连续双线性曲面解释。公式 (2)/(3) 已由 BUG-027 后续实现，但不能仅凭局部公式 (1)-(3) 宣称完整 guaranteed screen-space error。
+- 维护边界：真实小型 HeightMap 的 ancestor bound、非 `2^k+1` 输入和 source depth 上限仍可作为工程回归测试；连续双线性曲面解释与完整误差证明属于可选研究，不是当前完成条件。公式 (2)/(3) 已由 BUG-027 实现，但不能仅凭局部公式 (1)-(3) 宣称完整 guaranteed screen-space error。
 
 ### BUG-027：Center-Depth SSE 不是论文公式 (2)/(3) 的保守屏幕投影
 
@@ -336,7 +336,18 @@
 - 定位：Classic/DOD 的 `ComputeScreenErrorScore`、OpenGL `GpuRoamErrorEvaluation`/`GpuRoamCandidateMarking` 以及 `GpuRoamLike.hlsl::ScoreNode` 各自复制了 center-depth heuristic。GPU 常量只上传 `View`、`ProjectionScaleY` 与 `DrawableHeight`，没有完整 `ViewProjection` 和 drawable width。
 - 解决方案：新增共享 `RoamScreenProjection.h`，把 triangle corners 与世界高度方向 `(0,worldThickness,0,0)` 变换到 homogeneous clip space，以 `clip.x/clip.y/clip.w` 和 `thicknessClip.x/thicknessClip.y/thicknessClip.w` 直接实现公式 (3)。三个角点分别求最小 denominator 与最大 pixel-scaled numerator；wedgie 触碰或穿越 inward near plane 时返回 `float max`。Classic/DOD 共用 helper；OpenGL/D3D12 shader 使用相同代数和常量布局。保留的平坦区域 `edge-density` 明确作为独立扩展，并改成三个端点的真实像素投影，不再复用 center depth。
 - 验证：新增 `roam_screen_projection` 测试，对多组 FOV、aspect、camera pitch/roll、drawable 尺寸和 perspective/orthographic 投影在 triangle 内密集采样公式 (2)，所有样本均不超过公式 (3) bound；near-plane crossing 返回人工最大值，分辨率双倍时 bound 双倍。OpenGL/D3D12 RelWithDebInfo 构建通过，DXC 成功编译全部 GPU ROAM shader，OpenGL `--gpu-smoke-test` 退出码为 0。
-- 后续：补 CPU/GLSL/HLSL score buffer 逐值一致性测试，以及真实 nested parent/child 最终 priority 单调性测试。最终 score 仍是 `max(geometricBound, edgeDensity)`，调度仍非 persistent dual queues，因此不能把局部保守 bound 直接表述为完整论文最优性保证。
+- 维护边界：CPU/GLSL/HLSL score buffer 逐值一致性测试仍属于跨后端工程正确性验证；真实 nested parent/child 最终 priority 单调性测试只服务论文证明研究，不是当前完成条件。持久 dual queues 已在后续阶段实现，但最终 score 仍是 `max(geometricBound, edgeDensity)`，因此不能把局部保守 bound 直接表述为完整论文最优性保证。
+
+### BUG-028：Classic 每次 Build 全量重建并上传 CPU Mesh
+
+- 状态：`Fixed`
+- 严重级别：`中`
+- 发生阶段：论文 incremental triangle stripping 与当前 Classic 输出路径对照
+- 现象：拓扑和双队列已经跨帧持久，但旧路径仍从 roots 递归收集全部 active leaves，重新采样每个 leaf 的顶点属性、构造新的 `TerrainMeshData`，adapter 再移动完整 vectors，renderer 最后上传整个 VBO/IBO。固定视点触发 Build 时，输出成本仍与活动三角形总数成正比。
+- 定位：旧 `ClassicRoamMeshBuilder::Build` 在 topology 稳定后调用 `CollectLeafNodes` 与 `EmitLeafTriangles`；`TerrainLodRenderPacket` 只能拥有 CPU Mesh，没有借用生命周期、generation 或更新区间；OpenGL/D3D12 CPU 路径只接受全量上传。
+- 解决方案：每个 active leaf 新增 `MeshSlot`，builder 持久维护 dense `_meshSlotOwners` 与 `_meshData`。split 复用 parent 槽并追加 right child；merge 写回 parent，删除另一 child，并以 move-last compaction 消除空洞。topology 提交只记录有序 edit，emit 阶段统一 replay、按 generation 去重 dirty slots 并合并 ranges。adapter 通过 borrowed Mesh 发布持久数据；OpenGL 只对 dirty ranges 调用 `glBufferSubData`，D3D12 为每个 frame slot 保存 pending full/range 状态，并在 slot 追赶多个 Build 时分别合并 vertex/index 区间。validator 交叉检查 root leaf 集合、slot owner、反向 `MeshSlot` 和局部 index 范围。
+- 验证：新增 `incremental-emit` profile 和 CTest。129x129、528 个 active triangles 下，相同视点连续三次 Build 的计数依次为：首帧 full=1/updated=528；第二帧 full=0/updated=528，用于结束 Rebuilt 调试色；第三帧 full=0/updated=0/reused=528/dirtyRanges=0。Classic smoke 的大规模 split/merge/级联合并 6 帧全部通过且 topology issue 为 0，budget-reentry 5 帧维持 512 leaf 并全部通过。OpenGL 全部 CTest 9/9 通过，OpenGL 与 D3D12 RelWithDebInfo 均构建通过，D3D12 版 headless incremental profile 也通过。RTX 5090 D 上 0.5 秒 D3D12 runtime 采样得到 228 个 Classic 局部上传帧，没有任何一帧超过当帧完整 Mesh 字节数，稳定末段降为 0 B。
+- 后续：当前实现对应论文“只修改受影响输出”的职责，但不是 triangle-strip 数据格式复刻。仍需增加独立 full-emit reference 与随机 split/merge 轨迹逐帧对照，并用有窗口 runtime benchmark 测量 changed slots、实际 upload bytes 与耗时的缩放关系。
 
 ## 模板
 

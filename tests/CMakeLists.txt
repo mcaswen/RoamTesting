@@ -138,9 +138,18 @@ if(TARGET parallel_roam)
             --algorithm dod
             --profile budget-reentry
     )
+    add_test(
+        NAME roam_incremental_mesh_emit_classic
+        COMMAND
+            $<TARGET_FILE:parallel_roam>
+            --benchmark
+            --algorithm classic
+            --profile incremental-emit
+    )
     set_tests_properties(
         roam_budget_reentry_classic
         roam_budget_reentry_dod
+        roam_incremental_mesh_emit_classic
         PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."
     )
 endif()

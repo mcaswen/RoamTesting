@@ -164,6 +164,10 @@ persistentSplitQueueSize
 persistentMergeQueueSize
 queueCrossoverCount
 queueMembershipUpdateCount
+cpuMeshFullRebuildCount
+cpuMeshUpdatedTriangleCount
+cpuMeshReusedTriangleCount
+cpuMeshDirtyRangeCount
 splitCount
 mergeCount
 maxActiveDepth
@@ -202,13 +206,15 @@ cpuGpuReadbackBytes
 
 `cpuUtilizationPercent` 使用进程 CPU time / build wall time 的口径，单个逻辑核心满载约为 100%，多线程算法可以超过 100%。
 
-CPU 阶段按互斥执行区间记录，阶段和应接近 `cpuUpdateMs`；原生 `split/merge/emit/validate` 仍作为重叠的 pass 包络保留，不能与互斥阶段重复相加。GPU 不再只报告设备总时间：OpenGL 使用八个顺序 `GL_TIME_ELAPSED` query，D3D12 使用九个 timestamp 边界，分别得到 split 前活动叶收集、活动叶像素误差/视锥测试、split 候选标记、merge parent 评分、split/direct-diamond 提交、活动叶计数重置、split 后活动叶收集和 mesh/indirect-args 输出。`gpuPassSumMs` 只是八段之和，不含 CPU dispatch wall、query/readback wait 或 render。
+CPU 阶段按互斥执行区间记录，阶段和应接近 `cpuUpdateMs`；原生 `split/merge/emit/validate` 仍作为重叠的 pass 包络保留，不能与互斥阶段重复相加。Classic 的 `cpuMeshEmitMs` 现在只包含 topology edit replay、dirty slot 写入和 range 合并；必须结合四个 `cpuMesh*Count` 以及 renderer 实际记录的 `cpuGpuUploadBytes` 解读，不能再把它当作每帧全量 Mesh 构建。OpenGL 的上传字节直接对应当前 Build ranges；D3D12 每个 frame slot 延迟消费两次使用之间累积的 ranges 并集，因此实际上传量可能大于当前 Build 的 dirty slots，但不应超过当前完整 Mesh。GPU 不再只报告设备总时间：OpenGL 使用八个顺序 `GL_TIME_ELAPSED` query，D3D12 使用九个 timestamp 边界，分别得到 split 前活动叶收集、活动叶像素误差/视锥测试、split 候选标记、merge parent 评分、split/direct-diamond 提交、活动叶计数重置、split 后活动叶收集和 mesh/indirect-args 输出。`gpuPassSumMs` 只是八段之和，不含 CPU dispatch wall、query/readback wait 或 render。
+
+Classic 的报告采用工程等价口径，不以论文完整证明为验收目标。公式 (1)-(3) 用于统一误差尺度，forced split/diamond merge 用于保持连续拓扑，持久队列 membership 和增量 Mesh 用于减少局部变化后的重复工作。报告可以分别分析这些阶段与变化量的关系，但由于优先级仍按全部队列成员刷新，不得把局部 emit/upload 的下降写成整次 Build 已达到论文严格 `O(Delta N)`，也不得使用“给定预算下全局最优”作为结论。
 
 运行时 Markdown 的首要比较表必须以 ROAM 逻辑阶段为行，而不是以 shader 名为行。GPU ROAM-like 是混合实现：完整 merge、级联回收、邻接修复和 CPU split baseline 仍由 DOD 执行；GPU merge shader 当前只产生诊断候选，GPU 拓扑只追加一轮 split，并仅支持直接 base-neighbor diamond。报告必须分别显示 `GPU-like CPU baseline` 与 `GPU-like shader`，未实现的 GPU merge topology 写成 `N/A`，不能用 `0 ms` 暗示它已经实现。
 
 该表分析稳定帧热路径。nested wedgie tree / `GeometricError` rebuild 属于初始化、地形切换或预计算深度失效后的 reset 路径，当前没有独立阶段计时；不能从稳定帧表中推断其成本，若要比较必须另建 initialization benchmark。
 
-统一 benchmark harness 对 Classic、DOD 和 GPU 名称都应用预算与 `center -> away` 视锥回收断言；对启用持久双队列统计的 Classic，另外要求 `Q_s == ActiveTriangleCount <= TriangleBudget`，并要求单帧 `SplitCount + MergeCount <= ActiveNodeCount`，用于捕获同一 parent 在统一循环中反复逆转。`budget-reentry` profile 另以低预算和原地小角度转向，要求 Classic/DOD 在转向后的第一次 Build 同时 merge 旧低分 diamond 并 split 新高分区域。无窗口模式因没有图形上下文通常跳过 GPU。应用级 `--gpu-smoke-test` 在 OpenGL 和 D3D12 上分别验证 GPU packet 非空、最终三角形不超预算，并检查 CPU DOD 持久拓扑的三类 issue 为零。这类正确性验证不替代 30-60 秒 runtime 性能采样。
+统一 benchmark harness 对 Classic、DOD 和 GPU 名称都应用预算与 `center -> away` 视锥回收断言；对启用持久双队列统计的 Classic，另外要求 `Q_s == ActiveTriangleCount <= TriangleBudget`、`updated+reused==active`、dirty ranges 不多于 updated triangles，并要求单帧 `SplitCount + MergeCount <= ActiveNodeCount`。`budget-reentry` profile 以低预算和原地小角度转向，要求 Classic/DOD 在转向后的第一次 Build 同时 merge 旧低分 diamond 并 split 新高分区域。`incremental-emit` 连续三次使用同一 Classic 视点：首帧必须 full rebuild，第二帧只允许增量调试属性过渡，第三帧必须零 split/merge、零 updated/dirty 并复用全部 leaf。无窗口模式因没有图形上下文通常跳过 GPU。应用级 `--gpu-smoke-test` 在 OpenGL 和 D3D12 上分别验证 GPU packet 非空、最终三角形不超预算，并检查 CPU DOD 持久拓扑的三类 issue 为零。这类正确性验证不替代 30-60 秒 runtime 性能采样。
 
 ### DOD active internal 索引 A/B
 

@@ -19,7 +19,7 @@ float ElapsedMilliseconds(std::chrono::steady_clock::time_point start, std::chro
 }
 } // 匿名命名空间
 
-Terrain::TerrainMeshData ClassicRoamMeshBuilder::Build(
+const Terrain::TerrainMeshData& ClassicRoamMeshBuilder::Build(
     const Terrain::HeightMap& heightMap,
     float terrainSize,
     float heightScale,
@@ -49,25 +49,19 @@ Terrain::TerrainMeshData ClassicRoamMeshBuilder::Build(
     _settings.MergeThreshold = std::min(_settings.MergeThreshold, _settings.SplitThreshold);
     _stats = {};
     _currentSplitPaths.clear();
-    _activeLeaves.clear();
     _viewProjection = view.ViewProjection;
     _frustumPlanes = view.FrustumPlanes;
     _drawableWidth = std::max(view.DrawableWidth, 1U);
     _drawableHeight = std::max(view.DrawableHeight, 1U);
     _terrainSize = terrainSize;
     _heightScale = heightScale;
-
-    Terrain::TerrainMeshData meshData{};
-    meshData.GridWidth = heightMap.Width();
-    meshData.GridHeight = heightMap.Height();
-    // mesh metadata 直接透传给 renderer 和 benchmark CSV
-    meshData.TerrainSize = terrainSize;
-    meshData.HeightScale = heightScale;
+    BeginIncrementalMeshUpdate(resetTopology);
 
     if (!heightMap.IsValid())
     {
         // 与规则网格 builder 保持空 mesh 失败语义
-        return meshData;
+        ResetIncrementalMeshStorage();
+        return _meshData;
     }
 
     if (rebuildVarianceTrees)
@@ -79,6 +73,7 @@ Terrain::TerrainMeshData ClassicRoamMeshBuilder::Build(
     if (resetTopology)
     {
         // 高度图或最大深度不兼容时才清空拓扑，普通相机移动保留树结构
+        ResetIncrementalMeshStorage();
         ResetTopology();
     }
     else if (rebuildVarianceTrees)
@@ -91,6 +86,12 @@ Terrain::TerrainMeshData ClassicRoamMeshBuilder::Build(
     // Q_s/Q_m membership 与 active topology 一起跨帧保留；本帧只刷新 priority 并局部改队列
     OptimizeWithPersistentDualQueues();
 
+    // topology edit 按提交顺序作用到持久 mesh，只重写 split/merge 影响的稠密槽位。
+    const auto meshEmitStart = std::chrono::steady_clock::now();
+    ApplyIncrementalMeshUpdates();
+    FinalizeIncrementalMeshUpdate();
+    const auto meshEmitEnd = std::chrono::steady_clock::now();
+
     if (_settings.EnableTopologyValidation)
     {
         // validator 是调试路径，不参与默认修复逻辑
@@ -100,25 +101,18 @@ Terrain::TerrainMeshData ClassicRoamMeshBuilder::Build(
         _stats.ValidateMilliseconds = ElapsedMilliseconds(validateStart, validateEnd);
     }
 
-    // 最终 leaf 快照在拓扑稳定后收集，emit 和统计共用
-    const auto finalCollectStart = std::chrono::steady_clock::now();
-    CollectLeafNodes(_activeLeaves);
-    const auto finalCollectEnd = std::chrono::steady_clock::now();
-    const auto meshEmitStart = std::chrono::steady_clock::now();
-    EmitLeafTriangles(meshData, _activeLeaves);
-    const auto meshEmitEnd = std::chrono::steady_clock::now();
-
     const auto finalizeStart = std::chrono::steady_clock::now();
-    AccumulateLeafStats(meshData, _activeLeaves);
+    AccumulateLeafStats(_meshData, _meshSlotOwners);
     _stats.MergeMilliseconds =
         _stats.MergeCandidateMarkMilliseconds + _stats.MergeTopologyMilliseconds;
     _stats.SplitMilliseconds =
         _stats.SplitInitialScanMilliseconds + _stats.SplitQueueTopologyMilliseconds;
-    _stats.EmitMilliseconds = ElapsedMilliseconds(finalCollectStart, meshEmitEnd);
+    _stats.EmitMilliseconds = ElapsedMilliseconds(meshEmitStart, meshEmitEnd);
     _stats.PrepareMilliseconds = ElapsedMilliseconds(updateStart, prepareEnd);
     // 活动 leaf 数由持久 Q_s 直接给出，不再为预算单独递归收集
     _stats.BudgetLeafCollectMilliseconds = 0.0F;
-    _stats.FinalLeafCollectMilliseconds = ElapsedMilliseconds(finalCollectStart, finalCollectEnd);
+    // 稠密 slot owner 数组就是最终 active leaf 视图，不再递归收集。
+    _stats.FinalLeafCollectMilliseconds = 0.0F;
     _stats.MeshEmitMilliseconds = ElapsedMilliseconds(meshEmitStart, meshEmitEnd);
 
     CollectActiveSplitPaths();
@@ -129,6 +123,6 @@ Terrain::TerrainMeshData ClassicRoamMeshBuilder::Build(
         ElapsedMilliseconds(finalizeStart, std::chrono::steady_clock::now());
     // update 时间覆盖完整算法入口，便于和各互斥阶段总和做 sanity check
     _stats.UpdateMilliseconds = ElapsedMilliseconds(updateStart, std::chrono::steady_clock::now());
-    return meshData;
+    return _meshData;
 }
 } // 命名空间 ParallelRoam::Algorithms::ClassicRoam

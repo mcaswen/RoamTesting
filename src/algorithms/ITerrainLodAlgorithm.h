@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace ParallelRoam::Algorithms
 {
@@ -149,12 +150,35 @@ enum class TerrainLodNativeResourceApi
 };
 
 /// <summary>
+/// CPU mesh 的一段连续更新范围；vertex/index 范围可以独立为空。
+/// </summary>
+struct TerrainLodCpuMeshUpdateRange
+{
+    std::size_t FirstVertex{0};
+    std::size_t VertexCount{0};
+    std::size_t FirstIndex{0};
+    std::size_t IndexCount{0};
+};
+
+enum class TerrainLodCpuMeshLifetime
+{
+    OwnedByPacket,
+    UntilNextBuildOrReset,
+};
+
+/// <summary>
 /// 算法输出给 renderer 或 benchmark 的统一渲染数据包
 /// </summary>
 struct TerrainLodRenderPacket
 {
     TerrainLodRenderMode Mode{TerrainLodRenderMode::CpuMesh};
     Terrain::TerrainMeshData CpuMesh;
+    // 增量 CPU 算法可借用其持久 mesh，避免每帧复制完整数组。
+    const Terrain::TerrainMeshData* BorrowedCpuMesh{nullptr};
+    std::vector<TerrainLodCpuMeshUpdateRange> CpuMeshUpdateRanges;
+    TerrainLodCpuMeshLifetime CpuMeshLifetime{TerrainLodCpuMeshLifetime::OwnedByPacket};
+    bool CpuMeshRequiresFullUpload{true};
+    std::uint64_t CpuMeshGeneration{0};
     std::string StatusMessage;
     std::uint32_t GpuNodeBufferId{0};
     std::uint32_t GpuHeightMapTextureId{0};
@@ -189,6 +213,11 @@ struct TerrainLodRenderPacket
     std::size_t ActiveTriangleCount{0};
     std::size_t IndexCount{0};
 
+    [[nodiscard]] const Terrain::TerrainMeshData* ResolveCpuMesh() const
+    {
+        return BorrowedCpuMesh != nullptr ? BorrowedCpuMesh : &CpuMesh;
+    }
+
     /// <summary>
     /// 校验跨 API 资源互斥、容量、步长和借用生命周期是否满足当前渲染模式
     /// </summary>
@@ -210,8 +239,38 @@ struct TerrainLodRenderPacket
 
         if (Mode == TerrainLodRenderMode::CpuMesh || Mode == TerrainLodRenderMode::DebugOnly)
         {
+            const bool hasBorrowedCpuMesh = BorrowedCpuMesh != nullptr;
+            const Terrain::TerrainMeshData* cpuMesh = ResolveCpuMesh();
+            bool hasValidCpuMeshContract = true;
+            if (Mode == TerrainLodRenderMode::CpuMesh)
+            {
+                hasValidCpuMeshContract = cpuMesh != nullptr &&
+                    !cpuMesh->Vertices.empty() && !cpuMesh->Indices.empty();
+                if (hasBorrowedCpuMesh)
+                {
+                    hasValidCpuMeshContract = hasValidCpuMeshContract &&
+                        CpuMesh.Vertices.empty() && CpuMesh.Indices.empty() &&
+                        CpuMeshLifetime == TerrainLodCpuMeshLifetime::UntilNextBuildOrReset &&
+                        CpuMeshGeneration > 0U;
+                    for (const TerrainLodCpuMeshUpdateRange& range : CpuMeshUpdateRanges)
+                    {
+                        hasValidCpuMeshContract = hasValidCpuMeshContract &&
+                            range.FirstVertex <= cpuMesh->Vertices.size() &&
+                            range.VertexCount <= cpuMesh->Vertices.size() - range.FirstVertex &&
+                            range.FirstIndex <= cpuMesh->Indices.size() &&
+                            range.IndexCount <= cpuMesh->Indices.size() - range.FirstIndex;
+                    }
+                }
+                else
+                {
+                    hasValidCpuMeshContract = hasValidCpuMeshContract &&
+                        CpuMeshLifetime == TerrainLodCpuMeshLifetime::OwnedByPacket &&
+                        CpuMeshRequiresFullUpload && CpuMeshGeneration == 0U &&
+                        CpuMeshUpdateRanges.empty();
+                }
+            }
             // 非 GPU 模式禁止携带任何需要生命周期管理的资源
-            return !hasGpuResourceIds && !hasNativeGpuResources &&
+            return hasValidCpuMeshContract && !hasGpuResourceIds && !hasNativeGpuResources &&
                    NativeResourceApi == TerrainLodNativeResourceApi::None &&
                    GpuResourceLifetime == TerrainLodGpuResourceLifetime::None &&
                    GpuResourceGeneration == 0U;
@@ -304,6 +363,11 @@ struct TerrainLodStats
     std::size_t PersistentMergeQueueSize{0};
     std::size_t QueueCrossoverCount{0};
     std::size_t QueueMembershipUpdateCount{0};
+    // Classic incremental emit 统计；其他算法保持为零。
+    std::size_t CpuMeshFullRebuildCount{0};
+    std::size_t CpuMeshUpdatedTriangleCount{0};
+    std::size_t CpuMeshReusedTriangleCount{0};
+    std::size_t CpuMeshDirtyRangeCount{0};
     std::size_t RejectedSplitCount{0};
     std::size_t BudgetRejectedSplitCount{0};
     std::size_t RejectedMergeCount{0};

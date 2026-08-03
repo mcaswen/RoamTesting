@@ -12,7 +12,7 @@ TerrainLodAlgorithmInfo ClassicRoamTerrainLodAlgorithm::Info() const
         TerrainLodAlgorithmId::ClassicCpuRoam,
         "classic_cpu_roam",
         "Classic CPU ROAM",
-        "Object-style CPU ROAM baseline with persistent bintree topology and dual priority queues",
+        "Object-style CPU ROAM baseline with persistent topology, dual queues, and incremental mesh emit",
     };
 }
 
@@ -52,18 +52,32 @@ bool ClassicRoamTerrainLodAlgorithm::BuildRenderData(
     // GPU buffer 和 indirect draw 字段留给后续 GPU ROAM-like
     outPacket.Mode = TerrainLodRenderMode::CpuMesh;
     const TerrainLodCpuSample cpuSampleStart = CaptureTerrainLodCpuSample();
-    outPacket.CpuMesh = _builder.Build(
+    const Terrain::TerrainMeshData& meshData = _builder.Build(
         *input.HeightMap,
         input.Settings.TerrainSize,
         input.Settings.HeightScale,
         input.View,
         ToClassicSettings(input.Settings));
+    outPacket.BorrowedCpuMesh = &meshData;
+    outPacket.CpuMeshLifetime = TerrainLodCpuMeshLifetime::UntilNextBuildOrReset;
+    outPacket.CpuMeshRequiresFullUpload = _builder.MeshRequiresFullUpload();
+    outPacket.CpuMeshGeneration = _builder.MeshGeneration();
+    outPacket.CpuMeshUpdateRanges.reserve(_builder.MeshUpdateRanges().size());
+    for (const ClassicRoamMeshUpdateRange& range : _builder.MeshUpdateRanges())
+    {
+        outPacket.CpuMeshUpdateRanges.push_back(TerrainLodCpuMeshUpdateRange{
+            range.FirstTriangle * 3U,
+            range.TriangleCount * 3U,
+            range.FirstTriangle * 3U,
+            range.TriangleCount * 3U,
+        });
+    }
     const TerrainLodCpuSample cpuSampleEnd = CaptureTerrainLodCpuSample();
     _stats = ToTerrainLodStats(_builder.Stats());
     _stats.CpuUtilizationPercent = ComputeCpuUtilizationPercent(cpuSampleStart, cpuSampleEnd);
     outPacket.ActiveTriangleCount = _stats.ActiveTriangleCount;
-    outPacket.IndexCount = outPacket.CpuMesh.Indices.size();
-    return !outPacket.CpuMesh.Vertices.empty() && !outPacket.CpuMesh.Indices.empty();
+    outPacket.IndexCount = meshData.Indices.size();
+    return !meshData.Vertices.empty() && !meshData.Indices.empty();
 }
 
 const TerrainLodStats& ClassicRoamTerrainLodAlgorithm::Stats() const
@@ -114,6 +128,10 @@ TerrainLodStats ClassicRoamTerrainLodAlgorithm::ToTerrainLodStats(const ClassicR
     lodStats.PersistentMergeQueueSize = stats.PersistentMergeQueueSize;
     lodStats.QueueCrossoverCount = stats.QueueCrossoverCount;
     lodStats.QueueMembershipUpdateCount = stats.QueueMembershipUpdateCount;
+    lodStats.CpuMeshFullRebuildCount = stats.MeshFullRebuildCount;
+    lodStats.CpuMeshUpdatedTriangleCount = stats.MeshUpdatedTriangleCount;
+    lodStats.CpuMeshReusedTriangleCount = stats.MeshReusedTriangleCount;
+    lodStats.CpuMeshDirtyRangeCount = stats.MeshDirtyRangeCount;
     lodStats.RejectedSplitCount = stats.RejectedSplitCount;
     lodStats.BudgetRejectedSplitCount = stats.BudgetRejectedSplitCount;
     lodStats.RejectedMergeCount = stats.RejectedMergeCount;

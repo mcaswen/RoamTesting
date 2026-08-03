@@ -167,9 +167,11 @@ assets/textures/Tex_Terrain_Debug_Diffuse.ppm
 - split 使用持久 indexed max-heap `Q_s`，保存全部 active leaves，并受默认 20,000 活动 leaf 硬预算限制；forced split 为调用链预留预算 token；
 - merge 使用持久 canonical diamond min-heap `Q_m`；两队列在统一 crossover 循环中调度，满预算时以 merge-first 事务回收低损失区域并为高收益 closure 腾位；同一 Build 禁止刚 split 的 parent 立即 merge、刚 merge 的 parent 立即 split，避免非单调扩展 priority 造成事务振荡；
 - `PathId`、split/merge 双阈值和最终 active path 共同提供跨 Build 迟滞；
-- CPU Mesh 仍按活动 leaf 全量生成，每个 leaf 输出三个独立顶点；OpenGL/D3D12 renderer 负责上传和绘制；
-- ImGui 已让 Classic、DOD 和 GPU ROAM-like 共用像素阈值与预算；Classic 额外显示持久 `Q_s/Q_m` 大小、crossover 和局部 membership 更新次数；
-- Classic smoke 使用 6 个视点验证预算、视锥方向变化、单 Build 级联合并和 topology issue；当前 OpenGL/D3D12 构建与 smoke 均通过；
+- CPU Mesh 使用持久 dense slots：split 复用 parent 槽并追加一个 child，merge 写回 parent 并以末槽压缩消除空洞；只重写 dirty slots，每个 leaf 仍输出三个独立顶点；
+- adapter 通过 borrowed Mesh + generation + dirty ranges 发布数据；OpenGL 用 `glBufferSubData` 部分上传，D3D12 为每个 frame slot 延迟消费 pending ranges，并在追赶多个 Build 时合并重叠区间；首次/reset/容量增长才全量上传；
+- ImGui 已让 Classic、DOD 和 GPU ROAM-like 共用像素阈值与预算；Classic 额外显示持久 `Q_s/Q_m`、crossover、局部 membership 更新次数，以及 Mesh full/updated/reused/range 计数；
+- Classic smoke 使用 6 个视点验证预算、视锥方向变化、单 Build 级联合并和 topology issue；`incremental-emit` 使用三次相同视点验证第三次 Build 零 dirty range；当前 OpenGL/D3D12 构建与 smoke 均通过；
+- 本阶段采用工程等价口径：公式 (1)-(3)、连续 diamond 拓扑、局部队列 membership 与增量 Mesh 输出已经覆盖论文主要误差、拓扑和变化量更新效果；不继续复刻 triangle strips、优先级延期或完整最优性证明，每次 Build 全量刷新优先级的 `O(N)` 边界保留并明确记录；
 - 阶段 2 的算法基线已封版。diamond/score heatmap 等更完整 debug draw 是后续可视化增强，不作为阶段完成阻塞项。
 
 ### 完整 Classic ROAM 完成记录

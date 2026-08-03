@@ -47,9 +47,81 @@ struct D3D12MeshFrameResources
     std::size_t VertexCapacityBytes{0};
     std::size_t IndexCapacityBytes{0};
     std::uint64_t MeshGeneration{0};
+    bool PendingFullUpload{true};
+    std::vector<Algorithms::TerrainLodCpuMeshUpdateRange> PendingUpdateRanges;
     D3D12_VERTEX_BUFFER_VIEW VertexView{};
     D3D12_INDEX_BUFFER_VIEW IndexView{};
 };
+
+struct MeshUpdateInterval
+{
+    std::size_t First{0};
+    std::size_t Count{0};
+};
+
+void CoalescePendingMeshUpdateRanges(
+    std::vector<Algorithms::TerrainLodCpuMeshUpdateRange>& ranges)
+{
+    std::vector<MeshUpdateInterval> vertexIntervals;
+    std::vector<MeshUpdateInterval> indexIntervals;
+    vertexIntervals.reserve(ranges.size());
+    indexIntervals.reserve(ranges.size());
+    for (const Algorithms::TerrainLodCpuMeshUpdateRange& range : ranges)
+    {
+        if (range.VertexCount > 0U)
+        {
+            vertexIntervals.push_back(MeshUpdateInterval{range.FirstVertex, range.VertexCount});
+        }
+        if (range.IndexCount > 0U)
+        {
+            indexIntervals.push_back(MeshUpdateInterval{range.FirstIndex, range.IndexCount});
+        }
+    }
+
+    const auto coalesce = [](std::vector<MeshUpdateInterval>& intervals) {
+        std::sort(
+            intervals.begin(),
+            intervals.end(),
+            [](const MeshUpdateInterval& left, const MeshUpdateInterval& right) {
+                return left.First < right.First;
+            });
+        std::size_t outputCount = 0U;
+        for (const MeshUpdateInterval& interval : intervals)
+        {
+            if (outputCount == 0U)
+            {
+                intervals[outputCount++] = interval;
+                continue;
+            }
+
+            MeshUpdateInterval& previous = intervals[outputCount - 1U];
+            const std::size_t previousEnd = previous.First + previous.Count;
+            if (interval.First <= previousEnd)
+            {
+                const std::size_t intervalEnd = interval.First + interval.Count;
+                previous.Count = std::max(previousEnd, intervalEnd) - previous.First;
+                continue;
+            }
+            intervals[outputCount++] = interval;
+        }
+        intervals.resize(outputCount);
+    };
+    coalesce(vertexIntervals);
+    coalesce(indexIntervals);
+
+    // 两类区间允许独立为空；按序配对只用于压缩存储，不改变各自的复制范围。
+    ranges.assign(std::max(vertexIntervals.size(), indexIntervals.size()), {});
+    for (std::size_t index = 0U; index < vertexIntervals.size(); ++index)
+    {
+        ranges[index].FirstVertex = vertexIntervals[index].First;
+        ranges[index].VertexCount = vertexIntervals[index].Count;
+    }
+    for (std::size_t index = 0U; index < indexIntervals.size(); ++index)
+    {
+        ranges[index].FirstIndex = indexIntervals[index].First;
+        ranges[index].IndexCount = indexIntervals[index].Count;
+    }
+}
 
 /// <summary>
 /// 与 Terrain.hlsl 保持相同布局的帧常量
@@ -533,6 +605,7 @@ bool UploadMeshForFrame(
     D3D12TerrainRendererState& state,
     const Terrain::TerrainMeshData& meshData,
     std::uint32_t frameIndex,
+    std::size_t* uploadedBytes,
     std::string* errorMessage)
 {
     D3D12MeshFrameResources& frame = state.MeshFrames[frameIndex];
@@ -551,6 +624,8 @@ bool UploadMeshForFrame(
     }
 
     // 缓冲采用只增长策略，避免相机移动触发 LOD 更新时频繁分配
+    bool uploadAllVertices = frame.PendingFullUpload;
+    bool uploadAllIndices = frame.PendingFullUpload;
     if (frame.VertexCapacityBytes < vertexBytes)
     {
         ReleaseMappedResource(frame.VertexBuffer, frame.MappedVertices);
@@ -560,6 +635,7 @@ bool UploadMeshForFrame(
             return false;
         }
         frame.VertexCapacityBytes = vertexBytes;
+        uploadAllVertices = true;
     }
     if (frame.IndexCapacityBytes < indexBytes)
     {
@@ -570,11 +646,57 @@ bool UploadMeshForFrame(
             return false;
         }
         frame.IndexCapacityBytes = indexBytes;
+        uploadAllIndices = true;
     }
 
     // 后端在复用帧索引前已经等待对应 fence，因此此处可直接写入
-    std::memcpy(frame.MappedVertices, meshData.Vertices.data(), vertexBytes);
-    std::memcpy(frame.MappedIndices, meshData.Indices.data(), indexBytes);
+    std::size_t copiedBytes = 0U;
+    if (uploadAllVertices)
+    {
+        std::memcpy(frame.MappedVertices, meshData.Vertices.data(), vertexBytes);
+        copiedBytes += vertexBytes;
+    }
+    else
+    {
+        for (const Algorithms::TerrainLodCpuMeshUpdateRange& range : frame.PendingUpdateRanges)
+        {
+            if (range.FirstVertex > meshData.Vertices.size())
+            {
+                continue;
+            }
+            const std::size_t count = std::min(
+                range.VertexCount,
+                meshData.Vertices.size() - range.FirstVertex);
+            const std::size_t rangeBytes = count * sizeof(Terrain::TerrainMeshVertex);
+            std::memcpy(
+                frame.MappedVertices + range.FirstVertex * sizeof(Terrain::TerrainMeshVertex),
+                meshData.Vertices.data() + range.FirstVertex,
+                rangeBytes);
+            copiedBytes += rangeBytes;
+        }
+    }
+    if (uploadAllIndices)
+    {
+        std::memcpy(frame.MappedIndices, meshData.Indices.data(), indexBytes);
+        copiedBytes += indexBytes;
+    }
+    else
+    {
+        for (const Algorithms::TerrainLodCpuMeshUpdateRange& range : frame.PendingUpdateRanges)
+        {
+            if (range.FirstIndex > meshData.Indices.size())
+            {
+                continue;
+            }
+            const std::size_t count = std::min(range.IndexCount, meshData.Indices.size() - range.FirstIndex);
+            const std::size_t rangeBytes = count * sizeof(std::uint32_t);
+            std::memcpy(
+                frame.MappedIndices + range.FirstIndex * sizeof(std::uint32_t),
+                meshData.Indices.data() + range.FirstIndex,
+                rangeBytes);
+            copiedBytes += rangeBytes;
+        }
+    }
     frame.VertexView.BufferLocation = frame.VertexBuffer->GetGPUVirtualAddress();
     frame.VertexView.SizeInBytes = static_cast<UINT>(vertexBytes);
     frame.VertexView.StrideInBytes = sizeof(Terrain::TerrainMeshVertex);
@@ -582,6 +704,12 @@ bool UploadMeshForFrame(
     frame.IndexView.SizeInBytes = static_cast<UINT>(indexBytes);
     frame.IndexView.Format = DXGI_FORMAT_R32_UINT;
     frame.MeshGeneration = state.MeshGeneration;
+    frame.PendingFullUpload = false;
+    frame.PendingUpdateRanges.clear();
+    if (uploadedBytes != nullptr)
+    {
+        *uploadedBytes = copiedBytes;
+    }
     return true;
 }
 
@@ -732,6 +860,7 @@ void TerrainRenderer::ResetTerrainLodAlgorithm()
         _d3d12State->Backend->WaitForGpuIdle();
     }
     _terrainLodAlgorithm.reset();
+    _borrowedCpuMeshData = nullptr;
     _terrainLodStats = {};
     _terrainLodStatusMessage.clear();
     _terrainLodTotalMilliseconds = 0.0F;
@@ -752,6 +881,7 @@ void TerrainRenderer::ResetTerrainLodAlgorithm()
 void TerrainRenderer::Shutdown()
 {
     _terrainLodAlgorithm.reset();
+    _borrowedCpuMeshData = nullptr;
     _terrainLodStats = {};
     _terrainLodStatusMessage.clear();
     if (_d3d12State != nullptr)
@@ -800,7 +930,11 @@ void TerrainRenderer::Render(const RenderContext& context)
     {
         // 网格版本按帧懒同步，首次轮转到该帧时才复制数据
         std::string uploadError;
-        if (!UploadMeshForFrame(*_d3d12State, _meshData, frameIndex, &uploadError))
+        const Terrain::TerrainMeshData* cpuMesh = _borrowedCpuMeshData != nullptr
+            ? _borrowedCpuMeshData
+            : &_meshData;
+        if (cpuMesh == nullptr ||
+            !UploadMeshForFrame(*_d3d12State, *cpuMesh, frameIndex, nullptr, &uploadError))
         {
             std::cerr << uploadError << '\n';
             return;
@@ -918,6 +1052,10 @@ TerrainRenderStats TerrainRenderer::Stats() const
     stats.RoamPersistentMergeQueueSize = _terrainLodStats.PersistentMergeQueueSize;
     stats.RoamQueueCrossoverCount = _terrainLodStats.QueueCrossoverCount;
     stats.RoamQueueMembershipUpdateCount = _terrainLodStats.QueueMembershipUpdateCount;
+    stats.RoamCpuMeshFullRebuildCount = _terrainLodStats.CpuMeshFullRebuildCount;
+    stats.RoamCpuMeshUpdatedTriangleCount = _terrainLodStats.CpuMeshUpdatedTriangleCount;
+    stats.RoamCpuMeshReusedTriangleCount = _terrainLodStats.CpuMeshReusedTriangleCount;
+    stats.RoamCpuMeshDirtyRangeCount = _terrainLodStats.CpuMeshDirtyRangeCount;
     stats.RoamRejectedSplitCount = _terrainLodStats.RejectedSplitCount;
     stats.RoamBudgetRejectedSplitCount = _terrainLodStats.BudgetRejectedSplitCount;
     stats.RoamRejectedMergeCount = _terrainLodStats.RejectedMergeCount;
@@ -998,6 +1136,7 @@ bool TerrainRenderer::RebuildRegularGrid(std::string* errorMessage)
     }
     // 规则网格不保留任何 ROAM 算法状态或相机重建历史
     _meshData = Terrain::TerrainMeshBuilder::Build(_heightMap, _settings.TerrainSize, _settings.HeightScale);
+    _borrowedCpuMeshData = nullptr;
     _terrainLodStats = {};
     _terrainLodStatusMessage.clear();
     _terrainLodTotalMilliseconds = 0.0F;
@@ -1034,6 +1173,7 @@ bool TerrainRenderer::RebuildTerrainLod(const RenderContext& context, std::strin
             _renderMode = Algorithms::TerrainLodRenderMode::CpuMesh;
         }
         // 算法对象同时拥有跨帧拓扑状态和对应 GPU 资源
+        _borrowedCpuMeshData = nullptr;
         _terrainLodAlgorithm = CreateTerrainLodAlgorithm(
             _settings.TerrainLodAlgorithm,
             *_d3d12State->Backend);
@@ -1093,6 +1233,7 @@ bool TerrainRenderer::RebuildTerrainLod(const RenderContext& context, std::strin
     {
         // 原生指针只借用到算法对象下一次重建或销毁之前
         _meshData = {};
+        _borrowedCpuMeshData = nullptr;
         _renderMode = Algorithms::TerrainLodRenderMode::GpuIndirect;
         _d3d12State->GpuVertexBuffer = reinterpret_cast<ID3D12Resource*>(renderPacket.NativeVertexBuffer);
         _d3d12State->GpuIndexBuffer = reinterpret_cast<ID3D12Resource*>(renderPacket.NativeIndexBuffer);
@@ -1127,6 +1268,7 @@ bool TerrainRenderer::RebuildTerrainLod(const RenderContext& context, std::strin
         }
 
         _meshData = {};
+        _borrowedCpuMeshData = nullptr;
         _renderMode = Algorithms::TerrainLodRenderMode::GpuProceduralIndirect;
         _d3d12State->GpuVertexBuffer = reinterpret_cast<ID3D12Resource*>(renderPacket.NativeVertexBuffer);
         _d3d12State->GpuIndexBuffer = nullptr;
@@ -1156,9 +1298,19 @@ bool TerrainRenderer::RebuildTerrainLod(const RenderContext& context, std::strin
         return false;
     }
 
-    // CPU 算法移交网格所有权，随后同步到逐帧上传缓冲
-    _meshData = std::move(renderPacket.CpuMesh);
-    if (_meshData.Vertices.empty() || _meshData.Indices.empty())
+    const Terrain::TerrainMeshData* cpuMesh = renderPacket.ResolveCpuMesh();
+    if (renderPacket.BorrowedCpuMesh != nullptr)
+    {
+        _meshData = {};
+        _borrowedCpuMeshData = renderPacket.BorrowedCpuMesh;
+    }
+    else
+    {
+        _meshData = std::move(renderPacket.CpuMesh);
+        _borrowedCpuMeshData = nullptr;
+        cpuMesh = &_meshData;
+    }
+    if (cpuMesh == nullptr || cpuMesh->Vertices.empty() || cpuMesh->Indices.empty())
     {
         _terrainLodStatusMessage = "Terrain LOD mesh build failed";
         SetError(errorMessage, _terrainLodStatusMessage);
@@ -1167,7 +1319,11 @@ bool TerrainRenderer::RebuildTerrainLod(const RenderContext& context, std::strin
 
     // CPU 上传单独计时以便与纯 GPU 数据路径比较
     const auto uploadStart = std::chrono::steady_clock::now();
-    if (!UploadMesh(errorMessage))
+    if (!UploadMeshData(
+            *cpuMesh,
+            renderPacket.CpuMeshRequiresFullUpload,
+            renderPacket.CpuMeshUpdateRanges,
+            errorMessage))
     {
         _meshDirty = true;
         return false;
@@ -1187,17 +1343,54 @@ bool TerrainRenderer::UploadMesh(std::string* errorMessage)
         SetError(errorMessage, "D3D12 terrain mesh upload state is incomplete");
         return false;
     }
+    static const std::vector<Algorithms::TerrainLodCpuMeshUpdateRange> noUpdateRanges;
+    return UploadMeshData(_meshData, true, noUpdateRanges, errorMessage);
+}
+
+bool TerrainRenderer::UploadMeshData(
+    const Terrain::TerrainMeshData& meshData,
+    bool fullUpload,
+    const std::vector<Algorithms::TerrainLodCpuMeshUpdateRange>& updateRanges,
+    std::string* errorMessage)
+{
+    if (_d3d12State == nullptr || meshData.Vertices.empty() || meshData.Indices.empty())
+    {
+        SetError(errorMessage, "D3D12 terrain mesh upload state is incomplete");
+        return false;
+    }
+
     // 新版本先上传当前帧，其他帧在轮转到来时按版本号补齐
     ++_d3d12State->MeshGeneration;
+    for (D3D12MeshFrameResources& frame : _d3d12State->MeshFrames)
+    {
+        if (fullUpload)
+        {
+            frame.PendingFullUpload = true;
+            frame.PendingUpdateRanges.clear();
+        }
+        else if (!frame.PendingFullUpload)
+        {
+            frame.PendingUpdateRanges.insert(
+                frame.PendingUpdateRanges.end(),
+                updateRanges.begin(),
+                updateRanges.end());
+            // 一个 frame slot 可能跨过多个 Build；先取区间并集，避免追赶版本时重复 memcpy。
+            CoalescePendingMeshUpdateRanges(frame.PendingUpdateRanges);
+        }
+    }
     _renderMode = Algorithms::TerrainLodRenderMode::CpuMesh;
-    _drawVertexCount = _meshData.Vertices.size();
-    _drawIndexCount = _meshData.Indices.size();
-    _drawTriangleCount = _meshData.Indices.size() / 3U;
-    return UploadMeshForFrame(
+    _drawVertexCount = meshData.Vertices.size();
+    _drawIndexCount = meshData.Indices.size();
+    _drawTriangleCount = meshData.Indices.size() / 3U;
+    std::size_t uploadedBytes = 0U;
+    const bool uploaded = UploadMeshForFrame(
         *_d3d12State,
-        _meshData,
+        meshData,
         _d3d12State->Backend->CurrentFrameIndex(),
+        &uploadedBytes,
         errorMessage);
+    _terrainLodStats.CpuGpuUploadBytes = uploadedBytes;
+    return uploaded;
 }
 
 bool TerrainRenderer::LoadTexture(const std::filesystem::path& texturePath, std::string* errorMessage)

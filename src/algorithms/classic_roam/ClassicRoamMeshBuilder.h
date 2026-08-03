@@ -37,6 +37,12 @@ struct TriangleDomainChildren
     TriangleDomain Right;
 };
 
+struct ClassicRoamMeshUpdateRange
+{
+    std::size_t FirstTriangle{0};
+    std::size_t TriangleCount{0};
+};
+
 // 按 Classic ROAM 的 base edge 规则生成两个 child domain
 [[nodiscard]] TriangleDomainChildren SplitTriangleDomain(const TriangleDomain& domain);
 
@@ -115,6 +121,12 @@ struct ClassicRoamStats
     // QueueMembershipUpdateCount 统计本帧 topology 事务产生的局部入队和出队次数
     std::size_t QueueMembershipUpdateCount{0};
 
+    // 增量 mesh 使用稳定 leaf slot，只重新生成本帧受影响的三角形。
+    std::size_t MeshFullRebuildCount{0};
+    std::size_t MeshUpdatedTriangleCount{0};
+    std::size_t MeshReusedTriangleCount{0};
+    std::size_t MeshDirtyRangeCount{0};
+
     // RejectedSplitCount 表示约束传播或过期候选导致的 split 失败
     std::size_t RejectedSplitCount{0};
 
@@ -170,7 +182,7 @@ public:
     /// <summary>
     /// 根据完整视图输入和像素误差阈值生成当前 active leaf triangle mesh
     /// </summary>
-    [[nodiscard]] Terrain::TerrainMeshData Build(
+    [[nodiscard]] const Terrain::TerrainMeshData& Build(
         const Terrain::HeightMap& heightMap,
         float terrainSize,
         float heightScale,
@@ -178,6 +190,9 @@ public:
         const ClassicRoamSettings& settings);
 
     [[nodiscard]] const ClassicRoamStats& Stats() const;
+    [[nodiscard]] const std::vector<ClassicRoamMeshUpdateRange>& MeshUpdateRanges() const;
+    [[nodiscard]] bool MeshRequiresFullUpload() const;
+    [[nodiscard]] std::uint64_t MeshGeneration() const;
 
 private:
     enum class SplitReason
@@ -234,6 +249,9 @@ private:
         // 一个 diamond 只在 Q_m 中保存 canonical parent；两侧都指向同一 representative
         ClassicRoamNode* MergeQueueRepresentative{nullptr};
         ClassicRoamNode* MergeQueuePartner{nullptr};
+
+        // active leaf 在持久 CPU mesh 中占用的稠密三角形槽位。
+        std::size_t MeshSlot{std::numeric_limits<std::size_t>::max()};
     };
 
     struct SplitQueueEntry
@@ -246,6 +264,18 @@ private:
     {
         ClassicRoamNode* Node{nullptr};
         float Score{0.0F};
+    };
+
+    enum class MeshTopologyEditType
+    {
+        Split,
+        Merge,
+    };
+
+    struct MeshTopologyEdit
+    {
+        MeshTopologyEditType Type{MeshTopologyEditType::Split};
+        ClassicRoamNode* Parent{nullptr};
     };
 
     [[nodiscard]] ClassicRoamNode* AddNode(
@@ -353,13 +383,23 @@ private:
     // validator 只检查当前拓扑，不在默认路径修复裂缝
     void ValidateTopology();
     void ValidatePersistentQueues(const std::vector<ClassicRoamNode*>& leafNodes);
+    void ValidateIncrementalMesh(const std::vector<ClassicRoamNode*>& leafNodes);
 
-    // 遍历 leaf 节点并输出渲染用 mesh
-    void EmitLeafTriangles(
-        Terrain::TerrainMeshData& meshData,
-        const std::vector<ClassicRoamNode*>& leafNodes) const;
-    void EmitNode(const ClassicRoamNode& node, Terrain::TerrainMeshData& meshData) const;
-    void EmitDomainTriangle(const ClassicRoamNode& node, Terrain::TerrainMeshData& meshData) const;
+    // 现代 indexed-mesh 等价的增量输出：active leaf 对应稠密固定槽位。
+    void BeginIncrementalMeshUpdate(bool resetTopology);
+    void RecordMeshSplit(ClassicRoamNode* parent);
+    void RecordMeshMerge(ClassicRoamNode* parent);
+    void ApplyIncrementalMeshUpdates();
+    void InitializeIncrementalMesh();
+    void ResetIncrementalMeshStorage();
+    void ReplaceMeshLeafWithChildren(ClassicRoamNode* parent);
+    void ReplaceMeshChildrenWithLeaf(ClassicRoamNode* parent);
+    void AppendMeshLeaf(ClassicRoamNode* node);
+    void RemoveMeshLeaf(ClassicRoamNode* node);
+    void WriteMeshLeaf(std::size_t slot, const ClassicRoamNode& node);
+    void RefreshMeshLeafDebugAttributes(ClassicRoamNode& node);
+    void MarkMeshSlotDirty(std::size_t slot);
+    void FinalizeIncrementalMeshUpdate();
 
     // 当前实现使用阈值决策，后续可替换为 priority queue
     [[nodiscard]] bool ShouldSplit(const ClassicRoamNode& node) const;
@@ -417,11 +457,17 @@ private:
     std::vector<std::unique_ptr<ClassicRoamNode>> _nodes;
     std::unordered_set<std::uint64_t> _previousSplitPaths;
     std::unordered_set<std::uint64_t> _currentSplitPaths;
-    // _activeLeaves 是拓扑稳定后的最终 leaf 快照，emit 和 stats 共用
-    std::vector<ClassicRoamNode*> _activeLeaves;
     // 两个 indexed heaps 和 active topology 一起跨帧保留
     std::vector<SplitQueueEntry> _splitQueue;
     std::vector<MergeQueueEntry> _mergeQueue;
+    // mesh slot owner 数组本身就是活动 leaf 的稠密输出视图。
+    Terrain::TerrainMeshData _meshData;
+    std::vector<ClassicRoamNode*> _meshSlotOwners;
+    std::vector<std::uint64_t> _meshSlotDirtyGeneration;
+    std::vector<std::size_t> _dirtyMeshSlots;
+    std::vector<ClassicRoamMeshUpdateRange> _meshUpdateRanges;
+    std::vector<ClassicRoamNode*> _debugTransitionLeaves;
+    std::vector<MeshTopologyEdit> _meshTopologyEdits;
     ClassicRoamNode* _rootA{nullptr};
     ClassicRoamNode* _rootB{nullptr};
     glm::mat4 _viewProjection{1.0F};
@@ -433,5 +479,8 @@ private:
     float _heightScale{1.0F};
     int _topologyMaxDepth{0};
     std::uint64_t _buildSequence{0};
+    std::uint64_t _meshGeneration{0};
+    bool _meshRequiresFullUpload{true};
+    bool _meshNeedsInitialization{true};
 };
 } // 命名空间 ParallelRoam::Algorithms::ClassicRoam

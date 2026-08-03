@@ -2,7 +2,7 @@
 
 本项目是一个面向高度图地形的自适应网格细分研究与实验平台。项目以自研的 Classic ROAM、Data-Oriented CPU ROAM、GPU ROAM-like 工程实现与优化和论文 CBT 2024：Large-scale Adaptive Mesh Refinement on the GPU(以下简称“CBT 2024”) 为对照路径，正在研究固定拓扑容量下兼顾视觉收益、兼容闭包成本与 GPU 并行性的全局资源分配方法。
 
-> **研究状态：进行中。** ROAM 对照平台、统一误差口径、固定预算、拓扑验证、双图形后端和阶段化 benchmark 已可运行；CBT 2024 的复现计划中，当前已完成 OCBT、基础二分器状态和程序化间接绘制。标题中的“兼容闭包感知全局资源分配”依旧等待探索、实现和验证。
+> **研究状态：进行中。** ROAM 对照平台、统一误差口径、固定预算、拓扑验证、双图形后端和阶段化 benchmark 已可运行；CBT 2024 的复现计划中，当前已完成 OCBT、基础二分器状态和程序化间接绘制。标题中的“兼容闭包感知全局资源分配”还未探索、实现和验证。
 
 ![Parallel ROAM 交互界面](docs/parallel-roam/report-assets/进入后界面.png)
 
@@ -42,7 +42,7 @@ cost(S) = | union(P_i), i in S |
 
 | 路径 | 数据与执行方式 | 当前能力 | 边界 |
 | --- | --- | --- | --- |
-| Classic CPU ROAM | 对象式节点、裸指针 bintree、串行 indexed heaps | 持久 `Q_s/Q_m`、统一 crossover、split、forced split、diamond merge、视锥感知、固定 leaf 预算、CPU Mesh | 每帧刷新队列 priority 并完整 emit；以单 Build 反向事务保护约束尚未证明单调的最终 priority |
+| Classic CPU ROAM | 对象式节点、裸指针 bintree、串行 indexed heaps | 持久 `Q_s/Q_m`、统一 crossover、split、forced split、diamond merge、视锥感知、固定 leaf 预算、增量 indexed CPU Mesh | 采用工程等价复现口径：公式、连续拓扑和增量输出对应论文主要效果，但不追求完整最优性证明 |
 | Data-Oriented CPU ROAM | SoA 节点池、索引邻接、活动集合、批量 pass 与条件并行 | 与 Classic 共享质量合同；融合 leaf 扫描、误差评估和候选标记 | 拓扑依赖限制并行度，最终仍生成 CPU Mesh |
 | GPU ROAM-like | CPU DOD 持久拓扑快照 + compute shader | GPU leaf compaction、误差评估、候选标记、单轮 split、mesh emit、indirect draw | 混合管线；GPU merge 只评分不提交，GPU split 不回写 CPU 持久真值 |
 | CBT 2024 | D3D12、OCBT 位域/归约树、GPU 基础二分器资源 | 四档 OCBT、基础拓扑、程序化间接绘制及专项验证 | 动态 split/merge、兼容传播和高度图自适应路径尚待实现 |
@@ -60,6 +60,8 @@ cost(S) = | union(P_i), i in S |
 - 活动 leaf `TriangleBudget` 上限；
 - forced split、diamond merge 和可选拓扑验证；
 - 平坦区域的独立 projected edge-density 扩展。
+
+对于 ROAM 1997 论文算法口径对齐问题：项目已经在误差公式、forced split/diamond merge、持久双队列和增量 Mesh 更新等阶段实现论文相近的拓扑效果与变化量相关成本，但由于项目工程实现约束，主问题复杂度、优化收益等因素综合考量，整帧复杂度并非论文严格的 `O(Delta N)`，当前网格也不是给定预算下的数学最优解。
 
 ### 工程能力
 
@@ -157,7 +159,7 @@ powershell -ExecutionPolicy Bypass -File scripts/setup_cbt_dx12_dependencies.ps1
 .\build\relwithdebinfo-d3d12-fetch\bin\ParallelROAM.exe --cbt-procedural-smoke-test
 ```
 
-当前单元与结构测试覆盖 nested wedgie、保守屏幕投影、D3D/OpenGL 视锥约定、CBT occupancy tree、基础 bisector topology、Classic/DOD 预算重入及 C++ 注释覆盖率。
+当前单元与结构测试覆盖 nested wedgie、保守屏幕投影、D3D/OpenGL 视锥约定、CBT occupancy tree、基础 bisector topology、Classic/DOD 预算重入、Classic 增量 Mesh emit 及 C++ 注释覆盖率。
 
 ## Benchmark
 
@@ -170,7 +172,7 @@ powershell -ExecutionPolicy Bypass -File scripts/setup_cbt_dx12_dependencies.ps1
   --profile standard
 ```
 
-可选算法为 `classic|dod|gpu|all`，profile 为 `smoke|budget-reentry|standard`。无图形上下文时 GPU 路径可能被跳过；该入口主要用于 Classic/DOD 正确性与固定轨迹回归。
+可选算法为 `classic|dod|gpu|all`，profile 为 `smoke|budget-reentry|incremental-emit|standard`。`incremental-emit` 用三个相同 Classic 视点验证首帧初始化、一次调试属性过渡和随后零 dirty-range 复用；无图形上下文时 GPU 路径可能被跳过。
 
 ### 应用级运行时实验
 
@@ -245,7 +247,7 @@ powershell -ExecutionPolicy Bypass -File scripts/setup_cbt_dx12_dependencies.ps1
 - 兼容闭包感知调度器尚未实现，H1-H5 仍待实验验证；
 - CBT 2024 当前只到基础拓扑和程序化绘制，完整动态 split/merge 尚未接入；
 - GPU ROAM-like 是 CPU DOD + GPU split-only/emit 的混合路径，仅供当前实验探索和参考；
-- Classic 已实现论文结构的持久化双队列和 crossover，但最终 priority 还包含 edge-density、视锥置零和迟滞，parent-child 单调性尚未证明，因此不宣称完整的全局最优性；
+- Classic 已实现公式 (1)-(3)、连续 bintree/diamond 拓扑、持久双队列和增量 Mesh 输出；最终 priority、硬预算和输出格式是项目变体，当前研究不追求补齐论文完整最优性证明；
 - 当前正式场景数量和 DEM 多样性不足，旧性能数据也需要在新误差口径下重跑；
 
 ## 路线图

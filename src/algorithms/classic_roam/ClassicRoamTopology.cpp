@@ -135,6 +135,7 @@ bool ClassicRoamMeshBuilder::SplitNode(
     node->RightChild->ActivatedByForcedSplit = reason != SplitReason::Requested;
 
     LinkSplitNeighbors(node, baseNeighbor);
+    RecordMeshSplit(node);
     InsertSplitQueueNode(node->LeftChild);
     InsertSplitQueueNode(node->RightChild);
     AppendQueueNeighborhood(node, queueNeighborhood);
@@ -274,6 +275,7 @@ void ClassicRoamMeshBuilder::MergeSingleNode(ClassicRoamNode* node)
     node->ActivatedBuildId = _buildSequence;
     node->MergeBuildId = _buildSequence;
     node->ActivatedByForcedSplit = false;
+    RecordMeshMerge(node);
     InsertSplitQueueNode(node);
     _remainingSplitBudget = std::min(
         _settings.TriangleBudget,

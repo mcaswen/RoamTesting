@@ -310,6 +310,7 @@ void ClassicRoamMeshBuilder::ValidateTopology()
     }
 
     ValidatePersistentQueues(leafNodes);
+    ValidateIncrementalMesh(leafNodes);
 }
 
 void ClassicRoamMeshBuilder::ValidatePersistentQueues(const std::vector<ClassicRoamNode*>& leafNodes)
@@ -373,6 +374,42 @@ void ClassicRoamMeshBuilder::ValidatePersistentQueues(const std::vector<ClassicR
         if (index > 0U && MergeEntryPrecedes(_mergeQueue[index], _mergeQueue[(index - 1U) / 2U]))
         {
             ++_stats.InvalidTopologyCount;
+        }
+    }
+}
+
+void ClassicRoamMeshBuilder::ValidateIncrementalMesh(const std::vector<ClassicRoamNode*>& leafNodes)
+{
+    constexpr std::size_t elementsPerTriangle = 3U;
+    if (_meshSlotOwners.size() != leafNodes.size() ||
+        _meshData.Vertices.size() != _meshSlotOwners.size() * elementsPerTriangle ||
+        _meshData.Indices.size() != _meshSlotOwners.size() * elementsPerTriangle)
+    {
+        ++_stats.InvalidTopologyCount;
+        return;
+    }
+
+    std::unordered_set<const ClassicRoamNode*> leafSet{leafNodes.begin(), leafNodes.end()};
+    std::unordered_set<const ClassicRoamNode*> meshOwners;
+    meshOwners.reserve(_meshSlotOwners.size());
+    for (std::size_t slot = 0U; slot < _meshSlotOwners.size(); ++slot)
+    {
+        const ClassicRoamNode* node = _meshSlotOwners[slot];
+        if (node == nullptr || !node->Active || !IsLeaf(node) || node->MeshSlot != slot ||
+            leafSet.find(node) == leafSet.end() || !meshOwners.insert(node).second)
+        {
+            ++_stats.InvalidTopologyCount;
+            continue;
+        }
+
+        const std::size_t baseIndex = slot * elementsPerTriangle;
+        for (std::size_t localIndex = 0U; localIndex < elementsPerTriangle; ++localIndex)
+        {
+            const std::uint32_t index = _meshData.Indices[baseIndex + localIndex];
+            if (index < baseIndex || index >= baseIndex + elementsPerTriangle)
+            {
+                ++_stats.InvalidTopologyCount;
+            }
         }
     }
 }

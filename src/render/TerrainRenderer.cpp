@@ -329,6 +329,7 @@ void TerrainRenderer::RequestMeshRebuild()
 void TerrainRenderer::ResetTerrainLodAlgorithm()
 {
     _terrainLodAlgorithm.reset();
+    _borrowedCpuMeshData = nullptr;
     _terrainLodStats = {};
     _terrainLodStatusMessage.clear();
     _terrainLodTotalMilliseconds = 0.0F;
@@ -347,6 +348,7 @@ void TerrainRenderer::ResetTerrainLodAlgorithm()
 void TerrainRenderer::Shutdown()
 {
     _terrainLodAlgorithm.reset();
+    _borrowedCpuMeshData = nullptr;
     _terrainLodStats = {};
     _terrainLodStatusMessage.clear();
 
@@ -491,6 +493,10 @@ TerrainRenderStats TerrainRenderer::Stats() const
     stats.RoamPersistentMergeQueueSize = _terrainLodStats.PersistentMergeQueueSize;
     stats.RoamQueueCrossoverCount = _terrainLodStats.QueueCrossoverCount;
     stats.RoamQueueMembershipUpdateCount = _terrainLodStats.QueueMembershipUpdateCount;
+    stats.RoamCpuMeshFullRebuildCount = _terrainLodStats.CpuMeshFullRebuildCount;
+    stats.RoamCpuMeshUpdatedTriangleCount = _terrainLodStats.CpuMeshUpdatedTriangleCount;
+    stats.RoamCpuMeshReusedTriangleCount = _terrainLodStats.CpuMeshReusedTriangleCount;
+    stats.RoamCpuMeshDirtyRangeCount = _terrainLodStats.CpuMeshDirtyRangeCount;
     stats.RoamRejectedSplitCount = _terrainLodStats.RejectedSplitCount;
     stats.RoamBudgetRejectedSplitCount = _terrainLodStats.BudgetRejectedSplitCount;
     stats.RoamRejectedMergeCount = _terrainLodStats.RejectedMergeCount;
@@ -567,6 +573,7 @@ bool TerrainRenderer::RebuildRegularGrid(std::string* errorMessage)
 {
     // 规则网格会重置 ROAM 统计，避免 UI 显示上一次算法结果
     _meshData = Terrain::TerrainMeshBuilder::Build(_heightMap, _settings.TerrainSize, _settings.HeightScale);
+    _borrowedCpuMeshData = nullptr;
     _terrainLodStats = {};
     _terrainLodStatusMessage.clear();
     _terrainLodTotalMilliseconds = 0.0F;
@@ -599,6 +606,7 @@ bool TerrainRenderer::RebuildTerrainLod(const RenderContext& context, std::strin
         // renderer 只持有统一接口
         // 具体算法由 UI 选择的 TerrainLodAlgorithmId 决定
         // 切换算法时必须重建持久拓扑状态
+        _borrowedCpuMeshData = nullptr;
         _terrainLodAlgorithm = CreateTerrainLodAlgorithm(_settings.TerrainLodAlgorithm);
         _hasRoamBuildView = false;
     }
@@ -665,8 +673,19 @@ bool TerrainRenderer::RebuildTerrainLod(const RenderContext& context, std::strin
 
     if (renderPacket.Mode == Algorithms::TerrainLodRenderMode::CpuMesh)
     {
-        _meshData = std::move(renderPacket.CpuMesh);
-        if (_meshData.Vertices.empty() || _meshData.Indices.empty())
+        const Terrain::TerrainMeshData* cpuMesh = renderPacket.ResolveCpuMesh();
+        if (renderPacket.BorrowedCpuMesh != nullptr)
+        {
+            _meshData = {};
+            _borrowedCpuMeshData = renderPacket.BorrowedCpuMesh;
+        }
+        else
+        {
+            _meshData = std::move(renderPacket.CpuMesh);
+            _borrowedCpuMeshData = nullptr;
+            cpuMesh = &_meshData;
+        }
+        if (cpuMesh == nullptr || cpuMesh->Vertices.empty() || cpuMesh->Indices.empty())
         {
             // CPU mesh 路径必须提供完整顶点和索引
             if (errorMessage != nullptr)
@@ -678,7 +697,11 @@ bool TerrainRenderer::RebuildTerrainLod(const RenderContext& context, std::strin
         }
 
         const auto uploadStart = std::chrono::steady_clock::now();
-        if (!UploadMesh(errorMessage))
+        if (!UploadMeshData(
+                *cpuMesh,
+                renderPacket.CpuMeshRequiresFullUpload,
+                renderPacket.CpuMeshUpdateRanges,
+                errorMessage))
         {
             _meshDirty = true;
             return false;
@@ -693,6 +716,7 @@ bool TerrainRenderer::RebuildTerrainLod(const RenderContext& context, std::strin
     }
 
     _meshData = {};
+    _borrowedCpuMeshData = nullptr;
     if (!BindGpuTerrainBuffers(renderPacket, errorMessage))
     {
         _meshDirty = true;
@@ -706,6 +730,16 @@ bool TerrainRenderer::RebuildTerrainLod(const RenderContext& context, std::strin
 }
 
 bool TerrainRenderer::UploadMesh(std::string* errorMessage)
+{
+    static const std::vector<Algorithms::TerrainLodCpuMeshUpdateRange> noUpdateRanges;
+    return UploadMeshData(_meshData, true, noUpdateRanges, errorMessage);
+}
+
+bool TerrainRenderer::UploadMeshData(
+    const Terrain::TerrainMeshData& meshData,
+    bool fullUpload,
+    const std::vector<Algorithms::TerrainLodCpuMeshUpdateRange>& updateRanges,
+    std::string* errorMessage)
 {
     if (_vertexArrayId == 0)
     {
@@ -736,38 +770,86 @@ bool TerrainRenderer::UploadMesh(std::string* errorMessage)
     // LOD mesh 会随相机更新
     // 规则网格只在参数变化时更新
     const GLenum bufferUsage = _settings.UseTerrainLod ? GL_DYNAMIC_DRAW : GL_STATIC_DRAW;
-    const std::size_t vertexBufferBytes = _meshData.Vertices.size() * sizeof(Terrain::TerrainMeshVertex);
+    std::size_t uploadedBytes = 0U;
+    const std::size_t vertexBufferBytes = meshData.Vertices.size() * sizeof(Terrain::TerrainMeshVertex);
+    bool uploadAllVertices = fullUpload;
     if (_vertexBufferCapacityBytes < vertexBufferBytes)
     {
         glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(vertexBufferBytes), nullptr, bufferUsage);
         _vertexBufferCapacityBytes = vertexBufferBytes;
+        uploadAllVertices = true;
     }
-    glBufferSubData(
-        GL_ARRAY_BUFFER,
-        0,
-        static_cast<GLsizeiptr>(vertexBufferBytes),
-        _meshData.Vertices.data());
+    if (uploadAllVertices)
+    {
+        glBufferSubData(
+            GL_ARRAY_BUFFER,
+            0,
+            static_cast<GLsizeiptr>(vertexBufferBytes),
+            meshData.Vertices.data());
+        uploadedBytes += vertexBufferBytes;
+    }
+    else
+    {
+        for (const Algorithms::TerrainLodCpuMeshUpdateRange& range : updateRanges)
+        {
+            const std::size_t rangeBytes = range.VertexCount * sizeof(Terrain::TerrainMeshVertex);
+            if (rangeBytes == 0U)
+            {
+                continue;
+            }
+            glBufferSubData(
+                GL_ARRAY_BUFFER,
+                static_cast<GLintptr>(range.FirstVertex * sizeof(Terrain::TerrainMeshVertex)),
+                static_cast<GLsizeiptr>(rangeBytes),
+                meshData.Vertices.data() + range.FirstVertex);
+            uploadedBytes += rangeBytes;
+        }
+    }
 
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, _indexBufferId);
-    const std::size_t indexBufferBytes = _meshData.Indices.size() * sizeof(std::uint32_t);
+    const std::size_t indexBufferBytes = meshData.Indices.size() * sizeof(std::uint32_t);
+    bool uploadAllIndices = fullUpload;
     if (_indexBufferCapacityBytes < indexBufferBytes)
     {
         glBufferData(GL_ELEMENT_ARRAY_BUFFER, static_cast<GLsizeiptr>(indexBufferBytes), nullptr, bufferUsage);
         _indexBufferCapacityBytes = indexBufferBytes;
+        uploadAllIndices = true;
     }
-    glBufferSubData(
-        GL_ELEMENT_ARRAY_BUFFER,
-        0,
-        static_cast<GLsizeiptr>(indexBufferBytes),
-        _meshData.Indices.data());
+    if (uploadAllIndices)
+    {
+        glBufferSubData(
+            GL_ELEMENT_ARRAY_BUFFER,
+            0,
+            static_cast<GLsizeiptr>(indexBufferBytes),
+            meshData.Indices.data());
+        uploadedBytes += indexBufferBytes;
+    }
+    else
+    {
+        for (const Algorithms::TerrainLodCpuMeshUpdateRange& range : updateRanges)
+        {
+            const std::size_t rangeBytes = range.IndexCount * sizeof(std::uint32_t);
+            if (rangeBytes == 0U)
+            {
+                continue;
+            }
+            glBufferSubData(
+                GL_ELEMENT_ARRAY_BUFFER,
+                static_cast<GLintptr>(range.FirstIndex * sizeof(std::uint32_t)),
+                static_cast<GLsizeiptr>(rangeBytes),
+                meshData.Indices.data() + range.FirstIndex);
+            uploadedBytes += rangeBytes;
+        }
+    }
 
     _renderMode = Algorithms::TerrainLodRenderMode::CpuMesh;
     _gpuVertexBufferId = 0;
     _gpuIndexBufferId = 0;
     _gpuIndirectDrawBufferId = 0;
-    _drawVertexCount = _meshData.Vertices.size();
-    _drawIndexCount = _meshData.Indices.size();
-    _drawTriangleCount = _meshData.Indices.size() / 3U;
+    _drawVertexCount = meshData.Vertices.size();
+    _drawIndexCount = meshData.Indices.size();
+    _drawTriangleCount = meshData.Indices.size() / 3U;
+    _terrainLodStats.CpuGpuUploadBytes = uploadedBytes;
     return ConfigureTerrainVertexArray(_vertexBufferId, _indexBufferId, errorMessage);
 }
 

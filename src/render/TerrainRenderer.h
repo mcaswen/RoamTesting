@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace ParallelRoam::Render
 {
@@ -121,6 +122,10 @@ struct TerrainRenderStats
     std::size_t RoamPersistentMergeQueueSize{0};
     std::size_t RoamQueueCrossoverCount{0};
     std::size_t RoamQueueMembershipUpdateCount{0};
+    std::size_t RoamCpuMeshFullRebuildCount{0};
+    std::size_t RoamCpuMeshUpdatedTriangleCount{0};
+    std::size_t RoamCpuMeshReusedTriangleCount{0};
+    std::size_t RoamCpuMeshDirtyRangeCount{0};
     std::size_t RoamRejectedSplitCount{0};
     std::size_t RoamBudgetRejectedSplitCount{0};
     std::size_t RoamRejectedMergeCount{0};
@@ -217,6 +222,11 @@ private:
     // Terrain LOD 路径会随相机位置动态更新
     bool RebuildTerrainLod(const RenderContext& context, std::string* errorMessage);
     bool UploadMesh(std::string* errorMessage);
+    bool UploadMeshData(
+        const Terrain::TerrainMeshData& meshData,
+        bool fullUpload,
+        const std::vector<Algorithms::TerrainLodCpuMeshUpdateRange>& updateRanges,
+        std::string* errorMessage);
 #if defined(PARALLEL_ROAM_GRAPHICS_API_OPENGL)
     bool ConfigureTerrainVertexArray(
         unsigned int vertexBufferId,
@@ -238,6 +248,8 @@ private:
     IGraphicsBackend* _graphicsBackend{nullptr};
     Terrain::HeightMap _heightMap;
     Terrain::TerrainMeshData _meshData;
+    // Classic incremental emit 的 mesh 由算法持有，生命周期到下一次 Build/Reset。
+    const Terrain::TerrainMeshData* _borrowedCpuMeshData{nullptr};
     std::unique_ptr<Algorithms::ITerrainLodAlgorithm> _terrainLodAlgorithm;
     Algorithms::TerrainLodStats _terrainLodStats;
     std::string _terrainLodStatusMessage;

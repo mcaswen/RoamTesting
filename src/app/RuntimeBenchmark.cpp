@@ -70,6 +70,11 @@ struct RuntimeBenchmarkSummary
     double AverageNodes{0.0};
     std::size_t MaxNodes{0};
 
+    std::size_t CpuMeshFullRebuildCount{0};
+    double AverageCpuMeshUpdatedTriangles{0.0};
+    double AverageCpuMeshReusedTriangles{0.0};
+    double AverageCpuMeshDirtyRanges{0.0};
+
     // CPU 百分比按单核 100% 口径，适合观察并行扩展
     float AverageCpuUtilizationPercent{0.0F};
     float MaxCpuUtilizationPercent{0.0F};
@@ -174,6 +179,9 @@ RuntimeBenchmarkSummary SummarizeRuntimeBenchmark(const RuntimeBenchmarkAlgorith
     double totalRenderMilliseconds = 0.0;
     double totalTriangles = 0.0;
     double totalNodes = 0.0;
+    double totalCpuMeshUpdatedTriangles = 0.0;
+    double totalCpuMeshReusedTriangles = 0.0;
+    double totalCpuMeshDirtyRanges = 0.0;
     double totalCpuUtilization = 0.0;
 
     for (const RuntimeBenchmarkSample& sample : result.Samples)
@@ -220,6 +228,10 @@ RuntimeBenchmarkSummary SummarizeRuntimeBenchmark(const RuntimeBenchmarkAlgorith
         totalRenderMilliseconds += stats.RoamRenderMilliseconds;
         totalTriangles += static_cast<double>(stats.TriangleCount);
         totalNodes += static_cast<double>(stats.RoamNodeCount);
+        summary.CpuMeshFullRebuildCount += stats.RoamCpuMeshFullRebuildCount;
+        totalCpuMeshUpdatedTriangles += static_cast<double>(stats.RoamCpuMeshUpdatedTriangleCount);
+        totalCpuMeshReusedTriangles += static_cast<double>(stats.RoamCpuMeshReusedTriangleCount);
+        totalCpuMeshDirtyRanges += static_cast<double>(stats.RoamCpuMeshDirtyRangeCount);
         totalCpuUtilization += stats.RoamCpuUtilizationPercent;
 
         summary.MaxFrameMilliseconds = std::max(summary.MaxFrameMilliseconds, sample.FrameMilliseconds);
@@ -301,6 +313,9 @@ RuntimeBenchmarkSummary SummarizeRuntimeBenchmark(const RuntimeBenchmarkAlgorith
     summary.AverageRenderMilliseconds = static_cast<float>(totalRenderMilliseconds / sampleCount);
     summary.AverageTriangles = totalTriangles / sampleCount;
     summary.AverageNodes = totalNodes / sampleCount;
+    summary.AverageCpuMeshUpdatedTriangles = totalCpuMeshUpdatedTriangles / sampleCount;
+    summary.AverageCpuMeshReusedTriangles = totalCpuMeshReusedTriangles / sampleCount;
+    summary.AverageCpuMeshDirtyRanges = totalCpuMeshDirtyRanges / sampleCount;
     summary.AverageCpuUtilizationPercent = static_cast<float>(totalCpuUtilization / sampleCount);
     return summary;
 }
@@ -337,7 +352,9 @@ void WriteDetailedCsv(
         << "screenSpaceMergeThresholdPixels,triangleBudget,"
         << "timeSeconds,cameraX,cameraY,cameraZ,frameMilliseconds,triangles,nodes,"
         << "activeSplits,splits,forcedSplits,merges,candidatePeak,persistentSplitQueueSize,persistentMergeQueueSize,"
-        << "queueCrossoverCount,queueMembershipUpdateCount,budgetRejectedSplits,tjunctions,invalidNeighbors,"
+        << "queueCrossoverCount,queueMembershipUpdateCount,cpuMeshFullRebuildCount,"
+        << "cpuMeshUpdatedTriangleCount,cpuMeshReusedTriangleCount,cpuMeshDirtyRangeCount,"
+        << "budgetRejectedSplits,tjunctions,invalidNeighbors,"
         << "invalidTopology,cpuWorkers,cpuUtilizationPercent,lodTotalMilliseconds,"
         << "cpuUpdateMilliseconds,cpuPrepareMilliseconds,cpuMergeCandidateMarkMilliseconds,"
         << "cpuMergeTopologyMilliseconds,cpuBudgetLeafCollectMilliseconds,cpuErrorEvalMilliseconds,"
@@ -393,6 +410,10 @@ void WriteDetailedCsv(
                 << stats.RoamPersistentMergeQueueSize << ','
                 << stats.RoamQueueCrossoverCount << ','
                 << stats.RoamQueueMembershipUpdateCount << ','
+                << stats.RoamCpuMeshFullRebuildCount << ','
+                << stats.RoamCpuMeshUpdatedTriangleCount << ','
+                << stats.RoamCpuMeshReusedTriangleCount << ','
+                << stats.RoamCpuMeshDirtyRangeCount << ','
                 << stats.RoamBudgetRejectedSplitCount << ','
                 << stats.RoamTjunctionCount << ','
                 << stats.RoamInvalidNeighborCount << ','
@@ -575,12 +596,12 @@ void WriteSummaryMarkdown(
              << " | " << gpuSummary.AverageCpuFinalLeafCollectMilliseconds
              << " | " << (gpuSummary.AverageGpuActiveLeafResetMilliseconds +
                               gpuSummary.AverageGpuFinalLeafCompactionMilliseconds)
-             << " | DOD CPU 直接复用增量维护的 ActiveLeafNodes，因此本列为 0；GPU 数值包含 counter reset 和 split 后 leaf compaction |\n";
+             << " | Classic 直接复用 dense mesh slot owners，DOD 直接复用 ActiveLeafNodes，因此两者本列均为 0；GPU 数值包含 counter reset 和 split 后 leaf compaction |\n";
     markdown << "| Mesh emit / draw argument 生成 | " << classicSummary.AverageCpuMeshEmitMilliseconds
              << " | " << dodSummary.AverageCpuMeshEmitMilliseconds
              << " | " << gpuSummary.AverageCpuMeshEmitMilliseconds
              << " | " << gpuSummary.AverageGpuMeshEmitMilliseconds
-             << " | GPU 输出非共享顶点、索引和 indirect draw argument |\n";
+             << " | Classic 只重写拓扑变化影响的稳定槽位；DOD 仍完整 emit；GPU 输出非共享顶点、索引和 indirect draw argument |\n";
     markdown << "| Finalize / 发布 packet | " << classicSummary.AverageCpuFinalizeMilliseconds
              << " | " << dodSummary.AverageCpuFinalizeMilliseconds
              << " | " << gpuSummary.AverageCpuFinalizeMilliseconds
@@ -590,7 +611,8 @@ void WriteSummaryMarkdown(
     markdown << "`CPU update` 包含下表中互斥的物理执行区间；`CPU upload` 是算法返回后的 renderer 上传。"
              << "Classic 在扫描和弹出 split queue 时评估屏幕误差；DOD 已把 active leaf 遍历、SSE/视锥评估和"
              << " threshold 标记融合到同一次 active-leaf-index 扫描。因此两者单独的 `Error eval` 都为零，DOD 的融合成本"
-             << "全部计入 `Split scan/mark`；GPU shader 仍保留独立 dispatch。\n\n";
+             << "全部计入 `Split scan/mark`；Classic 的 `Mesh emit` 是 dirty-slot 增量更新，不再等同于完整网格构建；"
+             << "GPU shader 仍保留独立 dispatch。\n\n";
     markdown << "| Algorithm | CPU update | Prepare | Merge mark | Merge topology | Budget leaf collect | "
              << "Error eval | Split scan/mark | Split topology | Final leaf collect/view | Mesh emit | "
              << "Finalize | CPU upload |\n";
@@ -611,6 +633,24 @@ void WriteSummaryMarkdown(
                  << " | " << summary.AverageCpuMeshEmitMilliseconds
                  << " | " << summary.AverageCpuFinalizeMilliseconds
                  << " | " << summary.AverageCpuUploadMilliseconds << " |\n";
+    }
+
+    markdown << "\n### 增量 CPU Mesh 输出\n\n";
+    markdown << "`Full rebuilds` 是采样窗口内的全量初始化次数；其余列是逐帧平均值。"
+             << "当前只有 Classic 填充这些字段，其他算法为零不代表它们也采用了增量输出。"
+             << "D3D12 的 frame slot 会延迟消费两次使用之间积累的 dirty range 并集，"
+             << "因此 `Max upload bytes` 表示实际补齐量，不要求等于当前 Build 的 updated triangles。\n\n";
+    markdown << "| Algorithm | Full rebuilds | Updated triangles | Reused triangles | Dirty ranges | Max upload bytes |\n";
+    markdown << "| --- | ---: | ---: | ---: | ---: | ---: |\n";
+    for (const RuntimeBenchmarkAlgorithmResult& result : results)
+    {
+        const RuntimeBenchmarkSummary summary = SummarizeRuntimeBenchmark(result);
+        markdown << "| " << result.AlgorithmName
+                 << " | " << summary.CpuMeshFullRebuildCount
+                 << " | " << summary.AverageCpuMeshUpdatedTriangles
+                 << " | " << summary.AverageCpuMeshReusedTriangles
+                 << " | " << summary.AverageCpuMeshDirtyRanges
+                 << " | " << summary.MaxCpuGpuUploadBytes << " |\n";
     }
 
     markdown << "\n### 原生 pass 包络\n\n";
