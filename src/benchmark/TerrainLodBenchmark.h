@@ -23,6 +23,7 @@ enum class BenchmarkProfile
 {
     Smoke,
     BudgetReentry,
+    BudgetSaturation,
     IncrementalEmit,
     Standard,
 };

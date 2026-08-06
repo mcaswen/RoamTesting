@@ -137,6 +137,8 @@ private:
         // 朝向在单次路径内保持固定，避免中心点附近方向退化
         float YawDegrees{-90.0F};
         float PitchDegrees{-18.0F};
+        Gui::TerrainPanelState::RuntimeBenchmarkPath Path{
+            Gui::TerrainPanelState::RuntimeBenchmarkPath::Default};
 
         // benchmark 结束后恢复用户原本的面板参数
         Gui::TerrainPanelState PreviousTerrainPanelState;

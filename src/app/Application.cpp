@@ -71,6 +71,29 @@ std::pair<float, float> ComputeYawPitchForLookAt(const glm::vec3& position, cons
     return {yawDegrees, pitchDegrees};
 }
 
+struct BudgetSaturationCameraPose
+{
+    glm::vec3 Position{0.0F};
+    glm::vec3 Target{0.0F};
+};
+
+BudgetSaturationCameraPose ComputeBudgetSaturationCameraPose(float normalizedTime)
+{
+    const float t = std::clamp(normalizedTime, 0.0F, 1.0F);
+    const float angle = t * 6.28318530718F;
+    return BudgetSaturationCameraPose{
+        glm::vec3{
+            std::cos(angle) * 58.0F,
+            20.0F + std::sin(angle * 2.0F) * 3.0F,
+            std::sin(angle) * 58.0F,
+        },
+        glm::vec3{
+            std::cos(angle + 0.55F) * 10.0F,
+            4.0F,
+            std::sin(angle + 0.55F) * 10.0F,
+        }};
+}
+
 Render::TerrainRenderSettings ToRenderSettings(const Gui::TerrainPanelState& state)
 {
     Render::TerrainRenderSettings settings{};
@@ -692,6 +715,7 @@ void Application::StartRuntimeBenchmark()
     _runtimeBenchmark.FailureMessage.clear();
     _runtimeBenchmark.Results.clear();
     _runtimeBenchmark.Notes.clear();
+    _runtimeBenchmark.Path = _terrainPanelState.BenchmarkPath;
     _runtimeBenchmark.Notes.push_back("构建配置：" + BuildConfigurationName());
     _runtimeBenchmark.Notes.push_back("图形后端：" + std::string{_graphicsBackend->Name()});
     _runtimeBenchmark.Notes.push_back(
@@ -756,6 +780,25 @@ void Application::StartRuntimeBenchmark()
         _camera.YawDegrees(),
         _camera.PitchDegrees(),
     };
+
+    if (_runtimeBenchmark.Path == Gui::TerrainPanelState::RuntimeBenchmarkPath::BudgetSaturation)
+    {
+        // 压力路径使用已验证能吃满 200000 三角形的固定场景参数。
+        _terrainPanelState.HeightMapIndex = 1;
+        _terrainPanelState.TerrainSize = 80.0F;
+        _terrainPanelState.HeightScale = 12.0F;
+        _terrainPanelState.RoamMaxDepth = 20;
+        _terrainPanelState.RoamScreenSpaceSplitThresholdPixels = 0.25F;
+        _terrainPanelState.RoamScreenSpaceMergeThresholdPixels = 0.10F;
+        _terrainPanelState.RoamTriangleBudget = 200000;
+        ApplyHeightMapSelection();
+        _runtimeBenchmark.Notes.push_back("Benchmark 路径：极限压力路径");
+    }
+    else
+    {
+        _runtimeBenchmark.Notes.push_back("Benchmark 路径：默认选项路径");
+    }
+
     _terrainPanelState.VSyncEnabled = false;
     ApplyWindowPanelSettings();
     _runtimeBenchmark.Notes.push_back(
@@ -783,13 +826,26 @@ void Application::BeginRuntimeBenchmarkAlgorithm()
     result.Samples.reserve(720);
     _runtimeBenchmark.Results.push_back(std::move(result));
 
-    const float halfTerrainSize = _terrainPanelState.TerrainSize * 0.5F;
-    const float cameraHeight = std::max(3.0F, _terrainPanelState.HeightScale * 1.5F);
-    // Z+ 边中点到中心的路径便于和固定朝向一起解释
-    _runtimeBenchmark.StartPosition = glm::vec3{0.0F, cameraHeight, halfTerrainSize};
-    _runtimeBenchmark.EndPosition = glm::vec3{0.0F, cameraHeight, 0.0F};
+    if (_runtimeBenchmark.Path == Gui::TerrainPanelState::RuntimeBenchmarkPath::BudgetSaturation)
+    {
+        const BudgetSaturationCameraPose pose = ComputeBudgetSaturationCameraPose(0.0F);
+        _runtimeBenchmark.StartPosition = pose.Position;
+        _runtimeBenchmark.EndPosition = pose.Target;
+    }
+    else
+    {
+        const float halfTerrainSize = _terrainPanelState.TerrainSize * 0.5F;
+        const float cameraHeight = std::max(3.0F, _terrainPanelState.HeightScale * 1.5F);
+        // Z+ 边中点到中心的路径便于和固定朝向一起解释
+        _runtimeBenchmark.StartPosition = glm::vec3{0.0F, cameraHeight, halfTerrainSize};
+        _runtimeBenchmark.EndPosition = glm::vec3{0.0F, cameraHeight, 0.0F};
+    }
+    const glm::vec3 initialLookAtTarget =
+        _runtimeBenchmark.Path == Gui::TerrainPanelState::RuntimeBenchmarkPath::BudgetSaturation
+        ? _runtimeBenchmark.EndPosition
+        : glm::vec3{0.0F, 0.0F, 0.0F};
     const auto [yawDegrees, pitchDegrees] =
-        ComputeYawPitchForLookAt(_runtimeBenchmark.StartPosition, glm::vec3{0.0F, 0.0F, 0.0F});
+        ComputeYawPitchForLookAt(_runtimeBenchmark.StartPosition, initialLookAtTarget);
     _runtimeBenchmark.YawDegrees = yawDegrees;
     _runtimeBenchmark.PitchDegrees = pitchDegrees;
     _runtimeBenchmark.ElapsedSeconds = 0.0F;
@@ -825,10 +881,19 @@ void Application::PrepareRuntimeBenchmarkFrame(const FrameTiming& frameTiming)
     }
 
     const float t = _runtimeBenchmark.ElapsedSeconds / _runtimeBenchmark.DurationSeconds;
-    // 只平滑位置，不旋转相机，保证每个算法看到同一条视点路径
-    const glm::vec3 cameraPosition =
-        glm::mix(_runtimeBenchmark.StartPosition, _runtimeBenchmark.EndPosition, SmoothStep(t));
-    _camera.SetPose(cameraPosition, _runtimeBenchmark.YawDegrees, _runtimeBenchmark.PitchDegrees);
+    if (_runtimeBenchmark.Path == Gui::TerrainPanelState::RuntimeBenchmarkPath::BudgetSaturation)
+    {
+        const BudgetSaturationCameraPose pose = ComputeBudgetSaturationCameraPose(t);
+        const auto [yawDegrees, pitchDegrees] = ComputeYawPitchForLookAt(pose.Position, pose.Target);
+        _camera.SetPose(pose.Position, yawDegrees, pitchDegrees);
+    }
+    else
+    {
+        // 只平滑位置，不旋转相机，保证每个算法看到同一条视点路径
+        const glm::vec3 cameraPosition =
+            glm::mix(_runtimeBenchmark.StartPosition, _runtimeBenchmark.EndPosition, SmoothStep(t));
+        _camera.SetPose(cameraPosition, _runtimeBenchmark.YawDegrees, _runtimeBenchmark.PitchDegrees);
+    }
     _terrainRenderer.RequestMeshRebuild();
 }
 
@@ -922,6 +987,8 @@ void Application::FinishRuntimeBenchmark()
     _terrainPanelState.StartBenchmarkRequested = false;
     ApplyWindowPanelSettings();
     _camera.SetPose(previousCameraPose.Position, previousCameraPose.YawDegrees, previousCameraPose.PitchDegrees);
+    // 压力路径会临时切换 HeightMap；恢复面板状态时必须同步恢复 renderer 实际资源。
+    ApplyHeightMapSelection();
     // 恢复设置后强制重建一次，防止画面停留在 benchmark 的算法 mesh
     ApplyTerrainPanelSettings();
     _terrainRenderer.ResetTerrainLodAlgorithm();

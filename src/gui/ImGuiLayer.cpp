@@ -672,6 +672,15 @@ bool ImGuiLayer::DrawDebugOverlay(const DebugOverlayData& data, TerrainPanelStat
     {
         ImGui::BeginDisabled();
     }
+    const char* benchmarkPathItems[] = {"默认选项路径", "极限压力路径"};
+    int benchmarkPathIndex =
+        terrainState.BenchmarkPath == TerrainPanelState::RuntimeBenchmarkPath::BudgetSaturation ? 1 : 0;
+    if (ImGui::Combo("Benchmark 路径", &benchmarkPathIndex, benchmarkPathItems, 2))
+    {
+        terrainState.BenchmarkPath = benchmarkPathIndex == 1
+            ? TerrainPanelState::RuntimeBenchmarkPath::BudgetSaturation
+            : TerrainPanelState::RuntimeBenchmarkPath::Default;
+    }
     if (ImGui::Button("开始 Benchmark", ImVec2{-1.0F, 0.0F}))
     {
         // 按钮只写请求位，Application 下一帧统一启动状态机

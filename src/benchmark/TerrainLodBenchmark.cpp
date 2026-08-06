@@ -57,6 +57,8 @@ struct BenchmarkScenario
     bool RequireNearDetailIncrease{false};
     // 预算重入场景要求转向后的第一次 Build 同时回收旧细节并细分新区域
     bool RequireImmediateBudgetReallocation{false};
+    // 预算饱和场景要求整条相机路径都维持在配置的活动叶三角形上限
+    bool RequireBudgetSaturation{false};
 };
 
 // smoke、budget-reentry 和 incremental-emit 偏回归测试，standard 偏性能样本
@@ -100,6 +102,8 @@ std::string ToString(BenchmarkProfile profile)
         return "smoke";
     case BenchmarkProfile::BudgetReentry:
         return "budget-reentry";
+    case BenchmarkProfile::BudgetSaturation:
+        return "budget-saturation";
     case BenchmarkProfile::IncrementalEmit:
         return "incremental-emit";
     case BenchmarkProfile::Standard:
@@ -152,6 +156,41 @@ std::vector<BenchmarkCameraKeyframe> MakeStandardCameraPath()
             std::cos(angle) * Radius,
             Height + std::sin(angle * 1.7F) * 2.0F,
             std::sin(angle) * Radius + wave,
+        };
+        frame.TimeSeconds = t * DurationSeconds;
+        path.push_back(frame);
+    }
+
+    return path;
+}
+
+std::vector<BenchmarkCameraKeyframe> MakeBudgetSaturationCameraPath()
+{
+    // Peking 高度图的最细网格容量显著超过 200000 个三角形。
+    // 低空闭合环绕让视锥内持续存在超过 200000 个高优先级 leaf，
+    // 内圈移动目标则迫使满预算拓扑在不同区域之间重新分配。
+    std::vector<BenchmarkCameraKeyframe> path;
+    constexpr int FrameCount = 24;
+    constexpr float CameraRadius = 58.0F;
+    constexpr float TargetRadius = 10.0F;
+    constexpr float DurationSeconds = 12.0F;
+    path.reserve(FrameCount);
+
+    for (int index = 0; index < FrameCount; ++index)
+    {
+        const float t = static_cast<float>(index) / static_cast<float>(FrameCount - 1);
+        const float angle = t * 6.28318530718F;
+        BenchmarkCameraKeyframe frame{};
+        frame.Name = "budget-orbit-" + std::to_string(index);
+        frame.Position = glm::vec3{
+            std::cos(angle) * CameraRadius,
+            20.0F + std::sin(angle * 2.0F) * 3.0F,
+            std::sin(angle) * CameraRadius,
+        };
+        frame.Target = glm::vec3{
+            std::cos(angle + 0.55F) * TargetRadius,
+            4.0F,
+            std::sin(angle + 0.55F) * TargetRadius,
         };
         frame.TimeSeconds = t * DurationSeconds;
         path.push_back(frame);
@@ -269,6 +308,21 @@ BenchmarkScenario MakeScenario(BenchmarkProfile profile)
                 4.0F,
                 glm::vec3{8.0F, 0.0F, 0.0F}},
         };
+        return scenario;
+    }
+
+    if (profile == BenchmarkProfile::BudgetSaturation)
+    {
+        scenario.HeightMapPath = "assets/heightmaps/Hm_Terrain_Peking_513.png";
+        scenario.Settings.TerrainSize = 80.0F;
+        scenario.Settings.HeightScale = 12.0F;
+        scenario.Settings.MaxDepth = 20;
+        scenario.Settings.ScreenSpaceSplitThresholdPixels = 0.25F;
+        scenario.Settings.ScreenSpaceMergeThresholdPixels = 0.10F;
+        scenario.Settings.TriangleBudget = 200000U;
+        scenario.Settings.EnableTopologyValidation = false;
+        scenario.RequireBudgetSaturation = true;
+        scenario.CameraPath = MakeBudgetSaturationCameraPath();
         return scenario;
     }
 
@@ -476,6 +530,19 @@ bool ValidateRunShape(const BenchmarkScenario& scenario, std::vector<BenchmarkFr
                 frames[index].TriangleCount >= minimumFilledBudget;
             frames[index].Passed = frames[index].Passed && reallocatedInOneBuild;
             passed = passed && reallocatedInOneBuild;
+        }
+    }
+
+    if (scenario.RequireBudgetSaturation)
+    {
+        const std::size_t minimumFilledBudget = scenario.Settings.TriangleBudget > 2U
+            ? scenario.Settings.TriangleBudget - 2U
+            : scenario.Settings.TriangleBudget;
+        for (BenchmarkFrameResult& frame : frames)
+        {
+            const bool budgetFilled = frame.TriangleCount >= minimumFilledBudget;
+            frame.Passed = frame.Passed && budgetFilled;
+            passed = passed && budgetFilled;
         }
     }
 
@@ -877,6 +944,12 @@ bool ParseProfile(std::string_view value, BenchmarkProfile& outProfile)
         return true;
     }
 
+    if (value == "budget-saturation")
+    {
+        outProfile = BenchmarkProfile::BudgetSaturation;
+        return true;
+    }
+
     if (value == "incremental-emit")
     {
         outProfile = BenchmarkProfile::IncrementalEmit;
@@ -1043,6 +1116,6 @@ int RunTerrainLodBenchmarkFromCommandLine(int argc, char** argv)
 std::string BenchmarkUsage()
 {
     return "Usage: ParallelROAM --benchmark [--algorithm classic|dod|gpu|all] "
-           "[--profile smoke|budget-reentry|incremental-emit|standard] [--csv path]\n";
+           "[--profile smoke|budget-reentry|budget-saturation|incremental-emit|standard] [--csv path]\n";
 }
 } // 命名空间 ParallelRoam::Benchmark

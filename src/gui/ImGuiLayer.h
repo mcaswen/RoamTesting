@@ -179,6 +179,12 @@ struct DebugOverlayData
 /// </summary>
 struct TerrainPanelState
 {
+    enum class RuntimeBenchmarkPath
+    {
+        Default,
+        BudgetSaturation,
+    };
+
     float TerrainSize{30.0F};
     float HeightScale{4.0F};
     bool Wireframe{false};
@@ -212,6 +218,7 @@ struct TerrainPanelState
 
     // UI 按钮只提交请求，Application 在下一帧开始可控相机路径
     bool StartBenchmarkRequested{false};
+    RuntimeBenchmarkPath BenchmarkPath{RuntimeBenchmarkPath::Default};
 };
 
 /// <summary>
