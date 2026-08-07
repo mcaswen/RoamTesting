@@ -8,11 +8,11 @@
 #include "algorithms/gpu_roam/GpuRoamMeshEmit.h"
 #include "algorithms/gpu_roam/GpuRoamSplitOnlyTopology.h"
 #include "platform/OpenGlCapabilities.h"
+#include "tools/PerformanceTimer.h"
 
 #include <glad/gl.h>
 
 #include <algorithm>
-#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <limits>
@@ -24,8 +24,6 @@ namespace ParallelRoam::Algorithms::GpuRoam
 {
 namespace
 {
-using Clock = std::chrono::steady_clock;
-
 constexpr std::size_t GpuPassIndex(GpuRoamGpuPass pass)
 {
     return static_cast<std::size_t>(pass);
@@ -59,11 +57,6 @@ struct GpuRoamUploadMetrics
     // 资源扩容单独计时，避免把偶发分配抖动归入稳定上传成本
     float BufferAllocationMilliseconds{0.0F};
 };
-
-float ElapsedMilliseconds(Clock::time_point start, Clock::time_point end)
-{
-    return std::chrono::duration<float, std::milli>(end - start).count();
-}
 
 std::size_t NormalizedTriangleBudget(const TerrainLodBuildInput& input)
 {
@@ -134,12 +127,12 @@ bool EnsureBufferCapacity(
     if (currentCapacityBytes < safeRequiredCapacityBytes)
     {
         // 容量只增长不缩小，连续帧拓扑波动不会反复触发重新分配
-        const auto allocationStart = Clock::now();
+        Tools::PerformanceTimer allocationTimer;
         glBindBuffer(target, bufferId);
         // 传入空数据只分配存储，实际快照由后续 glBufferSubData 写入
         glBufferData(target, static_cast<GLsizeiptr>(safeRequiredCapacityBytes), nullptr, GL_DYNAMIC_DRAW);
         glBindBuffer(target, 0);
-        metrics.BufferAllocationMilliseconds += ElapsedMilliseconds(allocationStart, Clock::now());
+        metrics.BufferAllocationMilliseconds += allocationTimer.Stop();
         currentCapacityBytes = safeRequiredCapacityBytes;
     }
     return true;
@@ -173,11 +166,11 @@ bool UploadBufferRange(
     if (data != nullptr && dataByteCount > 0U)
     {
         // 只更新有效前缀，缓冲尾部留给本帧 GPU 分裂产生的新节点
-        const auto uploadStart = Clock::now();
+        Tools::PerformanceTimer uploadTimer;
         glBindBuffer(target, bufferId);
         glBufferSubData(target, 0, static_cast<GLsizeiptr>(dataByteCount), data);
         glBindBuffer(target, 0);
-        metrics.CpuUploadMilliseconds += ElapsedMilliseconds(uploadStart, Clock::now());
+        metrics.CpuUploadMilliseconds += uploadTimer.Stop();
     }
     return true;
 }
@@ -221,7 +214,7 @@ bool UploadHeightMapTextureIfNeeded(
         return false;
     }
 
-    const auto uploadStart = Clock::now();
+    Tools::PerformanceTimer uploadTimer;
     // HeightMap 的抽象采样接口不保证底层连续，因此在上传前显式展平
     std::vector<float> heights;
     heights.resize(static_cast<std::size_t>(heightMap.Width()) * static_cast<std::size_t>(heightMap.Height()));
@@ -254,7 +247,7 @@ bool UploadHeightMapTextureIfNeeded(
     glBindTexture(GL_TEXTURE_2D, 0);
     // 高度图字节数只在缓存失效帧计入上传统计
     uploadBytes += heights.size() * sizeof(float);
-    metrics.CpuUploadMilliseconds += ElapsedMilliseconds(uploadStart, Clock::now());
+    metrics.CpuUploadMilliseconds += uploadTimer.Stop();
     state.CachedHeightMapPath = heightMap.SourcePath();
     state.CachedHeightMapWidth = heightMap.Width();
     state.CachedHeightMapHeight = heightMap.Height();
@@ -283,7 +276,7 @@ bool ResolveTimingReadbackSlot(
     }
 
     bool allQueriesAvailable = true;
-    const auto queryWaitStart = Clock::now();
+    Tools::PerformanceTimer queryWaitTimer;
     std::array<GLuint64, GpuRoamGpuPassCount> elapsedNanoseconds{};
     for (std::size_t passIndex = 0; passIndex < GpuRoamGpuPassCount; ++passIndex)
     {
@@ -298,18 +291,18 @@ bool ResolveTimingReadbackSlot(
             GL_QUERY_RESULT,
             &elapsedNanoseconds[passIndex]);
     }
-    queryWaitMilliseconds += ElapsedMilliseconds(queryWaitStart, Clock::now());
+    queryWaitMilliseconds += queryWaitTimer.Stop();
     // OpenGL keeps timer results in query objects rather than a readback buffer;
     // count the logical seven 64-bit results so the CSV still exposes their transfer size.
     readbackBytes += GpuRoamGpuPassCount * sizeof(GLuint64);
 
     GpuRoamCounters counters{};
     // counter buffer 与 timer query 使用同一槽位，二者描述的是同一次 dispatch 链
-    const auto readbackStart = Clock::now();
+    Tools::PerformanceTimer readbackTimer;
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, slot.CounterBufferId);
     glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, static_cast<GLsizeiptr>(sizeof(counters)), &counters);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-    readbackWaitMilliseconds += ElapsedMilliseconds(readbackStart, Clock::now());
+    readbackWaitMilliseconds += readbackTimer.Stop();
     readbackBytes += sizeof(counters);
 
     const std::size_t expectedActiveLeafCount =
@@ -674,7 +667,7 @@ bool GpuRoamMeshBuilder::RunGpuAlgorithmPasses(
     // 间接命令必须先清零，emit 未产生有效叶时也不会沿用上一帧 draw count
     bufferAllocationMilliseconds += metrics.BufferAllocationMilliseconds;
 
-    const auto dispatchWallStart = Clock::now();
+    Tools::PerformanceTimer dispatchWallTimer;
     GpuRoamTimingReadbackSlot& slot = _state.TimingReadbackSlots[timingSlotIndex];
 
     // 首次压缩只扫描 CPU 快照已有节点，为误差评估建立稠密活动叶列表
@@ -807,7 +800,7 @@ bool GpuRoamMeshBuilder::RunGpuAlgorithmPasses(
     RunGpuRoamMeshEmitPass(emitInput);
     glEndQuery(GL_TIME_ELAPSED);
     // wall 时间仅表示 CPU 发出 pass 链的耗时，不等同于 GPU 执行时间
-    dispatchWallMilliseconds += ElapsedMilliseconds(dispatchWallStart, Clock::now());
+    dispatchWallMilliseconds += dispatchWallTimer.Stop();
 
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
     glBindTexture(GL_TEXTURE_2D, 0);

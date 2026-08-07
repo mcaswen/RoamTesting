@@ -8,12 +8,12 @@
 #include "algorithms/gpu_roam/d3d12/D3D12GpuRoamTerrainLodAlgorithm.h"
 #include "render/D3D12GraphicsBackend.h"
 #include "render/D3D12ProceduralTerrainPipeline.h"
+#include "tools/PerformanceTimer.h"
 
 #include <stb_image.h>
 
 #include <algorithm>
 #include <array>
-#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -1155,7 +1155,7 @@ bool TerrainRenderer::RebuildRegularGrid(std::string* errorMessage)
 bool TerrainRenderer::RebuildTerrainLod(const RenderContext& context, std::string* errorMessage)
 {
     // 总耗时覆盖算法创建 拓扑更新和可能的 CPU 上传
-    const auto rebuildStart = std::chrono::steady_clock::now();
+    Tools::PerformanceTimer rebuildTimer;
     _terrainLodTotalMilliseconds = 0.0F;
     _terrainLodCpuUploadMilliseconds = 0.0F;
     if (_terrainLodAlgorithm == nullptr || _terrainLodAlgorithm->Info().Id != _settings.TerrainLodAlgorithm)
@@ -1251,8 +1251,7 @@ bool TerrainRenderer::RebuildTerrainLod(const RenderContext& context, std::strin
         _d3d12State->GpuIndexView.Format = DXGI_FORMAT_R32_UINT;
         _d3d12State->GpuResourceGeneration = renderPacket.GpuResourceGeneration;
         _meshDirty = false;
-        _terrainLodTotalMilliseconds =
-            std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - rebuildStart).count();
+        _terrainLodTotalMilliseconds = rebuildTimer.Stop();
         return true;
     }
 
@@ -1286,8 +1285,7 @@ bool TerrainRenderer::RebuildTerrainLod(const RenderContext& context, std::strin
         _drawIndexCount = 0U;
         _drawTriangleCount = renderPacket.ActiveTriangleCount;
         _meshDirty = false;
-        _terrainLodTotalMilliseconds =
-            std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - rebuildStart).count();
+        _terrainLodTotalMilliseconds = rebuildTimer.Stop();
         return true;
     }
 
@@ -1318,7 +1316,7 @@ bool TerrainRenderer::RebuildTerrainLod(const RenderContext& context, std::strin
     }
 
     // CPU 上传单独计时以便与纯 GPU 数据路径比较
-    const auto uploadStart = std::chrono::steady_clock::now();
+    Tools::PerformanceTimer uploadTimer;
     if (!UploadMeshData(
             *cpuMesh,
             renderPacket.CpuMeshRequiresFullUpload,
@@ -1328,11 +1326,9 @@ bool TerrainRenderer::RebuildTerrainLod(const RenderContext& context, std::strin
         _meshDirty = true;
         return false;
     }
-    _terrainLodCpuUploadMilliseconds =
-        std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - uploadStart).count();
+    _terrainLodCpuUploadMilliseconds = uploadTimer.Stop();
     _meshDirty = false;
-    _terrainLodTotalMilliseconds =
-        std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - rebuildStart).count();
+    _terrainLodTotalMilliseconds = rebuildTimer.Stop();
     return true;
 }
 

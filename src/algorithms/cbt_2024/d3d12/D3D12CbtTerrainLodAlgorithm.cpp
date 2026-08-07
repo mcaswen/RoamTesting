@@ -3,12 +3,12 @@
 #include "algorithms/cbt_2024/Cbt2024Support.h"
 #include "algorithms/cbt_2024/CbtBisectorTopology.h"
 #include "render/D3D12GraphicsBackend.h"
+#include "tools/PerformanceTimer.h"
 
 #include <d3d12.h>
 #include <wrl/client.h>
 
 #include <array>
-#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -387,7 +387,7 @@ bool D3D12CbtTerrainLodAlgorithm::BuildRenderData(
     TerrainLodRenderPacket& outPacket,
     std::string* errorMessage)
 {
-    const auto buildStart = std::chrono::steady_clock::now();
+    Tools::PerformanceTimer buildTimer;
     // 每次构建先清空输出，失败路径不能遗留上一帧可绘制资源
     outPacket = {};
     _stats = {};
@@ -429,8 +429,7 @@ bool D3D12CbtTerrainLodAlgorithm::BuildRenderData(
     _stats.ActiveNodeCount = ActiveBisectorCount;
     _stats.OriginalTriangleCount = ActiveBisectorCount;
     _stats.MaxActiveDepth = 0;
-    _stats.CpuUpdateMilliseconds =
-        std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - buildStart).count();
+    _stats.CpuUpdateMilliseconds = buildTimer.Stop();
 
     FillRenderPacket(*_state, outPacket);
     // 统一契约检查是返回成功前的最后门禁，避免 renderer 接收不完整资源组合

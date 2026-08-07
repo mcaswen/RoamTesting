@@ -19,7 +19,6 @@
 
 #include <algorithm>
 #include <array>
-#include <chrono>
 #include <cmath>
 #include <exception>
 #include <filesystem>
@@ -255,7 +254,7 @@ bool Application::Initialize()
     }
 
     // 初始化完成后重置时钟，避免资源加载耗时进入首帧 delta
-    _lastFrameTime = std::chrono::steady_clock::now();
+    _frameTimer.Restart();
     _initialized = true;
     return true;
 }
@@ -358,13 +357,9 @@ void Application::Shutdown()
 
 Application::FrameTiming Application::ComputeFrameTiming()
 {
-    const auto now = std::chrono::steady_clock::now();
-    const std::chrono::duration<float> delta = now - _lastFrameTime;
-    _lastFrameTime = now;
-
     // 调试断点或窗口拖拽会造成异常大 delta，需要限制相机单帧位移
     constexpr float MaxDeltaSeconds = 0.1F;
-    const float rawDeltaSeconds = std::max(delta.count(), 0.0F);
+    const float rawDeltaSeconds = std::max(_frameTimer.Restart() * 0.001F, 0.0F);
 
     FrameTiming frameTiming{};
     frameTiming.RawDeltaSeconds = rawDeltaSeconds;

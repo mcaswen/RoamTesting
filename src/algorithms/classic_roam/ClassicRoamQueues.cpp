@@ -1,7 +1,7 @@
 #include "algorithms/classic_roam/ClassicRoamMeshBuilder.h"
+#include "tools/PerformanceTimer.h"
 
 #include <algorithm>
-#include <chrono>
 #include <cmath>
 #include <limits>
 
@@ -11,13 +11,6 @@ namespace
 {
 constexpr std::size_t InvalidQueueIndex = std::numeric_limits<std::size_t>::max();
 constexpr float BlockedSplitScore = -std::numeric_limits<float>::max();
-
-float ElapsedMilliseconds(
-    std::chrono::steady_clock::time_point start,
-    std::chrono::steady_clock::time_point end)
-{
-    return std::chrono::duration<float, std::milli>(end - start).count();
-}
 } // 匿名命名空间
 
 void ClassicRoamMeshBuilder::InitializePersistentQueues()
@@ -453,23 +446,21 @@ void ClassicRoamMeshBuilder::RefreshMergeQueueNeighborhood(
 
 void ClassicRoamMeshBuilder::RefreshPersistentQueuePriorities()
 {
-    const auto splitStart = std::chrono::steady_clock::now();
+    Tools::PerformanceTimer splitTimer;
     for (SplitQueueEntry& entry : _splitQueue)
     {
         entry.Score = SplitQueueScore(*entry.Node);
     }
     HeapifySplitQueue();
-    _stats.SplitInitialScanMilliseconds =
-        ElapsedMilliseconds(splitStart, std::chrono::steady_clock::now());
+    _stats.SplitInitialScanMilliseconds = splitTimer.Stop();
 
-    const auto mergeStart = std::chrono::steady_clock::now();
+    Tools::PerformanceTimer mergeTimer;
     for (MergeQueueEntry& entry : _mergeQueue)
     {
         entry.Score = MergeQueueScore(*entry.Node);
     }
     HeapifyMergeQueue();
-    _stats.MergeCandidateMarkMilliseconds =
-        ElapsedMilliseconds(mergeStart, std::chrono::steady_clock::now());
+    _stats.MergeCandidateMarkMilliseconds = mergeTimer.Stop();
 }
 
 void ClassicRoamMeshBuilder::OptimizeWithPersistentDualQueues()
@@ -496,10 +487,9 @@ void ClassicRoamMeshBuilder::OptimizeWithPersistentDualQueues()
         // accuracy target 优先回收明确低于 merge threshold 的 diamond
         if (mergeNode != nullptr && mergeScore < _settings.MergeThreshold)
         {
-            const auto mergeStart = std::chrono::steady_clock::now();
+            Tools::PerformanceTimer mergeTimer(_stats.MergeTopologyMilliseconds);
             const bool merged = MergeNodeOrDiamond(mergeNode, std::numeric_limits<float>::max());
-            _stats.MergeTopologyMilliseconds +=
-                ElapsedMilliseconds(mergeStart, std::chrono::steady_clock::now());
+            mergeTimer.Stop();
             if (!merged)
             {
                 RemoveMergeQueueCandidate(mergeNode);
@@ -517,10 +507,9 @@ void ClassicRoamMeshBuilder::OptimizeWithPersistentDualQueues()
         if (_remainingSplitBudget > 0U)
         {
             const std::size_t budgetRejectBefore = _stats.BudgetRejectedSplitCount;
-            const auto splitStart = std::chrono::steady_clock::now();
+            Tools::PerformanceTimer splitTimer(_stats.SplitQueueTopologyMilliseconds);
             const bool split = SplitNode(splitNode, SplitReason::Requested, nullptr, 0U);
-            _stats.SplitQueueTopologyMilliseconds +=
-                ElapsedMilliseconds(splitStart, std::chrono::steady_clock::now());
+            splitTimer.Stop();
             if (split)
             {
                 continue;
@@ -534,10 +523,9 @@ void ClassicRoamMeshBuilder::OptimizeWithPersistentDualQueues()
             if (closureNeedsMoreBudget && mergeNode != nullptr && splitScore > currentMergeScore)
             {
                 // strict capacity 下先 merge 再重试 split，避免论文伪代码的瞬时超预算
-                const auto mergeStart = std::chrono::steady_clock::now();
+                Tools::PerformanceTimer mergeTimer(_stats.MergeTopologyMilliseconds);
                 const bool merged = MergeNodeOrDiamond(mergeNode, std::numeric_limits<float>::max());
-                _stats.MergeTopologyMilliseconds +=
-                    ElapsedMilliseconds(mergeStart, std::chrono::steady_clock::now());
+                mergeTimer.Stop();
                 if (merged)
                 {
                     ++_stats.QueueCrossoverCount;
@@ -560,10 +548,9 @@ void ClassicRoamMeshBuilder::OptimizeWithPersistentDualQueues()
         // 已满预算时执行论文 crossover：只有回收损失低于最高 split 收益才交换资源
         if (mergeNode != nullptr && splitScore > mergeScore)
         {
-            const auto mergeStart = std::chrono::steady_clock::now();
+            Tools::PerformanceTimer mergeTimer(_stats.MergeTopologyMilliseconds);
             const bool merged = MergeNodeOrDiamond(mergeNode, std::numeric_limits<float>::max());
-            _stats.MergeTopologyMilliseconds +=
-                ElapsedMilliseconds(mergeStart, std::chrono::steady_clock::now());
+            mergeTimer.Stop();
             if (merged)
             {
                 ++_stats.QueueCrossoverCount;

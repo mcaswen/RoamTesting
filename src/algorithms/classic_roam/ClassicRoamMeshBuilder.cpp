@@ -2,21 +2,15 @@
 
 #include "algorithms/ITerrainLodAlgorithm.h"
 #include "algorithms/RoamNestedWedgie.h"
+#include "tools/PerformanceTimer.h"
 
 #include <algorithm>
-#include <chrono>
 
 namespace ParallelRoam::Algorithms::ClassicRoam
 {
 namespace
 {
 constexpr int MaximumSupportedDepth = 20;
-
-float ElapsedMilliseconds(std::chrono::steady_clock::time_point start, std::chrono::steady_clock::time_point end)
-{
-    const std::chrono::duration<float, std::milli> elapsed = end - start;
-    return elapsed.count();
-}
 } // 匿名命名空间
 
 const Terrain::TerrainMeshData& ClassicRoamMeshBuilder::Build(
@@ -26,7 +20,7 @@ const Terrain::TerrainMeshData& ClassicRoamMeshBuilder::Build(
     const TerrainLodViewInput& view,
     const ClassicRoamSettings& settings)
 {
-    const auto updateStart = std::chrono::steady_clock::now();
+    Tools::PerformanceTimer updateTimer;
     ++_buildSequence;
     ClassicRoamSettings normalizedSettings = settings;
     // nested wedgie tree 的容量随深度指数增长，和现有 UI 的上限保持一致
@@ -81,48 +75,46 @@ const Terrain::TerrainMeshData& ClassicRoamMeshBuilder::Build(
         // 预计算树扩深时不需要丢弃拓扑，但已有节点必须读取新的 nested wedgie thickness
         RefreshNodeVarianceErrors();
     }
-    const auto prepareEnd = std::chrono::steady_clock::now();
+    const float prepareMilliseconds = updateTimer.ElapsedMilliseconds();
 
     // Q_s/Q_m membership 与 active topology 一起跨帧保留；本帧只刷新 priority 并局部改队列
     OptimizeWithPersistentDualQueues();
 
     // topology edit 按提交顺序作用到持久 mesh，只重写 split/merge 影响的稠密槽位。
-    const auto meshEmitStart = std::chrono::steady_clock::now();
+    Tools::PerformanceTimer meshEmitTimer;
     ApplyIncrementalMeshUpdates();
     FinalizeIncrementalMeshUpdate();
-    const auto meshEmitEnd = std::chrono::steady_clock::now();
+    const float meshEmitMilliseconds = meshEmitTimer.Stop();
 
     if (_settings.EnableTopologyValidation)
     {
         // validator 是调试路径，不参与默认修复逻辑
-        const auto validateStart = std::chrono::steady_clock::now();
+        Tools::PerformanceTimer validateTimer;
         ValidateTopology();
-        const auto validateEnd = std::chrono::steady_clock::now();
-        _stats.ValidateMilliseconds = ElapsedMilliseconds(validateStart, validateEnd);
+        _stats.ValidateMilliseconds = validateTimer.Stop();
     }
 
-    const auto finalizeStart = std::chrono::steady_clock::now();
+    Tools::PerformanceTimer finalizeTimer;
     AccumulateLeafStats(_meshData, _meshSlotOwners);
     _stats.MergeMilliseconds =
         _stats.MergeCandidateMarkMilliseconds + _stats.MergeTopologyMilliseconds;
     _stats.SplitMilliseconds =
         _stats.SplitInitialScanMilliseconds + _stats.SplitQueueTopologyMilliseconds;
-    _stats.EmitMilliseconds = ElapsedMilliseconds(meshEmitStart, meshEmitEnd);
-    _stats.PrepareMilliseconds = ElapsedMilliseconds(updateStart, prepareEnd);
+    _stats.EmitMilliseconds = meshEmitMilliseconds;
+    _stats.PrepareMilliseconds = prepareMilliseconds;
     // 活动 leaf 数由持久 Q_s 直接给出，不再为预算单独递归收集
     _stats.BudgetLeafCollectMilliseconds = 0.0F;
     // 稠密 slot owner 数组就是最终 active leaf 视图，不再递归收集。
     _stats.FinalLeafCollectMilliseconds = 0.0F;
-    _stats.MeshEmitMilliseconds = ElapsedMilliseconds(meshEmitStart, meshEmitEnd);
+    _stats.MeshEmitMilliseconds = meshEmitMilliseconds;
 
     CollectActiveSplitPaths();
     // hysteresis 只使用 merge 和 split 完成后的最终 active topology
     _previousSplitPaths = _currentSplitPaths;
     _topologyMaxDepth = _settings.MaxDepth;
-    _stats.FinalizeMilliseconds =
-        ElapsedMilliseconds(finalizeStart, std::chrono::steady_clock::now());
+    _stats.FinalizeMilliseconds = finalizeTimer.Stop();
     // update 时间覆盖完整算法入口，便于和各互斥阶段总和做 sanity check
-    _stats.UpdateMilliseconds = ElapsedMilliseconds(updateStart, std::chrono::steady_clock::now());
+    _stats.UpdateMilliseconds = updateTimer.Stop();
     return _meshData;
 }
 } // 命名空间 ParallelRoam::Algorithms::ClassicRoam

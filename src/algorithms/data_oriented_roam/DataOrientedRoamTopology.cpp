@@ -1,9 +1,9 @@
 #include "algorithms/data_oriented_roam/DataOrientedRoamParallel.h"
 #include "algorithms/data_oriented_roam/DataOrientedRoamState.h"
+#include "tools/PerformanceTimer.h"
 
 #include <algorithm>
 #include <charconv>
-#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -1164,13 +1164,12 @@ void RefineWithSplitQueue(DataOrientedRoamState& state)
 {
     state.Stats.TopologyChunkCount = static_cast<std::size_t>(
         DataOrientedRoamTopologyChunkGridSize * DataOrientedRoamTopologyChunkGridSize);
-    const auto candidateMarkStart = std::chrono::steady_clock::now();
+    Tools::PerformanceTimer candidateMarkTimer;
     RefreshPersistentSplitQueuePriorities(state);
     std::vector<DataOrientedRoamSplitCandidate> initialCandidates;
     SnapshotPersistentSplitQueueCandidates(state, initialCandidates);
     state.Stats.SplitCandidateCount = initialCandidates.size();
-    state.Stats.SplitCandidateMarkMilliseconds =
-        ElapsedMilliseconds(candidateMarkStart, std::chrono::steady_clock::now());
+    state.Stats.SplitCandidateMarkMilliseconds = candidateMarkTimer.Stop();
     state.Stats.CandidatePeakCount = std::max(
         state.Stats.CandidatePeakCount,
         state.ActiveLeafNodes.size() + state.MergeQueue.size());
@@ -1253,13 +1252,12 @@ void MergeWithDiamondQueue(DataOrientedRoamState& state)
 {
     state.Stats.TopologyChunkCount = static_cast<std::size_t>(
         DataOrientedRoamTopologyChunkGridSize * DataOrientedRoamTopologyChunkGridSize);
-    const auto queueRefreshStart = std::chrono::steady_clock::now();
+    Tools::PerformanceTimer queueRefreshTimer;
     RefreshPersistentMergeQueuePriorities(state);
     std::vector<DataOrientedRoamMergeCandidate> candidates;
     SnapshotPersistentMergeQueueCandidates(state, state.Settings.MergeThreshold, candidates);
     state.Stats.MergeCandidateCount = candidates.size();
-    state.Stats.MergeCandidateMarkMilliseconds =
-        ElapsedMilliseconds(queueRefreshStart, std::chrono::steady_clock::now());
+    state.Stats.MergeCandidateMarkMilliseconds = queueRefreshTimer.Stop();
     std::sort(
         candidates.begin(),
         candidates.end(),

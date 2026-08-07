@@ -313,14 +313,6 @@ bool DataOrientedRoamState::IsLeaf(DataOrientedRoamNodeIndex node) const
     return IsValidNode(node) && !Nodes[node].IsSplit;
 }
 
-float ElapsedMilliseconds(
-    std::chrono::steady_clock::time_point start,
-    std::chrono::steady_clock::time_point end)
-{
-    const std::chrono::duration<float, std::milli> elapsed = end - start;
-    return elapsed.count();
-}
-
 std::uint64_t LeftChildPathId(std::uint64_t parentPathId)
 {
     // path id 使用二叉堆编码

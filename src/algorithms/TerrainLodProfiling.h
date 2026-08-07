@@ -1,7 +1,8 @@
 #pragma once
 
+#include "tools/PerformanceTimer.h"
+
 #include <algorithm>
-#include <chrono>
 
 #if defined(_WIN32)
 #ifndef NOMINMAX
@@ -68,7 +69,7 @@ namespace Detail
 struct TerrainLodCpuSample
 {
     // WallTime 用于计算本次 build 的真实等待时间
-    std::chrono::steady_clock::time_point WallTime;
+    Tools::PerformanceTimer::TimePoint WallTime;
     // ProcessCpuMilliseconds 会累加同进程内多个 worker 的 CPU 时间
     double ProcessCpuMilliseconds{-1.0};
 };
@@ -76,7 +77,7 @@ struct TerrainLodCpuSample
 [[nodiscard]] inline TerrainLodCpuSample CaptureTerrainLodCpuSample()
 {
     return TerrainLodCpuSample{
-        std::chrono::steady_clock::now(),
+        Tools::PerformanceTimer::Now(),
         Detail::CaptureProcessCpuMilliseconds(),
     };
 }
@@ -85,8 +86,9 @@ struct TerrainLodCpuSample
     const TerrainLodCpuSample& start,
     const TerrainLodCpuSample& end)
 {
-    const auto wallDuration = std::chrono::duration<double, std::milli>(end.WallTime - start.WallTime);
-    if (wallDuration.count() <= 0.0 ||
+    const double wallMilliseconds = static_cast<double>(
+        Tools::PerformanceTimer::ElapsedMilliseconds(start.WallTime, end.WallTime));
+    if (wallMilliseconds <= 0.0 ||
         start.ProcessCpuMilliseconds < 0.0 ||
         end.ProcessCpuMilliseconds < 0.0)
     {
@@ -95,6 +97,6 @@ struct TerrainLodCpuSample
 
     // 100% 表示一个逻辑核心满载  多线程 build 可以超过 100%
     const double cpuMilliseconds = end.ProcessCpuMilliseconds - start.ProcessCpuMilliseconds;
-    return static_cast<float>(std::max(0.0, cpuMilliseconds / wallDuration.count() * 100.0));
+    return static_cast<float>(std::max(0.0, cpuMilliseconds / wallMilliseconds * 100.0));
 }
 } // 命名空间 ParallelRoam::Algorithms

@@ -8,13 +8,13 @@
 #include "algorithms/gpu_roam/GpuRoamTerrainLodAlgorithm.h"
 #endif
 #include "terrain/HeightMap.h"
+#include "tools/PerformanceTimer.h"
 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <algorithm>
 #include <array>
-#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <filesystem>
@@ -32,8 +32,6 @@ namespace ParallelRoam::Benchmark
 {
 namespace
 {
-using Clock = std::chrono::steady_clock;
-
 // benchmark 的核心约束是三算法共享同一组输入
 // 算法只通过 ITerrainLodAlgorithm 边界接入
 struct BenchmarkCameraKeyframe
@@ -626,9 +624,9 @@ BenchmarkAlgorithmRun RunAlgorithm(
 
         Algorithms::TerrainLodRenderPacket renderPacket{};
         std::string errorMessage;
-        const auto start = Clock::now();
+        Tools::PerformanceTimer buildTimer;
         const bool buildSucceeded = algorithm->BuildRenderData(buildInput, renderPacket, &errorMessage);
-        const auto end = Clock::now();
+        const float buildWallMilliseconds = buildTimer.Stop();
         if (!errorMessage.empty())
         {
             // 错误信息不吞掉
@@ -655,7 +653,7 @@ BenchmarkAlgorithmRun RunAlgorithm(
         frame.Stats = stats;
         // BuildWallMilliseconds 包括接口调用外层开销
         // Stats.CpuUpdateMilliseconds 则由算法自己报告
-        frame.BuildWallMilliseconds = std::chrono::duration<float, std::milli>(end - start).count();
+        frame.BuildWallMilliseconds = buildWallMilliseconds;
         const bool usesRoamBudget =
             selection == BenchmarkAlgorithmSelection::Classic ||
             selection == BenchmarkAlgorithmSelection::DataOriented ||

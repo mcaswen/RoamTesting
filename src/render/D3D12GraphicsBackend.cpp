@@ -1,12 +1,12 @@
 #include "render/D3D12GraphicsBackend.h"
 
 #include "gui/ImGuiLayer.h"
+#include "tools/PerformanceTimer.h"
 
 #include <SDL_syswm.h>
 
 #include <algorithm>
 #include <array>
-#include <chrono>
 #include <iostream>
 #include <sstream>
 
@@ -1128,10 +1128,9 @@ bool D3D12GraphicsBackend::WaitForFrame(std::uint32_t frameIndex, std::string* e
         return false;
     }
     // 该等待只覆盖当前 frame allocator 的所有权冲突
-    const auto waitStart = std::chrono::steady_clock::now();
+    Tools::PerformanceTimer waitTimer;
     WaitForSingleObject(_fenceEvent, INFINITE);
-    _lastGpuWaitMilliseconds =
-        std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - waitStart).count();
+    _lastGpuWaitMilliseconds = waitTimer.Stop();
     return true;
 }
 

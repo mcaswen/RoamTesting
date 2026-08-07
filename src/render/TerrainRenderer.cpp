@@ -6,12 +6,12 @@
 #include "algorithms/classic_roam/ClassicRoamTerrainLodAlgorithm.h"
 #include "algorithms/data_oriented_roam/DataOrientedRoamTerrainLodAlgorithm.h"
 #include "algorithms/gpu_roam/GpuRoamTerrainLodAlgorithm.h"
+#include "tools/PerformanceTimer.h"
 
 #include <glad/gl.h>
 #include <stb_image.h>
 
 #include <algorithm>
-#include <chrono>
 #include <cstddef>
 #include <iostream>
 #include <memory>
@@ -597,7 +597,7 @@ bool TerrainRenderer::RebuildRegularGrid(std::string* errorMessage)
 
 bool TerrainRenderer::RebuildTerrainLod(const RenderContext& context, std::string* errorMessage)
 {
-    const auto rebuildStart = std::chrono::steady_clock::now();
+    Tools::PerformanceTimer rebuildTimer;
     _terrainLodTotalMilliseconds = 0.0F;
     _terrainLodCpuUploadMilliseconds = 0.0F;
 
@@ -696,7 +696,7 @@ bool TerrainRenderer::RebuildTerrainLod(const RenderContext& context, std::strin
             return false;
         }
 
-        const auto uploadStart = std::chrono::steady_clock::now();
+        Tools::PerformanceTimer uploadTimer;
         if (!UploadMeshData(
                 *cpuMesh,
                 renderPacket.CpuMeshRequiresFullUpload,
@@ -706,12 +706,10 @@ bool TerrainRenderer::RebuildTerrainLod(const RenderContext& context, std::strin
             _meshDirty = true;
             return false;
         }
-        _terrainLodCpuUploadMilliseconds =
-            std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - uploadStart).count();
+        _terrainLodCpuUploadMilliseconds = uploadTimer.Stop();
 
         _meshDirty = false;
-        _terrainLodTotalMilliseconds =
-            std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - rebuildStart).count();
+        _terrainLodTotalMilliseconds = rebuildTimer.Stop();
         return true;
     }
 
@@ -724,8 +722,7 @@ bool TerrainRenderer::RebuildTerrainLod(const RenderContext& context, std::strin
     }
 
     _meshDirty = false;
-    _terrainLodTotalMilliseconds =
-        std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - rebuildStart).count();
+    _terrainLodTotalMilliseconds = rebuildTimer.Stop();
     return true;
 }
 

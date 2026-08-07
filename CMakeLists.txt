@@ -49,7 +49,7 @@ endif()
 if(PARALLEL_ROAM_BUILD_APP)
     parallel_roam_prepare_dependencies()
 
-    set(PARALLEL_ROAM_APP_SOURCES)
+    set(PARALLEL_ROAM_APP_SOURCES src/tools/PerformanceTimer.cpp)
     set(PARALLEL_ROAM_FULL_APP_AVAILABLE OFF)
 
     if(PARALLEL_ROAM_GRAPHICS_API_NORMALIZED STREQUAL "OPENGL" AND
@@ -174,7 +174,11 @@ if(PARALLEL_ROAM_BUILD_APP)
     add_executable(parallel_roam src/main.cpp ${PARALLEL_ROAM_APP_SOURCES})
     add_executable(ParallelROAM::app ALIAS parallel_roam)
 
-    target_include_directories(parallel_roam PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_include_directories(
+        parallel_roam
+        PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/src"
+    )
     target_compile_definitions(parallel_roam PRIVATE PARALLEL_ROAM_BUILD_CONFIG="$<CONFIG>")
 
     if(PARALLEL_ROAM_GRAPHICS_API_NORMALIZED STREQUAL "OPENGL")

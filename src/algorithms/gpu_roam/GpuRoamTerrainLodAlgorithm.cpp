@@ -3,9 +3,9 @@
 #include "algorithms/TerrainLodProfiling.h"
 #include "algorithms/gpu_roam/GpuRoamBufferSchema.h"
 #include "platform/OpenGlCapabilities.h"
+#include "tools/PerformanceTimer.h"
 
 #include <algorithm>
-#include <chrono>
 
 namespace ParallelRoam::Algorithms::GpuRoam
 {
@@ -148,10 +148,9 @@ bool GpuRoamTerrainLodAlgorithm::BuildRenderData(
         ToDataOrientedSettings(input.Settings));
 
     _stats = ToTerrainLodStats(_cpuTopologyBuilder.Stats());
-    const auto snapshotStart = std::chrono::steady_clock::now();
+    Tools::PerformanceTimer snapshotTimer;
     const GpuRoamBufferSnapshot snapshot = BuildGpuRoamBufferSnapshot(_cpuTopologyBuilder.State());
-    _stats.GpuSnapshotBuildMilliseconds =
-        std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - snapshotStart).count();
+    _stats.GpuSnapshotBuildMilliseconds = snapshotTimer.Stop();
     if (!_gpuMeshBuilder.Build(snapshot, input, outPacket, _stats, errorMessage))
     {
         return false;

@@ -3,13 +3,13 @@
 #include "algorithms/TerrainLodProfiling.h"
 #include "algorithms/gpu_roam/GpuRoamBufferSchema.h"
 #include "render/D3D12GraphicsBackend.h"
+#include "tools/PerformanceTimer.h"
 
 #include <d3d12.h>
 #include <wrl/client.h>
 
 #include <algorithm>
 #include <array>
-#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -998,10 +998,9 @@ bool D3D12GpuRoamTerrainLodAlgorithm::BuildRenderData(
     _stats = ToLodStats(_cpuTopologyBuilder.Stats());
     // 将 SoA CPU 状态打包为与 HLSL NodeRecord 一致的结构化快照
     // 快照冻结本帧输入，compute pass 不再读取正在变化的 CPU node pool
-    const auto snapshotStart = std::chrono::steady_clock::now();
+    Tools::PerformanceTimer snapshotTimer;
     const GpuRoamBufferSnapshot snapshot = BuildGpuRoamBufferSnapshot(_cpuTopologyBuilder.State());
-    _stats.GpuSnapshotBuildMilliseconds =
-        std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - snapshotStart).count();
+    _stats.GpuSnapshotBuildMilliseconds = snapshotTimer.Stop();
     if (snapshot.Nodes.empty() || snapshot.ActiveLeafIndices.empty())
     {
         SetError(errorMessage, "DX12 GPU ROAM-like topology snapshot is empty");
@@ -1017,16 +1016,15 @@ bool D3D12GpuRoamTerrainLodAlgorithm::BuildRenderData(
     const std::size_t additionalSplitCapacity = AdditionalGpuSplitCapacity(snapshot, input);
     const std::size_t nodeCapacity = snapshot.Nodes.size() + additionalSplitCapacity * 2U;
     const std::size_t activeLeafCapacity = snapshot.ActiveLeafIndices.size() + additionalSplitCapacity;
-    const auto allocationStart = std::chrono::steady_clock::now();
+    Tools::PerformanceTimer allocationTimer;
     if (!EnsureFrameResources(*_state, frameIndex, nodeCapacity, errorMessage))
     {
         return false;
     }
-    _stats.GpuBufferAllocationMilliseconds =
-        std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - allocationStart).count();
+    _stats.GpuBufferAllocationMilliseconds = allocationTimer.Stop();
     GpuFrameResources& frame = _state->Frames[frameIndex];
     ID3D12GraphicsCommandList* commandList = _backend->CommandList();
-    const auto dispatchStart = std::chrono::steady_clock::now();
+    Tools::PerformanceTimer dispatchTimer;
 
     // 上一轮这些缓冲可能处于图形读取状态，计算前统一转回 UAV
     // CPU 快照复制完成后由同一 direct queue 顺序保证 compute 可见
@@ -1134,8 +1132,7 @@ bool D3D12GpuRoamTerrainLodAlgorithm::BuildRenderData(
     // 结果在该帧槽位下一次通过 fence 验证后读取
     frame.PendingReadback = true;
 
-    _stats.GpuDispatchWallMilliseconds =
-        std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - dispatchStart).count();
+    _stats.GpuDispatchWallMilliseconds = dispatchTimer.Stop();
     CopyGpuPassTimingsToStats(_state->LastGpuPassMilliseconds, _stats);
     _stats.CpuGpuUploadBytes = snapshot.NodeBufferBytes() + sizeof(GpuCounters);
     // 当前帧尚未执行完成，绘制统计先采用上次结果或 CPU 快照估值

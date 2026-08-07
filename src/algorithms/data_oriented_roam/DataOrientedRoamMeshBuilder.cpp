@@ -4,9 +4,9 @@
 #include "algorithms/RoamNestedWedgie.h"
 #include "algorithms/data_oriented_roam/DataOrientedRoamState.h"
 #include "algorithms/data_oriented_roam/DataOrientedRoamThreadPool.h"
+#include "tools/PerformanceTimer.h"
 
 #include <algorithm>
-#include <chrono>
 #include <utility>
 
 namespace ParallelRoam::Algorithms::DataOrientedRoam
@@ -83,7 +83,7 @@ Terrain::TerrainMeshData DataOrientedRoamMeshBuilder::BuildInternal(
     bool emitCpuMesh)
 {
     DataOrientedRoamState& state = *_state;
-    const auto updateStart = std::chrono::steady_clock::now();
+    Tools::PerformanceTimer updateTimer;
     ++state.BuildSequence;
 
     DataOrientedRoamSettings normalizedSettings = settings;
@@ -139,53 +139,52 @@ Terrain::TerrainMeshData DataOrientedRoamMeshBuilder::BuildInternal(
         // 预计算树扩深时保留拓扑，但已有节点必须刷新 nested wedgie thickness
         RefreshNodeVarianceErrors(state);
     }
-    const auto prepareEnd = std::chrono::steady_clock::now();
+    const float prepareMilliseconds = updateTimer.ElapsedMilliseconds();
 
-    const auto mergeStart = std::chrono::steady_clock::now();
+    Tools::PerformanceTimer mergeTimer;
     // merge pass 先运行，远处旧细节先回收
     MergeWithDiamondQueue(state);
-    const auto mergeEnd = std::chrono::steady_clock::now();
+    const float mergeMilliseconds = mergeTimer.Stop();
 
-    const auto splitStart = std::chrono::steady_clock::now();
+    Tools::PerformanceTimer splitTimer;
     // 持久 Q_s 并行刷新 priority 并生成提交快照，随后执行 split/crossover。
     RefineWithSplitQueue(state);
-    const auto splitEnd = std::chrono::steady_clock::now();
+    const float splitMilliseconds = splitTimer.Stop();
 
     if (state.Settings.EnableTopologyValidation)
     {
-        const auto validateStart = std::chrono::steady_clock::now();
+        Tools::PerformanceTimer validateTimer;
         ValidateTopology(state);
-        const auto validateEnd = std::chrono::steady_clock::now();
-        state.Stats.ValidateMilliseconds = ElapsedMilliseconds(validateStart, validateEnd);
+        state.Stats.ValidateMilliseconds = validateTimer.Stop();
     }
 
     // split/merge 已增量维护 ActiveLeafNodes；拓扑稳定后直接复用这份只读输出视图，
     // 避免为了 emit、统计和 GPU snapshot 再从两个 root 递归遍历或复制活动 leaf。
     const std::vector<DataOrientedRoamNodeIndex>& finalActiveLeaves = state.ActiveLeafNodes;
-    const auto meshEmitStart = std::chrono::steady_clock::now();
+    Tools::PerformanceTimer meshEmitTimer;
     if (emitCpuMesh)
     {
         EmitLeafTriangles(state, meshData, finalActiveLeaves);
     }
-    const auto meshEmitEnd = std::chrono::steady_clock::now();
+    const float meshEmitMilliseconds = meshEmitTimer.Stop();
 
     // GPU 路径不生成 CPU mesh，active triangle 数直接来自持久活动 leaf 索引。
-    const auto finalizeStart = std::chrono::steady_clock::now();
+    Tools::PerformanceTimer finalizeTimer;
     AccumulateLeafStats(state, finalActiveLeaves);
     state.Stats.PersistentSplitQueueSize = finalActiveLeaves.size();
     state.Stats.PersistentMergeQueueSize = state.MergeQueue.size();
-    state.Stats.MergeMilliseconds = ElapsedMilliseconds(mergeStart, mergeEnd);
-    state.Stats.SplitMilliseconds = ElapsedMilliseconds(splitStart, splitEnd);
+    state.Stats.MergeMilliseconds = mergeMilliseconds;
+    state.Stats.SplitMilliseconds = splitMilliseconds;
     state.Stats.EmitMilliseconds = emitCpuMesh
-        ? ElapsedMilliseconds(meshEmitStart, meshEmitEnd)
+        ? meshEmitMilliseconds
         : 0.0F;
-    state.Stats.PrepareMilliseconds = ElapsedMilliseconds(updateStart, prepareEnd);
+    state.Stats.PrepareMilliseconds = prepareMilliseconds;
     // DOD 直接用 Q_s.size() 计算预算，不再有独立的 leaf collect。
     state.Stats.BudgetLeafCollectMilliseconds = 0.0F;
     // 字段为统一报告 schema 保留；DOD 不再执行最终 leaf collect/copy pass。
     state.Stats.FinalLeafCollectMilliseconds = 0.0F;
     state.Stats.MeshEmitMilliseconds = emitCpuMesh
-        ? ElapsedMilliseconds(meshEmitStart, meshEmitEnd)
+        ? meshEmitMilliseconds
         : 0.0F;
 
     CollectActiveSplitPaths(state);
@@ -193,9 +192,8 @@ Terrain::TerrainMeshData DataOrientedRoamMeshBuilder::BuildInternal(
     // 必须在 merge 和 split 都完成后再更新
     state.PreviousSplitPaths = state.CurrentSplitPaths;
     state.TopologyMaxDepth = state.Settings.MaxDepth;
-    state.Stats.FinalizeMilliseconds =
-        ElapsedMilliseconds(finalizeStart, std::chrono::steady_clock::now());
-    state.Stats.UpdateMilliseconds = ElapsedMilliseconds(updateStart, std::chrono::steady_clock::now());
+    state.Stats.FinalizeMilliseconds = finalizeTimer.Stop();
+    state.Stats.UpdateMilliseconds = updateTimer.Stop();
     return meshData;
 }
 

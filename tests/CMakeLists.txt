@@ -15,6 +15,27 @@ if(WIN32)
 endif()
 
 add_executable(
+    parallel_roam_performance_timer_tests
+    PerformanceTimerTests.cpp
+    ../src/tools/PerformanceTimer.cpp
+)
+
+target_include_directories(
+    parallel_roam_performance_timer_tests
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+)
+
+target_link_libraries(
+    parallel_roam_performance_timer_tests
+    PRIVATE
+        parallel_roam_project_options
+        parallel_roam_project_warnings
+        Threads::Threads
+)
+
+add_test(NAME performance_timer COMMAND parallel_roam_performance_timer_tests)
+
+add_executable(
     parallel_roam_cbt_occupancy_tree_tests
     CbtOccupancyTreeTests.cpp
     ../src/algorithms/cbt_2024/CbtOccupancyTree.cpp

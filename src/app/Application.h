@@ -7,8 +7,8 @@
 #include "platform/Window.h"
 #include "render/GraphicsBackend.h"
 #include "render/TerrainRenderer.h"
+#include "tools/PerformanceTimer.h"
 
-#include <chrono>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -197,7 +197,7 @@ private:
     Gui::TerrainPanelState _terrainPanelState;
     RuntimeBenchmarkState _runtimeBenchmark;
     std::string _lastMeshUpdateError;
-    std::chrono::steady_clock::time_point _lastFrameTime{};
+    Tools::PerformanceTimer _frameTimer;
     bool _initialized{false};
     bool _terrainLodSmokeTestEnabled{false};
     bool _terrainLodSmokeTestFailed{false};

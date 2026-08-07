@@ -4,7 +4,6 @@
 
 #include <array>
 #include <atomic>
-#include <chrono>
 #include <cstdint>
 #include <limits>
 #include <unordered_set>
@@ -255,10 +254,6 @@ struct DataOrientedRoamState
     [[nodiscard]] bool IsValidNode(DataOrientedRoamNodeIndex node) const;
     [[nodiscard]] bool IsLeaf(DataOrientedRoamNodeIndex node) const;
 };
-
-[[nodiscard]] float ElapsedMilliseconds(
-    std::chrono::steady_clock::time_point start,
-    std::chrono::steady_clock::time_point end);
 
 [[nodiscard]] std::uint64_t LeftChildPathId(std::uint64_t parentPathId);
 [[nodiscard]] std::uint64_t RightChildPathId(std::uint64_t parentPathId);
