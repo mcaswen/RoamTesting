@@ -66,6 +66,14 @@ struct DataOrientedRoamMergeCandidate
     DataOrientedRoamNodeIndex Node{InvalidDataOrientedRoamNodeIndex};
 };
 
+struct DataOrientedRoamMergeCandidateEvaluation
+{
+    // NodeScore 保持普通 merge 候选的原排序语义；PairScore 用于预算重平衡时衡量整个 diamond。
+    bool Eligible{false};
+    float NodeScore{0.0F};
+    float PairScore{0.0F};
+};
+
 /// <summary>
 /// SoA 节点池中单个节点的只读视图，字段引用到底层连续数组
 /// </summary>
@@ -306,6 +314,11 @@ void CollectMergeCandidates(DataOrientedRoamState& state, std::vector<DataOrient
 void CollectMergeCandidates(
     DataOrientedRoamState& state,
     std::vector<DataOrientedRoamMergeCandidate>& candidates,
+    float maximumScore);
+
+[[nodiscard]] DataOrientedRoamMergeCandidateEvaluation EvaluateMergeCandidate(
+    const DataOrientedRoamState& state,
+    DataOrientedRoamNodeIndex node,
     float maximumScore);
 
 // CanMergeNode 只检查 diamond merge 前置条件，不修改拓扑

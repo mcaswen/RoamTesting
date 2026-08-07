@@ -45,7 +45,65 @@ struct FusedSplitScanOutput
     // 候选只写 worker-local vector，扫描阶段不需要互斥锁。
     std::vector<DataOrientedRoamSplitCandidate> Candidates;
 };
+
+DataOrientedRoamMergeCandidateEvaluation EvaluateMergeCandidateImpl(
+    const DataOrientedRoamState& state,
+    DataOrientedRoamNodeIndex node,
+    float maximumScore)
+{
+    if (!state.IsValidNode(node) || state.IsLeaf(node))
+    {
+        return {};
+    }
+
+    const DataOrientedRoamNodeConstRef candidate = state.Nodes[node];
+    if (!state.IsValidNode(candidate.LeftChild) || !state.IsValidNode(candidate.RightChild) ||
+        !state.IsLeaf(candidate.LeftChild) || !state.IsLeaf(candidate.RightChild))
+    {
+        return {};
+    }
+
+    const float score = ComputeScreenErrorScore(state, candidate);
+    if (score > maximumScore)
+    {
+        return {};
+    }
+
+    const DataOrientedRoamNodeIndex baseNeighbor = candidate.BaseNeighbor;
+    if (!state.IsValidNode(baseNeighbor) || state.IsLeaf(baseNeighbor))
+    {
+        return DataOrientedRoamMergeCandidateEvaluation{true, score, score};
+    }
+
+    if (state.Nodes[baseNeighbor].BaseNeighbor != node ||
+        !state.IsValidNode(state.Nodes[baseNeighbor].LeftChild) ||
+        !state.IsValidNode(state.Nodes[baseNeighbor].RightChild) ||
+        !state.IsLeaf(state.Nodes[baseNeighbor].LeftChild) ||
+        !state.IsLeaf(state.Nodes[baseNeighbor].RightChild))
+    {
+        return {};
+    }
+
+    const float baseNeighborScore = ComputeScreenErrorScore(state, state.Nodes[baseNeighbor]);
+    if (baseNeighborScore > maximumScore)
+    {
+        return {};
+    }
+
+    return DataOrientedRoamMergeCandidateEvaluation{
+        true,
+        score,
+        std::max(score, baseNeighborScore)};
+}
 } // 匿名命名空间
+
+DataOrientedRoamMergeCandidateEvaluation EvaluateMergeCandidate(
+    const DataOrientedRoamState& state,
+    DataOrientedRoamNodeIndex node,
+    float maximumScore)
+{
+    return EvaluateMergeCandidateImpl(state, node, maximumScore);
+}
 
 bool CanMergeNode(const DataOrientedRoamState& state, DataOrientedRoamNodeIndex node)
 {
@@ -57,54 +115,7 @@ bool CanMergeNode(
     DataOrientedRoamNodeIndex node,
     float maximumScore)
 {
-    if (!state.IsValidNode(node) || state.IsLeaf(node))
-    {
-        // merge candidate 必须是 active internal node
-        return false;
-    }
-
-    const DataOrientedRoamNodeConstRef candidate = state.Nodes[node];
-    if (!state.IsValidNode(candidate.LeftChild) || !state.IsValidNode(candidate.RightChild))
-    {
-        return false;
-    }
-
-    if (!state.IsLeaf(candidate.LeftChild) || !state.IsLeaf(candidate.RightChild))
-    {
-        // 子树更深时必须先从更深层回收
-        return false;
-    }
-
-    if (ComputeScreenErrorScore(state, candidate) > maximumScore)
-    {
-        // parent 自身误差仍高时回收会造成可见 LOD 退化
-        return false;
-    }
-
-    const DataOrientedRoamNodeIndex baseNeighbor = candidate.BaseNeighbor;
-    if (!state.IsValidNode(baseNeighbor) || state.IsLeaf(baseNeighbor))
-    {
-        return true;
-    }
-
-    if (state.Nodes[baseNeighbor].BaseNeighbor != node)
-    {
-        // 非互指 diamond 不能单侧 merge，否则会制造 T-junction
-        return false;
-    }
-
-    if (!state.IsValidNode(state.Nodes[baseNeighbor].LeftChild) ||
-        !state.IsValidNode(state.Nodes[baseNeighbor].RightChild))
-    {
-        return false;
-    }
-
-    if (!state.IsLeaf(state.Nodes[baseNeighbor].LeftChild) || !state.IsLeaf(state.Nodes[baseNeighbor].RightChild))
-    {
-        return false;
-    }
-
-    return ComputeScreenErrorScore(state, state.Nodes[baseNeighbor]) <= maximumScore;
+    return EvaluateMergeCandidate(state, node, maximumScore).Eligible;
 }
 
 void CollectSplitCandidates(DataOrientedRoamState& state, std::vector<DataOrientedRoamSplitCandidate>& candidates)
@@ -245,18 +256,17 @@ void CollectMergeCandidates(
         for (std::size_t index = begin; index < end; ++index)
         {
             const DataOrientedRoamNodeIndex node = state.ActiveInternalNodes[index];
-            if (!state.IsValidNode(node) ||
-                state.IsLeaf(node) ||
-                !CanMergeNode(state, node, maximumScore))
+            const DataOrientedRoamMergeCandidateEvaluation evaluation =
+                EvaluateMergeCandidate(state, node, maximumScore);
+            if (!evaluation.Eligible)
             {
                 // 索引不变量异常或当前不可回收的节点都不会进入 merge 队列
                 continue;
             }
 
-            const float score = ComputeScreenErrorScore(state, state.Nodes[node]);
             // merge 候选也刷新同一份 score cache
-            state.Nodes[node].ScreenError = score;
-            outCandidates.push_back(DataOrientedRoamMergeCandidate{score, node});
+            state.Nodes[node].ScreenError = evaluation.NodeScore;
+            outCandidates.push_back(DataOrientedRoamMergeCandidate{evaluation.NodeScore, node});
         }
     };
 

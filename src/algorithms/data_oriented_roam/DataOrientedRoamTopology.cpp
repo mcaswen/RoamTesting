@@ -650,7 +650,7 @@ bool MergeNodeOrDiamondWithScoreLimit(
     {
         // 完整 diamond merge 要同时回收两侧 parent
         // 只回收一侧会让对侧 child 贴上粗边
-        if (!CanMergeNode(state, baseNeighbor, maximumScore) || state.Nodes[baseNeighbor].BaseNeighbor != node)
+        if (state.Nodes[baseNeighbor].BaseNeighbor != node)
         {
             return false;
         }
@@ -825,8 +825,7 @@ DataOrientedRoamChunkId SafeInteriorMergeChunkId(
     if (state.IsValidNode(baseNeighbor) && !state.IsLeaf(baseNeighbor))
     {
         // diamond merge 会同时回收 base neighbor 一侧
-        if ((validateMergeScore && !CanMergeNode(state, baseNeighbor)) ||
-            !NodeBelongsToChunk(state, baseNeighbor, chunkId) ||
+        if (!NodeBelongsToChunk(state, baseNeighbor, chunkId) ||
             !NodeBelongsToChunk(state, state.Nodes[baseNeighbor].LeftChild, chunkId) ||
             !NodeBelongsToChunk(state, state.Nodes[baseNeighbor].RightChild, chunkId) ||
             !NodeBelongsToChunk(state, state.Nodes[state.Nodes[baseNeighbor].LeftChild].BaseNeighbor, chunkId) ||
@@ -1272,13 +1271,15 @@ void MergeWithDiamondQueue(DataOrientedRoamState& state)
     std::priority_queue<MergeQueueEntry, std::vector<MergeQueueEntry>, CandidateCompare> queue;
     std::uint64_t sequence = 0U;
     const auto enqueueCandidate = [&state, &queue, &sequence](DataOrientedRoamNodeIndex node) {
-        if (!CanMergeNode(state, node))
+        const DataOrientedRoamMergeCandidateEvaluation evaluation =
+            EvaluateMergeCandidate(state, node, state.Settings.MergeThreshold);
+        if (!evaluation.Eligible)
         {
             return;
         }
 
-        const float score = EvaluateScreenErrorForNode(state, node);
-        queue.push(MergeQueueEntry{score, sequence++, node});
+        state.Nodes[node].ScreenError = evaluation.NodeScore;
+        queue.push(MergeQueueEntry{evaluation.NodeScore, sequence++, node});
         state.Stats.CandidatePeakCount = std::max(state.Stats.CandidatePeakCount, queue.size());
     };
 
@@ -1374,20 +1375,15 @@ void MergeWithDiamondQueue(DataOrientedRoamState& state)
                                                rebalanceScoreLimit,
                                                &rebalanceQueue,
                                                &rebalanceSequence](DataOrientedRoamNodeIndex node) {
-        if (!CanMergeNode(state, node, rebalanceScoreLimit))
+        const DataOrientedRoamMergeCandidateEvaluation evaluation =
+            EvaluateMergeCandidate(state, node, rebalanceScoreLimit);
+        if (!evaluation.Eligible)
         {
             return;
         }
 
-        float score = EvaluateScreenErrorForNode(state, node);
-        const DataOrientedRoamNodeIndex baseNeighbor = state.Nodes[node].BaseNeighbor;
-        if (state.IsValidNode(baseNeighbor) &&
-            !state.IsLeaf(baseNeighbor) &&
-            state.Nodes[baseNeighbor].BaseNeighbor == node)
-        {
-            score = std::max(score, EvaluateScreenErrorForNode(state, baseNeighbor));
-        }
-        rebalanceQueue.push(MergeQueueEntry{score, rebalanceSequence++, node});
+        state.Nodes[node].ScreenError = evaluation.NodeScore;
+        rebalanceQueue.push(MergeQueueEntry{evaluation.PairScore, rebalanceSequence++, node});
         state.Stats.CandidatePeakCount = std::max(state.Stats.CandidatePeakCount, rebalanceQueue.size());
     };
     for (const DataOrientedRoamMergeCandidate& candidate : rebalanceCandidates)
