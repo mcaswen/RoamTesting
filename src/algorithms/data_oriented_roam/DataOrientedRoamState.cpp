@@ -374,6 +374,10 @@ DataOrientedRoamNodeIndex AddNode(
     // 新节点默认为 leaf，后续 split 才会加入 active internal 索引
     state.ActiveInternalNodePositions.push_back(InvalidActiveNodePosition);
     state.ActiveLeafNodePositions.push_back(InvalidActiveNodePosition);
+    state.SplitQueueBlockedBuildIds.push_back(0U);
+    state.MergeQueuePositions.push_back(std::numeric_limits<std::size_t>::max());
+    state.MergeQueueRepresentatives.push_back(InvalidDataOrientedRoamNodeIndex);
+    state.MergeQueuePartners.push_back(InvalidDataOrientedRoamNodeIndex);
     return node;
 }
 
@@ -408,6 +412,11 @@ void ReserveNodePool(DataOrientedRoamState& state)
     state.ActiveInternalNodes.reserve(targetCapacity / 2U);
     state.ActiveLeafNodePositions.reserve(targetCapacity);
     state.ActiveLeafNodes.reserve(targetCapacity / 2U + 1U);
+    state.SplitQueueBlockedBuildIds.reserve(targetCapacity);
+    state.MergeQueue.reserve(targetCapacity / 2U);
+    state.MergeQueuePositions.reserve(targetCapacity);
+    state.MergeQueueRepresentatives.reserve(targetCapacity);
+    state.MergeQueuePartners.reserve(targetCapacity);
 }
 
 void ResetTopology(DataOrientedRoamState& state)
@@ -421,6 +430,11 @@ void ResetTopology(DataOrientedRoamState& state)
     state.ActiveInternalNodePositions.clear();
     state.ActiveLeafNodes.clear();
     state.ActiveLeafNodePositions.clear();
+    state.SplitQueueBlockedBuildIds.clear();
+    state.MergeQueue.clear();
+    state.MergeQueuePositions.clear();
+    state.MergeQueueRepresentatives.clear();
+    state.MergeQueuePartners.clear();
 
     state.RootA = AddNode(
         state,
@@ -448,6 +462,8 @@ void ResetTopology(DataOrientedRoamState& state)
     state.ActiveLeafNodePositions[state.RootA] = 0U;
     state.ActiveLeafNodes.push_back(state.RootB);
     state.ActiveLeafNodePositions[state.RootB] = 1U;
+    InitializePersistentSplitQueue(state);
+    InitializePersistentMergeQueue(state);
     state.TopologyMaxDepth = state.Settings.MaxDepth;
 }
 

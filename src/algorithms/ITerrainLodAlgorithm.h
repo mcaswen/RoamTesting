@@ -358,7 +358,7 @@ struct TerrainLodStats
     std::size_t CrackRiskCount{0};
     std::size_t ConstraintPassCount{0};
     std::size_t CandidatePeakCount{0};
-    // Persistent queue fields are currently populated by Classic CPU ROAM
+    // Classic and DOD populate persistent topology queue diagnostics.
     std::size_t PersistentSplitQueueSize{0};
     std::size_t PersistentMergeQueueSize{0};
     std::size_t QueueCrossoverCount{0};

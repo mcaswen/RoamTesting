@@ -60,7 +60,7 @@ CBT 2024 的 `GenerateCommands`（命令生成）和分类阶段主要依据投�
 | CBT 2024 先到先分配策略 | 同 GPU 拓扑下的主要直接基线 |
 | GPU 误差 Top-K | 判断普通排序是否已经足够的消融基线 |
 | 本文依赖感知调度器 | 待验证方法 |
-| 项目现有 Classic / DOD CPU ROAM | 相同论文公式 (1) nested wedgie thickness、像素 SSE、视锥感知和固定活动三角形预算下的对象式/SoA CPU 参考；Classic 使用持久 dual-queue crossover，DOD 使用有限批次交换启发式 |
+| 项目现有 Classic / DOD CPU ROAM | 相同论文公式 (1) nested wedgie thickness、像素 SSE、视锥感知和固定活动三角形预算下的对象式/SoA CPU 参考；两者都使用持久 dual-queue crossover 并持续交换至队首条件收敛 |
 | 项目现有 GPU ROAM-like | 同一评分与硬预算下的混合管线参考；持久拓扑来自带预算交换的 CPU DOD，原生 GPU 追加仍按 append 顺序领取 token 的单轮 split-only，不等同于独立全 GPU 调度器 |
 | 小规模穷举、整数线性规划或串行精确贪心 | 估计与最优参考的差距 |
 
@@ -68,7 +68,7 @@ CBT 2024 的 `GenerateCommands`（命令生成）和分类阶段主要依据投�
 
 所有方法使用相同高度图、相机路径、最大深度、最终三角形预算和**独立于各算法 LOD 决策器的公共离线质量评估器**。Classic、DOD 和 GPU ROAM-like 当前使用同一 nested wedgie thickness 的像素投影；CBT 2024 基线使用投影面积分类，不能把 ROAM 与 CBT 的内部 score 数值直接当成“相同误差评估器”。实验应对最终网格统一采样并计算屏幕空间位置/深度/法线误差。场景覆盖平坦/高曲率混合、山脊峡谷、长兼容链、遮挡后显露和不少于三类真实数字高程模型（DEM）；重点测试候选需求为容量 2 倍和 4 倍的超额需求场景。记录最大/P95/平均屏幕空间误差、深度与法线误差、预算利用率、优先级倒置、各 GPU 阶段时间、拓扑变更量、裂缝、非法邻接和结果确定性。
 
-三种 ROAM 的 20,000 leaf 硬预算只证明它们不会超过活动三角形上限。CPU requested/forced split 会消耗闭包成本；Classic 的持久 `Q_s/Q_m` 按 triangle/diamond priority 做 merge-first crossover，DOD 在池满时使用有限批次交换，但二者都不预测完整 closure 集合、不去重共享 closure，也不按实际依赖成本做全局收益选择。GPU split-only 仍按并发 append 顺序领取 CPU baseline 的剩余 token。它们适合作为对象式、SoA 和混合 GPU 管线参考，但都不等同于本文拟研究的依赖感知全局预算调度器。
+三种 ROAM 的 20,000 leaf 硬预算只证明它们不会超过活动三角形上限。CPU requested/forced split 会消耗闭包成本；Classic 与 DOD 的持久 `Q_s/Q_m` 都按 triangle/diamond priority 做 merge-first crossover 并持续交换至队首条件收敛，但二者都不预测完整 closure 集合、不去重共享 closure，也不按实际依赖成本做全局收益选择。GPU split-only 仍按并发 append 顺序领取 CPU baseline 的剩余 token。它们适合作为对象式、SoA 和混合 GPU 管线参考，但都不等同于本文拟研究的依赖感知全局预算调度器。
 
 **继续条件：**多个真实场景中，本文方法相较先到先分配策略对最大值或 P95 误差稳定改善约 10%，内存超额量为零，预算利用率不退化，选择阶段在参考 GPU 上不超过约 1 毫秒或拓扑更新时间预算的 20%。**停止或转向条件：**改善不足 5%、只存在于人工反例、简单阈值或 Top-K 已取得相近质量，或调度成本长期高于收益。
 

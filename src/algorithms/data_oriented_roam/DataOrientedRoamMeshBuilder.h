@@ -48,7 +48,7 @@ struct DataOrientedRoamSettings
     // 活动 leaf triangle 的硬上限
     std::size_t TriangleBudget{20000U};
     // 0 自动选择 worker 数 1 保持串行评估
-    // 候选扫描也复用这个并行宽度设置
+    // Q_s/Q_m priority refresh 也复用这个并行宽度设置
     std::size_t ErrorEvaluationWorkerCount{0};
     bool EnableLocalConstraints{true};
     bool EnableTopologyValidation{false};
@@ -80,11 +80,11 @@ struct DataOrientedRoamStats
     std::size_t TjunctionCount{0};
     std::size_t InvalidNeighborCount{0};
     std::size_t InvalidTopologyCount{0};
-    // ErrorEvaluationCount 记录融合 split 扫描实际评分的 active leaf 数量
+    // ErrorEvaluationCount 记录 Q_s priority refresh 实际评分的 active leaf 数量
     std::size_t ErrorEvaluationCount{0};
     // worker count 是本帧实际采用的并行宽度
     std::size_t ErrorEvaluationWorkerCount{0};
-    // collect/mark worker 统计保留统一接口；融合 split 扫描会同时更新两者
+    // collect/mark worker 统计保留统一接口；Q_s refresh 会同时更新两者
     std::size_t CollectWorkerCount{0};
     std::size_t CandidateMarkWorkerCount{0};
     // emit worker 数用于确认 CPU mesh 输出是否进入并行路径
@@ -92,6 +92,10 @@ struct DataOrientedRoamStats
     // 候选数量用于观察并行标记后的队列规模
     std::size_t SplitCandidateCount{0};
     std::size_t MergeCandidateCount{0};
+    std::size_t PersistentSplitQueueSize{0};
+    std::size_t PersistentMergeQueueSize{0};
+    std::size_t QueueCrossoverCount{0};
+    std::size_t QueueMembershipUpdateCount{0};
     // terrain chunk 统计用于观察保守并发提交覆盖面
     std::size_t TopologyChunkCount{0};
     // commit worker 数只统计 topology commit batch
@@ -128,10 +132,10 @@ struct DataOrientedRoamStats
     float FinalLeafCollectMilliseconds{0.0F};
     float MeshEmitMilliseconds{0.0F};
     float FinalizeMilliseconds{0.0F};
-    // 兼容旧报告；融合 split 扫描后两个独立误差耗时字段保持为零
+    // 兼容旧报告；评分已计入 Q_s/Q_m refresh，两个独立误差耗时字段保持为零
     float ErrorEvaluationSingleThreadMilliseconds{0.0F};
     float ErrorEvaluationParallelMilliseconds{0.0F};
-    // ActiveLeafCollectMilliseconds 兼容旧报告并保持为零；融合成本归入 split mark
+    // ActiveLeafCollectMilliseconds 兼容旧报告并保持为零；Q_s refresh 成本归入 split mark
     float ActiveLeafCollectMilliseconds{0.0F};
     float SplitCandidateMarkMilliseconds{0.0F};
     float MergeCandidateMarkMilliseconds{0.0F};

@@ -66,6 +66,12 @@ struct DataOrientedRoamMergeCandidate
     DataOrientedRoamNodeIndex Node{InvalidDataOrientedRoamNodeIndex};
 };
 
+struct DataOrientedRoamMergeQueueEntry
+{
+    float Score{0.0F};
+    DataOrientedRoamNodeIndex Node{InvalidDataOrientedRoamNodeIndex};
+};
+
 struct DataOrientedRoamMergeCandidateEvaluation
 {
     // NodeScore 保持普通 merge 候选的原排序语义；PairScore 用于预算重平衡时衡量整个 diamond。
@@ -219,9 +225,16 @@ struct DataOrientedRoamState
     std::vector<DataOrientedRoamNodeIndex> ActiveInternalNodes;
     // 节点索引到 ActiveInternalNodes 位置的反向表，支持 O(1) swap-remove
     std::vector<std::size_t> ActiveInternalNodePositions;
-    // 当前 active leaf 的连续索引直接驱动融合 split scan。
+    // 当前 active leaf 的连续索引同时承担持久 Q_s heap 存储。
     std::vector<DataOrientedRoamNodeIndex> ActiveLeafNodes;
     std::vector<std::size_t> ActiveLeafNodePositions;
+    std::vector<std::uint64_t> SplitQueueBlockedBuildIds;
+
+    // One canonical representative is stored for each mergeable diamond.
+    std::vector<DataOrientedRoamMergeQueueEntry> MergeQueue;
+    std::vector<std::size_t> MergeQueuePositions;
+    std::vector<DataOrientedRoamNodeIndex> MergeQueueRepresentatives;
+    std::vector<DataOrientedRoamNodeIndex> MergeQueuePartners;
 
     // RootA 和 RootB 构成初始 diamond
     DataOrientedRoamNodeIndex RootA{InvalidDataOrientedRoamNodeIndex};
@@ -297,6 +310,48 @@ void AccumulateLeafStats(
 void RefineWithSplitQueue(DataOrientedRoamState& state);
 void MergeWithDiamondQueue(DataOrientedRoamState& state);
 
+void InitializePersistentMergeQueue(DataOrientedRoamState& state);
+void InitializePersistentSplitQueue(DataOrientedRoamState& state);
+void RefreshPersistentSplitQueuePriorities(DataOrientedRoamState& state);
+void InsertPersistentSplitQueueNode(
+    DataOrientedRoamState& state,
+    DataOrientedRoamNodeIndex node);
+void RemovePersistentSplitQueueNode(
+    DataOrientedRoamState& state,
+    DataOrientedRoamNodeIndex node);
+void BlockPersistentSplitQueueNodeForCurrentBuild(
+    DataOrientedRoamState& state,
+    DataOrientedRoamNodeIndex node);
+[[nodiscard]] DataOrientedRoamNodeIndex TopPersistentSplitQueueNode(
+    const DataOrientedRoamState& state);
+[[nodiscard]] float TopPersistentSplitQueueScore(const DataOrientedRoamState& state);
+void SnapshotPersistentSplitQueueCandidates(
+    const DataOrientedRoamState& state,
+    std::vector<DataOrientedRoamSplitCandidate>& candidates);
+void RefreshPersistentMergeQueuePriorities(DataOrientedRoamState& state);
+void AppendPersistentMergeQueueNeighborhood(
+    const DataOrientedRoamState& state,
+    DataOrientedRoamNodeIndex node,
+    std::vector<DataOrientedRoamNodeIndex>& nodes);
+void InvalidatePersistentMergeQueueNeighborhood(
+    DataOrientedRoamState& state,
+    const std::vector<DataOrientedRoamNodeIndex>& nodes);
+void RefreshPersistentMergeQueueNeighborhood(
+    DataOrientedRoamState& state,
+    const std::vector<DataOrientedRoamNodeIndex>& nodes);
+void RemovePersistentMergeQueueCandidate(
+    DataOrientedRoamState& state,
+    DataOrientedRoamNodeIndex node);
+[[nodiscard]] DataOrientedRoamNodeIndex TopPersistentMergeQueueNode(
+    const DataOrientedRoamState& state);
+[[nodiscard]] float TopPersistentMergeQueueScore(const DataOrientedRoamState& state);
+void SnapshotPersistentMergeQueueCandidates(
+    const DataOrientedRoamState& state,
+    float maximumScore,
+    std::vector<DataOrientedRoamMergeCandidate>& candidates);
+[[nodiscard]] std::size_t CountPersistentQueueInvariantViolations(
+    const DataOrientedRoamState& state);
+
 // ValidateTopology 是可选 debug pass，不主动修复拓扑
 void ValidateTopology(DataOrientedRoamState& state);
 
@@ -304,17 +359,6 @@ void EmitLeafTriangles(
     DataOrientedRoamState& state,
     Terrain::TerrainMeshData& meshData,
     const std::vector<DataOrientedRoamNodeIndex>& leafNodes);
-
-[[nodiscard]] float EvaluateScreenErrorForNode(DataOrientedRoamState& state, DataOrientedRoamNodeIndex node);
-
-void CollectSplitCandidates(DataOrientedRoamState& state, std::vector<DataOrientedRoamSplitCandidate>& candidates);
-
-void CollectMergeCandidates(DataOrientedRoamState& state, std::vector<DataOrientedRoamMergeCandidate>& candidates);
-
-void CollectMergeCandidates(
-    DataOrientedRoamState& state,
-    std::vector<DataOrientedRoamMergeCandidate>& candidates,
-    float maximumScore);
 
 [[nodiscard]] DataOrientedRoamMergeCandidateEvaluation EvaluateMergeCandidate(
     const DataOrientedRoamState& state,

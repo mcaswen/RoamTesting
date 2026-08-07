@@ -63,7 +63,7 @@ subject to cost(S) <= available_capacity
 | 路径 | 数据与执行方式 | 当前能力 | 边界 |
 | --- | --- | --- | --- |
 | Classic CPU ROAM | 对象式节点、裸指针二叉三角树、串行索引堆 | 持久 `Q_s/Q_m`、统一交叉调度、split、forced split、diamond merge、视锥感知、固定叶三角形预算、增量 indexed CPU Mesh | 采用工程等价复现口径：公式、连续拓扑和增量输出对应 ROAM 1997 论文主要效果，但不追求完整最优性证明 |
-| Data-Oriented CPU ROAM | SoA 节点池、索引邻接、活动集合、批量处理阶段与条件并行 | 与 Classic 使用相同的误差公式、阈值、预算和拓扑验证口径；融合叶三角形扫描、误差评估和候选标记 | 拓扑依赖限制并行度，最终仍生成 CPU Mesh |
+| Data-Oriented CPU ROAM | SoA 节点池、索引邻接、持久 `Q_s/Q_m`、批量评分与条件并行 | 与 Classic 使用相同的误差公式、阈值、预算和拓扑验证口径；并行刷新队列优先级，局部维护队列成员，并持续执行预算交换直至队首条件收敛 | 拓扑依赖限制并行度，最终仍生成 CPU Mesh |
 | GPU ROAM-like | CPU DOD 持久拓扑快照 + compute shader | GPU 叶三角形 compaction、误差评估、候选标记、单轮 split、Mesh emit、indirect draw | 混合管线；GPU merge 只评分不提交，GPU split 不回写 CPU 持久真值 |
 | CBT 2024 | D3D12、OCBT 位域/归约树、GPU 基础二分器资源 | 四档 OCBT、基础拓扑、程序化间接绘制及专项验证 | 动态 split/merge、兼容传播和高度图自适应路径尚待实现 |
 | 闭包感知预算调度器 | 计划中的独立研究变体 | 研究问题、假设、基线和验收标准已定义 | 尚未实现；必须在忠实 CBT 基线冻结后开展 |
@@ -89,6 +89,8 @@ subject to cost(S) <= available_capacity
 - forced split 和 diamond merge；
 - 持久 split/merge 优先级队列；
 - 增量 indexed CPU Mesh 更新。
+
+DOD 也持久维护同口径的 `Q_s/Q_m`。预算满载时，只要 `max(Q_s) > min(Q_m)`，就先回收最低损失 diamond，再重试最高收益 split，直到队首条件不再成立。它保留全局候选排序与局部队列成员更新，但由于没有实现论文的全部单调性前提和优先级延期机制，仍不声称复现 ROAM 1997 的最少拓扑操作或最优网格证明。
 
 当前实现未复现以下机制：
 

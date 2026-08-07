@@ -169,7 +169,7 @@ assets/textures/Tex_Terrain_Debug_Diffuse.ppm
 - `PathId`、split/merge 双阈值和最终 active path 共同提供跨 Build 迟滞；
 - CPU Mesh 使用持久 dense slots：split 复用 parent 槽并追加一个 child，merge 写回 parent 并以末槽压缩消除空洞；只重写 dirty slots，每个 leaf 仍输出三个独立顶点；
 - adapter 通过 borrowed Mesh + generation + dirty ranges 发布数据；OpenGL 用 `glBufferSubData` 部分上传，D3D12 为每个 frame slot 延迟消费 pending ranges，并在追赶多个 Build 时合并重叠区间；首次/reset/容量增长才全量上传；
-- ImGui 已让 Classic、DOD 和 GPU ROAM-like 共用像素阈值与预算；Classic 额外显示持久 `Q_s/Q_m`、crossover、局部 membership 更新次数，以及 Mesh full/updated/reused/range 计数；
+- ImGui 已让 Classic、DOD 和 GPU ROAM-like 共用像素阈值与预算；Classic/DOD 都输出持久 `Q_s/Q_m`、资源交换次数和局部队列成员更新次数，Classic 另有 Mesh full/updated/reused/range 计数；
 - Classic smoke 使用 6 个视点验证预算、视锥方向变化、单 Build 级联合并和 topology issue；`incremental-emit` 使用三次相同视点验证第三次 Build 零 dirty range；当前 OpenGL/D3D12 构建与 smoke 均通过；
 - 本阶段采用工程等价口径：公式 (1)-(3)、连续 diamond 拓扑、局部队列 membership 与增量 Mesh 输出已经覆盖论文主要误差、拓扑和变化量更新效果；不继续复刻 triangle strips、优先级延期或完整最优性证明，每次 Build 全量刷新优先级的 `O(N)` 边界保留并明确记录；
 - 阶段 2 的算法基线已封版。diamond/score heatmap 等更完整 debug draw 是后续可视化增强，不作为阶段完成阻塞项。
@@ -272,7 +272,7 @@ assets/textures/Tex_Terrain_Debug_Diffuse.ppm
 当前状态：
 
 - `DataOrientedRoamNodePool` 已改为 SoA 数组，domain、parent/child、neighbor、error、方差索引、depth、build id 和 flag 分离存储；
-- `ScreenErrors` 缓存最近一次 split / merge 队列评分，并作为融合 split 扫描的连续写入目标；
+- `ScreenErrors` 缓存最近一次 `Q_s` 优先级刷新结果；`ActiveLeafNodes` 同时作为活动叶索引和带反向索引的最大堆，`Q_m` 另以带反向索引的最小堆保存可合并 diamond，并保证每个 diamond 只入队一次；
 - DOD 私有统计记录 SoA 数组数量和容量估算，统一 benchmark 接口保持不变。
 
 3C：线程池与并行误差评估
@@ -284,10 +284,10 @@ assets/textures/Tex_Terrain_Debug_Diffuse.ppm
 
 当前状态：
 
-- 历史版本曾使用独立 DOD `ErrorEvaluation` pass，先收集 active leaf，再批量刷新 `ScreenErrors`；当前实现已将其并入 3D 的 split 扫描，避免重复遍历；
+- 历史版本曾使用独立 DOD `ErrorEvaluation` pass，随后又将评分并入临时 split 候选扫描；当前实现改为并行刷新持久 `Q_s` 的全部优先级，再原地建堆；
 - 自动 worker 模式会按硬件线程数保守封顶，小批量 leaf 保持串行以避免调度成本吞掉收益；
-- `CpuErrorEvalMilliseconds` 与 `CpuBudgetLeafCollectMilliseconds` 在 DOD 中作为兼容字段保持为 0；融合区间统一记录到 `CpuSplitCandidateMarkMilliseconds`，split 拓扑仍独立记录到 `CpuSplitTopologyMilliseconds`；
-- 统一 UI 和 benchmark 输出实际 worker 数、CPU 占用率及 `CPU split scan/mark ms`，用于观察融合扫描是否真正获得多核收益；
+- `CpuErrorEvalMilliseconds` 与 `CpuBudgetLeafCollectMilliseconds` 在 DOD 中作为兼容字段保持为 0；`Q_s` 的优先级刷新、原地建堆和提交快照生成统一记录到 `CpuSplitCandidateMarkMilliseconds`，split 拓扑仍独立记录到 `CpuSplitTopologyMilliseconds`；
+- 统一 UI 和 benchmark 输出实际 worker 数、CPU 占用率及 `CPU split scan/mark ms`，该字段现在表示持久 `Q_s` 的优先级刷新、原地建堆和并行提交快照生成；
 - topology commit、约束传播继续与只读扫描分开；安全 chunk 内候选可并行预提交，其余路径串行收敛。
 
 3D：并行标记与收集
@@ -299,12 +299,11 @@ assets/textures/Tex_Terrain_Debug_Diffuse.ppm
 
 当前状态：
 
-- `ActiveLeafNodes` / `ActiveLeafNodePositions` 与 `ActiveInternalNodes` / `ActiveInternalNodePositions` 都由 split/merge 增量维护；节点池保留历史节点，但候选扫描不再遍历 inactive 历史节点；
-- `CollectSplitCandidates` 按 active leaf 连续索引分块，一个物理 pass 同时完成 active leaf 遍历与计数、像素 SSE/视锥评估、`ScreenErrors` 写入、阈值判断和 split 候选输出；worker-local buffer 合并后统一分配稳定 sequence；
-- active leaf 计数在同一 pass 内直接初始化剩余 triangle-budget token，不再为预算单独递归收集 leaf；
-- 预算满载时的 merge/split 重平衡预扫描也直接读取 `ActiveLeafNodes`；它发生在正式 Split 之前且可能先改拓扑，不能与后续候选结果共用，但已消除独立 root traversal；
-- merge candidate 标记只扫描 active internal 连续索引；安全 interior diamond 可并行预提交，其余候选和新出现的父层候选由动态串行队列收敛；
-- 并行 topology commit 完成后由主线程统一更新两组活动索引，串行 forced split/merge 则立即更新，避免共享 vector 写竞争；validator 仍从 root 独立遍历，并逐项校验活动索引和反向 position，防止索引错误自证正确；
+- `ActiveLeafNodes` / `ActiveLeafNodePositions` 同时构成持久 `Q_s` 最大堆；`ActiveInternalNodes` 继续保存活动 internal 索引，持久 `Q_m` 最小堆只登记当前可 merge diamonds，并保证每个 diamond 只入队一次；
+- 每个 Build 并行刷新 `Q_s/Q_m` 现有成员的像素 SSE/视锥优先级，再分别原地建堆；队列成员只由局部 split/merge 拓扑事务更新，不再每帧从活动集合重新发现；
+- `Q_s.size()` 直接初始化剩余 triangle-budget token；预算满载时持续比较 `max(Q_s)` 与 `min(Q_m)`，只要最高 split 收益仍大于最低 merge 损失，就执行 merge-first 资源交换，直到队首条件收敛；
+- threshold merge 和初始 split 快照仍可按安全 interior chunk 并行预提交；worker 运行前统一移除受影响的 `Q_m` 邻域，join 后由主线程提交活动索引与队列成员变化，再恢复局部 diamond；
+- validator 仍从 root 独立遍历，并额外校验两个 heap 的顺序、反向 position、diamond 唯一代表关系和 `Q_m` 成员完整性，防止持久队列自证正确；
 - split/merge 已同步维护 `ActiveLeafNodes`；最终 mesh emit、统计和 GPU snapshot 直接读取这份拓扑稳定后的只读输出视图，不再从 root 递归收集，也不再复制第二份 leaf vector。DOD 的 `CpuFinalLeafCollectMilliseconds` 因而为 0；validator 仍保留独立 root traversal，用于交叉校验活动索引而不是让索引自证正确。
 
 2026-08-01 同参数隔离 A/B 中，完整 node-pool 扫描与 active-internal 扫描都保留索引维护成本，只切换 merge 候选来源。DOD 的 `CpuMergeCandidateMarkMilliseconds` 从 `1.6273 ms` 降至 `0.9777 ms`，完整 Merge pass 从 `1.6495 ms` 降至 `0.9985 ms`；两组最大拓扑错误均为 0，平均 triangles/nodes 差异低于 1%。单轮数据用于确认优化方向，正式结论仍应采用多轮重复实验。
@@ -465,7 +464,7 @@ Level E：GPU split-only 或 split/merge topology update
 4E：GPU Active Leaf Compaction
 
 - GPU 遍历 node buffer，压缩 active leaf index；
-- active leaf buffer 成为 leaf error evaluation、split candidate marking 和 mesh emit 的共享输入；merge candidate scoring 则扫描 split parent 节点池；
+- active leaf buffer 成为 leaf error evaluation、split candidate marking 和 mesh emit 的共享输入；GPU merge candidate scoring 仍扫描 split parent 节点池，不复用 CPU DOD 的持久 `Q_m`；
 - 默认只 readback active leaf count 和必要统计；
 - 继续用 CPU topology commit，保证风险集中在收集和数据流上。
 

@@ -62,7 +62,7 @@ Debug View 的价值不只是展示效果，也用于定位算法问题。比如
 - 同一活动三角形预算或离线质量目标
 ```
 
-三种 ROAM 的 `TriangleBudget` 都是最终活动 leaf 硬上限。Classic 持久维护 `Q_s/Q_m`，预算满载时在统一循环比较最高 split 与最低 merge，并用 merge-first 事务为 forced closure 腾出 token；为适配尚未证明单调的项目扩展 priority，同一 Build 不允许刚提交的 split/merge 被立即反向执行。DOD 仍使用有限批次交换启发式。GPU ROAM-like 先运行 CPU DOD baseline，再由 compute counter 原子分配剩余 token：外边界单 split 消费 1，diamond pair 消费 2，提交失败时归还。原生 GPU pass 仍按候选 append 顺序竞争 token。Classic dual queues 没有共享 closure 去重或依赖成本建模，因此固定预算仍不代表已经实现本文研究的闭包感知全局资源分配。
+三种 ROAM 的 `TriangleBudget` 都是最终活动 leaf 硬上限。Classic 与 DOD 都持久维护 `Q_s/Q_m`，预算满载时比较最高 split 与最低 merge，并用 merge-first 事务为 forced closure 腾出 token；为适配尚未证明单调的项目扩展 priority，同一 Build 不允许刚提交的 split/merge 被立即反向执行。两种 CPU 实现都会持续交换，直到队首不再满足 `max(Q_s) > min(Q_m)`。GPU ROAM-like 先运行 CPU DOD baseline，再由 compute counter 原子分配剩余 token：外边界单 split 消费 1，diamond pair 消费 2，提交失败时归还。原生 GPU pass 仍按候选 append 顺序竞争 token。两种 CPU dual queues 都没有共享 closure 去重或依赖成本建模，因此固定预算仍不代表已经实现本文研究的闭包感知全局资源分配。
 
 主要对比指标：
 
@@ -214,7 +214,7 @@ Classic 的报告采用工程等价口径，不以论文完整证明为验收目
 
 该表分析稳定帧热路径。nested wedgie tree / `GeometricError` rebuild 属于初始化、地形切换或预计算深度失效后的 reset 路径，当前没有独立阶段计时；不能从稳定帧表中推断其成本，若要比较必须另建 initialization benchmark。
 
-统一 benchmark harness 对 Classic、DOD 和 GPU 名称都应用预算与 `center -> away` 视锥回收断言；对启用持久双队列统计的 Classic，另外要求 `Q_s == ActiveTriangleCount <= TriangleBudget`、`updated+reused==active`、dirty ranges 不多于 updated triangles，并要求单帧 `SplitCount + MergeCount <= ActiveNodeCount`。`budget-reentry` profile 以低预算和原地小角度转向，要求 Classic/DOD 在转向后的第一次 Build 同时 merge 旧低分 diamond 并 split 新高分区域。`incremental-emit` 连续三次使用同一 Classic 视点：首帧必须 full rebuild，第二帧只允许增量调试属性过渡，第三帧必须零 split/merge、零 updated/dirty 并复用全部 leaf。无窗口模式因没有图形上下文通常跳过 GPU。应用级 `--gpu-smoke-test` 在 OpenGL 和 D3D12 上分别验证 GPU packet 非空、最终三角形不超预算，并检查 CPU DOD 持久拓扑的三类 issue 为零。这类正确性验证不替代 30-60 秒 runtime 性能采样。
+统一 benchmark harness 对 Classic、DOD 和 GPU 名称都应用预算与 `center -> away` 视锥回收断言；对启用持久队列统计的 Classic/DOD，另外要求 `Q_s == ActiveTriangleCount <= TriangleBudget` 且单帧 `SplitCount + MergeCount <= ActiveNodeCount`。增量 Mesh 的 `updated+reused==active` 与 dirty range 约束只在算法实际报告这些字段时启用。`budget-reentry` profile 以低预算和原地小角度转向，要求 Classic/DOD 在转向后的第一次 Build 同时 merge 旧低分 diamond 并 split 新高分区域。`incremental-emit` 连续三次使用同一 Classic 视点：首帧必须 full rebuild，第二帧只允许增量调试属性过渡，第三帧必须零 split/merge、零 updated/dirty 并复用全部 leaf。无窗口模式因没有图形上下文通常跳过 GPU。应用级 `--gpu-smoke-test` 在 OpenGL 和 D3D12 上分别验证 GPU packet 非空、最终三角形不超预算，并检查 CPU DOD 持久拓扑的三类 issue 为零。这类正确性验证不替代 30-60 秒 runtime 性能采样。
 
 ### DOD active internal 索引 A/B
 
@@ -233,6 +233,8 @@ Classic 的报告采用工程等价口径，不以论文完整证明为验收目
 
 ### DOD active leaf 融合 Split 扫描 A/B
 
+> 历史版本说明：本节记录 2026-08-01 当时的全量候选扫描实现及其 A/B 结果。2026-08-07 主线已由下一节的持久 `Q_s/Q_m` 替代；`CollectSplitCandidates` 等旧函数已删除，本节数据只用于说明演进过程，不能当作当前代码路径。
+
 本轮继续使用相同的 OpenGL RelWithDebInfo、Test129、Terrain size 30、Height scale 4、Max depth 14、split/merge 4 px / 2 px、Triangle budget 20000，每种算法运行 10 秒。基线为上述 active internal 优化后的 `runtime-benchmark-20260801-030432`；最终实验组为 `runtime-benchmark-20260801-195558`。
 
 实现将 split 前的 active leaf 收集、预算 leaf 计数、像素 SSE/视锥评估、`ScreenErrors` 写入和 threshold 候选标记融合到 `CollectSplitCandidates` 的一次 active-leaf-index 扫描。预算满载时的 merge/split 重平衡仍需在正式 Split 之前评估需求，但也直接读取 `ActiveLeafNodes`，不再递归收集。DOD 的 `Budget leaf collect` 与独立 `Error eval` 兼容字段因此为 0，融合物理区间完整归入 `Split scan/mark`，避免同一循环被多个统计字段重复计时。
@@ -250,6 +252,24 @@ Classic 的报告采用工程等价口径，不以论文完整证明为验收目
 第一行基线是 `Budget leaf collect + Error eval + Split mark`；它包含基线中位于 Split pass 包络外的预算计数，所以不能与第二行混加。一次机械融合 control `runtime-benchmark-20260801-194942` 仍扫描完整持久 node pool，并为每个节点沿 parent 链判断是否 active，结果为 `1.6692 ms`，比基线三个阶段之和高 3.3%。最终收益因此应归因于增量维护 `ActiveLeafNodes`、只扫描真实活动叶以及消除重复遍历，而不是函数合并本身。
 
 两组测试按固定运行时长而不是固定 Build 次数采样；优化后每秒 Build 次数增加，使相机路径上的采样密度和每帧 split/merge 数发生变化。triangles/nodes 的小幅差异不能直接解释为质量变化。本表是单轮方向性 A/B，正式论文或结项报告仍需固定轨迹、重复多轮并报告方差。
+
+### DOD 持久双队列与资源交换上限 A/B
+
+2026-08-07 使用 `budget-saturation` 固定 24 帧轨迹验证 DOD 持久 `Q_s/Q_m`。配置为 Peking 547x547、Terrain size 80、Height scale 12、Max depth 20、split/merge 0.25 px / 0.1 px、Triangle budget 200000、最多 8 workers。各阶段使用同一相机关键帧，活动叶三角形始终为 199999–200000，拓扑错误为 0。
+
+| 版本 | CPU update p50 | CPU update p95 | 稳定帧 split/merge 中位数 | 队列成员更新次数中位数 | 结论 |
+| --- | ---: | ---: | ---: | ---: | --- |
+| 旧 active-index 全量候选扫描 | 263.141 ms | 324.648 ms | 2349 / 2349 | 0 | 对照组 |
+| 仅持久 `Q_m`，并行刷新优先级 | 205.689 ms | 290.832 ms | 2349 / 2349 | 12440 | 消除 active-internal 可合并性全扫与重复评分 |
+| 持久 `Q_s/Q_m`，不限制资源交换次数 | 452.741 ms | 520.527 ms | 37387 / 37387 | 455246 | 全局队首交换触发过多拓扑事务，明显倒退 |
+| 持久 `Q_s/Q_m`，最多 128 次资源交换 | 115.497 ms | 196.257 ms | 2683 / 2683 | 30711 | 保留全局排序，同时约束单帧拓扑工作 |
+| 撤销上限后的当前实现 | 415.957 ms | 469.560 ms | 37661 / 37386 | 457427 | 恢复与 Classic 相同的持续收敛口径；crossover 中位数 13576 |
+
+有限资源交换版本又重复两轮，CPU update p50 分别为 124.221 ms 和 135.202 ms，p95 分别为 199.818 ms 和 194.404 ms。三轮 p50 均低于旧对照，但该上限减少了 DOD 实际执行的拓扑事务，使其无法与持续收敛的 Classic 进行同等工作量比较。因此主线已撤销 128 次限制，这三轮数据只保留为调度策略 A/B，不再代表当前实现性能。撤销上限后的 24 帧复测保持 199999–200000 个活动叶三角形，crossover 为 0–16762、稳态中位数 13576，拓扑错误为 0，证明当前路径不再受固定交换次数限制。
+
+当前 `CpuSplitCandidateMarkMilliseconds` 表示持久 `Q_s` 全成员的并行 SSE/视锥优先级刷新、原地建堆与并行提交快照生成；`CpuMergeCandidateMarkMilliseconds` 对应持久 `Q_m` 的同类工作，其中每个 diamond 只保留一个代表节点。拓扑事务只局部维护队列成员。DOD 现已持续执行资源交换直至队首条件收敛，但仍没有实现 ROAM 1997 的优先级延期列表及全部最优性证明前提，因此只能按当前真实队列和拓扑语义评价。
+
+原始数据：`benchmark-output/budget-saturation-dod.csv`、`benchmark-output/budget-saturation-dod-persistent-qm-parallel.csv`、`benchmark-output/budget-saturation-dod-dual-queues.csv`、`benchmark-output/budget-saturation-dod-dual-queues-bounded.csv`、`benchmark-output/budget-saturation-dod-dual-queues-bounded-run2.csv`、`benchmark-output/budget-saturation-dod-dual-queues-bounded-run3.csv`、`benchmark-output/budget-saturation-dod-dual-queues-unbounded-final.csv`。
 
 ### DOD 最终 Active Leaf 输出视图复用
 

@@ -62,7 +62,7 @@ TerrainLodStats ToTerrainLodStats(const DataOrientedRoam::DataOrientedRoamStats&
         stats.TopologyCommitWorkerCount,
     });
 
-    // CPU DOD baseline 的融合扫描归入 split candidate mark；GPU dispatch 仍单独计时。
+    // CPU DOD baseline 的 Q_s refresh 归入 split candidate mark；GPU dispatch 仍单独计时。
     const float errorEvaluationMilliseconds = ErrorEvaluationMilliseconds(stats);
     const float splitCollectMilliseconds =
         stats.ActiveLeafCollectMilliseconds + stats.SplitCandidateMarkMilliseconds;

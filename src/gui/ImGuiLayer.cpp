@@ -358,12 +358,16 @@ void DrawDetailedPerformanceMetrics(const DebugOverlayData& data)
     DrawMetricSize("Merge 数", data.RoamMergeCount);
     DrawMetricSize("约束传播", data.RoamConstraintPassCount);
     DrawMetricSize("队列峰值", data.RoamCandidatePeakCount);
-    if (data.TerrainLodAlgorithm == Algorithms::TerrainLodAlgorithmId::ClassicCpuRoam)
+    if (data.TerrainLodAlgorithm == Algorithms::TerrainLodAlgorithmId::ClassicCpuRoam ||
+        data.TerrainLodAlgorithm == Algorithms::TerrainLodAlgorithmId::DataOrientedCpuRoam)
     {
         DrawMetricSize("持久 Qs", data.RoamPersistentSplitQueueSize);
         DrawMetricSize("持久 Qm", data.RoamPersistentMergeQueueSize);
         DrawMetricSize("队列交换", data.RoamQueueCrossoverCount);
         DrawMetricSize("队列局部更新", data.RoamQueueMembershipUpdateCount);
+    }
+    if (data.TerrainLodAlgorithm == Algorithms::TerrainLodAlgorithmId::ClassicCpuRoam)
+    {
         DrawMetricSize("Mesh 全量重建", data.RoamCpuMeshFullRebuildCount);
         DrawMetricSize("Mesh 更新三角形", data.RoamCpuMeshUpdatedTriangleCount);
         DrawMetricSize("Mesh 复用三角形", data.RoamCpuMeshReusedTriangleCount);

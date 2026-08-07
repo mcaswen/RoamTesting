@@ -125,6 +125,10 @@ TerrainLodStats DataOrientedRoamTerrainLodAlgorithm::ToTerrainLodStats(const Dat
     lodStats.CrackRiskCount = stats.CrackRiskCount;
     lodStats.ConstraintPassCount = stats.ConstraintPassCount;
     lodStats.CandidatePeakCount = stats.CandidatePeakCount;
+    lodStats.PersistentSplitQueueSize = stats.PersistentSplitQueueSize;
+    lodStats.PersistentMergeQueueSize = stats.PersistentMergeQueueSize;
+    lodStats.QueueCrossoverCount = stats.QueueCrossoverCount;
+    lodStats.QueueMembershipUpdateCount = stats.QueueMembershipUpdateCount;
     lodStats.RejectedSplitCount = stats.RejectedSplitCount;
     lodStats.BudgetRejectedSplitCount = stats.BudgetRejectedSplitCount;
     lodStats.RejectedMergeCount = stats.RejectedMergeCount;
@@ -151,7 +155,7 @@ TerrainLodStats DataOrientedRoamTerrainLodAlgorithm::ToTerrainLodStats(const Dat
     lodStats.MergeTopologyNonEmptyChunkCount = stats.MergeTopologyNonEmptyChunkCount;
     lodStats.MergeTopologyCommitWorkerCount = stats.MergeTopologyCommitWorkerCount;
     lodStats.ParallelMergeCommitCount = stats.ParallelMergeCommitCount;
-    // 融合扫描后 error/collect 独立时间为零，完整扫描成本归入 split mark。
+    // Q_s refresh 已包含评分与预算计数，error/collect 独立时间保持为零。
     const float errorEvaluationMilliseconds = ErrorEvaluationMilliseconds(stats);
     const float splitCollectMilliseconds =
         // 保留公式兼容旧报告；当前 ActiveLeafCollectMilliseconds 为零。

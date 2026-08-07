@@ -463,18 +463,28 @@ bool ValidateFrame(
         return false;
     }
 
-    // Classic 的 Q_s 必须精确表示 active cut；其他算法目前保持这些字段为零
+    // CPU 持久 Q_s 成员必须精确对应 active cut。
     if (stats.PersistentSplitQueueSize != 0U &&
         (stats.PersistentSplitQueueSize != stats.ActiveTriangleCount ||
          stats.PersistentSplitQueueSize > scenario.Settings.TriangleBudget ||
-         stats.SplitCount + stats.MergeCount > stats.ActiveNodeCount ||
-         stats.CpuMeshFullRebuildCount > 1U ||
+         stats.SplitCount + stats.MergeCount > stats.ActiveNodeCount))
+    {
+        // 每个 parent 在同一 Build 最多执行一次正向或反向事务。
+        // 事件数超过持久节点池规模通常意味着 split/merge 发生了同帧振荡。
+        return false;
+    }
+
+    const bool reportsIncrementalCpuMesh =
+        stats.CpuMeshFullRebuildCount != 0U ||
+        stats.CpuMeshUpdatedTriangleCount != 0U ||
+        stats.CpuMeshReusedTriangleCount != 0U ||
+        stats.CpuMeshDirtyRangeCount != 0U;
+    if (reportsIncrementalCpuMesh &&
+        (stats.CpuMeshFullRebuildCount > 1U ||
          stats.CpuMeshUpdatedTriangleCount + stats.CpuMeshReusedTriangleCount !=
              stats.ActiveTriangleCount ||
          stats.CpuMeshDirtyRangeCount > stats.CpuMeshUpdatedTriangleCount))
     {
-        // 每个 Classic parent 在同一 Build 最多执行一次正向或反向事务。
-        // 事件数超过持久节点池规模通常意味着 split/merge 发生了同帧振荡。
         return false;
     }
 

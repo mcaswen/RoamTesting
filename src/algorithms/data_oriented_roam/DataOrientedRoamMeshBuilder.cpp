@@ -147,7 +147,7 @@ Terrain::TerrainMeshData DataOrientedRoamMeshBuilder::BuildInternal(
     const auto mergeEnd = std::chrono::steady_clock::now();
 
     const auto splitStart = std::chrono::steady_clock::now();
-    // 融合扫描同时统计 active leaf、初始化预算、评估 SSE 并生成 split 候选。
+    // 持久 Q_s 并行刷新 priority 并生成提交快照，随后执行 split/crossover。
     RefineWithSplitQueue(state);
     const auto splitEnd = std::chrono::steady_clock::now();
 
@@ -172,13 +172,15 @@ Terrain::TerrainMeshData DataOrientedRoamMeshBuilder::BuildInternal(
     // GPU 路径不生成 CPU mesh，active triangle 数直接来自持久活动 leaf 索引。
     const auto finalizeStart = std::chrono::steady_clock::now();
     AccumulateLeafStats(state, finalActiveLeaves);
+    state.Stats.PersistentSplitQueueSize = finalActiveLeaves.size();
+    state.Stats.PersistentMergeQueueSize = state.MergeQueue.size();
     state.Stats.MergeMilliseconds = ElapsedMilliseconds(mergeStart, mergeEnd);
     state.Stats.SplitMilliseconds = ElapsedMilliseconds(splitStart, splitEnd);
     state.Stats.EmitMilliseconds = emitCpuMesh
         ? ElapsedMilliseconds(meshEmitStart, meshEmitEnd)
         : 0.0F;
     state.Stats.PrepareMilliseconds = ElapsedMilliseconds(updateStart, prepareEnd);
-    // DOD 不再有独立的预算 leaf collect，时间归入融合 split candidate pass。
+    // DOD 直接用 Q_s.size() 计算预算，不再有独立的 leaf collect。
     state.Stats.BudgetLeafCollectMilliseconds = 0.0F;
     // 字段为统一报告 schema 保留；DOD 不再执行最终 leaf collect/copy pass。
     state.Stats.FinalLeafCollectMilliseconds = 0.0F;
