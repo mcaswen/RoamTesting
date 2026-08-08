@@ -1,5 +1,7 @@
 #include "algorithms/classic_roam/ClassicRoamMeshBuilder.h"
 
+#include "algorithms/RoamGeometry.h"
+
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -243,10 +245,12 @@ void ClassicRoamMeshBuilder::WriteMeshLeaf(std::size_t slot, const ClassicRoamNo
     {
         const glm::vec2 uv = uvs[index];
         Terrain::TerrainMeshVertex& vertex = _meshData.Vertices[baseIndex + index];
-        vertex.Position = DomainToWorld(uv);
-        vertex.Normal = SampleNormal(uv);
+        const Roam::TerrainWorldSample terrainSample =
+            Roam::SampleTerrainWorld(*_heightMap, uv, _terrainSize, _heightScale);
+        vertex.Position = terrainSample.Position;
+        vertex.Normal = Roam::SampleHeightGradientNormal(*_heightMap, uv, _terrainSize, _heightScale);
         vertex.TexCoord = uv;
-        vertex.Height = _heightMap->SampleBilinear(uv.x, uv.y);
+        vertex.Height = terrainSample.Height;
         vertex.DebugColor = debugColor;
         vertex.DebugHighlight = debugHighlight;
     }

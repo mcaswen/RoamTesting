@@ -1,6 +1,8 @@
 #include "algorithms/data_oriented_roam/DataOrientedRoamParallel.h"
 #include "algorithms/data_oriented_roam/DataOrientedRoamState.h"
 
+#include "algorithms/RoamGeometry.h"
+
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -61,10 +63,16 @@ void WriteDomainTriangle(
         // 这样 split 后的新中点高度和规则网格 baseline 一致
         const glm::vec2& uv = uvs[vertexOffset];
         Terrain::TerrainMeshVertex vertex{};
-        vertex.Position = DomainToWorld(state, uv);
-        vertex.Normal = SampleNormal(state, uv);
+        const Roam::TerrainWorldSample terrainSample =
+            Roam::SampleTerrainWorld(*state.HeightMap, uv, state.TerrainSize, state.HeightScale);
+        vertex.Position = terrainSample.Position;
+        vertex.Normal = Roam::SampleHeightGradientNormal(
+            *state.HeightMap,
+            uv,
+            state.TerrainSize,
+            state.HeightScale);
         vertex.TexCoord = uv;
-        vertex.Height = state.HeightMap->SampleBilinear(uv.x, uv.y);
+        vertex.Height = terrainSample.Height;
         vertex.DebugColor = debugColor;
         vertex.DebugHighlight = debugHighlight;
         const std::size_t vertexIndex = static_cast<std::size_t>(baseIndex) + vertexOffset;

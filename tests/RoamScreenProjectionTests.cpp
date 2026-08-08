@@ -1,3 +1,5 @@
+#include "algorithms/RoamGeometry.h"
+#include "algorithms/RoamScreenError.h"
 #include "algorithms/RoamScreenProjection.h"
 #include "algorithms/TerrainLodView.h"
 
@@ -18,7 +20,18 @@ using ParallelRoam::Algorithms::BuildTerrainLodViewInput;
 using ParallelRoam::Algorithms::TerrainLodFrustumPlane;
 using ParallelRoam::Algorithms::Roam::ArtificialMaximumScreenError;
 using ParallelRoam::Algorithms::Roam::ComputeConservativeScreenDistortionPixels;
+using ParallelRoam::Algorithms::Roam::ComputeScreenErrorScore;
 using ParallelRoam::Algorithms::Roam::ConservativeScreenProjectionInput;
+using ParallelRoam::Algorithms::Roam::IsTriangleVisible;
+using ParallelRoam::Algorithms::Roam::ScreenErrorScoreInput;
+using ParallelRoam::Algorithms::Roam::SplitTriangleDomain;
+
+struct TestTriangleDomain
+{
+    glm::vec2 A{0.0F};
+    glm::vec2 B{0.0F};
+    glm::vec2 C{0.0F};
+};
 
 float ProjectedSegmentLengthPixels(
     const glm::vec3& point,
@@ -103,6 +116,21 @@ bool DenseSamplesStayWithinBound(
 int main()
 {
     bool passed = true;
+
+    const TestTriangleDomain splitInput{
+        glm::vec2{0.0F, 1.0F},
+        glm::vec2{1.0F, 0.0F},
+        glm::vec2{0.0F, 0.0F},
+    };
+    const auto splitChildren = SplitTriangleDomain(splitInput);
+    const glm::vec2 expectedMidpoint{0.5F, 0.5F};
+    passed &= splitChildren.Left.A == splitInput.C;
+    passed &= splitChildren.Left.B == splitInput.A;
+    passed &= splitChildren.Left.C == expectedMidpoint;
+    passed &= splitChildren.Right.A == splitInput.B;
+    passed &= splitChildren.Right.B == splitInput.C;
+    passed &= splitChildren.Right.C == expectedMidpoint;
+
     const std::array<glm::vec3, 3U> triangle{
         glm::vec3{-1.4F, -0.2F, 0.8F},
         glm::vec3{1.1F, 0.35F, 0.25F},
@@ -184,6 +212,34 @@ int main()
         720U,
         false);
     const std::size_t nearIndex = static_cast<std::size_t>(TerrainLodFrustumPlane::Near);
+    passed &= IsTriangleVisible(triangle, 0.32F, scaleViewInput.FrustumPlanes);
+    const std::array<glm::vec3, 3U> outsideTriangle{
+        glm::vec3{1000.0F, 1000.0F, 1000.0F},
+        glm::vec3{1001.0F, 1000.0F, 1000.0F},
+        glm::vec3{1000.0F, 1001.0F, 1000.0F},
+    };
+    passed &= !IsTriangleVisible(outsideTriangle, 0.0F, scaleViewInput.FrustumPlanes);
+
+    const float sharedScore = ComputeScreenErrorScore(ScreenErrorScoreInput{
+        triangle,
+        0.32F,
+        scaleViewInput.ViewProjection,
+        scaleViewInput.FrustumPlanes[nearIndex],
+        scaleViewInput.FrustumPlanes,
+        1280U,
+        720U,
+    });
+    passed &= std::isfinite(sharedScore) && sharedScore > 0.0F;
+    passed &= ComputeScreenErrorScore(ScreenErrorScoreInput{
+        outsideTriangle,
+        0.0F,
+        scaleViewInput.ViewProjection,
+        scaleViewInput.FrustumPlanes[nearIndex],
+        scaleViewInput.FrustumPlanes,
+        1280U,
+        720U,
+    }) == 0.0F;
+
     ConservativeScreenProjectionInput scaleInput{
         triangle,
         scaleViewInput.ViewProjection,

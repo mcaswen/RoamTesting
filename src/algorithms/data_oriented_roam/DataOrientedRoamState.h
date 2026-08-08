@@ -385,15 +385,6 @@ void EmitLeafTriangles(
 [[nodiscard]] glm::vec3 DebugColorForLeaf(const DataOrientedRoamState& state, DataOrientedRoamNodeConstRef node);
 [[nodiscard]] float DebugHighlightForLeaf(const DataOrientedRoamState& state, DataOrientedRoamNodeConstRef node);
 
-// 返回 base edge 中点相对父三角形线性插值的有符号高度位移
-[[nodiscard]] float ComputeBaseMidpointDisplacement(const DataOrientedRoamState& state, const TriangleDomain& domain);
-
 // ComputeScreenErrorScore 是当前 split/merge 队列排序的统一评分
 [[nodiscard]] float ComputeScreenErrorScore(const DataOrientedRoamState& state, DataOrientedRoamNodeConstRef node);
-
-// DomainToWorld 保持与规则网格 builder 相同的世界坐标约定
-[[nodiscard]] glm::vec3 DomainToWorld(const DataOrientedRoamState& state, const glm::vec2& uv);
-
-// SampleNormal 从 HeightMap 梯度估计，避免依赖 leaf 邻接关系
-[[nodiscard]] glm::vec3 SampleNormal(const DataOrientedRoamState& state, const glm::vec2& uv);
 } // namespace ParallelRoam::Algorithms::DataOrientedRoam

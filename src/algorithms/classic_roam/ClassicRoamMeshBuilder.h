@@ -422,24 +422,8 @@ private:
     [[nodiscard]] glm::vec3 DebugColorForLeaf(const ClassicRoamNode& node) const;
     [[nodiscard]] float DebugHighlightForLeaf(const ClassicRoamNode& node) const;
 
-    // 返回 base edge 中点相对父三角形线性插值的有符号高度位移
-    [[nodiscard]] float ComputeBaseMidpointDisplacement(const TriangleDomain& domain) const;
-
-    // 使用投影矩阵、drawable 高度和 view-space 深度计算像素误差
+    // 统一组合视锥、保守几何误差和投影长边密度
     [[nodiscard]] float ComputeScreenErrorScore(const ClassicRoamNode& node) const;
-
-    // 使用 nested wedgie thickness 扩张后的世界 AABB 做保守视锥相交测试
-    [[nodiscard]] bool IsNodeVisible(
-        const ClassicRoamNode& node,
-        const glm::vec3& a,
-        const glm::vec3& b,
-        const glm::vec3& c) const;
-
-    // UV 到世界坐标的映射必须和规则网格 baseline 保持一致
-    [[nodiscard]] glm::vec3 DomainToWorld(const glm::vec2& uv) const;
-
-    // 使用 Height Map 邻域高度估算法线，避免 leaf 顶点重复导致硬边过重
-    [[nodiscard]] glm::vec3 SampleNormal(const glm::vec2& uv) const;
 
     [[nodiscard]] bool IsLeaf(const ClassicRoamNode* node) const;
 

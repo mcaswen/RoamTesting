@@ -1,27 +1,21 @@
 #include "algorithms/classic_roam/ClassicRoamMeshBuilder.h"
 
+#include "algorithms/RoamGeometry.h"
 #include "algorithms/RoamNestedWedgie.h"
-#include "algorithms/RoamScreenProjection.h"
+#include "algorithms/RoamScreenError.h"
 #include "algorithms/ITerrainLodAlgorithm.h"
 
 #include <algorithm>
-#include <cmath>
-#include <limits>
 
 namespace ParallelRoam::Algorithms::ClassicRoam
 {
-namespace
-{
-constexpr float ProjectedEdgeWeight = 0.20F;
-} // namespace
-
 TriangleDomainChildren SplitTriangleDomain(const TriangleDomain& domain)
 {
     // A/B 始终是 base edge，C 是 apex；两个 child 继续保持逆时针绕序
-    const glm::vec2 midpoint = (domain.A + domain.B) * 0.5F;
+    const auto children = Roam::SplitTriangleDomain(domain);
     return TriangleDomainChildren{
-        TriangleDomain{domain.C, domain.A, midpoint},
-        TriangleDomain{domain.B, domain.C, midpoint},
+        children.Left,
+        children.Right,
     };
 }
 
@@ -123,16 +117,6 @@ float ClassicRoamMeshBuilder::DebugHighlightForLeaf(const ClassicRoamNode& node)
     return 0.35F;
 }
 
-float ClassicRoamMeshBuilder::ComputeBaseMidpointDisplacement(const TriangleDomain& domain) const
-{
-    const float heightA = _heightMap->SampleBilinear(domain.A.x, domain.A.y);
-    const float heightB = _heightMap->SampleBilinear(domain.B.x, domain.B.y);
-    const glm::vec2 midpoint = (domain.A + domain.B) * 0.5F;
-    const float midpointHeight = _heightMap->SampleBilinear(midpoint.x, midpoint.y);
-    const float interpolatedHeight = (heightA + heightB) * 0.5F;
-    return midpointHeight - interpolatedHeight;
-}
-
 void ClassicRoamMeshBuilder::RebuildVarianceTrees(int finestDepth)
 {
     const TriangleDomain rootA{
@@ -149,7 +133,7 @@ void ClassicRoamMeshBuilder::RebuildVarianceTrees(int finestDepth)
         return SplitTriangleDomain(domain);
     };
     const auto signedDisplacement = [this](const TriangleDomain& domain) {
-        return ComputeBaseMidpointDisplacement(domain);
+        return Roam::ComputeBaseMidpointDisplacement(*_heightMap, domain);
     };
     static_cast<void>(Roam::BuildNestedWedgieTree(
         rootA,
@@ -188,101 +172,21 @@ float ClassicRoamMeshBuilder::VarianceError(std::uint8_t varianceTreeIndex, std:
 
 float ClassicRoamMeshBuilder::ComputeScreenErrorScore(const ClassicRoamNode& node) const
 {
-    const glm::vec3 a = DomainToWorld(node.Domain.A);
-    const glm::vec3 b = DomainToWorld(node.Domain.B);
-    const glm::vec3 c = DomainToWorld(node.Domain.C);
-    if (!IsNodeVisible(node, a, b, c))
-    {
-        // 视锥外节点不主动占用细分预算；forced split 仍可为可见边界维持无裂缝拓扑
-        return 0.0F;
-    }
-
     const float worldError = node.GeometricError * _heightScale;
-    const std::array<glm::vec3, 3U> triangle{a, b, c};
+    const std::array<glm::vec3, 3U> triangle{
+        Roam::DomainToWorld(*_heightMap, node.Domain.A, _terrainSize, _heightScale),
+        Roam::DomainToWorld(*_heightMap, node.Domain.B, _terrainSize, _heightScale),
+        Roam::DomainToWorld(*_heightMap, node.Domain.C, _terrainSize, _heightScale),
+    };
     const std::size_t nearPlaneIndex = static_cast<std::size_t>(TerrainLodFrustumPlane::Near);
-    const float geometricBoundPixels = Roam::ComputeConservativeScreenDistortionPixels({
+    return Roam::ComputeScreenErrorScore({
         triangle,
+        worldError,
         _viewProjection,
         _frustumPlanes[nearPlaneIndex],
-        worldError,
+        _frustumPlanes,
         _drawableWidth,
         _drawableHeight,
     });
-    if (geometricBoundPixels == Roam::ArtificialMaximumScreenError)
-    {
-        // 论文要求 wedgie 触碰或穿越 near plane 时跳过公式并给人工最大 priority。
-        return geometricBoundPixels;
-    }
-
-    // edge-density 是项目额外质量项，不属于论文 geometric distortion bound。
-    const float edgeDensityPixels = Roam::ComputeProjectedLongestEdgePixels(
-        triangle,
-        _viewProjection,
-        _drawableWidth,
-        _drawableHeight) * ProjectedEdgeWeight;
-    return std::max(geometricBoundPixels, edgeDensityPixels);
-}
-
-bool ClassicRoamMeshBuilder::IsNodeVisible(
-    const ClassicRoamNode& node,
-    const glm::vec3& a,
-    const glm::vec3& b,
-    const glm::vec3& c) const
-{
-    glm::vec3 minimum = glm::min(a, glm::min(b, c));
-    glm::vec3 maximum = glm::max(a, glm::max(b, c));
-    // nested wedgie thickness 界定子树累积高度偏差，扩张后测试保持保守
-    const float worldError = node.GeometricError * _heightScale;
-    minimum.y -= worldError;
-    maximum.y += worldError;
-    const glm::vec3 center = (minimum + maximum) * 0.5F;
-    const glm::vec3 extents = (maximum - minimum) * 0.5F;
-
-    for (const glm::vec4& plane : _frustumPlanes)
-    {
-        const glm::vec3 normal{plane};
-        const float centerDistance = glm::dot(normal, center) + plane.w;
-        const float projectedRadius = glm::dot(glm::abs(normal), extents);
-        if (centerDistance + projectedRadius < 0.0F)
-        {
-            // inward plane 的最大 AABB 支撑点仍在外侧，整个节点都不可见
-            return false;
-        }
-    }
-    return true;
-}
-
-glm::vec3 ClassicRoamMeshBuilder::DomainToWorld(const glm::vec2& uv) const
-{
-    // 世界空间仍以地形中心为原点，方便复用相机和光照
-    const float height = _heightMap->SampleBilinear(uv.x, uv.y);
-    return glm::vec3{
-        (uv.x - 0.5F) * _terrainSize,
-        height * _heightScale,
-        (uv.y - 0.5F) * _terrainSize,
-    };
-}
-
-glm::vec3 ClassicRoamMeshBuilder::SampleNormal(const glm::vec2& uv) const
-{
-    // 法线从 Height Map 梯度估计，不依赖相邻 leaf 拓扑
-    const float stepU = 1.0F / static_cast<float>(std::max(_heightMap->Width() - 1, 1));
-    const float stepV = 1.0F / static_cast<float>(std::max(_heightMap->Height() - 1, 1));
-    const float left = _heightMap->SampleBilinear(uv.x - stepU, uv.y);
-    const float right = _heightMap->SampleBilinear(uv.x + stepU, uv.y);
-    const float down = _heightMap->SampleBilinear(uv.x, uv.y - stepV);
-    const float up = _heightMap->SampleBilinear(uv.x, uv.y + stepV);
-
-    const glm::vec3 tangentX{stepU * 2.0F * _terrainSize, (right - left) * _heightScale, 0.0F};
-    const glm::vec3 tangentZ{0.0F, (up - down) * _heightScale, stepV * 2.0F * _terrainSize};
-    const glm::vec3 normal = glm::cross(tangentZ, tangentX);
-
-    // 极端退化时回退到竖直法线，避免 shader 中出现 NaN
-    if (glm::dot(normal, normal) <= std::numeric_limits<float>::epsilon())
-    {
-        return glm::vec3{0.0F, 1.0F, 0.0F};
-    }
-
-    return glm::normalize(normal);
 }
 } // 命名空间 ParallelRoam::Algorithms::ClassicRoam
