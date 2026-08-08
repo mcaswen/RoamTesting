@@ -165,6 +165,24 @@ TerrainLodStats DataOrientedRoamTerrainLodAlgorithm::ToTerrainLodStats(const Dat
     lodStats.CpuMergeCandidateMarkMilliseconds = stats.MergeCandidateMarkMilliseconds;
     lodStats.CpuMergeTopologyMilliseconds =
         std::max(0.0F, stats.MergeMilliseconds - stats.MergeCandidateMarkMilliseconds);
+    lodStats.CpuSplitTopologyChunkBuildMilliseconds = stats.SplitTopologyChunkBuildMilliseconds;
+    lodStats.CpuSplitTopologyQueueInvalidationMilliseconds =
+        stats.SplitTopologyQueueInvalidationMilliseconds;
+    lodStats.CpuSplitTopologyParallelCommitMilliseconds = stats.SplitTopologyParallelCommitMilliseconds;
+    lodStats.CpuSplitTopologyResultMergeMilliseconds = stats.SplitTopologyResultMergeMilliseconds;
+    lodStats.CpuSplitTopologyIndexQueueRefreshMilliseconds =
+        stats.SplitTopologyIndexQueueRefreshMilliseconds;
+    lodStats.CpuSplitTopologySerialConvergenceMilliseconds =
+        stats.SplitTopologySerialConvergenceMilliseconds;
+    lodStats.CpuMergeTopologyChunkBuildMilliseconds = stats.MergeTopologyChunkBuildMilliseconds;
+    lodStats.CpuMergeTopologyQueueInvalidationMilliseconds =
+        stats.MergeTopologyQueueInvalidationMilliseconds;
+    lodStats.CpuMergeTopologyParallelCommitMilliseconds = stats.MergeTopologyParallelCommitMilliseconds;
+    lodStats.CpuMergeTopologyResultMergeMilliseconds = stats.MergeTopologyResultMergeMilliseconds;
+    lodStats.CpuMergeTopologyIndexQueueRefreshMilliseconds =
+        stats.MergeTopologyIndexQueueRefreshMilliseconds;
+    lodStats.CpuMergeTopologySerialConvergenceMilliseconds =
+        stats.MergeTopologySerialConvergenceMilliseconds;
     lodStats.CpuBudgetLeafCollectMilliseconds = stats.BudgetLeafCollectMilliseconds;
     lodStats.CpuErrorEvalMilliseconds = errorEvaluationMilliseconds;
     lodStats.CpuSplitCandidateMarkMilliseconds =

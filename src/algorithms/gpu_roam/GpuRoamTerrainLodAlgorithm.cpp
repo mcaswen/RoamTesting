@@ -71,6 +71,27 @@ TerrainLodStats ToTerrainLodStats(const DataOrientedRoam::DataOrientedRoamStats&
     lodStats.CpuMergeCandidateMarkMilliseconds = stats.MergeCandidateMarkMilliseconds;
     lodStats.CpuMergeTopologyMilliseconds =
         std::max(0.0F, stats.MergeMilliseconds - stats.MergeCandidateMarkMilliseconds);
+    // GPU ROAM-like 先执行 CPU DOD 基线，因此六段 CPU 拓扑计时也必须原样发布。
+    // 这些字段不是 shader 时间；shader 仍由 Gpu*Milliseconds 单独表示。
+    lodStats.CpuSplitTopologyChunkBuildMilliseconds = stats.SplitTopologyChunkBuildMilliseconds;
+    lodStats.CpuSplitTopologyQueueInvalidationMilliseconds =
+        stats.SplitTopologyQueueInvalidationMilliseconds;
+    lodStats.CpuSplitTopologyParallelCommitMilliseconds = stats.SplitTopologyParallelCommitMilliseconds;
+    lodStats.CpuSplitTopologyResultMergeMilliseconds = stats.SplitTopologyResultMergeMilliseconds;
+    lodStats.CpuSplitTopologyIndexQueueRefreshMilliseconds =
+        stats.SplitTopologyIndexQueueRefreshMilliseconds;
+    lodStats.CpuSplitTopologySerialConvergenceMilliseconds =
+        stats.SplitTopologySerialConvergenceMilliseconds;
+    // Merge 六段用于说明混合路径中 CPU 基线的回收成本。
+    lodStats.CpuMergeTopologyChunkBuildMilliseconds = stats.MergeTopologyChunkBuildMilliseconds;
+    lodStats.CpuMergeTopologyQueueInvalidationMilliseconds =
+        stats.MergeTopologyQueueInvalidationMilliseconds;
+    lodStats.CpuMergeTopologyParallelCommitMilliseconds = stats.MergeTopologyParallelCommitMilliseconds;
+    lodStats.CpuMergeTopologyResultMergeMilliseconds = stats.MergeTopologyResultMergeMilliseconds;
+    lodStats.CpuMergeTopologyIndexQueueRefreshMilliseconds =
+        stats.MergeTopologyIndexQueueRefreshMilliseconds;
+    lodStats.CpuMergeTopologySerialConvergenceMilliseconds =
+        stats.MergeTopologySerialConvergenceMilliseconds;
     lodStats.CpuBudgetLeafCollectMilliseconds = stats.BudgetLeafCollectMilliseconds;
     lodStats.CpuErrorEvalMilliseconds = errorEvaluationMilliseconds;
     lodStats.CpuSplitCandidateMarkMilliseconds =

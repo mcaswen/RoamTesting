@@ -144,6 +144,18 @@ struct TerrainRenderStats
     float RoamCpuPrepareMilliseconds{0.0F};
     float RoamCpuMergeCandidateMarkMilliseconds{0.0F};
     float RoamCpuMergeTopologyMilliseconds{0.0F};
+    float RoamCpuSplitTopologyChunkBuildMilliseconds{0.0F};
+    float RoamCpuSplitTopologyQueueInvalidationMilliseconds{0.0F};
+    float RoamCpuSplitTopologyParallelCommitMilliseconds{0.0F};
+    float RoamCpuSplitTopologyResultMergeMilliseconds{0.0F};
+    float RoamCpuSplitTopologyIndexQueueRefreshMilliseconds{0.0F};
+    float RoamCpuSplitTopologySerialConvergenceMilliseconds{0.0F};
+    float RoamCpuMergeTopologyChunkBuildMilliseconds{0.0F};
+    float RoamCpuMergeTopologyQueueInvalidationMilliseconds{0.0F};
+    float RoamCpuMergeTopologyParallelCommitMilliseconds{0.0F};
+    float RoamCpuMergeTopologyResultMergeMilliseconds{0.0F};
+    float RoamCpuMergeTopologyIndexQueueRefreshMilliseconds{0.0F};
+    float RoamCpuMergeTopologySerialConvergenceMilliseconds{0.0F};
     float RoamCpuBudgetLeafCollectMilliseconds{0.0F};
     float RoamCpuErrorEvalMilliseconds{0.0F};
     float RoamCpuSplitCandidateMarkMilliseconds{0.0F};

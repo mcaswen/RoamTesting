@@ -396,6 +396,19 @@ struct TerrainLodStats
     float CpuPrepareMilliseconds{0.0F};
     float CpuMergeCandidateMarkMilliseconds{0.0F};
     float CpuMergeTopologyMilliseconds{0.0F};
+    // DOD 将 split/merge topology 各自拆成六个互斥阶段；其他算法保持为零。
+    float CpuSplitTopologyChunkBuildMilliseconds{0.0F};
+    float CpuSplitTopologyQueueInvalidationMilliseconds{0.0F};
+    float CpuSplitTopologyParallelCommitMilliseconds{0.0F};
+    float CpuSplitTopologyResultMergeMilliseconds{0.0F};
+    float CpuSplitTopologyIndexQueueRefreshMilliseconds{0.0F};
+    float CpuSplitTopologySerialConvergenceMilliseconds{0.0F};
+    float CpuMergeTopologyChunkBuildMilliseconds{0.0F};
+    float CpuMergeTopologyQueueInvalidationMilliseconds{0.0F};
+    float CpuMergeTopologyParallelCommitMilliseconds{0.0F};
+    float CpuMergeTopologyResultMergeMilliseconds{0.0F};
+    float CpuMergeTopologyIndexQueueRefreshMilliseconds{0.0F};
+    float CpuMergeTopologySerialConvergenceMilliseconds{0.0F};
     float CpuBudgetLeafCollectMilliseconds{0.0F};
     float CpuErrorEvalMilliseconds{0.0F};
     float CpuSplitCandidateMarkMilliseconds{0.0F};

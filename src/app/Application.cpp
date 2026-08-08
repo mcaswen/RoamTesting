@@ -517,6 +517,30 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
     debugData.RoamCpuPrepareMilliseconds = terrainStats.RoamCpuPrepareMilliseconds;
     debugData.RoamCpuMergeCandidateMarkMilliseconds = terrainStats.RoamCpuMergeCandidateMarkMilliseconds;
     debugData.RoamCpuMergeTopologyMilliseconds = terrainStats.RoamCpuMergeTopologyMilliseconds;
+    debugData.RoamCpuSplitTopologyChunkBuildMilliseconds =
+        terrainStats.RoamCpuSplitTopologyChunkBuildMilliseconds;
+    debugData.RoamCpuSplitTopologyQueueInvalidationMilliseconds =
+        terrainStats.RoamCpuSplitTopologyQueueInvalidationMilliseconds;
+    debugData.RoamCpuSplitTopologyParallelCommitMilliseconds =
+        terrainStats.RoamCpuSplitTopologyParallelCommitMilliseconds;
+    debugData.RoamCpuSplitTopologyResultMergeMilliseconds =
+        terrainStats.RoamCpuSplitTopologyResultMergeMilliseconds;
+    debugData.RoamCpuSplitTopologyIndexQueueRefreshMilliseconds =
+        terrainStats.RoamCpuSplitTopologyIndexQueueRefreshMilliseconds;
+    debugData.RoamCpuSplitTopologySerialConvergenceMilliseconds =
+        terrainStats.RoamCpuSplitTopologySerialConvergenceMilliseconds;
+    debugData.RoamCpuMergeTopologyChunkBuildMilliseconds =
+        terrainStats.RoamCpuMergeTopologyChunkBuildMilliseconds;
+    debugData.RoamCpuMergeTopologyQueueInvalidationMilliseconds =
+        terrainStats.RoamCpuMergeTopologyQueueInvalidationMilliseconds;
+    debugData.RoamCpuMergeTopologyParallelCommitMilliseconds =
+        terrainStats.RoamCpuMergeTopologyParallelCommitMilliseconds;
+    debugData.RoamCpuMergeTopologyResultMergeMilliseconds =
+        terrainStats.RoamCpuMergeTopologyResultMergeMilliseconds;
+    debugData.RoamCpuMergeTopologyIndexQueueRefreshMilliseconds =
+        terrainStats.RoamCpuMergeTopologyIndexQueueRefreshMilliseconds;
+    debugData.RoamCpuMergeTopologySerialConvergenceMilliseconds =
+        terrainStats.RoamCpuMergeTopologySerialConvergenceMilliseconds;
     debugData.RoamCpuBudgetLeafCollectMilliseconds = terrainStats.RoamCpuBudgetLeafCollectMilliseconds;
     debugData.RoamCpuErrorEvalMilliseconds = terrainStats.RoamCpuErrorEvalMilliseconds;
     debugData.RoamCpuSplitCandidateMarkMilliseconds = terrainStats.RoamCpuSplitCandidateMarkMilliseconds;

@@ -384,10 +384,28 @@ void DrawDetailedPerformanceMetrics(const DebugOverlayData& data)
     DrawMetricFloat("CPU prepare ms", data.RoamCpuPrepareMilliseconds, "%.2f");
     DrawMetricFloat("CPU merge mark ms", data.RoamCpuMergeCandidateMarkMilliseconds, "%.2f");
     DrawMetricFloat("CPU merge topology ms", data.RoamCpuMergeTopologyMilliseconds, "%.2f");
+    if (data.TerrainLodAlgorithm == Algorithms::TerrainLodAlgorithmId::DataOrientedCpuRoam)
+    {
+        DrawMetricFloat("DOD merge 分桶 ms", data.RoamCpuMergeTopologyChunkBuildMilliseconds, "%.2f");
+        DrawMetricFloat("DOD merge 队列失效 ms", data.RoamCpuMergeTopologyQueueInvalidationMilliseconds, "%.2f");
+        DrawMetricFloat("DOD merge 并行提交 ms", data.RoamCpuMergeTopologyParallelCommitMilliseconds, "%.2f");
+        DrawMetricFloat("DOD merge 结果汇总 ms", data.RoamCpuMergeTopologyResultMergeMilliseconds, "%.2f");
+        DrawMetricFloat("DOD merge 索引/队列刷新 ms", data.RoamCpuMergeTopologyIndexQueueRefreshMilliseconds, "%.2f");
+        DrawMetricFloat("DOD merge 串行收敛 ms", data.RoamCpuMergeTopologySerialConvergenceMilliseconds, "%.2f");
+    }
     DrawMetricFloat("CPU budget collect ms", data.RoamCpuBudgetLeafCollectMilliseconds, "%.2f");
     DrawMetricFloat("CPU error eval ms", data.RoamCpuErrorEvalMilliseconds, "%.2f");
     DrawMetricFloat("CPU split scan/mark ms", data.RoamCpuSplitCandidateMarkMilliseconds, "%.2f");
     DrawMetricFloat("CPU split topology ms", data.RoamCpuSplitTopologyMilliseconds, "%.2f");
+    if (data.TerrainLodAlgorithm == Algorithms::TerrainLodAlgorithmId::DataOrientedCpuRoam)
+    {
+        DrawMetricFloat("DOD split 分桶 ms", data.RoamCpuSplitTopologyChunkBuildMilliseconds, "%.2f");
+        DrawMetricFloat("DOD split 队列失效 ms", data.RoamCpuSplitTopologyQueueInvalidationMilliseconds, "%.2f");
+        DrawMetricFloat("DOD split 并行提交 ms", data.RoamCpuSplitTopologyParallelCommitMilliseconds, "%.2f");
+        DrawMetricFloat("DOD split 结果汇总 ms", data.RoamCpuSplitTopologyResultMergeMilliseconds, "%.2f");
+        DrawMetricFloat("DOD split 索引/队列刷新 ms", data.RoamCpuSplitTopologyIndexQueueRefreshMilliseconds, "%.2f");
+        DrawMetricFloat("DOD split 串行收敛 ms", data.RoamCpuSplitTopologySerialConvergenceMilliseconds, "%.2f");
+    }
     DrawMetricFloat("CPU final collect ms", data.RoamCpuFinalLeafCollectMilliseconds, "%.2f");
     DrawMetricFloat("CPU mesh emit ms", data.RoamCpuMeshEmitMilliseconds, "%.2f");
     DrawMetricFloat("CPU finalize ms", data.RoamCpuFinalizeMilliseconds, "%.2f");

@@ -305,6 +305,26 @@ TerrainLodStats ToLodStats(const DataOrientedRoam::DataOrientedRoamStats& stats)
     result.CpuMergeCandidateMarkMilliseconds = stats.MergeCandidateMarkMilliseconds;
     result.CpuMergeTopologyMilliseconds =
         std::max(0.0F, stats.MergeMilliseconds - stats.MergeCandidateMarkMilliseconds);
+    // D3D12 路径同样先运行 CPU DOD 基线；此处只转发 CPU 六段计时。
+    // GPU timestamp 不进入这些字段，避免报告把两条执行链重复相加。
+    result.CpuSplitTopologyChunkBuildMilliseconds = stats.SplitTopologyChunkBuildMilliseconds;
+    result.CpuSplitTopologyQueueInvalidationMilliseconds =
+        stats.SplitTopologyQueueInvalidationMilliseconds;
+    result.CpuSplitTopologyParallelCommitMilliseconds = stats.SplitTopologyParallelCommitMilliseconds;
+    result.CpuSplitTopologyResultMergeMilliseconds = stats.SplitTopologyResultMergeMilliseconds;
+    result.CpuSplitTopologyIndexQueueRefreshMilliseconds =
+        stats.SplitTopologyIndexQueueRefreshMilliseconds;
+    result.CpuSplitTopologySerialConvergenceMilliseconds =
+        stats.SplitTopologySerialConvergenceMilliseconds;
+    result.CpuMergeTopologyChunkBuildMilliseconds = stats.MergeTopologyChunkBuildMilliseconds;
+    result.CpuMergeTopologyQueueInvalidationMilliseconds =
+        stats.MergeTopologyQueueInvalidationMilliseconds;
+    result.CpuMergeTopologyParallelCommitMilliseconds = stats.MergeTopologyParallelCommitMilliseconds;
+    result.CpuMergeTopologyResultMergeMilliseconds = stats.MergeTopologyResultMergeMilliseconds;
+    result.CpuMergeTopologyIndexQueueRefreshMilliseconds =
+        stats.MergeTopologyIndexQueueRefreshMilliseconds;
+    result.CpuMergeTopologySerialConvergenceMilliseconds =
+        stats.MergeTopologySerialConvergenceMilliseconds;
     result.CpuBudgetLeafCollectMilliseconds = stats.BudgetLeafCollectMilliseconds;
     // CPU DOD baseline 已将评分归入 Q_s refresh，独立 error 时间保持为零。
     result.CpuErrorEvalMilliseconds = stats.ErrorEvaluationWorkerCount > 1U

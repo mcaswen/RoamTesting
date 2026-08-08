@@ -982,6 +982,8 @@ std::vector<CommittedSplit> CommitInteriorSplitChunks(
 
     std::vector<TopologyCommitCounters> localCounters(workerCount);
     std::vector<std::vector<CommittedSplit>> localCommittedSplits(workerCount);
+    // 邻域失效与 worker 提交分开计时，避免把主线程队列维护误算为并行收益。
+    Tools::PerformanceTimer queueInvalidationTimer;
     std::vector<DataOrientedRoamNodeIndex> mergeQueueNeighborhood;
     for (const std::vector<DataOrientedRoamSplitCandidate>& chunk : chunks)
     {
@@ -992,7 +994,9 @@ std::vector<CommittedSplit> CommitInteriorSplitChunks(
     }
     NormalizeQueueNeighborhood(mergeQueueNeighborhood);
     InvalidatePersistentMergeQueueNeighborhood(state, mergeQueueNeighborhood);
+    state.Stats.SplitTopologyQueueInvalidationMilliseconds += queueInvalidationTimer.Stop();
 
+    Tools::PerformanceTimer parallelCommitTimer;
     RunDataOrientedRoamWorkers(state, workerCount, [&](std::size_t workerIndex) {
         // 每个 chunk 只会被一个 worker 访问
         for (std::size_t chunkIndex = workerIndex; chunkIndex < chunks.size(); chunkIndex += workerCount)
@@ -1023,7 +1027,10 @@ std::vector<CommittedSplit> CommitInteriorSplitChunks(
             }
         }
     });
+    state.Stats.SplitTopologyParallelCommitMilliseconds += parallelCommitTimer.Stop();
 
+    // worker 已经 join；此后计时均表示主线程的提交结果整理成本。
+    Tools::PerformanceTimer resultMergeTimer;
     std::size_t totalCommittedCount = 0U;
     for (const TopologyCommitCounters& counters : localCounters)
     {
@@ -1037,7 +1044,9 @@ std::vector<CommittedSplit> CommitInteriorSplitChunks(
         // 合并顺序只影响后续同分 sequence，不影响拓扑正确性
         committedSplits.insert(committedSplits.end(), localSplits.begin(), localSplits.end());
     }
+    state.Stats.SplitTopologyResultMergeMilliseconds += resultMergeTimer.Stop();
 
+    Tools::PerformanceTimer indexQueueRefreshTimer;
     for (const CommittedSplit& split : committedSplits)
     {
         // worker 只改 SoA 拓扑；join 后主线程再集中修改两个共享索引 vector。
@@ -1050,6 +1059,7 @@ std::vector<CommittedSplit> CommitInteriorSplitChunks(
     }
     NormalizeQueueNeighborhood(mergeQueueNeighborhood);
     RefreshPersistentMergeQueueNeighborhood(state, mergeQueueNeighborhood);
+    state.Stats.SplitTopologyIndexQueueRefreshMilliseconds += indexQueueRefreshTimer.Stop();
 
     state.Stats.ParallelSplitCommitCount += totalCommittedCount;
     return committedSplits;
@@ -1083,6 +1093,8 @@ std::vector<CommittedMerge> CommitInteriorMergeChunks(
 
     std::vector<TopologyCommitCounters> localCounters(workerCount);
     std::vector<std::vector<CommittedMerge>> localCommittedMerges(workerCount);
+    // Merge 与 Split 使用相同六段边界，报告可以直接横向比较。
+    Tools::PerformanceTimer queueInvalidationTimer;
     std::vector<DataOrientedRoamNodeIndex> mergeQueueNeighborhood;
     for (const std::vector<DataOrientedRoamMergeCandidate>& chunk : chunks)
     {
@@ -1093,7 +1105,9 @@ std::vector<CommittedMerge> CommitInteriorMergeChunks(
     }
     NormalizeQueueNeighborhood(mergeQueueNeighborhood);
     InvalidatePersistentMergeQueueNeighborhood(state, mergeQueueNeighborhood);
+    state.Stats.MergeTopologyQueueInvalidationMilliseconds += queueInvalidationTimer.Stop();
 
+    Tools::PerformanceTimer parallelCommitTimer;
     RunDataOrientedRoamWorkers(state, workerCount, [&](std::size_t workerIndex) {
         // chunk ownership 保证不同 worker 不写同一组 neighbor
         for (std::size_t chunkIndex = workerIndex; chunkIndex < chunks.size(); chunkIndex += workerCount)
@@ -1123,7 +1137,9 @@ std::vector<CommittedMerge> CommitInteriorMergeChunks(
             }
         }
     });
+    state.Stats.MergeTopologyParallelCommitMilliseconds += parallelCommitTimer.Stop();
 
+    Tools::PerformanceTimer resultMergeTimer;
     std::size_t totalCommittedCount = 0U;
     for (const TopologyCommitCounters& counters : localCounters)
     {
@@ -1137,7 +1153,9 @@ std::vector<CommittedMerge> CommitInteriorMergeChunks(
     {
         committedMerges.insert(committedMerges.end(), localMerges.begin(), localMerges.end());
     }
+    state.Stats.MergeTopologyResultMergeMilliseconds += resultMergeTimer.Stop();
 
+    Tools::PerformanceTimer indexQueueRefreshTimer;
     for (const CommittedMerge& merge : committedMerges)
     {
         // Node 一定被合并；BaseNeighbor 只有在完整 diamond merge 时才一起转换。
@@ -1155,6 +1173,7 @@ std::vector<CommittedMerge> CommitInteriorMergeChunks(
     }
     NormalizeQueueNeighborhood(mergeQueueNeighborhood);
     RefreshPersistentMergeQueueNeighborhood(state, mergeQueueNeighborhood);
+    state.Stats.MergeTopologyIndexQueueRefreshMilliseconds += indexQueueRefreshTimer.Stop();
 
     return committedMerges;
 }
@@ -1174,14 +1193,18 @@ void RefineWithSplitQueue(DataOrientedRoamState& state)
         state.Stats.CandidatePeakCount,
         state.ActiveLeafNodes.size() + state.MergeQueue.size());
 
+    Tools::PerformanceTimer chunkBuildTimer;
     std::vector<std::vector<DataOrientedRoamSplitCandidate>> interiorChunks =
         BuildInteriorSplitChunks(state, initialCandidates);
+    state.Stats.SplitTopologyChunkBuildMilliseconds += chunkBuildTimer.Stop();
     CommitInteriorSplitChunks(state, interiorChunks);
 
     const std::size_t maximumIterations = std::max<std::size_t>(
         1024U,
         state.Settings.TriangleBudget * 8U + state.Nodes.size() * 4U);
     std::size_t iteration = 0U;
+    // 并行预提交之后仍需恢复双持久队列的严格优先级和预算语义。
+    Tools::PerformanceTimer serialConvergenceTimer;
     while (iteration++ < maximumIterations)
     {
         DataOrientedRoamNodeIndex mergeNode = TopPersistentMergeQueueNode(state);
@@ -1246,6 +1269,7 @@ void RefineWithSplitQueue(DataOrientedRoamState& state)
         // 约束闭包失败后节点仍属于 Q_s，但本次 Build 不能在 heap 顶部反复重试。
         BlockPersistentSplitQueueNodeForCurrentBuild(state, splitNode);
     }
+    state.Stats.SplitTopologySerialConvergenceMilliseconds += serialConvergenceTimer.Stop();
 }
 
 void MergeWithDiamondQueue(DataOrientedRoamState& state)
@@ -1258,6 +1282,7 @@ void MergeWithDiamondQueue(DataOrientedRoamState& state)
     SnapshotPersistentMergeQueueCandidates(state, state.Settings.MergeThreshold, candidates);
     state.Stats.MergeCandidateCount = candidates.size();
     state.Stats.MergeCandidateMarkMilliseconds = queueRefreshTimer.Stop();
+    Tools::PerformanceTimer chunkBuildTimer;
     std::sort(
         candidates.begin(),
         candidates.end(),
@@ -1267,8 +1292,10 @@ void MergeWithDiamondQueue(DataOrientedRoamState& state)
 
     std::vector<std::vector<DataOrientedRoamMergeCandidate>> interiorChunks =
         BuildInteriorMergeChunks(state, candidates);
+    state.Stats.MergeTopologyChunkBuildMilliseconds += chunkBuildTimer.Stop();
     CommitInteriorMergeChunks(state, interiorChunks);
 
+    Tools::PerformanceTimer serialConvergenceTimer;
     while (TopPersistentMergeQueueScore(state) <= state.Settings.MergeThreshold)
     {
         const DataOrientedRoamNodeIndex node = TopPersistentMergeQueueNode(state);
@@ -1282,6 +1309,7 @@ void MergeWithDiamondQueue(DataOrientedRoamState& state)
             ++state.Stats.RejectedMergeCount;
         }
     }
+    state.Stats.MergeTopologySerialConvergenceMilliseconds += serialConvergenceTimer.Stop();
 
 }
 } // 命名空间 ParallelRoam::Algorithms::DataOrientedRoam

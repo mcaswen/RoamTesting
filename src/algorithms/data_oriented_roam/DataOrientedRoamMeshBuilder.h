@@ -139,6 +139,25 @@ struct DataOrientedRoamStats
     float ActiveLeafCollectMilliseconds{0.0F};
     float SplitCandidateMarkMilliseconds{0.0F};
     float MergeCandidateMarkMilliseconds{0.0F};
+    // 拓扑总时间继续保留；下列六段用于解释 DOD chunk 提交和串行收敛各自的成本。
+    // ChunkBuild 包含候选排序、保守安全性检查和按地形 chunk 分桶。
+    // QueueInvalidation 在 worker 写拓扑前暂时移除可能失效的 Q_m 邻域。
+    // ParallelCommit 只覆盖 worker 真正校验并修改 SoA 拓扑的区间。
+    // ResultMerge 汇总 worker 本地计数器以及成功提交记录。
+    // IndexQueueRefresh 在主线程维护 ActiveLeafNodes、索引位置和局部队列成员。
+    // SerialConvergence 继续消费不能安全并行的边界候选和预算交换。
+    float SplitTopologyChunkBuildMilliseconds{0.0F};
+    float SplitTopologyQueueInvalidationMilliseconds{0.0F};
+    float SplitTopologyParallelCommitMilliseconds{0.0F};
+    float SplitTopologyResultMergeMilliseconds{0.0F};
+    float SplitTopologyIndexQueueRefreshMilliseconds{0.0F};
+    float SplitTopologySerialConvergenceMilliseconds{0.0F};
+    float MergeTopologyChunkBuildMilliseconds{0.0F};
+    float MergeTopologyQueueInvalidationMilliseconds{0.0F};
+    float MergeTopologyParallelCommitMilliseconds{0.0F};
+    float MergeTopologyResultMergeMilliseconds{0.0F};
+    float MergeTopologyIndexQueueRefreshMilliseconds{0.0F};
+    float MergeTopologySerialConvergenceMilliseconds{0.0F};
     float SplitMilliseconds{0.0F};
     float EmitMilliseconds{0.0F};
     float ValidateMilliseconds{0.0F};

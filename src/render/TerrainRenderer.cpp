@@ -510,6 +510,30 @@ TerrainRenderStats TerrainRenderer::Stats() const
     stats.RoamCpuPrepareMilliseconds = _terrainLodStats.CpuPrepareMilliseconds;
     stats.RoamCpuMergeCandidateMarkMilliseconds = _terrainLodStats.CpuMergeCandidateMarkMilliseconds;
     stats.RoamCpuMergeTopologyMilliseconds = _terrainLodStats.CpuMergeTopologyMilliseconds;
+    stats.RoamCpuSplitTopologyChunkBuildMilliseconds =
+        _terrainLodStats.CpuSplitTopologyChunkBuildMilliseconds;
+    stats.RoamCpuSplitTopologyQueueInvalidationMilliseconds =
+        _terrainLodStats.CpuSplitTopologyQueueInvalidationMilliseconds;
+    stats.RoamCpuSplitTopologyParallelCommitMilliseconds =
+        _terrainLodStats.CpuSplitTopologyParallelCommitMilliseconds;
+    stats.RoamCpuSplitTopologyResultMergeMilliseconds =
+        _terrainLodStats.CpuSplitTopologyResultMergeMilliseconds;
+    stats.RoamCpuSplitTopologyIndexQueueRefreshMilliseconds =
+        _terrainLodStats.CpuSplitTopologyIndexQueueRefreshMilliseconds;
+    stats.RoamCpuSplitTopologySerialConvergenceMilliseconds =
+        _terrainLodStats.CpuSplitTopologySerialConvergenceMilliseconds;
+    stats.RoamCpuMergeTopologyChunkBuildMilliseconds =
+        _terrainLodStats.CpuMergeTopologyChunkBuildMilliseconds;
+    stats.RoamCpuMergeTopologyQueueInvalidationMilliseconds =
+        _terrainLodStats.CpuMergeTopologyQueueInvalidationMilliseconds;
+    stats.RoamCpuMergeTopologyParallelCommitMilliseconds =
+        _terrainLodStats.CpuMergeTopologyParallelCommitMilliseconds;
+    stats.RoamCpuMergeTopologyResultMergeMilliseconds =
+        _terrainLodStats.CpuMergeTopologyResultMergeMilliseconds;
+    stats.RoamCpuMergeTopologyIndexQueueRefreshMilliseconds =
+        _terrainLodStats.CpuMergeTopologyIndexQueueRefreshMilliseconds;
+    stats.RoamCpuMergeTopologySerialConvergenceMilliseconds =
+        _terrainLodStats.CpuMergeTopologySerialConvergenceMilliseconds;
     stats.RoamCpuBudgetLeafCollectMilliseconds = _terrainLodStats.CpuBudgetLeafCollectMilliseconds;
     stats.RoamCpuErrorEvalMilliseconds = _terrainLodStats.CpuErrorEvalMilliseconds;
     stats.RoamCpuSplitCandidateMarkMilliseconds = _terrainLodStats.CpuSplitCandidateMarkMilliseconds;

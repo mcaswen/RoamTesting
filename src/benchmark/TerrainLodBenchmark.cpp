@@ -798,6 +798,12 @@ bool WriteCsv(
            "mergeTopologyNonEmptyChunkCount,mergeTopologyCommitWorkerCount,parallelMergeCommitCount,"
            "cpuUpdateMs,cpuPrepareMs,cpuMergeCandidateMarkMs,cpuMergeTopologyMs,"
            "cpuBudgetLeafCollectMs,cpuErrorEvalMs,cpuSplitCandidateMarkMs,cpuSplitTopologyMs,"
+           "cpuSplitTopologyChunkBuildMs,cpuSplitTopologyQueueInvalidationMs,"
+           "cpuSplitTopologyParallelCommitMs,cpuSplitTopologyResultMergeMs,"
+           "cpuSplitTopologyIndexQueueRefreshMs,cpuSplitTopologySerialConvergenceMs,"
+           "cpuMergeTopologyChunkBuildMs,cpuMergeTopologyQueueInvalidationMs,"
+           "cpuMergeTopologyParallelCommitMs,cpuMergeTopologyResultMergeMs,"
+           "cpuMergeTopologyIndexQueueRefreshMs,cpuMergeTopologySerialConvergenceMs,"
            "cpuFinalLeafCollectMs,cpuMeshEmitMs,cpuFinalizeMs,cpuUploadMs,"
            "gpuInitialLeafCompactionMs,gpuErrorEvaluationMs,gpuSplitCandidateMarkingMs,"
            "gpuMergeCandidateMarkingMs,"
@@ -873,6 +879,18 @@ bool WriteCsv(
                 << frame.Stats.CpuErrorEvalMilliseconds << ','
                 << frame.Stats.CpuSplitCandidateMarkMilliseconds << ','
                 << frame.Stats.CpuSplitTopologyMilliseconds << ','
+                << frame.Stats.CpuSplitTopologyChunkBuildMilliseconds << ','
+                << frame.Stats.CpuSplitTopologyQueueInvalidationMilliseconds << ','
+                << frame.Stats.CpuSplitTopologyParallelCommitMilliseconds << ','
+                << frame.Stats.CpuSplitTopologyResultMergeMilliseconds << ','
+                << frame.Stats.CpuSplitTopologyIndexQueueRefreshMilliseconds << ','
+                << frame.Stats.CpuSplitTopologySerialConvergenceMilliseconds << ','
+                << frame.Stats.CpuMergeTopologyChunkBuildMilliseconds << ','
+                << frame.Stats.CpuMergeTopologyQueueInvalidationMilliseconds << ','
+                << frame.Stats.CpuMergeTopologyParallelCommitMilliseconds << ','
+                << frame.Stats.CpuMergeTopologyResultMergeMilliseconds << ','
+                << frame.Stats.CpuMergeTopologyIndexQueueRefreshMilliseconds << ','
+                << frame.Stats.CpuMergeTopologySerialConvergenceMilliseconds << ','
                 << frame.Stats.CpuFinalLeafCollectMilliseconds << ','
                 << frame.Stats.CpuMeshEmitMilliseconds << ','
                 << frame.Stats.CpuFinalizeMilliseconds << ','

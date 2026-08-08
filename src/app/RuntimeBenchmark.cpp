@@ -30,6 +30,18 @@ struct RuntimeBenchmarkSummary
     float AverageCpuPrepareMilliseconds{0.0F};
     float AverageCpuMergeCandidateMarkMilliseconds{0.0F};
     float AverageCpuMergeTopologyMilliseconds{0.0F};
+    float AverageCpuSplitTopologyChunkBuildMilliseconds{0.0F};
+    float AverageCpuSplitTopologyQueueInvalidationMilliseconds{0.0F};
+    float AverageCpuSplitTopologyParallelCommitMilliseconds{0.0F};
+    float AverageCpuSplitTopologyResultMergeMilliseconds{0.0F};
+    float AverageCpuSplitTopologyIndexQueueRefreshMilliseconds{0.0F};
+    float AverageCpuSplitTopologySerialConvergenceMilliseconds{0.0F};
+    float AverageCpuMergeTopologyChunkBuildMilliseconds{0.0F};
+    float AverageCpuMergeTopologyQueueInvalidationMilliseconds{0.0F};
+    float AverageCpuMergeTopologyParallelCommitMilliseconds{0.0F};
+    float AverageCpuMergeTopologyResultMergeMilliseconds{0.0F};
+    float AverageCpuMergeTopologyIndexQueueRefreshMilliseconds{0.0F};
+    float AverageCpuMergeTopologySerialConvergenceMilliseconds{0.0F};
     float AverageCpuBudgetLeafCollectMilliseconds{0.0F};
     float AverageCpuErrorEvalMilliseconds{0.0F};
     float AverageCpuSplitCandidateMarkMilliseconds{0.0F};
@@ -149,6 +161,18 @@ RuntimeBenchmarkSummary SummarizeRuntimeBenchmark(const RuntimeBenchmarkAlgorith
     double totalCpuPrepareMilliseconds = 0.0;
     double totalCpuMergeCandidateMarkMilliseconds = 0.0;
     double totalCpuMergeTopologyMilliseconds = 0.0;
+    double totalCpuSplitTopologyChunkBuildMilliseconds = 0.0;
+    double totalCpuSplitTopologyQueueInvalidationMilliseconds = 0.0;
+    double totalCpuSplitTopologyParallelCommitMilliseconds = 0.0;
+    double totalCpuSplitTopologyResultMergeMilliseconds = 0.0;
+    double totalCpuSplitTopologyIndexQueueRefreshMilliseconds = 0.0;
+    double totalCpuSplitTopologySerialConvergenceMilliseconds = 0.0;
+    double totalCpuMergeTopologyChunkBuildMilliseconds = 0.0;
+    double totalCpuMergeTopologyQueueInvalidationMilliseconds = 0.0;
+    double totalCpuMergeTopologyParallelCommitMilliseconds = 0.0;
+    double totalCpuMergeTopologyResultMergeMilliseconds = 0.0;
+    double totalCpuMergeTopologyIndexQueueRefreshMilliseconds = 0.0;
+    double totalCpuMergeTopologySerialConvergenceMilliseconds = 0.0;
     double totalCpuBudgetLeafCollectMilliseconds = 0.0;
     double totalCpuErrorEvalMilliseconds = 0.0;
     double totalCpuSplitCandidateMarkMilliseconds = 0.0;
@@ -198,6 +222,30 @@ RuntimeBenchmarkSummary SummarizeRuntimeBenchmark(const RuntimeBenchmarkAlgorith
         totalCpuPrepareMilliseconds += stats.RoamCpuPrepareMilliseconds;
         totalCpuMergeCandidateMarkMilliseconds += stats.RoamCpuMergeCandidateMarkMilliseconds;
         totalCpuMergeTopologyMilliseconds += stats.RoamCpuMergeTopologyMilliseconds;
+        totalCpuSplitTopologyChunkBuildMilliseconds +=
+            stats.RoamCpuSplitTopologyChunkBuildMilliseconds;
+        totalCpuSplitTopologyQueueInvalidationMilliseconds +=
+            stats.RoamCpuSplitTopologyQueueInvalidationMilliseconds;
+        totalCpuSplitTopologyParallelCommitMilliseconds +=
+            stats.RoamCpuSplitTopologyParallelCommitMilliseconds;
+        totalCpuSplitTopologyResultMergeMilliseconds +=
+            stats.RoamCpuSplitTopologyResultMergeMilliseconds;
+        totalCpuSplitTopologyIndexQueueRefreshMilliseconds +=
+            stats.RoamCpuSplitTopologyIndexQueueRefreshMilliseconds;
+        totalCpuSplitTopologySerialConvergenceMilliseconds +=
+            stats.RoamCpuSplitTopologySerialConvergenceMilliseconds;
+        totalCpuMergeTopologyChunkBuildMilliseconds +=
+            stats.RoamCpuMergeTopologyChunkBuildMilliseconds;
+        totalCpuMergeTopologyQueueInvalidationMilliseconds +=
+            stats.RoamCpuMergeTopologyQueueInvalidationMilliseconds;
+        totalCpuMergeTopologyParallelCommitMilliseconds +=
+            stats.RoamCpuMergeTopologyParallelCommitMilliseconds;
+        totalCpuMergeTopologyResultMergeMilliseconds +=
+            stats.RoamCpuMergeTopologyResultMergeMilliseconds;
+        totalCpuMergeTopologyIndexQueueRefreshMilliseconds +=
+            stats.RoamCpuMergeTopologyIndexQueueRefreshMilliseconds;
+        totalCpuMergeTopologySerialConvergenceMilliseconds +=
+            stats.RoamCpuMergeTopologySerialConvergenceMilliseconds;
         totalCpuBudgetLeafCollectMilliseconds += stats.RoamCpuBudgetLeafCollectMilliseconds;
         totalCpuErrorEvalMilliseconds += stats.RoamCpuErrorEvalMilliseconds;
         totalCpuSplitCandidateMarkMilliseconds += stats.RoamCpuSplitCandidateMarkMilliseconds;
@@ -265,6 +313,30 @@ RuntimeBenchmarkSummary SummarizeRuntimeBenchmark(const RuntimeBenchmarkAlgorith
         static_cast<float>(totalCpuMergeCandidateMarkMilliseconds / sampleCount);
     summary.AverageCpuMergeTopologyMilliseconds =
         static_cast<float>(totalCpuMergeTopologyMilliseconds / sampleCount);
+    summary.AverageCpuSplitTopologyChunkBuildMilliseconds =
+        static_cast<float>(totalCpuSplitTopologyChunkBuildMilliseconds / sampleCount);
+    summary.AverageCpuSplitTopologyQueueInvalidationMilliseconds =
+        static_cast<float>(totalCpuSplitTopologyQueueInvalidationMilliseconds / sampleCount);
+    summary.AverageCpuSplitTopologyParallelCommitMilliseconds =
+        static_cast<float>(totalCpuSplitTopologyParallelCommitMilliseconds / sampleCount);
+    summary.AverageCpuSplitTopologyResultMergeMilliseconds =
+        static_cast<float>(totalCpuSplitTopologyResultMergeMilliseconds / sampleCount);
+    summary.AverageCpuSplitTopologyIndexQueueRefreshMilliseconds =
+        static_cast<float>(totalCpuSplitTopologyIndexQueueRefreshMilliseconds / sampleCount);
+    summary.AverageCpuSplitTopologySerialConvergenceMilliseconds =
+        static_cast<float>(totalCpuSplitTopologySerialConvergenceMilliseconds / sampleCount);
+    summary.AverageCpuMergeTopologyChunkBuildMilliseconds =
+        static_cast<float>(totalCpuMergeTopologyChunkBuildMilliseconds / sampleCount);
+    summary.AverageCpuMergeTopologyQueueInvalidationMilliseconds =
+        static_cast<float>(totalCpuMergeTopologyQueueInvalidationMilliseconds / sampleCount);
+    summary.AverageCpuMergeTopologyParallelCommitMilliseconds =
+        static_cast<float>(totalCpuMergeTopologyParallelCommitMilliseconds / sampleCount);
+    summary.AverageCpuMergeTopologyResultMergeMilliseconds =
+        static_cast<float>(totalCpuMergeTopologyResultMergeMilliseconds / sampleCount);
+    summary.AverageCpuMergeTopologyIndexQueueRefreshMilliseconds =
+        static_cast<float>(totalCpuMergeTopologyIndexQueueRefreshMilliseconds / sampleCount);
+    summary.AverageCpuMergeTopologySerialConvergenceMilliseconds =
+        static_cast<float>(totalCpuMergeTopologySerialConvergenceMilliseconds / sampleCount);
     summary.AverageCpuBudgetLeafCollectMilliseconds =
         static_cast<float>(totalCpuBudgetLeafCollectMilliseconds / sampleCount);
     summary.AverageCpuErrorEvalMilliseconds = static_cast<float>(totalCpuErrorEvalMilliseconds / sampleCount);
@@ -359,6 +431,12 @@ void WriteDetailedCsv(
         << "cpuUpdateMilliseconds,cpuPrepareMilliseconds,cpuMergeCandidateMarkMilliseconds,"
         << "cpuMergeTopologyMilliseconds,cpuBudgetLeafCollectMilliseconds,cpuErrorEvalMilliseconds,"
         << "cpuSplitCandidateMarkMilliseconds,cpuSplitTopologyMilliseconds,"
+        << "cpuSplitTopologyChunkBuildMilliseconds,cpuSplitTopologyQueueInvalidationMilliseconds,"
+        << "cpuSplitTopologyParallelCommitMilliseconds,cpuSplitTopologyResultMergeMilliseconds,"
+        << "cpuSplitTopologyIndexQueueRefreshMilliseconds,cpuSplitTopologySerialConvergenceMilliseconds,"
+        << "cpuMergeTopologyChunkBuildMilliseconds,cpuMergeTopologyQueueInvalidationMilliseconds,"
+        << "cpuMergeTopologyParallelCommitMilliseconds,cpuMergeTopologyResultMergeMilliseconds,"
+        << "cpuMergeTopologyIndexQueueRefreshMilliseconds,cpuMergeTopologySerialConvergenceMilliseconds,"
         << "cpuFinalLeafCollectMilliseconds,cpuMeshEmitMilliseconds,cpuFinalizeMilliseconds,"
         << "cpuUploadMilliseconds,"
         << "gpuInitialLeafCompactionMilliseconds,gpuErrorEvaluationMilliseconds,"
@@ -429,6 +507,18 @@ void WriteDetailedCsv(
                 << stats.RoamCpuErrorEvalMilliseconds << ','
                 << stats.RoamCpuSplitCandidateMarkMilliseconds << ','
                 << stats.RoamCpuSplitTopologyMilliseconds << ','
+                << stats.RoamCpuSplitTopologyChunkBuildMilliseconds << ','
+                << stats.RoamCpuSplitTopologyQueueInvalidationMilliseconds << ','
+                << stats.RoamCpuSplitTopologyParallelCommitMilliseconds << ','
+                << stats.RoamCpuSplitTopologyResultMergeMilliseconds << ','
+                << stats.RoamCpuSplitTopologyIndexQueueRefreshMilliseconds << ','
+                << stats.RoamCpuSplitTopologySerialConvergenceMilliseconds << ','
+                << stats.RoamCpuMergeTopologyChunkBuildMilliseconds << ','
+                << stats.RoamCpuMergeTopologyQueueInvalidationMilliseconds << ','
+                << stats.RoamCpuMergeTopologyParallelCommitMilliseconds << ','
+                << stats.RoamCpuMergeTopologyResultMergeMilliseconds << ','
+                << stats.RoamCpuMergeTopologyIndexQueueRefreshMilliseconds << ','
+                << stats.RoamCpuMergeTopologySerialConvergenceMilliseconds << ','
                 << stats.RoamCpuFinalLeafCollectMilliseconds << ','
                 << stats.RoamCpuMeshEmitMilliseconds << ','
                 << stats.RoamCpuFinalizeMilliseconds << ','
@@ -635,6 +725,43 @@ void WriteSummaryMarkdown(
                  << " | " << summary.AverageCpuFinalizeMilliseconds
                  << " | " << summary.AverageCpuUploadMilliseconds << " |\n";
     }
+
+    const float dodSplitTopologyDetailSum =
+        dodSummary.AverageCpuSplitTopologyChunkBuildMilliseconds +
+        dodSummary.AverageCpuSplitTopologyQueueInvalidationMilliseconds +
+        dodSummary.AverageCpuSplitTopologyParallelCommitMilliseconds +
+        dodSummary.AverageCpuSplitTopologyResultMergeMilliseconds +
+        dodSummary.AverageCpuSplitTopologyIndexQueueRefreshMilliseconds +
+        dodSummary.AverageCpuSplitTopologySerialConvergenceMilliseconds;
+    const float dodMergeTopologyDetailSum =
+        dodSummary.AverageCpuMergeTopologyChunkBuildMilliseconds +
+        dodSummary.AverageCpuMergeTopologyQueueInvalidationMilliseconds +
+        dodSummary.AverageCpuMergeTopologyParallelCommitMilliseconds +
+        dodSummary.AverageCpuMergeTopologyResultMergeMilliseconds +
+        dodSummary.AverageCpuMergeTopologyIndexQueueRefreshMilliseconds +
+        dodSummary.AverageCpuMergeTopologySerialConvergenceMilliseconds;
+    markdown << "\n### DOD 拓扑六段计时\n\n";
+    markdown << "六段均为互斥执行区间。`六段合计` 与原有 `Topology total` 的差值是函数调用、"
+             << "worker 数决策和少量循环控制等尚未单列的开销。\n\n";
+    markdown << "| 操作 | 候选排序/分桶 | 队列邻域失效 | chunk 并行提交 | worker 结果汇总 | "
+             << "活动叶索引/队列刷新 | 串行收敛 | 六段合计 | Topology total |\n";
+    markdown << "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n";
+    markdown << "| Split | " << dodSummary.AverageCpuSplitTopologyChunkBuildMilliseconds
+             << " | " << dodSummary.AverageCpuSplitTopologyQueueInvalidationMilliseconds
+             << " | " << dodSummary.AverageCpuSplitTopologyParallelCommitMilliseconds
+             << " | " << dodSummary.AverageCpuSplitTopologyResultMergeMilliseconds
+             << " | " << dodSummary.AverageCpuSplitTopologyIndexQueueRefreshMilliseconds
+             << " | " << dodSummary.AverageCpuSplitTopologySerialConvergenceMilliseconds
+             << " | " << dodSplitTopologyDetailSum
+             << " | " << dodSummary.AverageCpuSplitTopologyMilliseconds << " |\n";
+    markdown << "| Merge | " << dodSummary.AverageCpuMergeTopologyChunkBuildMilliseconds
+             << " | " << dodSummary.AverageCpuMergeTopologyQueueInvalidationMilliseconds
+             << " | " << dodSummary.AverageCpuMergeTopologyParallelCommitMilliseconds
+             << " | " << dodSummary.AverageCpuMergeTopologyResultMergeMilliseconds
+             << " | " << dodSummary.AverageCpuMergeTopologyIndexQueueRefreshMilliseconds
+             << " | " << dodSummary.AverageCpuMergeTopologySerialConvergenceMilliseconds
+             << " | " << dodMergeTopologyDetailSum
+             << " | " << dodSummary.AverageCpuMergeTopologyMilliseconds << " |\n";
 
     markdown << "\n### 增量 CPU Mesh 输出\n\n";
     markdown << "`Full rebuilds` 是采样窗口内的全量初始化次数；其余列是逐帧平均值。"
