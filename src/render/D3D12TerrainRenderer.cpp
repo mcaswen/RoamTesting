@@ -185,6 +185,7 @@ bool NeedsMeshRebuild(const TerrainRenderSettings& previous, const TerrainRender
            previous.RoamScreenSpaceSplitThresholdPixels != next.RoamScreenSpaceSplitThresholdPixels ||
            previous.RoamScreenSpaceMergeThresholdPixels != next.RoamScreenSpaceMergeThresholdPixels ||
            previous.RoamTriangleBudget != next.RoamTriangleBudget ||
+           previous.RoamEnableParallelSplit != next.RoamEnableParallelSplit ||
            previous.RoamEnableLocalConstraints != next.RoamEnableLocalConstraints ||
            previous.RoamEnableTopologyValidation != next.RoamEnableTopologyValidation;
 }
@@ -1037,6 +1038,7 @@ TerrainRenderStats TerrainRenderer::Stats() const
     stats.RoamScreenSpaceSplitThresholdPixels = _settings.RoamScreenSpaceSplitThresholdPixels;
     stats.RoamScreenSpaceMergeThresholdPixels = _settings.RoamScreenSpaceMergeThresholdPixels;
     stats.RoamTriangleBudgetSetting = _settings.RoamTriangleBudget;
+    stats.RoamParallelSplitEnabled = _settings.RoamEnableParallelSplit;
     stats.RoamNodeCount = _terrainLodStats.ActiveNodeCount;
     stats.RoamOriginalTriangleCount = _terrainLodStats.OriginalTriangleCount;
     stats.RoamSubdividedTriangleCount = _terrainLodStats.SubdividedTriangleCount;
@@ -1218,6 +1220,7 @@ bool TerrainRenderer::RebuildTerrainLod(const RenderContext& context, std::strin
     lodSettings.ScreenSpaceSplitThresholdPixels = _settings.RoamScreenSpaceSplitThresholdPixels;
     lodSettings.ScreenSpaceMergeThresholdPixels = _settings.RoamScreenSpaceMergeThresholdPixels;
     lodSettings.TriangleBudget = _settings.RoamTriangleBudget;
+    lodSettings.EnableParallelSplit = _settings.RoamEnableParallelSplit;
     lodSettings.EnableLocalConstraints = _settings.RoamEnableLocalConstraints;
     lodSettings.EnableTopologyValidation = _settings.RoamEnableTopologyValidation;
     Algorithms::TerrainLodBuildInput buildInput{};

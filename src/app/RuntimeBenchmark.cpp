@@ -421,7 +421,7 @@ void WriteDetailedCsv(
     csv << "algorithm,buildConfiguration,graphicsBackend,graphicsAdapter,graphicsVersion,vSyncEnabled,"
         << "heightMapPath,heightMapWidth,heightMapHeight,terrainSize,heightScale,"
         << "maxDepthSetting,screenSpaceSplitThresholdPixels,"
-        << "screenSpaceMergeThresholdPixels,triangleBudget,"
+        << "screenSpaceMergeThresholdPixels,triangleBudget,dodParallelSplitEnabled,"
         << "timeSeconds,cameraX,cameraY,cameraZ,frameMilliseconds,triangles,nodes,"
         << "activeSplits,splits,forcedSplits,merges,candidatePeak,persistentSplitQueueSize,persistentMergeQueueSize,"
         << "queueCrossoverCount,queueMembershipUpdateCount,cpuMeshFullRebuildCount,"
@@ -472,6 +472,7 @@ void WriteDetailedCsv(
                 << stats.RoamScreenSpaceSplitThresholdPixels << ','
                 << stats.RoamScreenSpaceMergeThresholdPixels << ','
                 << stats.RoamTriangleBudgetSetting << ','
+                << (stats.RoamParallelSplitEnabled ? "true" : "false") << ','
                 << sample.TimeSeconds << ','
                 << sample.CameraPosition.x << ','
                 << sample.CameraPosition.y << ','
@@ -596,7 +597,9 @@ void WriteSummaryMarkdown(
         markdown << "- ROAM 屏幕空间 split/merge 阈值："
                  << stats->RoamScreenSpaceSplitThresholdPixels << " px / "
                  << stats->RoamScreenSpaceMergeThresholdPixels << " px\n";
-        markdown << "- ROAM triangle budget：" << stats->RoamTriangleBudgetSetting << "\n\n";
+        markdown << "- ROAM triangle budget：" << stats->RoamTriangleBudgetSetting << "\n";
+        markdown << "- DOD 并行 Split："
+                 << (stats->RoamParallelSplitEnabled ? "开启" : "关闭") << "\n\n";
     }
     markdown << "## 总体结果\n\n";
     markdown << "| Algorithm | Samples | Avg Frame ms | Max Frame ms | Avg LOD ms | Max LOD ms | "

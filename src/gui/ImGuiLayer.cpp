@@ -783,6 +783,10 @@ bool ImGuiLayer::DrawDebugOverlay(const DebugOverlayData& data, TerrainPanelStat
     DrawSectionHeader("ROAM");
     changed |= ImGui::Checkbox("局部约束", &terrainState.RoamEnableLocalConstraints);
     changed |= ImGui::Checkbox("拓扑验证", &terrainState.RoamEnableTopologyValidation);
+    if (terrainState.TerrainLodAlgorithm == Algorithms::TerrainLodAlgorithmId::DataOrientedCpuRoam)
+    {
+        changed |= ImGui::Checkbox("并行 Split", &terrainState.RoamEnableParallelSplit);
+    }
     changed |= ImGui::SliderInt("最大深度", &terrainState.RoamMaxDepth, 1, 20);
     if (terrainState.TerrainLodAlgorithm == Algorithms::TerrainLodAlgorithmId::ClassicCpuRoam ||
         terrainState.TerrainLodAlgorithm == Algorithms::TerrainLodAlgorithmId::DataOrientedCpuRoam ||

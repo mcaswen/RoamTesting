@@ -50,6 +50,8 @@ struct DataOrientedRoamSettings
     // 0 自动选择 worker 数 1 保持串行评估
     // Q_s/Q_m priority refresh 也复用这个并行宽度设置
     std::size_t ErrorEvaluationWorkerCount{0};
+    // 关闭时跳过 Split 候选快照、分桶和 chunk 提交，直接消费实时 Q_s。
+    bool EnableParallelSplit{true};
     bool EnableLocalConstraints{true};
     bool EnableTopologyValidation{false};
 };

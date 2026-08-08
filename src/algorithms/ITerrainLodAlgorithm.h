@@ -76,6 +76,8 @@ struct TerrainLodSettings
     float ScreenSpaceMergeThresholdPixels{2.0F};
     // 三种 ROAM 路径共享活动 leaf triangle 硬上限。
     std::size_t TriangleBudget{20000U};
+    // 仅供 DOD 选择是否执行 chunk 并行 Split 预提交；评分并行不受影响。
+    bool EnableParallelSplit{true};
     bool EnableLocalConstraints{true};
     bool EnableTopologyValidation{false};
 };

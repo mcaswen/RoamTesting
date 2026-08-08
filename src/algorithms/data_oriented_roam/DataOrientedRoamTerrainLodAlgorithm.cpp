@@ -103,6 +103,7 @@ DataOrientedRoamSettings DataOrientedRoamTerrainLodAlgorithm::ToDataOrientedSett
     dataSettings.TriangleBudget = settings.TriangleBudget;
     // worker 数保持 DOD 内部策略  避免扩大统一参数面
     dataSettings.ErrorEvaluationWorkerCount = 0U;
+    dataSettings.EnableParallelSplit = settings.EnableParallelSplit;
     dataSettings.EnableLocalConstraints = settings.EnableLocalConstraints;
     dataSettings.EnableTopologyValidation = settings.EnableTopologyValidation;
     return dataSettings;

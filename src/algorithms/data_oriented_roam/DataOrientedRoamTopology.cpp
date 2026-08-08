@@ -1185,19 +1185,28 @@ void RefineWithSplitQueue(DataOrientedRoamState& state)
         DataOrientedRoamTopologyChunkGridSize * DataOrientedRoamTopologyChunkGridSize);
     Tools::PerformanceTimer candidateMarkTimer;
     RefreshPersistentSplitQueuePriorities(state);
-    std::vector<DataOrientedRoamSplitCandidate> initialCandidates;
-    SnapshotPersistentSplitQueueCandidates(state, initialCandidates);
-    state.Stats.SplitCandidateCount = initialCandidates.size();
-    state.Stats.SplitCandidateMarkMilliseconds = candidateMarkTimer.Stop();
+    if (state.Settings.EnableParallelSplit)
+    {
+        std::vector<DataOrientedRoamSplitCandidate> initialCandidates;
+        SnapshotPersistentSplitQueueCandidates(state, initialCandidates);
+        state.Stats.SplitCandidateCount = initialCandidates.size();
+        state.Stats.SplitCandidateMarkMilliseconds = candidateMarkTimer.Stop();
+
+        Tools::PerformanceTimer chunkBuildTimer;
+        std::vector<std::vector<DataOrientedRoamSplitCandidate>> interiorChunks =
+            BuildInteriorSplitChunks(state, initialCandidates);
+        state.Stats.SplitTopologyChunkBuildMilliseconds += chunkBuildTimer.Stop();
+        CommitInteriorSplitChunks(state, interiorChunks);
+    }
+    else
+    {
+        // 串行逻辑分支只保留并行 Q_s 评分和建堆，不复制、排序或分桶候选。
+        state.Stats.SplitCandidateCount = 0U;
+        state.Stats.SplitCandidateMarkMilliseconds = candidateMarkTimer.Stop();
+    }
     state.Stats.CandidatePeakCount = std::max(
         state.Stats.CandidatePeakCount,
         state.ActiveLeafNodes.size() + state.MergeQueue.size());
-
-    Tools::PerformanceTimer chunkBuildTimer;
-    std::vector<std::vector<DataOrientedRoamSplitCandidate>> interiorChunks =
-        BuildInteriorSplitChunks(state, initialCandidates);
-    state.Stats.SplitTopologyChunkBuildMilliseconds += chunkBuildTimer.Stop();
-    CommitInteriorSplitChunks(state, interiorChunks);
 
     const std::size_t maximumIterations = std::max<std::size_t>(
         1024U,

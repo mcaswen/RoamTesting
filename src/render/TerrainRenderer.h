@@ -63,6 +63,8 @@ struct TerrainRenderSettings
     float RoamScreenSpaceSplitThresholdPixels{4.0F};
     float RoamScreenSpaceMergeThresholdPixels{2.0F};
     std::size_t RoamTriangleBudget{20000U};
+    // DOD 专属实验开关；其他算法忽略该字段。
+    bool RoamEnableParallelSplit{true};
 
     // 局部约束只做 baseNeighbor forced split，不执行全局 repair
     bool RoamEnableLocalConstraints{true};
@@ -103,6 +105,7 @@ struct TerrainRenderStats
     float RoamScreenSpaceSplitThresholdPixels{0.0F};
     float RoamScreenSpaceMergeThresholdPixels{0.0F};
     std::size_t RoamTriangleBudgetSetting{0U};
+    bool RoamParallelSplitEnabled{true};
     std::size_t RoamNodeCount{0};
 
     // 三类活动叶用于区分保留、细分和本帧重建的几何来源

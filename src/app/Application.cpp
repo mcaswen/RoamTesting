@@ -107,6 +107,7 @@ Render::TerrainRenderSettings ToRenderSettings(const Gui::TerrainPanelState& sta
     settings.RoamScreenSpaceSplitThresholdPixels = state.RoamScreenSpaceSplitThresholdPixels;
     settings.RoamScreenSpaceMergeThresholdPixels = state.RoamScreenSpaceMergeThresholdPixels;
     settings.RoamTriangleBudget = static_cast<std::size_t>(std::max(state.RoamTriangleBudget, 2));
+    settings.RoamEnableParallelSplit = state.RoamEnableParallelSplit;
     settings.RoamEnableLocalConstraints = state.RoamEnableLocalConstraints;
     settings.RoamEnableTopologyValidation = state.RoamEnableTopologyValidation;
     settings.LightDirection = state.LightDirection;

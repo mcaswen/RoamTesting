@@ -1,6 +1,6 @@
 # ROAM 论文与当前 Classic CPU ROAM 实现详细对比
 
-> 对比基线：2026-08-03 当前源码，包含 nested wedgie 公式 (1)、保守屏幕投影公式 (2)/(3)、持久双优先队列与增量 indexed Mesh 输出。
+> 对比基线：2026-08-08 当前源码，包含 nested wedgie 公式 (1)、保守屏幕投影公式 (2)/(3)、持久双优先队列与 Classic 增量 indexed Mesh 输出；Classic/DOD 对比已按当前 SoA、持久活动集合、条件并行拓扑提交和 CPU mesh 输出路径重新核对。
 > 论文依据：项目内转写文档 [`roaming_terrain_paper.md`](roaming_terrain_paper.md)，未重新解析 PDF。  
 > 实现范围：以 `src/algorithms/classic_roam` 为核心，并追踪统一 LOD 接口、渲染上传和 Benchmark。  
 > 本文讨论的是“论文描述的 ROAM”与“项目当前名为 Classic CPU ROAM 的实现”之间的对应关系，不把同名类型或函数自动视为论文机制的完整复现。
@@ -116,7 +116,7 @@
 | 论文阶段 | 当前对应 | 状态 | 核心差异 |
 | --- | --- | --- | --- |
 | view-independent nested bounds 预计算 | `Roam::BuildNestedWedgieSubtree()` + `RebuildVarianceTrees()` | 已实现 | 最细层为 0；父层严格执行公式 (1)，深度上限为 20 |
-| incremental frustum update | `IsNodeVisible()` | 部分实现/变体 | 每次评分重新做 6-plane AABB 测试，没有跨帧标签和 subtree early-out 状态 |
+| incremental frustum update | `Roam::IsTriangleVisible()` | 部分实现/变体 | 每次评分重新做 6-plane AABB 测试，没有跨帧标签和 subtree early-out 状态 |
 | deferred priority recomputation | `RefreshPersistentQueuePriorities()` | 未实现 | membership 持久，但每次 Build 仍刷新两个队列全部成员的 priority |
 | persistent dual queues | intrusive indexed `Q_s/Q_m` | 已实现 | membership 跨帧保留，拓扑变更只局部维护；每帧 key refresh 仍为 O(N) |
 | forced split | `SplitNode()` | 已实现 | 使用递归传播和预算 token 预留；统计口径以单个 parent split 计数 |
@@ -134,7 +134,7 @@
 
 ### 4.2 当前实现
 
-[`TriangleDomain`](../../src/algorithms/classic_roam/ClassicRoamMeshBuilder.h#L25) 保存三个 UV 顶点，其中 `A/B` 是 base edge，`C` 是 apex。[`SplitTriangleDomain()`](../../src/algorithms/classic_roam/ClassicRoamScoring.cpp#L15) 计算 `midpoint=(A+B)/2` 并生成：
+[`TriangleDomain`](../../src/algorithms/classic_roam/ClassicRoamMeshBuilder.h#L25) 保存三个 UV 顶点，其中 `A/B` 是 base edge，`C` 是 apex。Classic 与 DOD 的薄封装最终都调用共享 [`Roam::SplitTriangleDomain()`](../../src/algorithms/RoamGeometry.h#L29)，计算 `midpoint=(A+B)/2` 并生成：
 
 ```text
 Left  = { C, A, midpoint }
@@ -214,7 +214,7 @@ thickness = max(leftThickness, rightThickness)
           + abs(ComputeBaseMidpointDisplacement(domain))
 ```
 
-[`ComputeBaseMidpointDisplacement()`](../../src/algorithms/classic_roam/ClassicRoamScoring.cpp#L125) 只计算当前 base edge `A-B` 的 midpoint 实际高度与端点线性插值之差，并保留符号；共享递推负责取绝对值。Classic 与 DOD 共用 `RoamNestedWedgie.h`，GPU ROAM-like 则从 DOD topology snapshot 直接读取传播后的 `GeometricError`。
+共享 [`Roam::ComputeBaseMidpointDisplacement()`](../../src/algorithms/RoamGeometry.h#L40) 只计算当前 base edge `A-B` 的 midpoint 实际高度与端点线性插值之差，并保留符号；共享递推负责取绝对值。Classic 与 DOD 共用 `RoamGeometry.h` 和 `RoamNestedWedgie.h`，GPU ROAM-like 则从 DOD topology snapshot 直接读取传播后的 `GeometricError`。
 
 ### 6.3 与论文一致的部分
 
@@ -256,7 +256,7 @@ thickness = max(leftThickness, rightThickness)
 
 ### 7.2 当前公式
 
-共享 [`ComputeConservativeScreenDistortionPixels()`](../../src/algorithms/RoamScreenProjection.h) 令世界高度 thickness vector 为 `(0, worldError, 0, 0)`，并把 triangle corner 与该方向乘 `ViewProjection`。对每个角点，以齐次裁剪坐标的 `clip.x/clip.y/clip.w` 作为已包含 projection scale 的 `(p,q,r)`，以 `thicknessClip.x/thicknessClip.y/thicknessClip.w` 作为 `(a,b,c)`。实现分别求：
+共享 [`Roam::ComputeScreenErrorScore()`](../../src/algorithms/RoamScreenError.h#L30) 先调用 [`Roam::IsTriangleVisible()`](../../src/algorithms/RoamGeometry.h#L105)，再调用 [`ComputeConservativeScreenDistortionPixels()`](../../src/algorithms/RoamScreenProjection.h)。后者令世界高度 thickness vector 为 `(0, worldError, 0, 0)`，并把 triangle corner 与该方向乘 `ViewProjection`。对每个角点，以齐次裁剪坐标的 `clip.x/clip.y/clip.w` 作为已包含 projection scale 的 `(p,q,r)`，以 `thicknessClip.x/thicknessClip.y/thicknessClip.w` 作为 `(a,b,c)`。实现分别求：
 
 ```text
 denominator_i = r_i^2 - c^2
@@ -267,7 +267,7 @@ geometricBoundPixels = 2 * sqrt(max_i(numerator_i^2))
                          / min_i(denominator_i)
 ```
 
-这就是论文公式 (3) 的角点保守组合，只是提前把 projection 和 NDC-to-pixel scale 合入变量。齐次写法同时覆盖 perspective、orthographic、D3D/OpenGL depth convention 和非方形 drawable。若 wedgie 触碰或穿过 inward near plane，返回 `std::numeric_limits<float>::max()`；完全位于视锥外的节点仍先由 `IsNodeVisible()` 得 0。
+这就是论文公式 (3) 的角点保守组合，只是提前把 projection 和 NDC-to-pixel scale 合入变量。齐次写法同时覆盖 perspective、orthographic、D3D/OpenGL depth convention 和非方形 drawable。若 wedgie 触碰或穿过 inward near plane，返回 `std::numeric_limits<float>::max()`；完全位于视锥外的节点仍先由 `Roam::IsTriangleVisible()` 得 0。
 
 项目仍保留独立的平坦区域密度项：三个 triangle corner 直接投影到 pixel 后求最长边 `projectedLongestEdgePixels`，最终：
 
@@ -289,7 +289,7 @@ score = max(geometricBoundPixels, edgeDensityPixels)
 1. `edgeDensityPixels` 是额外 tessellation density，不是地形近似误差上界。
 2. score 没有归一化到论文示例的 `[0,1]`；项目直接使用 pixel threshold，这不影响公式的保守性。
 3. geometric component 对应论文局部 bound，但最终 `max(geometricBound, edgeDensity)`、visibility 置零和 hysteresis 共同作用后的 queue priority 尚无 parent/child 单调性测试。
-4. CPU 共享实现与两个 GPU shader 目前是三份等价表达，不是由同一 shader include 生成；后续修改必须用跨后端数值测试防止漂移。
+4. Classic 与 DOD 的 CPU 几何、可见性和最终 score 已分别收敛到 `RoamGeometry.h`、`RoamScreenProjection.h` 和 `RoamScreenError.h`。OpenGL 的两个 compute pass 也共用 `GpuRoamShaderCommon.h`；D3D12 HLSL 仍保留独立等价表达，因此跨 CPU/GLSL/HLSL 的数值一致性仍需测试保护。
 
 ### 7.5 判定
 
@@ -453,7 +453,7 @@ score < MergeThreshold  -> coarse
 
 ### 13.2 当前机制
 
-[`IsNodeVisible()`](../../src/algorithms/classic_roam/ClassicRoamScoring.cpp#L244) 用 triangle 三个顶点的 world AABB，并在 Y 方向按 `GeometricError*HeightScale` 扩张，然后逐一测试六个 frustum planes。不可见时 [`ComputeScreenErrorScore()`](../../src/algorithms/classic_roam/ClassicRoamScoring.cpp#L213) 返回 0。
+[`Roam::IsTriangleVisible()`](../../src/algorithms/RoamGeometry.h#L105) 用 triangle 三个顶点的 world AABB，并在 Y 方向按 `GeometricError*HeightScale` 扩张，然后逐一测试六个 frustum planes。不可见时 [`Roam::ComputeScreenErrorScore()`](../../src/algorithms/RoamScreenError.h#L30) 返回 0；Classic 和 DOD 的各自 wrapper 都调用这条共享路径。
 
 这带来两种效果：
 
@@ -588,7 +588,7 @@ AABB 的 Y 扩张使用公式 (1) 的 nested thickness，已经消除旧 `max(lo
 | 最小 `Delta N` topology changes | 无证明 | 未实现 | 否 |
 | Direct target triangle count | hard `TriangleBudget` | 部分实现/变体 | 只保证上限，不保证精确目标或最优分配 |
 | Error tolerance | Split/Merge pixel thresholds | 部分实现/变体 | 是启发式 tolerance，不是 guaranteed bound |
-| Frustum-aware priority | `IsNodeVisible()` 返回 0 score | 已实现 | 功能上成立 |
+| Frustum-aware priority | `Roam::IsTriangleVisible()` 返回 false 后 score 为 0 | 已实现 | 功能上成立 |
 | Incremental frustum labels | 无 | 未实现 | 否 |
 | Draw culling outside frustum | Mesh 保留全部 active leaves | 未实现 | 否 |
 | Priority deferral lists | 无 | 未实现 | 否 |
@@ -716,7 +716,7 @@ FinalPriority = max(...)
 
 ### 20.5 已完成的现代增量输出与剩余验证
 
-论文在 1997 年硬件上选择 triangle strips。项目现在实现的是现代 indexed 等价路径：每个 active leaf 拥有 dense stable slot，split/merge 记录 edit，emit 阶段只重写 dirty slots，renderer 只上传 dirty ranges。D3D12 还为交换链每个 frame slot 保留 pending ranges，避免轮转时漏更新。
+论文在 1997 年硬件上选择 triangle strips。Classic 当前实现的是现代 indexed 等价路径：每个活动叶三角形拥有 dense stable slot，split/merge 记录 edit，emit 阶段只重写 dirty slots，renderer 只上传 dirty ranges。D3D12 还为交换链每个 frame slot 保留 pending ranges，避免轮转时漏更新。DOD 普通 CPU `Build()` 尚未复用这套增量 mesh 槽位；它直接遍历 `ActiveLeafNodes` 完整写出本帧 CPU mesh，而供 GPU adapter 使用的 `UpdateTopology()` 可以完全跳过 CPU emit。
 
 已通过 `incremental-emit` 回归验证：相同视点连续三次 Build 时，首帧全量初始化，第二帧只清除一次 Rebuilt 调试属性，第三帧 `updated triangles=0`、`dirty ranges=0`、全部 leaf 复用。
 
@@ -799,50 +799,138 @@ FinalPriority = max(...)
 ### 24.1 源码可直接确认
 
 - nested wedgie rebuild 是完整深度递归，复杂度与完整预计算 bintree 节点数成正比；
-- 每次 Build 仍刷新持久 `Q_s/Q_m` 的全部现有 keys；
-- budget 和最终 leaf view 分别直接读取 `Q_s.size()` 与 dense Mesh slot owners，不再递归收集；
-- active split paths 再递归一次 internal topology；
-- mesh emit 只为 dirty slots 重采样 3 个 vertices，连续 slots 合并为 ranges；
-- CPU mesh 通过 borrowed packet 发布，OpenGL/D3D12 只上传 ranges；首次、reset 或 buffer 扩容全量上传；
-- candidate heaps 带来 `push/pop` 的对数因子；
-- score 在扫描、合法性检查和 candidate pop 处可能重复计算。
+- Classic 与 DOD 每次 Build 都会刷新持久 `Q_s/Q_m` 的全部现有视点相关分数，并以一次自底向上建堆恢复顺序；持久的是队列成员，不是跨相机状态继续有效的分数；
+- Classic 串行刷新两个队列；DOD 对至少 256 项的队列评分使用持久线程池并行写入互不重叠的 `ScreenErrors` 或 merge queue entry，自动模式最多使用 8 个 worker；
+- DOD 的 split/merge 候选快照直接复用已缓存的 `ScreenError`/`Score`，不再为候选收集重复评分；真正提交 merge 前仍会重算所选 parent 或 diamond 双方分数，作用是确认并发或前序拓扑修改后候选仍然合法；
+- Classic 的 budget 与最终活动叶视图分别直接读取 `_splitQueue.size()` 和 `_meshSlotOwners`；DOD 直接读取 `ActiveLeafNodes.size()` 和 `ActiveLeafNodes`。两条默认路径都不再为输出递归收集活动叶三角形；
+- 两者仍会递归遍历 active internal topology 以重建跨帧迟滞使用的 split paths；
+- Classic mesh emit 只为 dirty slots 重采样 3 个 vertices，连续 slots 合并为 ranges，并通过 borrowed packet 让 OpenGL/D3D12 局部上传；首次、reset 或 buffer 扩容才全量上传；
+- DOD 普通 CPU `Build()` 每帧把全部 `ActiveLeafNodes` 写成 3 顶点/3 索引的完整 mesh；至少 256 个活动叶三角形时 emit 可并行，自动模式最多 8 个 worker；`UpdateTopology()` 则不生成 CPU mesh；
+- DOD 只对满足同一 8x8 terrain chunk 写入约束的 interior 候选并发提交；split 至少 32 个、merge 至少 160 个且至少分布在两个非空 chunk 才启用并行，forced split、首次分配 child 和跨 chunk 候选回退到串行路径；
+- 两套 indexed heap 的局部插入、删除和恢复都带有对数因子，全量 priority refresh 后的建堆为线性复杂度。
 
 ### 24.2 基于结构的推断
 
-固定相机且 topology 不变化时，Mesh emit/upload 已可降为 0，但 queue key refresh 与 active split path 遍历仍是 `O(N)`，所以整次 Build 还不能呈现论文“几乎无变化时成本接近零”的完整优势。
+固定相机且 topology 不变化时，Classic 的 mesh emit/upload 可降为 0，但 queue key refresh 与 active split path 遍历仍是 `O(N)`；DOD 还会完整写出 CPU mesh，除非走只更新拓扑的 `UpdateTopology()`。因此两者的整次 CPU `Build()` 都不能呈现论文“几乎无变化时成本接近零”的完整优势，且当前 Classic 与 DOD 的总耗时还混入了不同的 mesh 输出策略。
 
-裸指针 node 在堆上分散，merge/split/validation traversal 的 cache locality 通常弱于连续 SoA/DOD；但实际最大瓶颈需要 profiler 确认，不能只凭结构断言。
+Classic 裸指针 node 在堆上分散，拓扑访问更容易出现 cache miss；DOD 的同字段批量访问连续，但一个完整拓扑事务仍需跨 `Domains`、child、neighbor、flag 等多组数组，并不等于所有访问都连续。DOD 的候选快照、排序、分 chunk、邻域排序去重和线程同步也会形成额外固定成本，因此小批量阶段可能慢于 Classic 的直接串行指针修改。
 
 ### 24.3 需要 profiler 才能确认
 
-- 当前场景究竟由 error scoring、heap 操作、pointer chasing、height sampling、mesh allocation 还是 upload 主导；
-- vertex cache 去重的 CPU 成本能否抵消 upload 节省；
-- node pool 高水位对长时间运行的真实内存压力。
+- 当前场景究竟由 score 刷新、heap 操作、指针/索引追踪、候选分块、线程同步、HeightMap 采样、mesh 分配还是 upload 主导；
+- DOD 在多少活动节点和候选数量下，SoA 与并行收益能够覆盖快照、排序和 chunk 提交成本；
+- Classic 增量 mesh 对稳定视点的收益，与 DOD 完整并行 emit 在大变化帧的收益交叉点；
+- 两套只增不缩的历史节点池高水位对长时间运行的真实内存压力。
 
 ## 25. 对 Classic 与 DOD 比较口径的影响
 
-当前研究问题采用“对象式串行 Classic 工程基线 vs DOD 与 GPU 优化版本”的口径，不再宣称前者是论文逐项复刻。差异仍拆成算法语义和现代 CPU 优化两类：
+当前研究问题采用“对象式串行 Classic 工程基线 vs DOD 与 GPU 优化版本”的口径，不再把比较简化为“单核对多核”，也不宣称 Classic 是论文源码的逐项复刻。当前两套 CPU 实现已经共享大部分 LOD 语义，因此需要先把共同算法合同、真正的数据导向优势和只在某一版本中完成的工程优化分开。
 
-### 25.1 Classic ROAM 算法语义
+### 25.1 两套实现共享的算法合同
 
-- nested error bounds；
-- conservative screen priority；
-- forced split/diamond merge；
-- persistent dual queues；
-- hard budget 与 split/merge 迟滞；
-- topology 与 indexed Mesh 增量更新。
+以下能力不能记作 DOD 相对 Classic 的独有收益，因为当前两套实现都具备：
 
-### 25.2 DOD/现代 CPU 优化
+- 两个根三角形组成根 diamond，并使用相同的 base-edge 二分规则；
+- 共享 [`Roam::SplitTriangleDomain()`](../../src/algorithms/RoamGeometry.h#L29)、[`Roam::BuildNestedWedgieSubtree()`](../../src/algorithms/RoamNestedWedgie.h#L60) 和 [`Roam::ComputeScreenErrorScore()`](../../src/algorithms/RoamScreenError.h#L30)，因此几何误差、视锥判断、像素投影和 edge-density 项使用同一 CPU 实现；
+- 相同的 `MaxDepth`、split/merge thresholds、Triangle Budget、局部约束和拓扑验证入口；
+- recursive forced split、邻接重连、diamond merge 和同一 Build 内的向上级联合并；
+- 持久 `Q_s/Q_m`、局部队列成员维护、hard-budget merge-first crossover 和跨帧迟滞；
+- merge 后保留历史 child，后续重新 split 时复用已有节点；
+- 默认热路径不再从两个 roots 递归收集活动叶三角形；递归收集只保留给 validator 交叉检查；
+- 相同的公共 `TerrainLodRenderPacket`、统计结构和 benchmark 参数口径。
 
-- index 代替裸指针；
-- SoA/连续数组；
-- active leaf 稳定集合；
-- pass fusion；
-- chunk 并行；
-- 批量 candidate mark 与 topology commit；
-- 更可控的容量、内存访问和 worker 调度。
+所以在相同输入和设置下，Classic 与 DOD 应首先被视为**同一套 ROAM 质量合同的两种 CPU 数据组织和执行策略**。若活动叶三角形数量或拓扑结果不同，应优先检查实现一致性，而不是把差异解释为 DOD 本身的性能优化。
 
-Classic、DOD 和 GPU 继续共享当前 pixel score、hysteresis、hard budget 和相机输入。报告比较真实阶段成本、三角形数量、拓扑错误和画质，不再设置 `ClassicPaperRoam` 或 `DODPaperSemantics` 模式。结论应写成“Classic 工程基线与 DOD/GPU 优化版本对比”，并明确哪些收益来自数据布局、并行、阶段融合、局部拓扑维护或增量 Mesh 输出。
+### 25.2 数据布局与生命周期
+
+| 对比项 | Classic | DOD | 实际影响 |
+| --- | --- | --- | --- |
+| node ownership | [`_nodes`](../../src/algorithms/classic_roam/ClassicRoamMeshBuilder.h#L440) 是 `vector<unique_ptr<ClassicRoamNode>>` | [`DataOrientedRoamNodePool`](../../src/algorithms/data_oriented_roam/DataOrientedRoamState.h#L141) 由多组 `vector` 组成 | Classic node 独立堆分配；DOD 同字段连续 |
+| 拓扑引用 | `ClassicRoamNode*` 裸指针 | `uint32_t` node index | Classic 直接解引用；DOD 不受 vector 扩容地址变化影响，并便于批量索引处理 |
+| 字段布局 | domain、child、neighbor、误差和状态集中在一个对象 | `Domains/Parents/Children/Neighbors/Errors/Flags` 分离为 SoA | DOD 的窄 pass 可只触及需要的数组；完整拓扑事务仍会跨多数组访问 |
+| 可读访问 | 直接访问 node 字段 | `DataOrientedRoamNodeRef/ConstRef` proxy 引用 SoA 字段 | DOD 保持对象式代码可读性，但 proxy 不改变底层数据布局 |
+| 活动叶三角形 | 独立 `Q_s` 保存活动叶；`_meshSlotOwners` 保存输出稠密视图 | [`ActiveLeafNodes`](../../src/algorithms/data_oriented_roam/DataOrientedRoamState.h#L228) 同时是活动叶集合和 `Q_s` heap | DOD 少维护一份活动叶 vector，但其顺序是 heap 顺序，不是稳定渲染顺序 |
+| 活动 internal 节点 | 没有独立集合，拓扑由 pointers 与 `IsSplit/Active` 表达 | `ActiveInternalNodes` 加反向位置表 | DOD 不必扫描包含历史节点的整个 node pool 来发现当前 internal 集合 |
+| merge queue | node 内保存 heap index、representative 和 partner 指针 | 独立 position/representative/partner 数组 | 两者语义相同；DOD 的反向关系连续存储 |
+| 历史节点 | merge 后 child 对象继续存活，reset 才清空 | merge 后 child index 继续保留，reset 才清空 | 两者内存都更接近历史高水位，而不是当前活动拓扑大小 |
+| 预分配 | node 首次创建时逐个堆分配；mesh arrays 按 Triangle Budget reserve | [`ReserveNodePool()`](../../src/algorithms/data_oriented_roam/DataOrientedRoamState.cpp#L376) 同时 reserve SoA、活动集合和队列反向表 | DOD 减少首次深入细分时多数组反复扩容；index 语义不依赖地址稳定 |
+| 线程池 | 无，固定串行 | builder 持有 [`DataOrientedRoamThreadPool`](../../src/algorithms/data_oriented_roam/DataOrientedRoamThreadPool.cpp#L7)，state 借用指针 | DOD builder move 后必须重绑 `ThreadPool`；该裸指针不是拓扑 ownership |
+
+### 25.3 一帧执行链的真实差异
+
+| 阶段 | Classic | DOD |
+| --- | --- | --- |
+| Build 入口 | [`ClassicRoamMeshBuilder::Build()`](../../src/algorithms/classic_roam/ClassicRoamMeshBuilder.cpp#L16) 返回 builder 持有的 mesh 引用 | [`DataOrientedRoamMeshBuilder::BuildInternal()`](../../src/algorithms/data_oriented_roam/DataOrientedRoamMeshBuilder.cpp#L77) 返回本帧 `TerrainMeshData`；`UpdateTopology()` 可关闭 CPU emit |
+| priority refresh | [`RefreshPersistentQueuePriorities()`](../../src/algorithms/classic_roam/ClassicRoamQueues.cpp#L447) 串行刷新 `Q_s/Q_m` | [`RefreshPersistentSplitQueuePriorities()`](../../src/algorithms/data_oriented_roam/DataOrientedRoamQueues.cpp#L414) 与 [`RefreshPersistentMergeQueuePriorities()`](../../src/algorithms/data_oriented_roam/DataOrientedRoamQueues.cpp#L575) 可按连续区间并行 |
+| merge 调度 | [`OptimizeWithPersistentDualQueues()`](../../src/algorithms/classic_roam/ClassicRoamQueues.cpp#L466) 在一个循环内统一处理阈值 merge、split 和预算 crossover | [`MergeWithDiamondQueue()`](../../src/algorithms/data_oriented_roam/DataOrientedRoamTopology.cpp#L1251) 先批量处理低分 merge；[`RefineWithSplitQueue()`](../../src/algorithms/data_oriented_roam/DataOrientedRoamTopology.cpp#L1163) 再处理 split，并在预算不足时继续消费实时 `Q_m` crossover |
+| 候选收集 | 直接读取 heap 顶部，不创建全量提交快照 | split/merge 都从缓存 score 生成候选快照；merge 快照排序，split 快照按优先级分 chunk |
+| 拓扑提交 | 串行执行完整 forced-split closure 或 diamond merge | 满足安全条件的 interior 候选先 chunk 并行提交；首次 child 分配、forced split、跨 chunk 和不安全候选仍由实时 heap 串行提交 |
+| 活动叶视图 | `_meshSlotOwners` | `ActiveLeafNodes` | 两者都避免默认输出前递归 collect |
+| CPU mesh emit | [`ApplyIncrementalMeshUpdates()`](../../src/algorithms/classic_roam/ClassicRoamMeshEmit.cpp#L89) 只重写持久 `_meshData` 的 dirty slots | [`EmitLeafTriangles()`](../../src/algorithms/data_oriented_roam/DataOrientedRoamMeshEmit.cpp#L121) 对本次 `BuildInternal()` 的局部 `meshData` resize 后完整写出全部活动叶三角形，可分段并行 |
+| renderer 交付 | `BorrowedCpuMesh`、generation、dirty ranges，支持局部 buffer upload | `CpuMesh` 按值放入 packet，当前没有 dirty ranges | Classic 当前输出链更增量；DOD 当前输出链更适合大批量顺序写入 |
+| 帧末状态 | 递归收集 active split paths；mesh slots 和 queues 跨帧保留 | 同样递归收集 active split paths；活动索引、queues 和 node pool 跨帧保留 | 两者都尚未消除这次 internal topology 遍历 |
+
+### 25.4 真正属于 DOD 的优势
+
+1. **同字段连续存储。** `ScreenErrors`、child indices、neighbor indices、depths 和 flags 分离后，批量 score refresh、统计或验证可以只读取所需数组。Classic 无法在不改变对象布局的情况下获得相同的数据流。
+2. **索引化活动集合。** `ActiveLeafNodes/ActiveInternalNodes` 与反向位置表使激活、失活和任意位置删除不依赖对象地址，也不必扫描历史 node pool。`ActiveLeafNodes` 同时作为 `Q_s` heap，进一步避免重复活动叶容器。
+3. **批量评分。** 队列不少于 256 项时，DOD 把 score refresh 切成互不重叠的连续区间，通过持久线程池并行执行；Classic 固定单 worker。
+4. **受约束的多核拓扑提交。** DOD 用固定 8x8 chunk 作为写入 ownership。只有全部受影响节点都位于同一 chunk、不会首次分配 child、也不需要 forced split 的候选才能并行，保证 worker 不写同一邻接区域。
+5. **按实测门槛启用并行。** split interior 候选少于 32、merge interior 候选少于 160，或只有一个非空 chunk 时保持串行，避免小任务调度成本反噬。这里没有限制算法候选总数，只决定提交方式。
+6. **持久 worker。** `DataOrientedRoamThreadPool` 只在需要时扩容并跨帧复用，避免每个 pass 重复创建线程。
+7. **成组预分配和容量统计。** `ReserveNodePool()` 依据 `MaxDepth` 与 Triangle Budget 为全部 SoA、活动集合和队列反向表预留容量；stats 还能报告节点存储字节数和数组数量，便于验证内存布局成本。
+8. **大 mesh 顺序并行写入。** 活动叶三角形不少于 256 时，DOD 预设最终数组大小，让各 worker 写独占三角形区间，不需要锁或原子追加。
+
+这些优势的核心不是“把 Classic 同一段代码开更多线程”，而是先把状态改成可索引、可分区、可批量访问的数据，再对满足无写冲突条件的工作启用并行。
+
+### 25.5 只在当前 DOD 中实现，但不等于 DOD 必然要求
+
+以下做法是当前 DOD 版本的工程选择，也可以移植回对象式实现，因此不能全部归因于 SoA 理论：
+
+- 持久线程池和 256 项评分/emit 门槛；
+- 8x8 terrain chunk、split 32/merge 160 的并行提交门槛；
+- split/merge 候选快照、排序和分 chunk；
+- `ActiveInternalNodes` 的显式维护；
+- 先运行独立 merge pass，再运行 split/crossover pass 的调度顺序；
+- topology-only 的 `UpdateTopology()` 入口。
+
+反过来，下面这些机制当前 Classic 已有或做得更完整，不能写成 DOD 优势：
+
+- 持久双优先队列、局部 membership 更新、hard-budget crossover；
+- nested wedgie、保守像素优先级、视锥感知和迟滞；
+- forced split 与 diamond merge；
+- 活动叶三角形无需递归收集；
+- **增量 CPU mesh 槽位、dirty ranges、borrowed mesh 和局部 GPU buffer upload**。DOD 普通 CPU 路径目前仍完整 emit。
+
+Classic 还具有较低的固定调度成本：它不生成全量候选快照，不排序 split 候选，不分 chunk，也不进行 worker 同步。活动规模较小、拓扑变化稀疏或并行安全候选比例低时，Classic 某些阶段快于 DOD 是合理结果，不能据此否定 DOD 数据布局；同样，也不能仅凭 SoA 名称预判 DOD 必然更快。
+
+### 25.6 公平 Benchmark 应怎样拆
+
+对比报告至少应分别观察：
+
+| 观察项 | 要回答的问题 |
+| --- | --- |
+| `prepare` | variance rebuild、pool reserve 或 reset 是否混入稳态帧 |
+| `merge candidate mark` | 当前字段覆盖 `Q_m` 全量 score refresh、heapify 和候选快照；排序与分 chunk 尚计入后续 merge 总时间 |
+| `merge topology` | 当前派生字段还包含候选排序和 chunk 构建；分析时要再结合候选数、非空 chunk 数、并行提交数和串行 boundary 回退 |
+| `split candidate mark` | 当前字段覆盖 `Q_s` score refresh、heapify 和候选快照；不能把它笼统称为“误差评估” |
+| `split topology` | 当前字段包含 split 候选排序/分 chunk、forced closure、预算 crossover、并行 interior split 和串行回退 |
+| `mesh emit` | Classic dirty-slot 增量写入与 DOD 全量并行写入的不同策略 |
+| `finalize` | split path 递归、统计聚合和 packet 准备成本 |
+| worker/chunk 统计 | 并行路径是否真的启动，候选是否足够多且分布到多个安全 chunk |
+
+应同时保留 DOD 单 worker 诊断结果，用来区分“布局/批处理收益”和“多核收益”；但产品对比仍应使用 Classic 串行基线与 DOD 自动 worker 的完整配置。总 CPU 时间比较必须注明 Classic 使用增量 mesh、DOD 使用完整 CPU emit；若只研究拓扑优化，应单独比较 split/merge 阶段，不能把不同输出策略的成本混为 DOD 数据布局结论。
+
+### 25.7 当前共同边界
+
+- 两者都每帧刷新所有现有 `Q_s/Q_m` 分数，复杂度仍有 `O(N+M)` 下界；
+- 两者都在帧末递归收集 active split paths；
+- 两者都保留历史 child，节点存储随运行期间拓扑高水位增长；
+- DOD 并行 split 只覆盖已经拥有可复用 children、无需 forced closure 的 interior 候选，首次向更深层细分仍主要依赖串行路径；
+- DOD chunk 提交前后的候选快照、排序、邻域排序去重和 join 是真实成本，不应隐藏在笼统的 `split/merge` 总时间里；
+- Classic 的增量 mesh 与 DOD 的完整 mesh 目前不是同一输出算法，端到端差异不能全部归因于 node layout。
+
+最终报告应写成“Classic 对象式串行基线与 DOD 数据导向优化版本对比”，并明确收益究竟来自 SoA、索引化活动集合、并行 score refresh、chunk 拓扑提交、完整并行 emit，还是来自某一版本独有的增量 mesh。Classic、DOD 和 GPU 继续共享当前 pixel score、hysteresis、hard budget 和相机输入，不再设置额外的论文严格模式。
 
 ## 26. 文件与符号索引
 
@@ -851,13 +939,24 @@ Classic、DOD 和 GPU 继续共享当前 pixel score、hysteresis、hard budget 
 | [`docs/source_analysis/roaming_terrain_paper.md`](roaming_terrain_paper.md) | §4-§7 | 论文拓扑、双队列、误差和性能增强依据 |
 | [`ClassicRoamMeshBuilder.h`](../../src/algorithms/classic_roam/ClassicRoamMeshBuilder.h) | `TriangleDomain`, `ClassicRoamNode`, settings/stats | Classic 核心状态和合同 |
 | [`ClassicRoamMeshBuilder.cpp`](../../src/algorithms/classic_roam/ClassicRoamMeshBuilder.cpp) | `ClassicRoamMeshBuilder::Build` | 当前每次 Build 的真实 pass 顺序 |
+| [`RoamGeometry.h`](../../src/algorithms/RoamGeometry.h) | `SplitTriangleDomain`, `ComputeBaseMidpointDisplacement`, `SampleTerrainWorld`, `IsTriangleVisible` | Classic/DOD 共用几何、HeightMap 采样和视锥逻辑 |
+| [`RoamScreenError.h`](../../src/algorithms/RoamScreenError.h) | `ComputeScreenErrorScore` | Classic/DOD 共用最终候选优先级分数 |
 | [`RoamScreenProjection.h`](../../src/algorithms/RoamScreenProjection.h) | `ComputeConservativeScreenDistortionPixels`, `ComputeProjectedLongestEdgePixels` | 公式 (2)/(3)、near crossing 与独立 edge-density 投影 |
 | [`ClassicRoamState.cpp`](../../src/algorithms/classic_roam/ClassicRoamState.cpp) | `AddNode`, `ResetTopology`, leaf/path collect | 根 diamond、node ownership、持久 topology |
-| [`ClassicRoamScoring.cpp`](../../src/algorithms/classic_roam/ClassicRoamScoring.cpp) | base displacement、score、frustum | 当前误差公式和 view weighting |
-| [`ClassicRoamTopology.cpp`](../../src/algorithms/classic_roam/ClassicRoamTopology.cpp) | split queue, merge queue, forced split, diamond merge | 动态 topology 更新 |
+| [`ClassicRoamScoring.cpp`](../../src/algorithms/classic_roam/ClassicRoamScoring.cpp) | Classic domain wrapper、variance tree 接入、score wrapper | 把 Classic state 映射到共享几何和评分函数 |
+| [`ClassicRoamQueues.cpp`](../../src/algorithms/classic_roam/ClassicRoamQueues.cpp) | `RefreshPersistentQueuePriorities`, `OptimizeWithPersistentDualQueues` | Classic 持久 `Q_s/Q_m` 和串行 crossover |
+| [`ClassicRoamTopology.cpp`](../../src/algorithms/classic_roam/ClassicRoamTopology.cpp) | `SplitNode`, `CanMergeNode`, `MergeNodeOrDiamond` | forced split、neighbor relink 和 diamond merge |
 | [`ClassicRoamMeshEmit.cpp`](../../src/algorithms/classic_roam/ClassicRoamMeshEmit.cpp) | edit replay、slot replace/compact、`WriteMeshLeaf`、range finalize | 增量 CPU indexed Mesh |
 | [`ClassicRoamValidation.cpp`](../../src/algorithms/classic_roam/ClassicRoamValidation.cpp) | `ValidateTopology` | T-junction、邻接和树不变量诊断 |
 | [`ClassicRoamTerrainLodAlgorithm.cpp`](../../src/algorithms/classic_roam/ClassicRoamTerrainLodAlgorithm.cpp) | adapter, stats mapping | 接入统一算法接口和 Benchmark |
+| [`DataOrientedRoamState.h`](../../src/algorithms/data_oriented_roam/DataOrientedRoamState.h) | `DataOrientedRoamNodePool`, `ActiveLeafNodes`, `ActiveInternalNodes` | DOD SoA、活动集合、反向位置和持久队列状态 |
+| [`DataOrientedRoamMeshBuilder.cpp`](../../src/algorithms/data_oriented_roam/DataOrientedRoamMeshBuilder.cpp) | `BuildInternal`, `UpdateTopology` | DOD 的 merge/split/emit 顺序和 topology-only 入口 |
+| [`DataOrientedRoamQueues.cpp`](../../src/algorithms/data_oriented_roam/DataOrientedRoamQueues.cpp) | priority refresh、持久 `Q_s/Q_m`、候选快照 | DOD 批量评分、heap 维护和缓存 score 复用 |
+| [`DataOrientedRoamTopology.cpp`](../../src/algorithms/data_oriented_roam/DataOrientedRoamTopology.cpp) | `CommitInteriorSplitChunks`, `CommitInteriorMergeChunks`, `RefineWithSplitQueue`, `MergeWithDiamondQueue` | DOD chunk 分类、条件并行提交和串行回退 |
+| [`DataOrientedRoamMeshEmit.cpp`](../../src/algorithms/data_oriented_roam/DataOrientedRoamMeshEmit.cpp) | `EmitLeafTriangles` | DOD 完整 CPU mesh 的分段并行写入 |
+| [`DataOrientedRoamThreadPool.cpp`](../../src/algorithms/data_oriented_roam/DataOrientedRoamThreadPool.cpp) | `ParallelFor`, `WorkerLoop` | DOD 跨帧复用 worker 的任务执行器 |
+| [`DataOrientedRoamTerrainLodAlgorithm.cpp`](../../src/algorithms/data_oriented_roam/DataOrientedRoamTerrainLodAlgorithm.cpp) | adapter, stats mapping | DOD 接入统一 CPU mesh 和 Benchmark 统计 |
+| [`GpuRoamShaderCommon.h`](../../src/algorithms/gpu_roam/GpuRoamShaderCommon.h) | `GpuRoamScoreCommonGlsl` | OpenGL 两个 compute pass 共用的 GPU ROAM-like score 逻辑 |
 | [`ITerrainLodAlgorithm.h`](../../src/algorithms/ITerrainLodAlgorithm.h) | settings, view input, stats, render packet | 三种 ROAM 路径的共享质量和统计口径 |
 | [`TerrainRenderer.cpp`](../../src/render/TerrainRenderer.cpp) | `BuildRenderData` 消费、`UploadMeshData` | OpenGL CPU Mesh full/range 上传 |
 | [`D3D12TerrainRenderer.cpp`](../../src/render/D3D12TerrainRenderer.cpp) | `UploadMeshData`、`UploadMeshForFrame` | D3D12 per-frame pending full/range 上传 |

@@ -787,6 +787,7 @@ bool WriteCsv(
     csv << "profile,algorithm,frameIndex,timeSeconds,cameraName,cameraX,cameraY,cameraZ,"
            "heightMapWidth,heightMapHeight,terrainSize,heightScale,maxDepth,"
            "screenSpaceSplitThresholdPixels,screenSpaceMergeThresholdPixels,triangleBudget,"
+           "dodParallelSplitEnabled,"
            "activeTriangleCount,activeNodeCount,splitCount,forcedSplitCount,mergeCount,candidatePeakCount,"
            "persistentSplitQueueSize,persistentMergeQueueSize,queueCrossoverCount,queueMembershipUpdateCount,"
            "cpuMeshFullRebuildCount,cpuMeshUpdatedTriangleCount,cpuMeshReusedTriangleCount,cpuMeshDirtyRangeCount,"
@@ -840,6 +841,7 @@ bool WriteCsv(
                 << scenario.Settings.ScreenSpaceSplitThresholdPixels << ','
                 << scenario.Settings.ScreenSpaceMergeThresholdPixels << ','
                 << scenario.Settings.TriangleBudget << ','
+                << (scenario.Settings.EnableParallelSplit ? "true" : "false") << ','
                 << frame.TriangleCount << ','
                 << frame.Stats.ActiveNodeCount << ','
                 << frame.Stats.SplitCount << ','
