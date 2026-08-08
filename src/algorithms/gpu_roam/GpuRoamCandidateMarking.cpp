@@ -1,16 +1,18 @@
 #include "algorithms/gpu_roam/GpuRoamCandidateMarking.h"
 
 #include "algorithms/gpu_roam/GpuRoamComputeSupport.h"
+#include "algorithms/gpu_roam/GpuRoamShaderCommon.h"
 
 #include <glad/gl.h>
 
 #include <algorithm>
+#include <string>
 
 namespace ParallelRoam::Algorithms::GpuRoam
 {
 namespace
 {
-constexpr const char* CandidateMarkingComputeSource = R"(
+const std::string CandidateMarkingComputeSource = std::string{R"glsl(
 #version 430 core
 // 同一 dispatch 同时扫描 active leaf 和完整 node pool
 // invocation 数量取两个范围的最大值
@@ -83,164 +85,9 @@ uniform uint uDrawableWidth;
 uniform uint uDrawableHeight;
 uniform uint uCandidateKind;
 
-// 与 error pass 保持完全相同，避免 split 和 merge 使用不同评分函数
-const float projectedEdgeWeight = 0.20;
-const float artificialMaximumScreenError = 3.402823466e+38;
-const float projectionEpsilon = 1.0e-7;
-
-float sampleHeight(vec2 uv)
-{
-    // 显式采用 CPU HeightMap::SampleBilinear 的 uv * (size - 1) 约定。
-    // candidate 对 internal parent 重新评分，不能只复用 leaf error 数组。
-    ivec2 size = textureSize(uHeightMap, 0);
-    // clamp 后的端点恰好落到纹素 0 和 size - 1。
-    vec2 pixel = clamp(uv, vec2(0.0), vec2(1.0)) * vec2(max(size - ivec2(1), ivec2(0)));
-    ivec2 p0 = ivec2(floor(pixel));
-    ivec2 p1 = min(p0 + ivec2(1), size - ivec2(1));
-    vec2 weight = pixel - vec2(p0);
-    // 显式插值确保 OpenGL 与 D3D12 的评分输入一致。
-    float h00 = texelFetch(uHeightMap, p0, 0).r;
-    float h10 = texelFetch(uHeightMap, ivec2(p1.x, p0.y), 0).r;
-    float h01 = texelFetch(uHeightMap, ivec2(p0.x, p1.y), 0).r;
-    float h11 = texelFetch(uHeightMap, p1, 0).r;
-    return mix(mix(h00, h10, weight.x), mix(h01, h11, weight.x), weight.y);
-}
-
-vec3 domainToWorld(vec2 uv)
-{
-    // CPU 只上传 domain，世界空间位置始终由当前高度图求值
-    return vec3(
-        (uv.x - 0.5) * uTerrainSize,
-        sampleHeight(uv) * uHeightScale,
-        (uv.y - 0.5) * uTerrainSize);
-}
-
-bool isNodeVisible(NodeRecord node, vec3 a, vec3 b, vec3 c)
-{
-    // merge parent 和 split leaf 使用完全相同的保守可见性判断。
-    vec3 minimumPoint = min(a, min(b, c));
-    vec3 maximumPoint = max(a, max(b, c));
-    float worldError = node.domainCAndErrors.z * uHeightScale;
-    // nested wedgie thickness 扩张包围盒，避免子树高度偏差被误剔除。
-    minimumPoint.y -= worldError;
-    maximumPoint.y += worldError;
-    vec3 center = (minimumPoint + maximumPoint) * 0.5;
-    vec3 extents = (maximumPoint - minimumPoint) * 0.5;
-    for (uint planeIndex = 0u; planeIndex < 6u; ++planeIndex)
-    {
-        // projectedRadius 是 AABB 在当前平面法线上的半径。
-        vec4 plane = uFrustumPlanes[planeIndex];
-        float centerDistance = dot(plane.xyz, center) + plane.w;
-        float projectedRadius = dot(abs(plane.xyz), extents);
-        if (centerDistance + projectedRadius < 0.0)
-        {
-            return false;
-        }
-    }
-    return true;
-}
-
-bool wedgieIntersectsNearPlane(float worldError, vec3 a, vec3 b, vec3 c)
-{
-    // 固定索引 4 对应 CPU 构建的 inward near plane。
-    vec4 nearPlane = uFrustumPlanes[4];
-    // thickness 沿世界 Y 轴，abs(normal.y) 给出平面距离半径。
-    float thicknessRadius = abs(nearPlane.y) * worldError;
-    return dot(nearPlane.xyz, a) + nearPlane.w <= thicknessRadius ||
-        dot(nearPlane.xyz, b) + nearPlane.w <= thicknessRadius ||
-        dot(nearPlane.xyz, c) + nearPlane.w <= thicknessRadius;
-}
-
-float conservativeScreenDistortion(float worldError, vec3 a, vec3 b, vec3 c)
-{
-    if (wedgieIntersectsNearPlane(worldError, a, b, c))
-    {
-        return artificialMaximumScreenError;
-    }
-
-    // 以 w=0 变换方向，避免 view translation 污染 thickness。
-    vec4 thicknessClip = uViewProjection * vec4(0.0, worldError, 0.0, 0.0);
-    vec3 vertices[3] = vec3[3](a, b, c);
-    float halfWidth = float(max(uDrawableWidth, 1u)) * 0.5;
-    float halfHeight = float(max(uDrawableHeight, 1u)) * 0.5;
-    float minimumDenominator = artificialMaximumScreenError;
-    float maximumNumeratorSquared = 0.0;
-    for (uint vertexIndex = 0u; vertexIndex < 3u; ++vertexIndex)
-    {
-        vec4 clip = uViewProjection * vec4(vertices[vertexIndex], 1.0);
-        // 齐次 clip.w 形式把透视、正交和 API 深度约定统一到公式 (3)。
-        float denominator = clip.w * clip.w - thicknessClip.w * thicknessClip.w;
-        if (isnan(denominator) || isinf(denominator) || denominator <= projectionEpsilon)
-        {
-            return artificialMaximumScreenError;
-        }
-        // X/Y 分别使用 drawable 宽高，结果直接以 pixel 为单位。
-        float horizontal = halfWidth * (thicknessClip.x * clip.w - thicknessClip.w * clip.x);
-        float vertical = halfHeight * (thicknessClip.y * clip.w - thicknessClip.w * clip.y);
-        float numeratorSquared = horizontal * horizontal + vertical * vertical;
-        if (isnan(numeratorSquared) || isinf(numeratorSquared))
-        {
-            return artificialMaximumScreenError;
-        }
-        // 分开组合角点极值，避免 center depth 对粗三角形近端的低估。
-        minimumDenominator = min(minimumDenominator, denominator);
-        maximumNumeratorSquared = max(maximumNumeratorSquared, numeratorSquared);
-    }
-    return 2.0 * sqrt(maximumNumeratorSquared) / minimumDenominator;
-}
-
-float projectedLongestEdge(vec3 a, vec3 b, vec3 c)
-{
-    // edge-density 与 geometric bound 独立，只共享最终 max priority。
-    vec3 vertices[3] = vec3[3](a, b, c);
-    vec2 screenPositions[3];
-    vec2 halfDrawable = vec2(
-        float(max(uDrawableWidth, 1u)) * 0.5,
-        float(max(uDrawableHeight, 1u)) * 0.5);
-    for (uint vertexIndex = 0u; vertexIndex < 3u; ++vertexIndex)
-    {
-        vec4 clip = uViewProjection * vec4(vertices[vertexIndex], 1.0);
-        if (isnan(clip.w) || isinf(clip.w) || abs(clip.w) <= projectionEpsilon)
-        {
-            return artificialMaximumScreenError;
-        }
-        screenPositions[vertexIndex] = halfDrawable * clip.xy / clip.w;
-        if (any(isnan(screenPositions[vertexIndex])) || any(isinf(screenPositions[vertexIndex])))
-        {
-            return artificialMaximumScreenError;
-        }
-    }
-    return max(
-        max(length(screenPositions[0] - screenPositions[1]), length(screenPositions[1] - screenPositions[2])),
-        length(screenPositions[2] - screenPositions[0]));
-}
-
-float scoreNode(uint nodeIndex)
-{
-    // 此实现必须与 GpuRoamErrorEvaluation 的 scoreNode 同步修改
-    NodeRecord node = nodes[nodeIndex];
-    vec2 aUv = node.domainAAndB.xy;
-    vec2 bUv = node.domainAAndB.zw;
-    vec2 cUv = node.domainCAndErrors.xy;
-
-    vec3 a = domainToWorld(aUv);
-    vec3 b = domainToWorld(bUv);
-    vec3 c = domainToWorld(cUv);
-    if (!isNodeVisible(node, a, b, c))
-    {
-        // 零分不会产生主动 split，并允许 DOD baseline 在本 Build 回收旧拓扑。
-        return 0.0;
-    }
-    float worldError = node.domainCAndErrors.z * uHeightScale;
-    float geometricBoundPixels = conservativeScreenDistortion(worldError, a, b, c);
-    if (geometricBoundPixels == artificialMaximumScreenError)
-    {
-        return geometricBoundPixels;
-    }
-    // max 语义与 CPU ROAM 保持一致，不把 geometric bound 和 edge-density 重复累加。
-    return max(geometricBoundPixels, projectedLongestEdge(a, b, c) * projectedEdgeWeight);
-}
-
+ )glsl"} +
+    std::string{GpuRoamScoreCommonGlsl} +
+    R"glsl(
 void main()
 {
     uint index = gl_GlobalInvocationID.x;
@@ -288,7 +135,7 @@ void main()
         mergeCandidates[outputIndex] = index;
     }
 }
-)";
+)glsl";
 } // namespace
 
 bool EnsureGpuRoamCandidateMarkingProgram(
@@ -298,7 +145,7 @@ bool EnsureGpuRoamCandidateMarkingProgram(
     // split 和 merge 共享一个 program，确保同帧阈值和评分参数一致
     return EnsureGpuRoamComputeProgram(
         programId,
-        CandidateMarkingComputeSource,
+        CandidateMarkingComputeSource.c_str(),
         "candidate marking",
         errorMessage);
 }
