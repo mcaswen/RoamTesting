@@ -5,6 +5,7 @@
 
 #include <glm/glm.hpp>
 
+#include <cstddef>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -12,7 +13,7 @@
 namespace ParallelRoam::App
 {
 /// <summary>
-/// 运行时相机路径 benchmark 的单帧采样
+/// 运行时相机路径 benchmark 的单点采样
 /// </summary>
 struct RuntimeBenchmarkSample
 {
@@ -22,7 +23,12 @@ struct RuntimeBenchmarkSample
     std::string GraphicsVersion;
     bool VSyncEnabled{false};
 
-    // 路径内时间用于把每帧样本映射回 10 秒回放
+    // 离散相机路径坐标；同一轮中的每种算法都使用相同序列
+    std::size_t PathSampleIndex{0};
+    std::size_t PathSampleCount{0};
+    float PathProgress{0.0F};
+
+    // 当前算法实际经过的墙钟时间，只用于记录，不驱动路径推进
     float TimeSeconds{0.0F};
 
     // 相机位置和 renderer stats 一起写入 CSV，便于复现实验点

@@ -422,7 +422,8 @@ void WriteDetailedCsv(
         << "heightMapPath,heightMapWidth,heightMapHeight,terrainSize,heightScale,"
         << "maxDepthSetting,screenSpaceSplitThresholdPixels,"
         << "screenSpaceMergeThresholdPixels,triangleBudget,dodParallelSplitEnabled,"
-        << "timeSeconds,cameraX,cameraY,cameraZ,frameMilliseconds,triangles,nodes,"
+        << "pathSampleIndex,pathSampleCount,pathProgress,timeSeconds,"
+        << "cameraX,cameraY,cameraZ,frameMilliseconds,triangles,nodes,"
         << "activeSplits,splits,forcedSplits,merges,candidatePeak,persistentSplitQueueSize,persistentMergeQueueSize,"
         << "queueCrossoverCount,queueMembershipUpdateCount,cpuMeshFullRebuildCount,"
         << "cpuMeshUpdatedTriangleCount,cpuMeshReusedTriangleCount,cpuMeshDirtyRangeCount,"
@@ -473,6 +474,9 @@ void WriteDetailedCsv(
                 << stats.RoamScreenSpaceMergeThresholdPixels << ','
                 << stats.RoamTriangleBudgetSetting << ','
                 << (stats.RoamParallelSplitEnabled ? "true" : "false") << ','
+                << sample.PathSampleIndex << ','
+                << sample.PathSampleCount << ','
+                << sample.PathProgress << ','
                 << sample.TimeSeconds << ','
                 << sample.CameraPosition.x << ','
                 << sample.CameraPosition.y << ','
@@ -565,17 +569,36 @@ void WriteSummaryMarkdown(
     }
 
     markdown << "# 运行时基准测试报告\n\n";
-    float sampledDurationSeconds = 0.0F;
+    std::size_t pathSampleCount = 0;
+    bool sampleSequenceComplete = !results.empty();
     for (const RuntimeBenchmarkAlgorithmResult& result : results)
     {
         if (!result.Samples.empty())
         {
-            sampledDurationSeconds = std::max(sampledDurationSeconds, result.Samples.back().TimeSeconds);
+            if (pathSampleCount == 0U)
+            {
+                pathSampleCount = result.Samples.front().PathSampleCount;
+            }
+            sampleSequenceComplete = sampleSequenceComplete && result.Samples.size() == pathSampleCount;
+            for (std::size_t sampleIndex = 0; sampleIndex < result.Samples.size(); ++sampleIndex)
+            {
+                const RuntimeBenchmarkSample& sample = result.Samples[sampleIndex];
+                sampleSequenceComplete = sampleSequenceComplete &&
+                    sample.PathSampleIndex == sampleIndex &&
+                    sample.PathSampleCount == pathSampleCount;
+            }
+        }
+        else
+        {
+            sampleSequenceComplete = false;
         }
     }
 
-    markdown << "- 相机路径：从地形边缘中点移动到地形中心\n";
-    markdown << "- 每种算法的采样时长：" << sampledDurationSeconds << " 秒\n";
+    markdown << "- 相机路径：离散采样点序列；具体路径类型见下方 Benchmark 路径\n";
+    markdown << "- 每种算法的路径采样点数：" << pathSampleCount << "\n";
+    markdown << "- 采样规则：每种算法按相同 sampleIndex 执行全部相机姿态，完成后再切换算法\n";
+    markdown << "- 采样完整性：" << (sampleSequenceComplete ? "完整" : "不完整") << "\n";
+    markdown << "- timeSeconds：当前算法实际经过的墙钟时间，不参与路径推进\n";
     markdown << "- 详细 CSV：`" << csvPath.filename().string() << "`\n\n";
     for (const std::string& note : notes)
     {

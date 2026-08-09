@@ -5,7 +5,11 @@
 #include "benchmark/RoamProbe.h"
 #include "benchmark/TerrainLodBenchmark.h"
 
+#include <algorithm>
+#include <cmath>
+#include <cstddef>
 #include <exception>
+#include <limits>
 #include <string>
 #include <string_view>
 #endif
@@ -254,6 +258,19 @@ int main(int argc, char** argv)
             break;
         }
 
+        if (argument == "--runtime-benchmark-samples")
+        {
+            int value = 0;
+            if (!parseIntOption(index, argument, value))
+            {
+                break;
+            }
+            runtimeBenchmarkOverrides.HasSampleCount = true;
+            runtimeBenchmarkOverrides.SampleCount = static_cast<std::size_t>(std::max(value, 2));
+            hasRuntimeBenchmarkOverrides = true;
+            continue;
+        }
+
         if (argument == "--runtime-benchmark-duration")
         {
             float value = 0.0F;
@@ -261,8 +278,22 @@ int main(int argc, char** argv)
             {
                 break;
             }
-            runtimeBenchmarkOverrides.HasDurationSeconds = true;
-            runtimeBenchmarkOverrides.DurationSeconds = value;
+            if (!std::isfinite(value) || value <= 0.0F)
+            {
+                parseError = std::string{argument} + " must be a finite positive number";
+                break;
+            }
+            // 旧参数仅保留兼容性：每个名义秒换算为 60 个离散采样点
+            const double convertedSampleCount = static_cast<double>(value) * 60.0;
+            if (convertedSampleCount > static_cast<double>(std::numeric_limits<int>::max()))
+            {
+                parseError = std::string{argument} + " produces too many sample points";
+                break;
+            }
+            runtimeBenchmarkOverrides.HasSampleCount = true;
+            runtimeBenchmarkOverrides.SampleCount = std::max(
+                static_cast<std::size_t>(convertedSampleCount),
+                static_cast<std::size_t>(2));
             hasRuntimeBenchmarkOverrides = true;
             continue;
         }

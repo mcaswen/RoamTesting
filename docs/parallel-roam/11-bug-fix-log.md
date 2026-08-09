@@ -350,6 +350,17 @@
 - 验证：新增 `incremental-emit` profile 和 CTest。129x129、528 个 active triangles 下，相同视点连续三次 Build 的计数依次为：首帧 full=1/updated=528；第二帧 full=0/updated=528，用于结束 Rebuilt 调试色；第三帧 full=0/updated=0/reused=528/dirtyRanges=0。Classic smoke 的大规模 split/merge/级联合并 6 帧全部通过且 topology issue 为 0，budget-reentry 5 帧维持 512 leaf 并全部通过。OpenGL 全部 CTest 9/9 通过，OpenGL 与 D3D12 RelWithDebInfo 均构建通过，D3D12 版 headless incremental profile 也通过。RTX 5090 D 上 0.5 秒 D3D12 runtime 采样得到 228 个 Classic 局部上传帧，没有任何一帧超过当帧完整 Mesh 字节数，稳定末段降为 0 B。
 - 后续：当前实现对应论文“只修改受影响输出”的职责，但不是 triangle-strip 数据格式复刻。仍需增加独立 full-emit reference 与随机 split/merge 轨迹逐帧对照，并用有窗口 runtime benchmark 测量 changed slots、实际 upload bytes 与耗时的缩放关系。
 
+### BUG-029：固定 10 秒路径导致算法获得不同数量的相机输入
+
+- 状态：`Fixed`
+- 严重级别：`高`
+- 发生阶段：Classic、DOD、GPU ROAM-like runtime benchmark 公平性复核
+- 现象：旧状态机用每种算法自己的 `RawDeltaSeconds` 推进 10 秒路径并逐帧采样，因此较快算法会在同一条几何路径上获得更多 Build 和更密的相机姿态。极限压力报告 `runtime-benchmark-20260810-003052` 中三种算法分别只有 37、61、32 个样本；默认路径报告 `runtime-benchmark-20260810-002908` 中则分别为 5615、3052、2435 个样本。平均耗时不仅混入算法成本，还混入不同的路径离散密度和拓扑事务序列。
+- 定位：`Application::PrepareRuntimeBenchmarkFrame` 旧实现用 `ElapsedSeconds / DurationSeconds` 计算路径进度，`Application::CompleteRuntimeBenchmarkFrame` 也用墙钟时间决定算法切换；`RuntimeBenchmarkSample` 没有路径采样索引，报告只能记录 `timeSeconds`。
+- 解决方案：runtime benchmark 改为有限的离散相机姿态序列。默认选项路径固定 600 点，极限压力路径固定 64 点；Classic、DOD、GPU 都从 `sampleIndex=0` 走到末点，每完成一个渲染样本才推进索引。`timeSeconds` 仅记录当前算法实际墙钟时间。CSV 新增 `pathSampleIndex`、`pathSampleCount`、`pathProgress`，Markdown 检查每种算法是否完整覆盖 `0..sampleCount-1`。CLI 新增 `--runtime-benchmark-samples`；旧 `--runtime-benchmark-duration` 只作为兼容入口，按每个名义秒 60 点换算。
+- 验证：OpenGL RelWithDebInfo 构建通过；使用 `--runtime-benchmark-samples 4` 完成窗口实测，Classic、DOD、GPU 均输出 4 个样本，索引均为 `0,1,2,3`，进度均为 `0,0.333,0.667,1`；按索引分组后每组只有一个唯一相机坐标，Markdown 输出“采样完整性：完整”。
+- 后续：采用旧 10 秒口径生成的报告仍可用于说明当时版本，但不能直接作为新口径下的逐点公平对比基线；正式优化实验应在固定采样点口径下重新运行多轮。
+
 ## 模板
 
 ```text

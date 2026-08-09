@@ -195,7 +195,7 @@ D3D12 构建可以独立验证 CBT OCBT 的四种容量特化。该入口不会�
 scripts\run_relwithdebinfo_fetch.bat --runtime-benchmark
 ```
 
-该命令会为每种可用算法运行同一条 10 秒相机路径，生成 `benchmark-output/runtime-benchmark-*.md` 和对应逐帧 CSV 后自动退出。GPU capability 不满足时，报告会保留 CPU 结果并写明 GPU skip 原因。CBT 2024 在完整 split/merge 和高度图路径完成前仅参与专用验证，不进入这组三算法性能排名。
+该命令会让每种可用算法依次执行同一组离散相机采样点，生成 `benchmark-output/runtime-benchmark-*.md` 和对应逐点 CSV 后自动退出。默认选项路径为 600 点，极限压力路径为 64 点，也可通过 `--runtime-benchmark-samples` 覆盖；算法耗时只改变完成整轮测试所需的墙钟时间，不再改变采样点数量或姿态。GPU capability 不满足时，报告会保留 CPU 结果并写明 GPU skip 原因。CBT 2024 在完整 split/merge 和高度图路径完成前仅参与专用验证，不进入这组三算法性能排名。
 
 当前 pin 的版本：
 

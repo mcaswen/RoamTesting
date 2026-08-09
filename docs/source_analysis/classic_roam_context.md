@@ -862,7 +862,7 @@ TriangleCount = ActiveLeafCount
 
 ### 15.5 运行时 benchmark
 
-**源码事实：** UI/`--runtime-benchmark` 依次运行 Classic、DOD，并在后端支持时加入 GPU；每个算法 reset，从地形 Z+ 边中点平滑移动到中心，默认 10 秒，每个应用帧强制 LOD Build。输出 `benchmark-output/runtime-benchmark-<timestamp>.md/.csv`。Classic 与 DOD 都把历史字段 `merge candidate mark` / `split scan-mark` 分别解释为持久 `Q_m/Q_s` 的优先级刷新与原地建堆，并输出两队列大小、资源交换次数和局部队列成员更新次数；Classic 另有四个增量 Mesh 计数。两者预算与最终 leaf collect 均为 0。renderer 的 `CpuGpuUploadBytes` 记录实际 full/range 上传字节。DOD 最终直接复用 `ActiveLeafNodes`，但仍完整 emit CPU Mesh。GPU 路径仍记录各 compute 算法阶段及 snapshot/allocation/dispatch/query/readback/render 边界成本。
+**源码事实：** UI/`--runtime-benchmark` 依次运行 Classic、DOD，并在后端支持时加入 GPU；每个算法 reset 后按相同 `sampleIndex` 执行离散相机姿态，默认选项路径从地形 Z+ 边中点平滑移动到中心，共 600 点；极限压力路径共 64 点。每个采样点强制一次 LOD Build，算法完成全部点后才切换；实际墙钟时间只写入 `timeSeconds`，不参与路径推进。输出 `benchmark-output/runtime-benchmark-<timestamp>.md/.csv`，CSV 额外记录 `pathSampleIndex`、`pathSampleCount` 和 `pathProgress`。Classic 与 DOD 都把历史字段 `merge candidate mark` / `split scan-mark` 分别解释为持久 `Q_m/Q_s` 的优先级刷新与原地建堆，并输出两队列大小、资源交换次数和局部队列成员更新次数；Classic 另有四个增量 Mesh 计数。两者预算与最终 leaf collect 均为 0。renderer 的 `CpuGpuUploadBytes` 记录实际 full/range 上传字节。DOD 最终直接复用 `ActiveLeafNodes`，但仍完整 emit CPU Mesh。GPU 路径仍记录各 compute 算法阶段及 snapshot/allocation/dispatch/query/readback/render 边界成本。
 
 证据：`Application.cpp` 第 640-784、850-879 行；`RuntimeBenchmark.cpp` 第 130-200、339-390、414-430 行。
 

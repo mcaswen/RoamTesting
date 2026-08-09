@@ -132,8 +132,8 @@ Debug View 的价值不只是展示效果，也用于定位算法问题。比如
 推荐流程：
 
 1. 启动后先 warm-up 3 到 5 秒，不记录数据；
-2. 使用固定相机路径回放 30 到 60 秒；
-3. 每帧记录统计数据；
+2. 把固定相机路径离散为足够密集的采样点，并让所有算法按相同 `sampleIndex` 执行；
+3. 每个采样点记录一次统计数据，同时保留实际墙钟时间但不让它驱动路径；
 4. 分别输出平均值、p50、p95、最大值；
 5. 对 GPU 计时使用 OpenGL Timer Query；
 6. 单独标注是否发生 CPU readback；
@@ -143,6 +143,9 @@ Debug View 的价值不只是展示效果，也用于定位算法问题。比如
 
 ```text
 frameIndex
+pathSampleIndex
+pathSampleCount
+pathProgress
 timeSeconds
 mode
 terrainName

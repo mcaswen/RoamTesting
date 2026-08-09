@@ -104,7 +104,7 @@ P2 不用于追平 Classic，而用于证明 DOD 的额外能力是否值得保�
 - 相同提交基础、构建配置和图形后端；
 - 相同 HeightMap、terrain size、height scale、max depth；
 - 相同 split/merge thresholds、FOV、可绘制区域尺寸和 triangle budget；
-- 相同相机路径；
+- 相同离散相机采样点数，并逐个核对 `sampleIndex` 与相机姿态；
 - DOD 串行 topology 对比时关闭并行 split；
 - Classic 和 DOD 都启用相同拓扑验证设置；
 - 默认选项路径和极限压力路径各运行不少于 5 轮。
@@ -136,7 +136,7 @@ split 单操作成本 = sum(cpuSplitTopologyMilliseconds) / sum(splits)
 merge 单操作成本 = sum(cpuMergeTopologyMilliseconds) / sum(merges)
 ```
 
-不得仅比较每帧 topology 时间，因为不同实现的帧率不同，同一 10 秒窗口内的采样帧数和拓扑事务数也会不同。
+不得仅比较每个采样点的 topology 时间；当前 runtime benchmark 已固定三种算法的路径采样点数和姿态序列，还必须结合每点与累计的 topology 事务数计算单操作成本，避免把工作量差异误读为实现效率差异。
 
 ## 6. 阶段 B：串行 topology 公平对齐
 

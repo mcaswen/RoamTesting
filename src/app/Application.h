@@ -9,6 +9,7 @@
 #include "render/TerrainRenderer.h"
 #include "tools/PerformanceTimer.h"
 
+#include <cstddef>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -36,8 +37,8 @@ struct RuntimeBenchmarkOverrides
     bool HasScreenSpaceMergeThresholdPixels{false};
     float ScreenSpaceMergeThresholdPixels{2.0F};
 
-    bool HasDurationSeconds{false};
-    float DurationSeconds{10.0F};
+    bool HasSampleCount{false};
+    std::size_t SampleCount{0};
 
     std::string Label;
 };
@@ -122,11 +123,14 @@ private:
         // AlgorithmIndex 指向当前正在跑的算法
         std::size_t AlgorithmIndex{0};
 
-        // ElapsedSeconds 是当前算法内的路径时间
+        // ElapsedSeconds 只记录当前算法实际运行时长，不参与路径推进
         float ElapsedSeconds{0.0F};
 
-        // DurationSeconds 统一为 10 秒，和 UI 文案保持一致
-        float DurationSeconds{10.0F};
+        // 同一轮 benchmark 的所有算法使用相同路径采样点数
+        std::size_t PathSampleCount{0};
+
+        // PathSampleIndex 标识当前帧对应的离散相机姿态
+        std::size_t PathSampleIndex{0};
 
         // StartPosition 是地形边中点上方的相机位置
         glm::vec3 StartPosition{0.0F};

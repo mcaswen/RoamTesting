@@ -214,12 +214,12 @@ powershell -ExecutionPolicy Bypass -File scripts/setup_cbt_dx12_dependencies.ps1
 .\build\relwithdebinfo-fetch\bin\ParallelROAM.exe --runtime-benchmark
 ```
 
-运行时 benchmark 会在同一配置和相机路径下依次采样可用算法，关闭 VSync，并在 `benchmark-output/` 生成：
+运行时 benchmark 会在同一配置下依次让可用算法走完相同的离散相机采样点，关闭 VSync，并在 `benchmark-output/` 生成：
 
 - `runtime-benchmark-<timestamp>.md`：中文汇总和阶段对比；
 - `runtime-benchmark-<timestamp>.csv`：逐帧原始数据。
 
-可通过 `--runtime-benchmark-heightmap`、`--runtime-benchmark-terrain-size`、`--runtime-benchmark-height-scale`、`--runtime-benchmark-max-depth`、`--runtime-benchmark-split-pixels`、`--runtime-benchmark-merge-pixels`、`--runtime-benchmark-duration` 和 `--runtime-benchmark-label` 覆盖实验参数。
+默认选项路径包含 600 个采样点，极限压力路径包含 64 个采样点；每种算法都按相同 `sampleIndex` 执行，因此算法快慢不会再改变路径采样密度。可通过 `--runtime-benchmark-heightmap`、`--runtime-benchmark-terrain-size`、`--runtime-benchmark-height-scale`、`--runtime-benchmark-max-depth`、`--runtime-benchmark-split-pixels`、`--runtime-benchmark-merge-pixels`、`--runtime-benchmark-samples` 和 `--runtime-benchmark-label` 覆盖实验参数。旧 `--runtime-benchmark-duration` 仅作为兼容参数保留，每个名义秒换算为 60 个离散采样点。
 
 正式对比实验将为每条算法路径独立执行 warm-up，并轮换或随机化算法运行顺序，以降低缓存状态、GPU 频率和设备温度造成的顺序偏差。
 
@@ -269,7 +269,7 @@ powershell -ExecutionPolicy Bypass -File scripts/setup_cbt_dx12_dependencies.ps1
 - HeightMap、`TerrainSize`、`HeightScale` 和 `MaxDepth`；
 - split/merge 像素阈值与拓扑预算；
 - 可绘制区域分辨率、FOV、相机路径和 VSync 状态；
-- warm-up、采样时长、重复次数和随机种子；
+- warm-up、路径采样点数、重复次数和随机种子；
 - CPU/GPU 各逻辑阶段耗时；
 - 最大/P95/平均屏幕误差、预算利用率、拓扑错误和确定性；
 

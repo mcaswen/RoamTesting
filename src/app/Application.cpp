@@ -93,6 +93,10 @@ BudgetSaturationCameraPose ComputeBudgetSaturationCameraPose(float normalizedTim
         }};
 }
 
+// benchmark 路径是有限的相机姿态序列；压力路径的单点成本更高，因此使用较少采样点
+constexpr std::size_t DefaultRuntimeBenchmarkSampleCount = 600;
+constexpr std::size_t BudgetSaturationRuntimeBenchmarkSampleCount = 64;
+
 Render::TerrainRenderSettings ToRenderSettings(const Gui::TerrainPanelState& state)
 {
     Render::TerrainRenderSettings settings{};
@@ -679,11 +683,6 @@ void Application::ApplyPendingRuntimeBenchmarkOverrides()
             std::clamp(overrides.ScreenSpaceMergeThresholdPixels, 0.1F, 32.0F);
     }
 
-    if (overrides.HasDurationSeconds)
-    {
-        _runtimeBenchmark.DurationSeconds = std::max(0.1F, overrides.DurationSeconds);
-    }
-
     _terrainPanelState.RoamScreenSpaceMergeThresholdPixels = std::min(
         _terrainPanelState.RoamScreenSpaceMergeThresholdPixels,
         _terrainPanelState.RoamScreenSpaceSplitThresholdPixels);
@@ -731,11 +730,22 @@ void Application::StartRuntimeBenchmark()
     _runtimeBenchmark.HasPreparedFirstFrame = false;
     _runtimeBenchmark.AlgorithmIndex = 0;
     _runtimeBenchmark.ElapsedSeconds = 0.0F;
+    _runtimeBenchmark.PathSampleIndex = 0;
     _runtimeBenchmark.Failed = false;
     _runtimeBenchmark.FailureMessage.clear();
     _runtimeBenchmark.Results.clear();
     _runtimeBenchmark.Notes.clear();
     _runtimeBenchmark.Path = _terrainPanelState.BenchmarkPath;
+    _runtimeBenchmark.PathSampleCount =
+        _runtimeBenchmark.Path == Gui::TerrainPanelState::RuntimeBenchmarkPath::BudgetSaturation
+        ? BudgetSaturationRuntimeBenchmarkSampleCount
+        : DefaultRuntimeBenchmarkSampleCount;
+    if (_runtimeBenchmarkOverrides.HasSampleCount)
+    {
+        _runtimeBenchmark.PathSampleCount = std::max(
+            _runtimeBenchmarkOverrides.SampleCount,
+            static_cast<std::size_t>(2));
+    }
     _runtimeBenchmark.Notes.push_back("构建配置：" + BuildConfigurationName());
     _runtimeBenchmark.Notes.push_back("图形后端：" + std::string{_graphicsBackend->Name()});
     _runtimeBenchmark.Notes.push_back(
@@ -819,6 +829,10 @@ void Application::StartRuntimeBenchmark()
         _runtimeBenchmark.Notes.push_back("Benchmark 路径：默认选项路径");
     }
 
+    _runtimeBenchmark.Notes.push_back(
+        "路径采样点数：" + std::to_string(_runtimeBenchmark.PathSampleCount) +
+        "；每种算法按相同 sampleIndex 执行完整路径");
+
     _terrainPanelState.VSyncEnabled = false;
     ApplyWindowPanelSettings();
     _runtimeBenchmark.Notes.push_back(
@@ -843,7 +857,7 @@ void Application::BeginRuntimeBenchmarkAlgorithm()
     RuntimeBenchmarkAlgorithmResult result{};
     result.AlgorithmId = algorithmId;
     result.AlgorithmName = RuntimeBenchmarkAlgorithmDisplayName(algorithmId);
-    result.Samples.reserve(720);
+    result.Samples.reserve(_runtimeBenchmark.PathSampleCount);
     _runtimeBenchmark.Results.push_back(std::move(result));
 
     if (_runtimeBenchmark.Path == Gui::TerrainPanelState::RuntimeBenchmarkPath::BudgetSaturation)
@@ -869,6 +883,7 @@ void Application::BeginRuntimeBenchmarkAlgorithm()
     _runtimeBenchmark.YawDegrees = yawDegrees;
     _runtimeBenchmark.PitchDegrees = pitchDegrees;
     _runtimeBenchmark.ElapsedSeconds = 0.0F;
+    _runtimeBenchmark.PathSampleIndex = 0;
     _runtimeBenchmark.HasPreparedFirstFrame = false;
 
     _terrainPanelState.UseTerrainLod = true;
@@ -890,17 +905,19 @@ void Application::PrepareRuntimeBenchmarkFrame(const FrameTiming& frameTiming)
 
     if (_runtimeBenchmark.HasPreparedFirstFrame)
     {
-        // 第一帧已在 t=0 采样，后续帧再推进时间
+        // 第一帧从 0 开始记录；后续帧只累计实际墙钟时间
         const float deltaSeconds = std::max(frameTiming.RawDeltaSeconds, 0.0F);
-        _runtimeBenchmark.ElapsedSeconds =
-            std::min(_runtimeBenchmark.ElapsedSeconds + deltaSeconds, _runtimeBenchmark.DurationSeconds);
+        _runtimeBenchmark.ElapsedSeconds += deltaSeconds;
     }
     else
     {
         _runtimeBenchmark.HasPreparedFirstFrame = true;
     }
 
-    const float t = _runtimeBenchmark.ElapsedSeconds / _runtimeBenchmark.DurationSeconds;
+    const float t = _runtimeBenchmark.PathSampleCount <= 1U
+        ? 0.0F
+        : static_cast<float>(_runtimeBenchmark.PathSampleIndex) /
+            static_cast<float>(_runtimeBenchmark.PathSampleCount - 1U);
     if (_runtimeBenchmark.Path == Gui::TerrainPanelState::RuntimeBenchmarkPath::BudgetSaturation)
     {
         const BudgetSaturationCameraPose pose = ComputeBudgetSaturationCameraPose(t);
@@ -930,15 +947,24 @@ void Application::CompleteRuntimeBenchmarkFrame()
         return;
     }
 
-    if (_runtimeBenchmark.ElapsedSeconds < _runtimeBenchmark.DurationSeconds)
+    if (_runtimeBenchmark.PathSampleCount == 0U)
     {
+        _runtimeBenchmark.Failed = true;
+        _runtimeBenchmark.FailureMessage = "Runtime benchmark path has no sample points";
+        FinishRuntimeBenchmark();
+        return;
+    }
+
+    if (_runtimeBenchmark.PathSampleIndex + 1U < _runtimeBenchmark.PathSampleCount)
+    {
+        ++_runtimeBenchmark.PathSampleIndex;
         return;
     }
 
     ++_runtimeBenchmark.AlgorithmIndex;
     if (_runtimeBenchmark.AlgorithmIndex < _runtimeBenchmark.AlgorithmSequence.size())
     {
-        // 当前算法跑满 10 秒后立即切到下一个算法
+        // 当前算法走完全部采样点后，从同一路径起点切到下一个算法
         BeginRuntimeBenchmarkAlgorithm();
         return;
     }
@@ -962,6 +988,12 @@ void Application::RecordRuntimeBenchmarkSample(
     sample.GraphicsAdapter = _graphicsBackend->AdapterName();
     sample.GraphicsVersion = _graphicsBackend->VersionString();
     sample.VSyncEnabled = _terrainPanelState.VSyncEnabled;
+    sample.PathSampleIndex = _runtimeBenchmark.PathSampleIndex;
+    sample.PathSampleCount = _runtimeBenchmark.PathSampleCount;
+    sample.PathProgress = _runtimeBenchmark.PathSampleCount <= 1U
+        ? 0.0F
+        : static_cast<float>(_runtimeBenchmark.PathSampleIndex) /
+            static_cast<float>(_runtimeBenchmark.PathSampleCount - 1U);
     sample.TimeSeconds = _runtimeBenchmark.ElapsedSeconds;
     sample.CameraPosition = cameraPosition;
     // RawDeltaSeconds 是真实帧耗时，ClampedDeltaSeconds 只适合模拟
@@ -1002,6 +1034,7 @@ void Application::FinishRuntimeBenchmark()
     _runtimeBenchmark.Active = false;
     _runtimeBenchmark.HasPreparedFirstFrame = false;
     _runtimeBenchmark.ElapsedSeconds = 0.0F;
+    _runtimeBenchmark.PathSampleIndex = 0;
 
     _terrainPanelState = previousTerrainPanelState;
     _terrainPanelState.StartBenchmarkRequested = false;
@@ -1039,11 +1072,14 @@ float Application::RuntimeBenchmarkProgress() const
         return 0.0F;
     }
 
-    // 进度按算法数量归一化，顶部条展示整轮 benchmark 进度
-    const float localProgress = std::clamp(
-        _runtimeBenchmark.ElapsedSeconds / _runtimeBenchmark.DurationSeconds,
-        0.0F,
-        1.0F);
+    // 进度按算法数量和离散相机采样点归一化，不受算法本身速度影响
+    const float localProgress = _runtimeBenchmark.PathSampleCount == 0U
+        ? 0.0F
+        : std::clamp(
+            static_cast<float>(_runtimeBenchmark.PathSampleIndex + 1U) /
+                static_cast<float>(_runtimeBenchmark.PathSampleCount),
+            0.0F,
+            1.0F);
     const float completedAlgorithms = static_cast<float>(_runtimeBenchmark.AlgorithmIndex);
     // AlgorithmSequence 非空已在函数入口确认
     const float algorithmCount = static_cast<float>(_runtimeBenchmark.AlgorithmSequence.size());
