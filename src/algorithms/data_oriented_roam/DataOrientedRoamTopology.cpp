@@ -461,7 +461,7 @@ bool SplitNode(
         return false;
     }
 
-    if (state.Nodes[node].Depth >= state.Settings.MaxDepth)
+    if (state.Nodes.DepthAt(node) >= state.Settings.MaxDepth)
     {
         // maxDepth 是硬限制，不进入约束传播
         RecordRejectedSplit(state, counters);
@@ -475,7 +475,7 @@ bool SplitNode(
         return false;
     }
 
-    DataOrientedRoamNodeIndex baseNeighbor = state.Nodes[node].BaseNeighbor;
+    DataOrientedRoamNodeIndex baseNeighbor = state.Nodes.BaseNeighborAt(node);
     if (state.Settings.EnableLocalConstraints)
     {
         // local constraint 只在设置开启时传播 forced split
@@ -484,7 +484,7 @@ bool SplitNode(
         // 否则单侧 split 会把一条粗边贴到多条细边上
         while (state.IsValidNode(baseNeighbor) &&
                baseNeighbor != forcedFrom &&
-               state.Nodes[baseNeighbor].BaseNeighbor != node &&
+               state.Nodes.BaseNeighborAt(baseNeighbor) != node &&
                guard < state.Settings.MaxDepth + 2)
         {
             RecordConstraintPass(state, counters);
@@ -495,7 +495,7 @@ bool SplitNode(
                 return false;
             }
 
-            baseNeighbor = state.Nodes[node].BaseNeighbor;
+            baseNeighbor = state.Nodes.BaseNeighborAt(node);
             ++guard;
         }
     }
@@ -515,18 +515,20 @@ bool SplitNode(
             return false;
         }
 
-        baseNeighbor = state.Nodes[node].BaseNeighbor;
+        baseNeighbor = state.Nodes.BaseNeighborAt(node);
     }
 
-    const std::uint64_t parentPathId = state.Nodes[node].PathId;
-    if (!state.IsValidNode(state.Nodes[node].LeftChild) || !state.IsValidNode(state.Nodes[node].RightChild))
+    const std::uint64_t parentPathId = state.Nodes.PathIdAt(node);
+    const DataOrientedRoamNodeIndex leftChildBefore = state.Nodes.LeftChildAt(node);
+    const DataOrientedRoamNodeIndex rightChildBefore = state.Nodes.RightChildAt(node);
+    if (!state.IsValidNode(leftChildBefore) || !state.IsValidNode(rightChildBefore))
     {
         // 首次 split 创建 child，merge 后再次 split 时复用同一 child index
-        const TriangleDomain domain = state.Nodes[node].Domain;
-        const int childDepth = state.Nodes[node].Depth + 1;
+        const TriangleDomain domain = state.Nodes.DomainAt(node);
+        const int childDepth = state.Nodes.DepthAt(node) + 1;
         const TriangleDomainChildren childDomains = SplitTriangleDomain(domain);
-        const std::uint8_t varianceTreeIndex = state.Nodes[node].VarianceTreeIndex;
-        const std::size_t varianceIndex = state.Nodes[node].VarianceIndex;
+        const std::uint8_t varianceTreeIndex = state.Nodes.VarianceTreeIndexAt(node);
+        const std::size_t varianceIndex = state.Nodes.VarianceIndexAt(node);
         const DataOrientedRoamNodeIndex leftChild =
             AddNode(
                 state,
@@ -734,7 +736,7 @@ DataOrientedRoamChunkId SafeInteriorSplitChunkId(const DataOrientedRoamState& st
 {
     if (!state.IsValidNode(node) ||
         !state.IsLeaf(node) ||
-        state.Nodes[node].Depth >= state.Settings.MaxDepth ||
+        state.Nodes.DepthAt(node) >= state.Settings.MaxDepth ||
         !HasReusableChildren(state, node) ||
         SplitWouldNeedForcedNeighbor(state, node))
     {
@@ -1245,7 +1247,7 @@ void RefineWithSplitQueue(DataOrientedRoamState& state)
         const DataOrientedRoamNodeIndex splitNode = TopPersistentSplitQueueNode(state);
         const float splitScore = TopPersistentSplitQueueScore(state);
         if (!state.IsValidNode(splitNode) ||
-            !ShouldSplitWithScore(state, state.Nodes[splitNode], splitScore))
+            !ShouldSplitWithScore(state, splitNode, splitScore))
         {
             break;
         }

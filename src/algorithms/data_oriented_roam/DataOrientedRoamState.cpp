@@ -67,10 +67,10 @@ void CollectActiveSplitPathsFrom(DataOrientedRoamState& state, DataOrientedRoamN
         return;
     }
 
-    state.CurrentSplitPaths.insert(state.Nodes[node].PathId);
+    state.CurrentSplitPaths.insert(state.Nodes.PathIdAt(node));
     ++state.Stats.ActiveSplitCount;
-    CollectActiveSplitPathsFrom(state, state.Nodes[node].LeftChild);
-    CollectActiveSplitPathsFrom(state, state.Nodes[node].RightChild);
+    CollectActiveSplitPathsFrom(state, state.Nodes.LeftChildAt(node));
+    CollectActiveSplitPathsFrom(state, state.Nodes.RightChildAt(node));
 }
 } // 匿名命名空间
 
@@ -98,12 +98,6 @@ DataOrientedRoamNodeRef::operator DataOrientedRoamNodeConstRef() const
         ActivatedByForcedSplit,
         IsSplit,
     };
-}
-
-std::size_t DataOrientedRoamNodePool::size() const
-{
-    // Domains 是所有 SoA 数组的长度基准
-    return Domains.size();
 }
 
 std::size_t DataOrientedRoamNodePool::capacity() const
@@ -300,17 +294,6 @@ DataOrientedRoamNodeConstRef DataOrientedRoamNodePool::operator[](DataOrientedRo
         ActivatedByForcedSplits[node],
         IsSplits[node],
     };
-}
-
-bool DataOrientedRoamState::IsValidNode(DataOrientedRoamNodeIndex node) const
-{
-    return node != InvalidDataOrientedRoamNodeIndex && node < Nodes.size();
-}
-
-bool DataOrientedRoamState::IsLeaf(DataOrientedRoamNodeIndex node) const
-{
-    // IsSplits 是 byte flag，0 表示当前 active leaf
-    return IsValidNode(node) && !Nodes[node].IsSplit;
 }
 
 std::uint64_t LeftChildPathId(std::uint64_t parentPathId)

@@ -25,7 +25,7 @@ DataOrientedRoamMergeCandidateEvaluation EvaluateMergeCandidateImpl(
 
     // Commit-time validation deliberately recomputes only the selected parent.
     // Persistent Q_m owns frame-wide scoring and topology membership discovery.
-    const float score = ComputeScreenErrorScore(state, candidate);
+    const float score = ComputeScreenErrorScore(state, node);
     if (score > maximumScore)
     {
         return {};
@@ -48,7 +48,7 @@ DataOrientedRoamMergeCandidateEvaluation EvaluateMergeCandidateImpl(
         return {};
     }
 
-    const float baseNeighborScore = ComputeScreenErrorScore(state, state.Nodes[baseNeighbor]);
+    const float baseNeighborScore = ComputeScreenErrorScore(state, baseNeighbor);
     if (baseNeighborScore > maximumScore)
     {
         return {};

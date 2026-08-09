@@ -176,7 +176,90 @@ struct DataOrientedRoamNodePool
     std::vector<std::uint8_t> ActivatedByForcedSplits;
     std::vector<std::uint8_t> IsSplits;
 
-    [[nodiscard]] std::size_t size() const;
+    [[nodiscard]] std::size_t size() const noexcept
+    {
+        return Domains.size();
+    }
+
+    // Hot-path scalar accessors avoid materializing the full 20-field proxy
+    // when a pass needs only one SoA column.
+    // They intentionally expose read-only columns except for the cached score.
+    // Bounds checks remain the caller's responsibility, matching operator[].
+    [[nodiscard]] const TriangleDomain& DomainAt(DataOrientedRoamNodeIndex node) const noexcept
+    {
+        return Domains[node];
+    }
+
+    [[nodiscard]] DataOrientedRoamNodeIndex ParentAt(DataOrientedRoamNodeIndex node) const noexcept
+    {
+        return Parents[node];
+    }
+
+    [[nodiscard]] DataOrientedRoamNodeIndex LeftChildAt(DataOrientedRoamNodeIndex node) const noexcept
+    {
+        return LeftChildren[node];
+    }
+
+    [[nodiscard]] DataOrientedRoamNodeIndex RightChildAt(DataOrientedRoamNodeIndex node) const noexcept
+    {
+        return RightChildren[node];
+    }
+
+    [[nodiscard]] DataOrientedRoamNodeIndex BaseNeighborAt(DataOrientedRoamNodeIndex node) const noexcept
+    {
+        return BaseNeighbors[node];
+    }
+
+    [[nodiscard]] float GeometricErrorAt(DataOrientedRoamNodeIndex node) const noexcept
+    {
+        return GeometricErrors[node];
+    }
+
+    [[nodiscard]] float ScreenErrorAt(DataOrientedRoamNodeIndex node) const noexcept
+    {
+        return ScreenErrors[node];
+    }
+
+    [[nodiscard]] float& ScreenErrorAt(DataOrientedRoamNodeIndex node) noexcept
+    {
+        return ScreenErrors[node];
+    }
+
+    [[nodiscard]] std::uint64_t PathIdAt(DataOrientedRoamNodeIndex node) const noexcept
+    {
+        return PathIds[node];
+    }
+
+    [[nodiscard]] std::uint64_t SplitBuildIdAt(DataOrientedRoamNodeIndex node) const noexcept
+    {
+        return SplitBuildIds[node];
+    }
+
+    [[nodiscard]] std::uint64_t MergeBuildIdAt(DataOrientedRoamNodeIndex node) const noexcept
+    {
+        return MergeBuildIds[node];
+    }
+
+    [[nodiscard]] int DepthAt(DataOrientedRoamNodeIndex node) const noexcept
+    {
+        return Depths[node];
+    }
+
+    [[nodiscard]] std::size_t VarianceIndexAt(DataOrientedRoamNodeIndex node) const noexcept
+    {
+        return VarianceIndices[node];
+    }
+
+    [[nodiscard]] std::uint8_t VarianceTreeIndexAt(DataOrientedRoamNodeIndex node) const noexcept
+    {
+        return VarianceTreeIndices[node];
+    }
+
+    [[nodiscard]] bool IsSplitAt(DataOrientedRoamNodeIndex node) const noexcept
+    {
+        return IsSplits[node] != 0U;
+    }
+
     [[nodiscard]] std::size_t capacity() const;
     [[nodiscard]] std::size_t storage_bytes() const;
     [[nodiscard]] std::size_t array_count() const;
@@ -251,8 +334,15 @@ struct DataOrientedRoamState
     std::uint64_t BuildSequence{0};
     DataOrientedRoamThreadPool* ThreadPool{nullptr};
 
-    [[nodiscard]] bool IsValidNode(DataOrientedRoamNodeIndex node) const;
-    [[nodiscard]] bool IsLeaf(DataOrientedRoamNodeIndex node) const;
+    [[nodiscard]] bool IsValidNode(DataOrientedRoamNodeIndex node) const noexcept
+    {
+        return node != InvalidDataOrientedRoamNodeIndex && node < Nodes.size();
+    }
+
+    [[nodiscard]] bool IsLeaf(DataOrientedRoamNodeIndex node) const noexcept
+    {
+        return IsValidNode(node) && !Nodes.IsSplitAt(node);
+    }
 };
 
 [[nodiscard]] std::uint64_t LeftChildPathId(std::uint64_t parentPathId);
@@ -371,11 +461,13 @@ void EmitLeafTriangles(
 // ShouldSplitWithScore 汇总 split 阈值、merge 阈值和 hysteresis 规则
 [[nodiscard]] bool ShouldSplitWithScore(
     const DataOrientedRoamState& state,
-    DataOrientedRoamNodeConstRef node,
+    DataOrientedRoamNodeIndex node,
     float screenErrorScore);
 
 // WasSplitLastFrame 只读取上一帧最终 active split path
-[[nodiscard]] bool WasSplitLastFrame(const DataOrientedRoamState& state, DataOrientedRoamNodeConstRef node);
+[[nodiscard]] bool WasSplitLastFrame(
+    const DataOrientedRoamState& state,
+    DataOrientedRoamNodeIndex node);
 
 [[nodiscard]] DataOrientedRoamLeafDebugClass ClassifyLeafDebug(
     const DataOrientedRoamState& state,
@@ -386,5 +478,7 @@ void EmitLeafTriangles(
 [[nodiscard]] float DebugHighlightForLeaf(const DataOrientedRoamState& state, DataOrientedRoamNodeConstRef node);
 
 // ComputeScreenErrorScore 是当前 split/merge 队列排序的统一评分
-[[nodiscard]] float ComputeScreenErrorScore(const DataOrientedRoamState& state, DataOrientedRoamNodeConstRef node);
+[[nodiscard]] float ComputeScreenErrorScore(
+    const DataOrientedRoamState& state,
+    DataOrientedRoamNodeIndex node);
 } // namespace ParallelRoam::Algorithms::DataOrientedRoam

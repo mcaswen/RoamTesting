@@ -72,13 +72,13 @@ float SplitQueueScore(const DataOrientedRoamState& state, DataOrientedRoamNodeIn
     // Q_s 保存全部活动叶节点，包括达到最大深度或本次 Build 暂时被屏蔽的节点。
     // 被屏蔽节点只会沉到 heap 尾部，不会退出队列。merge 产生的 parent
     // 在同一个 Build 中不能再次被选中。
-    if (!IsActiveLeafNode(state, node) || state.Nodes[node].Depth >= state.Settings.MaxDepth ||
+    if (!IsActiveLeafNode(state, node) || state.Nodes.DepthAt(node) >= state.Settings.MaxDepth ||
         state.SplitQueueBlockedBuildIds[node] == state.BuildSequence ||
-        state.Nodes[node].MergeBuildId == state.BuildSequence)
+        state.Nodes.MergeBuildIdAt(node) == state.BuildSequence)
     {
         return BlockedSplitScore;
     }
-    return ComputeScreenErrorScore(state, state.Nodes[node]);
+    return ComputeScreenErrorScore(state, node);
 }
 
 bool SplitEntryPrecedes(
@@ -88,13 +88,13 @@ bool SplitEntryPrecedes(
 {
     // Q_s 按缓存的屏幕误差组成最大堆。分数相同时使用 PathId 稳定排序，
     // 使结果不受 ActiveLeafNodes 交换历史影响。
-    const float leftScore = state.Nodes[left].ScreenError;
-    const float rightScore = state.Nodes[right].ScreenError;
+    const float leftScore = state.Nodes.ScreenErrorAt(left);
+    const float rightScore = state.Nodes.ScreenErrorAt(right);
     if (leftScore != rightScore)
     {
         return leftScore > rightScore;
     }
-    return state.Nodes[left].PathId < state.Nodes[right].PathId;
+    return state.Nodes.PathIdAt(left) < state.Nodes.PathIdAt(right);
 }
 
 void SwapSplitQueueEntries(DataOrientedRoamState& state, std::size_t left, std::size_t right)
@@ -184,14 +184,15 @@ bool IsMergeableTopology(const DataOrientedRoamState& state, DataOrientedRoamNod
         return false;
     }
 
-    const DataOrientedRoamNodeConstRef candidate = state.Nodes[node];
-    if (!IsActiveLeafNode(state, candidate.LeftChild) || !IsActiveLeafNode(state, candidate.RightChild))
+    const DataOrientedRoamNodeIndex leftChild = state.Nodes.LeftChildAt(node);
+    const DataOrientedRoamNodeIndex rightChild = state.Nodes.RightChildAt(node);
+    if (!IsActiveLeafNode(state, leftChild) || !IsActiveLeafNode(state, rightChild))
     {
         return false;
     }
 
     // 地形边界上的 parent，以及 base neighbor 为活动叶节点的 parent，可以单独 merge。
-    const DataOrientedRoamNodeIndex baseNeighbor = candidate.BaseNeighbor;
+    const DataOrientedRoamNodeIndex baseNeighbor = state.Nodes.BaseNeighborAt(node);
     if (!state.IsValidNode(baseNeighbor) || IsActiveLeafNode(state, baseNeighbor))
     {
         return !state.IsValidNode(baseNeighbor) || IsActiveLeafNode(state, baseNeighbor);
@@ -203,9 +204,10 @@ bool IsMergeableTopology(const DataOrientedRoamState& state, DataOrientedRoamNod
     {
         return false;
     }
-    const DataOrientedRoamNodeConstRef base = state.Nodes[baseNeighbor];
-    return base.BaseNeighbor == node && IsActiveLeafNode(state, base.LeftChild) &&
-           IsActiveLeafNode(state, base.RightChild);
+    // 双向 base-neighbor 和四个 leaf child 共同定义可回收 diamond。
+    return state.Nodes.BaseNeighborAt(baseNeighbor) == node &&
+           IsActiveLeafNode(state, state.Nodes.LeftChildAt(baseNeighbor)) &&
+           IsActiveLeafNode(state, state.Nodes.RightChildAt(baseNeighbor));
 }
 
 // 一个完整 diamond 只对应一次队列操作，而不是两次 parent 操作。
@@ -219,10 +221,10 @@ DataOrientedRoamNodeIndex CanonicalMergeQueueNode(
         return InvalidDataOrientedRoamNodeIndex;
     }
 
-    const DataOrientedRoamNodeIndex baseNeighbor = state.Nodes[node].BaseNeighbor;
-    if (IsActiveInternalNode(state, baseNeighbor) && state.Nodes[baseNeighbor].BaseNeighbor == node)
+    const DataOrientedRoamNodeIndex baseNeighbor = state.Nodes.BaseNeighborAt(node);
+    if (IsActiveInternalNode(state, baseNeighbor) && state.Nodes.BaseNeighborAt(baseNeighbor) == node)
     {
-        return state.Nodes[node].PathId < state.Nodes[baseNeighbor].PathId ? node : baseNeighbor;
+        return state.Nodes.PathIdAt(node) < state.Nodes.PathIdAt(baseNeighbor) ? node : baseNeighbor;
     }
     return node;
 }
@@ -232,16 +234,16 @@ DataOrientedRoamNodeIndex CanonicalMergeQueueNode(
 float MergeQueueScore(const DataOrientedRoamState& state, DataOrientedRoamNodeIndex node)
 {
     const DataOrientedRoamNodeIndex partner = state.MergeQueuePartners[node];
-    if (state.Nodes[node].SplitBuildId == state.BuildSequence ||
-        (state.IsValidNode(partner) && state.Nodes[partner].SplitBuildId == state.BuildSequence))
+    if (state.Nodes.SplitBuildIdAt(node) == state.BuildSequence ||
+        (state.IsValidNode(partner) && state.Nodes.SplitBuildIdAt(partner) == state.BuildSequence))
     {
         return std::numeric_limits<float>::max();
     }
 
-    float score = ComputeScreenErrorScore(state, state.Nodes[node]);
+    float score = ComputeScreenErrorScore(state, node);
     if (state.IsValidNode(partner))
     {
-        score = std::max(score, ComputeScreenErrorScore(state, state.Nodes[partner]));
+        score = std::max(score, ComputeScreenErrorScore(state, partner));
     }
     return score;
 }
@@ -257,7 +259,7 @@ bool MergeEntryPrecedes(
     {
         return left.Score < right.Score;
     }
-    return state.Nodes[left.Node].PathId < state.Nodes[right.Node].PathId;
+    return state.Nodes.PathIdAt(left.Node) < state.Nodes.PathIdAt(right.Node);
 }
 
 // 每次交换 heap 项时都同步更新代表节点的反向位置，不保留可能随 vector
@@ -403,7 +405,7 @@ void InitializePersistentSplitQueue(DataOrientedRoamState& state)
     // 并建立 heap 顺序。
     for (DataOrientedRoamNodeIndex node : state.ActiveLeafNodes)
     {
-        state.Nodes[node].ScreenError = SplitQueueScore(state, node);
+        state.Nodes.ScreenErrorAt(node) = SplitQueueScore(state, node);
     }
     for (std::size_t index = state.ActiveLeafNodes.size() / 2U; index > 0U; --index)
     {
@@ -429,7 +431,7 @@ void RefreshPersistentSplitQueuePriorities(DataOrientedRoamState& state)
         for (std::size_t index = begin; index < end; ++index)
         {
             const DataOrientedRoamNodeIndex node = state.ActiveLeafNodes[index];
-            state.Nodes[node].ScreenError = SplitQueueScore(state, node);
+            state.Nodes.ScreenErrorAt(node) = SplitQueueScore(state, node);
         }
     };
     if (workerCount <= 1U)
@@ -475,7 +477,7 @@ void InsertPersistentSplitQueueNode(DataOrientedRoamState& state, DataOrientedRo
     const std::size_t position = state.ActiveLeafNodes.size();
     state.ActiveLeafNodePositions[node] = position;
     state.ActiveLeafNodes.push_back(node);
-    state.Nodes[node].ScreenError = SplitQueueScore(state, node);
+    state.Nodes.ScreenErrorAt(node) = SplitQueueScore(state, node);
     SiftSplitQueueUp(state, position);
     ++state.Stats.QueueMembershipUpdateCount;
 }
@@ -517,7 +519,7 @@ void BlockPersistentSplitQueueNodeForCurrentBuild(
         return;
     }
     state.SplitQueueBlockedBuildIds[node] = state.BuildSequence;
-    state.Nodes[node].ScreenError = BlockedSplitScore;
+    state.Nodes.ScreenErrorAt(node) = BlockedSplitScore;
     RestoreSplitQueueAt(state, state.ActiveLeafNodePositions[node]);
 }
 
@@ -533,7 +535,7 @@ float TopPersistentSplitQueueScore(const DataOrientedRoamState& state)
 {
     // Q_s 为空时返回与不可 split 叶节点相同的屏蔽分数。
     const DataOrientedRoamNodeIndex node = TopPersistentSplitQueueNode(state);
-    return state.IsValidNode(node) ? state.Nodes[node].ScreenError : BlockedSplitScore;
+    return state.IsValidNode(node) ? state.Nodes.ScreenErrorAt(node) : BlockedSplitScore;
 }
 
 void SnapshotPersistentSplitQueueCandidates(
@@ -548,8 +550,8 @@ void SnapshotPersistentSplitQueueCandidates(
     for (DataOrientedRoamNodeIndex node : state.ActiveLeafNodes)
     {
         // 当前 Build 已统一刷新过分数，生成快照时不再重复计算屏幕误差。
-        const float score = state.Nodes[node].ScreenError;
-        if (ShouldSplitWithScore(state, state.Nodes[node], score))
+        const float score = state.Nodes.ScreenErrorAt(node);
+        if (ShouldSplitWithScore(state, node, score))
         {
             candidates.push_back(DataOrientedRoamSplitCandidate{score, sequence++, node});
         }
@@ -806,7 +808,7 @@ std::size_t CountPersistentQueueInvariantViolations(const DataOrientedRoamState&
         const DataOrientedRoamNodeIndex partner = state.MergeQueuePartners[node];
         if (state.IsValidNode(partner) &&
             (state.MergeQueueRepresentatives[partner] != node ||
-             state.Nodes[node].PathId >= state.Nodes[partner].PathId))
+             state.Nodes.PathIdAt(node) >= state.Nodes.PathIdAt(partner)))
         {
             ++violations;
         }

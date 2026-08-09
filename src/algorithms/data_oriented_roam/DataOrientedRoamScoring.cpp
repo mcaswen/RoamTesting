@@ -20,10 +20,10 @@ TriangleDomainChildren SplitTriangleDomain(const TriangleDomain& domain)
 
 bool ShouldSplitWithScore(
     const DataOrientedRoamState& state,
-    DataOrientedRoamNodeConstRef node,
+    DataOrientedRoamNodeIndex node,
     float screenErrorScore)
 {
-    if (node.Depth >= state.Settings.MaxDepth)
+    if (state.Nodes.DepthAt(node) >= state.Settings.MaxDepth)
     {
         return false;
     }
@@ -46,10 +46,10 @@ bool ShouldSplitWithScore(
     return WasSplitLastFrame(state, node);
 }
 
-bool WasSplitLastFrame(const DataOrientedRoamState& state, DataOrientedRoamNodeConstRef node)
+bool WasSplitLastFrame(const DataOrientedRoamState& state, DataOrientedRoamNodeIndex node)
 {
     // hysteresis 只看上一帧最终 active split path
-    return state.PreviousSplitPaths.find(node.PathId) != state.PreviousSplitPaths.end();
+    return state.PreviousSplitPaths.find(state.Nodes.PathIdAt(node)) != state.PreviousSplitPaths.end();
 }
 
 DataOrientedRoamLeafDebugClass ClassifyLeafDebug(
@@ -172,13 +172,14 @@ float VarianceError(
     return state.VarianceTrees[treeIndex][varianceIndex];
 }
 
-float ComputeScreenErrorScore(const DataOrientedRoamState& state, DataOrientedRoamNodeConstRef node)
+float ComputeScreenErrorScore(const DataOrientedRoamState& state, DataOrientedRoamNodeIndex node)
 {
-    const float worldError = node.GeometricError * state.HeightScale;
+    const float worldError = state.Nodes.GeometricErrorAt(node) * state.HeightScale;
+    const TriangleDomain& domain = state.Nodes.DomainAt(node);
     const std::array<glm::vec3, 3U> triangle{
-        Roam::DomainToWorld(*state.HeightMap, node.Domain.A, state.TerrainSize, state.HeightScale),
-        Roam::DomainToWorld(*state.HeightMap, node.Domain.B, state.TerrainSize, state.HeightScale),
-        Roam::DomainToWorld(*state.HeightMap, node.Domain.C, state.TerrainSize, state.HeightScale),
+        Roam::DomainToWorld(*state.HeightMap, domain.A, state.TerrainSize, state.HeightScale),
+        Roam::DomainToWorld(*state.HeightMap, domain.B, state.TerrainSize, state.HeightScale),
+        Roam::DomainToWorld(*state.HeightMap, domain.C, state.TerrainSize, state.HeightScale),
     };
     const std::size_t nearPlaneIndex = static_cast<std::size_t>(TerrainLodFrustumPlane::Near);
     return Roam::ComputeScreenErrorScore({
