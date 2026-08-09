@@ -1,0 +1,485 @@
+# DOD 与 Classic ROAM 优化问题规划
+
+> 日期：2026-08-10  
+> 状态：实施规划 v1.0  
+> 范围：Data-Oriented CPU ROAM 相对 Classic CPU ROAM 的 CPU 热路径  
+> 基准：`RelWithDebInfo`、统一 ROAM 误差公式、持久 `Q_s/Q_m`、相同阈值与固定活动叶三角形预算
+
+## 1. 目标
+
+本计划解决两个容易混淆的问题：
+
+1. 让 DOD 的串行 split/merge 在相同算法职责和相同拓扑事务数量下，尽量接近 Classic 的单操作成本；
+2. 保留并证明 DOD 在连续扫描、批量评分、并行提交和高变化率 Mesh 输出中的额外收益。
+
+本计划不把“DOD 单核一定超过 Classic”设为结论。Classic 使用裸指针直接修改少量离散节点，这种布局可能天然适合串行拓扑事务；DOD 的目标是先消除当前实现额外支付的原子操作、节点代理、队列整理和全量输出成本，再判断剩余差距是否来自指针与 SoA 索引布局本身。
+
+本文把后续工作封闭为八类问题。除非 profiler 在相同输入、相同拓扑事务数量下发现一个稳定占用显著时间、且不能归入这八类的新阶段，否则不继续增加新的优化问题。
+
+## 2. 当前结论与基线
+
+当前实现已经完成以下对齐：
+
+- Classic 与 DOD 共用 ROAM 1997 公式 (1) 的嵌套楔形厚度，以及公式 (2)/(3) 的保守像素投影；
+- 两者共用 split/merge thresholds、FOV、可绘制区域尺寸、视锥和活动叶三角形硬预算；
+- 两者都持久维护 `Q_s/Q_m`，并在预算饱和时持续执行低损失 merge 与高收益 split 的资源交换；
+- DOD 已直接复用 `ActiveLeafNodes`，不再递归收集或复制最终活动叶节点；
+- DOD 的队列评分和候选标记已经快于 Classic，不再是下一阶段的主要优化对象；
+- 当前串行 split 对比中，DOD 的并行 split 选项关闭，但预算 token 仍使用 atomic；
+- Classic 已实现增量 Mesh slot、dirty range 和增量 upload，DOD 仍完整 emit CPU Mesh。
+
+最新单轮参考报告：
+
+- [默认选项路径报告](../../benchmark-output/runtime-benchmark-20260810-002908.md)
+- [极限压力路径报告](../../benchmark-output/runtime-benchmark-20260810-003052.md)
+
+| 路径 | 阶段 | Classic CPU | DOD CPU | 当前判断 |
+| --- | --- | ---: | ---: | --- |
+| 默认 | Merge mark | 0.4333 ms | 0.1870 ms | DOD 已更快，不优先优化 |
+| 默认 | Merge topology | 0.0047 ms | 0.0210 ms | DOD 单操作维护成本仍高 |
+| 默认 | Split scan/mark | 0.4486 ms | 0.3225 ms | DOD 已更快，不优先优化 |
+| 默认 | Split topology | 0.0093 ms | 0.0342 ms | DOD 单操作维护成本仍高 |
+| 默认 | Mesh emit | 0.0048 ms | 1.0635 ms | Classic 增量输出优势明显 |
+| 默认 | CPU upload | 0.0040 ms | 0.2092 ms | DOD 仍支付完整 Mesh 上传成本 |
+| 极限压力 | Merge mark | 14.6630 ms | 2.9499 ms | DOD 批量评分优势明显 |
+| 极限压力 | Merge topology | 32.2559 ms | 32.6699 ms | 帧耗时接近，但 DOD 每帧事务数更少 |
+| 极限压力 | Split scan/mark | 43.6063 ms | 8.5509 ms | DOD 批量评分优势明显 |
+| 极限压力 | Split topology | 67.7276 ms | 57.2506 ms | DOD 帧耗时更低，但单操作仍有差距 |
+| 极限压力 | Mesh emit | 44.5763 ms | 17.7158 ms | 高变化率下 DOD 全量并行 emit 有优势 |
+
+以上数据只用于确定优化方向，不作为正式性能结论。正式 A/B 必须多轮重复，并排除 `timeSeconds == 0` 的初始化样本。
+
+## 3. 八类优化问题总表
+
+| ID | 问题 | 性质 | Classic 现状 | 优先级 | 主要依赖 |
+| --- | --- | --- | --- | --- | --- |
+| O1 | 串行路径仍使用 atomic triangle budget | 串行对齐 + 保留并行能力 | 普通 `size_t` 预算 | P0 | 与 O2 同阶段 |
+| O2 | 串行和并行共用带运行时分支的拓扑函数 | 串行对齐 + 保留并行能力 | 精简串行函数 | P0 | O1、O7 |
+| O3 | `ActiveLeafNodes` 同时承担活动集合和 split heap | 追平 Classic 的 heap 局部性 | 独立 `{Node, Score}` heap | P1 | O8；为 O6 提供稳定槽位基础 |
+| O4 | 串行拓扑事务反复分配、排序和去重队列邻域 | 主要追平 Classic | 小邻域即时去重 | P0 | O2 |
+| O5 | merge 并行批处理的整理成本高于 worker 提交成本 | DOD 额外能力 | 无并行 merge 对应物 | P2 | O3、O4、O8 稳定后再做 |
+| O6 | DOD 每帧完整 emit 和 upload CPU Mesh | 追平 Classic + 自适应扩展 | 增量 Mesh slot/range | P1 | O3 的稳定叶节点/slot 语义 |
+| O7 | 拓扑热路径仍构造完整 SoA proxy | 追平 Classic 的直接字段成本 | 指针直接访问字段 | P0 | 与 O2、O4 一起完成 |
+| O8 | 活动索引和 merge queue 旁路数组访问分散 | 混合：对齐 + DOD 连续索引能力 | 节点内 intrusive 状态 | P1 | O3、O5 |
+
+## 4. 优先级定义
+
+### P0：先完成，否则串行对比不公平
+
+P0 只处理串行 topology commit 中 DOD 比 Classic 多支付的固定成本：
+
+- atomic budget；
+- `TopologyCommitCounters*` 和 `counters == nullptr` 运行时分支；
+- 每事务临时邻域容器和 `sort + unique`；
+- 只读或少量写入仍构造完整 proxy。
+
+P0 完成后，串行 split/merge 的控制流应当与 Classic 基本对应，剩余核心差异主要是裸指针访问与 SoA 索引访问。
+
+### P1：解决队列布局和完整帧输出差距
+
+P1 包含：
+
+- 把活动叶节点连续视图与 split heap 排序状态分离；
+- 压缩和重组活动索引、反向位置及 merge queue 元数据；
+- 为 DOD 增加稳定 Mesh slot、topology edit、dirty range 和增量 upload；
+- 根据拓扑变化比例，在增量 emit 与全量并行 emit 之间选择实测更快的路径。
+
+P1 完成后，默认路径不应再因为全量 Mesh 构建和上传掩盖 DOD 的评分收益。
+
+### P2：优化 DOD 独有的并行 merge 能力
+
+P2 不用于追平 Classic，而用于证明 DOD 的额外能力是否值得保留：
+
+- 复用 merge candidate、chunk 和 worker result 缓冲；
+- 批量合并邻域失效和刷新；
+- 降低 worker join 后的主线程索引/队列整理；
+- 根据候选规模选择串行或并行执行策略，但不限制拓扑事务总量，也不改变持续收敛语义。
+
+## 5. 阶段 A：建立不可变基线
+
+### A1. 固定对比口径
+
+每个优化提交之前和之后都必须使用：
+
+- 相同提交基础、构建配置和图形后端；
+- 相同 HeightMap、terrain size、height scale、max depth；
+- 相同 split/merge thresholds、FOV、可绘制区域尺寸和 triangle budget；
+- 相同相机路径；
+- DOD 串行 topology 对比时关闭并行 split；
+- Classic 和 DOD 都启用相同拓扑验证设置；
+- 默认选项路径和极限压力路径各运行不少于 5 轮。
+
+### A2. 统一统计
+
+核心指标：
+
+```text
+稳定样本 CPU update
+Merge candidate mark
+Merge topology
+Split candidate mark
+Split topology
+Mesh emit
+Finalize
+CPU upload
+split/merge 总操作数
+queue membership update 数
+forced split 数
+活动叶三角形数
+拓扑错误、无效邻接、T-junction
+```
+
+必须额外计算：
+
+```text
+split 单操作成本 = sum(cpuSplitTopologyMilliseconds) / sum(splits)
+merge 单操作成本 = sum(cpuMergeTopologyMilliseconds) / sum(merges)
+```
+
+不得仅比较每帧 topology 时间，因为不同实现的帧率不同，同一 10 秒窗口内的采样帧数和拓扑事务数也会不同。
+
+## 6. 阶段 B：串行 topology 公平对齐
+
+### B1. O1 + O2：串行预算与串行拓扑专用路径
+
+#### 当前问题
+
+[`TryAcquireSplitBudget`](../../src/algorithms/data_oriented_roam/DataOrientedRoamTopology.cpp#L312) 在串行 split 中仍执行 atomic load/CAS；[`SplitNode`](../../src/algorithms/data_oriented_roam/DataOrientedRoamTopology.cpp#L451)、`MergeSingleNode` 和多个统计 helper 通过 `TopologyCommitCounters*` 同时服务串行和并行路径。
+
+#### 实施内容
+
+1. 为串行收敛维护普通预算计数；
+2. atomic token 只供并行 commit 使用，或者由主线程批量预留后分配给 worker；
+3. 建立编译期可裁剪的串行/并行拓扑入口；
+4. 保持 forced split closure 的预算预留和失败归还语义；
+5. 邻接修复、child 复用和 diamond 规则仍共用底层 helper，避免复制两套拓扑算法；
+6. 串行路径不创建 worker-local counter，也不执行 `counters == nullptr` 分支。
+
+#### 验收
+
+- `roam_budget_reentry_dod` 通过；
+- 默认与压力路径 topology issue 均为 0；
+- 活动叶三角形不超过预算；
+- 相同固定相机序列下，优化前后最终活动叶集合、split/merge 总量和 forced split 总量一致；
+- 串行 split/merge 单操作成本下降；
+- 并行 split 打开时结果不退化。
+
+#### 回退条件
+
+若普通预算与 atomic 预算之间需要每次事务同步，导致串行路径没有稳定收益，则改为主线程按批次预留，而不是维护两份逐事务同步状态。
+
+### B2. O4：小邻域无分配去重
+
+#### 当前问题
+
+DoD 的 [`NormalizeQueueNeighborhood`](../../src/algorithms/data_oriented_roam/DataOrientedRoamTopology.cpp#L953) 对串行 split/merge 的小邻域反复执行 `sort + unique`；Classic 的 [`AppendQueueNeighborhood`](../../src/algorithms/classic_roam/ClassicRoamQueues.cpp#L386) 在插入时完成小集合去重。
+
+#### 实施内容
+
+1. 根据邻域扩张规则推导单次事务的最大候选数量；
+2. 使用栈上固定容量数组或项目已有的小型容器；
+3. 插入时即时去重，不在串行路径排序；
+4. 容量不足时保留可验证的安全回退，不允许静默丢失节点；
+5. 并行批处理仍允许集中收集后统一去重；
+6. 失效和刷新尽量复用同一份规范化邻域。
+
+#### 验收
+
+- 每次串行 split/merge 不发生邻域 vector 动态分配；
+- 串行路径不调用 `NormalizeQueueNeighborhood`；
+- queue membership 和 heap validator 无新增错误；
+- 单操作 topology 成本下降。
+
+### B3. O7：完成热路径 proxy 清理
+
+#### 当前问题
+
+评分路径已经使用标量访问器，但以下热路径仍存在完整 proxy：
+
+- [`SplitNode`](../../src/algorithms/data_oriented_roam/DataOrientedRoamTopology.cpp#L564) 的 parent/child 写入；
+- `IsSafeInteriorSplit`、`IsSafeInteriorMerge` 和 chunk 安全检查；
+- [`EvaluateMergeCandidateImpl`](../../src/algorithms/data_oriented_roam/DataOrientedRoamCandidateMarking.cpp#L10)；
+- [`AppendPersistentMergeQueueNeighborhood`](../../src/algorithms/data_oriented_roam/DataOrientedRoamQueues.cpp#L619)。
+
+#### 实施内容
+
+1. 只读判断改用标量访问器；
+2. 多字段写入改为专用操作，例如设置 split 状态、清空 child 邻接、更新 parent 邻接；
+3. 保留完整 proxy 给低频验证和调试代码；
+4. 不为每个 SoA 字段机械增加公开接口，只覆盖实际热路径。
+
+#### 验收
+
+- 正常 Build 热路径不再构造 `DataOrientedRoamNodeConstRef`；
+- `DataOrientedRoamNodeRef` 只保留在确实同时修改大量字段且实测无损的位置；
+- 汇编或 profiler 中不再出现热路径 `operator[]` 调用；
+- 正确性结果不变。
+
+### B4. 阶段 B 决策点
+
+阶段 B 完成后先停止实现并重新测量：
+
+- 若默认和压力路径的 DOD 串行 split/merge 单操作成本已接近 Classic，进入阶段 C；
+- 若差距仍明显，使用 profiler 只检查 `SplitNode`、`MergeSingleNode`、heap 维护和邻域队列更新；
+- 若 profiler 显示主要剩余时间来自随机 SoA 索引访问，而不是额外函数、分支或分配，则把该差距记录为当前数据布局对随机拓扑修改的成本，不继续增加新问题。
+
+## 7. 阶段 C：队列和活动索引布局
+
+### C1. O3：活动叶视图与 split heap 分离
+
+#### 当前问题
+
+[`SplitEntryPrecedes`](../../src/algorithms/data_oriented_roam/DataOrientedRoamQueues.cpp#L84) 从 heap 中取得 node index 后，再按 node index 读取 `ScreenErrors` 和 `PathIds`。`ActiveLeafNodes` 的 heap 交换还会持续改变最终叶节点输出顺序。
+
+Classic 的 [`SplitQueueEntry`](../../src/algorithms/classic_roam/ClassicRoamMeshBuilder.h#L261) 把 `Node` 和 `Score` 放在同一个 heap entry 中，并使用节点内反向位置。
+
+#### 实施内容
+
+1. 保留稳定、稠密的活动叶节点列表；
+2. 独立维护 split heap 的 node、score 和反向位置；
+3. heap 比较直接读取 heap position 对应的 score，不再通过 node index 跳转；
+4. split/merge 局部事务同时更新活动叶列表和 split heap；
+5. 不重新引入每帧活动叶复制或递归收集。
+
+#### 验收
+
+- `CpuFinalLeafCollectMilliseconds` 保持为 0；
+- split candidate mark 不退化；
+- split/merge 单操作 heap 维护成本下降；
+- 活动叶列表顺序不再因 score heapify 改变；
+- 为阶段 D 的稳定 Mesh slot 提供可用基础。
+
+#### 回退条件
+
+若维护两份索引使 topology membership update 成本高于 heap 局部性收益，则保留活动叶/heap 融合结构，只增加按 heap position 连续存储的 score 数组，并用独立 Mesh slot 解决输出稳定性。
+
+### C2. O8：压缩活动状态与旁路元数据
+
+#### 当前问题
+
+[`DataOrientedRoamState`](../../src/algorithms/data_oriented_roam/DataOrientedRoamState.h#L302) 为活动 internal、活动 leaf 和 merge queue 维护多组 node-to-position、representative 和 partner 数组。它们支持连续扫描和并行提交，但单次拓扑事务会写入多个分散数组。
+
+#### 实施内容
+
+1. 增加紧凑的 active 状态或 generation 标记，降低活动性判断成本；
+2. 在可证明节点容量不会溢出的前提下评估 32 位 position；
+3. 将 merge queue 的 position、representative、partner 按实际访问模式重组；
+4. 批量 commit 继续集中更新旁路索引；
+5. 不删除 `ActiveInternalNodes`。已有 A/B 已证明它能避免扫描历史 node pool，并显著降低 merge candidate mark。
+
+#### 验收
+
+- active leaf/internal 判断减少随机数组读取；
+- queue membership update 数保持一致；
+- merge candidate mark 不退化；
+- node pool 和旁路数组总内存不增加，或增加量有明确收益依据。
+
+## 8. 阶段 D：DOD 增量与全量自适应 Mesh
+
+### D1. O6：补齐增量 Mesh 输出契约
+
+#### 当前问题
+
+DoD 在 [`DataOrientedRoamMeshBuilder::Build`](../../src/algorithms/data_oriented_roam/DataOrientedRoamMeshBuilder.cpp#L163) 中把全部 `ActiveLeafNodes` 交给 [`EmitLeafTriangles`](../../src/algorithms/data_oriented_roam/DataOrientedRoamMeshEmit.cpp#L121)，每帧重新 resize 和写入完整 CPU Mesh。
+
+Classic 已通过 [`ApplyIncrementalMeshUpdates`](../../src/algorithms/classic_roam/ClassicRoamMeshEmit.cpp#L89) 实现稳定 slot、topology edit、dirty slot 和 update range，并由 adapter 发布借用 Mesh 与增量上传契约。
+
+#### 实施内容
+
+1. 为 DOD 节点维护 Mesh slot 或等价反向索引；
+2. split 时一个 child 继承 parent slot，另一个 child 追加新 slot；
+3. merge 时 parent 继承一个 child slot，另一个 child 通过 move-last 回收；
+4. topology commit 记录 Mesh edit，拓扑稳定后统一重放；
+5. 生成 dirty ranges 并接入 `TerrainLodRenderPacket` 的 borrowed Mesh/update range 契约；
+6. 增加 DOD 版 incremental-emit 回归测试；
+7. 用 A/B 实验确定增量 emit 与全量并行 emit 的交叉点；
+8. 当本帧 dirty triangle 比例超过交叉点时，允许完整并行 emit，不设置拓扑操作数量上限。
+
+#### 验收
+
+- 拓扑不变帧：updated triangles 和 dirty ranges 为 0；
+- 少量变化帧：`updated + reused == active`；
+- full/incremental 两条路径生成相同 Mesh 内容；
+- 默认路径 emit 和 upload 明显下降；
+- 极限压力路径不得因为强制增量更新而稳定慢于当前全量并行 emit；
+- OpenGL 与 D3D12 都正确消费 update ranges。
+
+## 9. 阶段 E：并行 merge 批处理
+
+### E1. O5：降低结果整理成本
+
+#### 当前问题
+
+[`MergeWithDiamondQueue`](../../src/algorithms/data_oriented_roam/DataOrientedRoamTopology.cpp#L1297) 当前执行候选快照、全量排序、chunk 分桶、邻域失效、worker 提交、结果合并、主线程索引/队列刷新和串行收敛。
+
+极限压力路径的单轮参考值：
+
+| Merge topology 子阶段 | 平均耗时 |
+| --- | ---: |
+| 候选排序/分桶 | 0.3746 ms |
+| 队列邻域失效 | 1.1586 ms |
+| chunk 并行提交 | 0.6366 ms |
+| worker 结果汇总 | 0.0119 ms |
+| 活动索引/队列刷新 | 4.9412 ms |
+| 串行收敛 | 25.5251 ms |
+
+并行 worker 提交不是最大成本，主线程的索引和队列刷新才是优先对象。
+
+#### 实施内容
+
+1. 将候选、chunk、计数器和已提交结果缓冲变成跨帧复用工作区；
+2. worker 输出紧凑的 topology transition 记录；
+3. 主线程按 node index 或受影响邻域批量应用索引变化；
+4. 对多个 merge 的邻域做一次批量规范化、失效和恢复；
+5. 使用实测候选交叉点选择串行或并行执行策略；
+6. 不限制本帧 merge/split 总事务数，持续收敛语义保持不变；
+7. 保留边界 candidate 串行回退和 diamond 拓扑检查。
+
+#### 验收
+
+- 并行路径的 `index/queue refresh` 明显下降；
+- worker commit 收益不被结果整理抵消；
+- 候选不足时串行路径不支付快照、分桶和 worker 调度成本；
+- 极限压力路径 CPU update 改善；
+- 默认路径不回退；
+- 拓扑事务总量、最终活动叶集合和拓扑正确性与优化前一致。
+
+## 10. 实施顺序与提交边界
+
+每个编号阶段必须独立提交，禁止把多个无法单独 A/B 的大改动压入同一提交。
+
+| 顺序 | 提交主题 | 包含问题 | 必须附带的验证 |
+| ---: | --- | --- | --- |
+| 1 | 串行预算与拓扑专用路径 | O1、O2 | CTest、budget reentry、默认/压力 A/B |
+| 2 | 串行队列邻域无分配去重 | O4 | queue validator、默认/压力 A/B |
+| 3 | 清理剩余热路径 proxy | O7 | CTest、汇编或 profiler 证据、A/B |
+| 4 | split heap 与活动叶视图分离 | O3 | heap/active index validator、A/B |
+| 5 | 活动状态和旁路元数据重组 | O8 | topology validator、内存统计、A/B |
+| 6 | DOD 增量 Mesh 基础路径 | O6 | 新增回归测试、OpenGL/D3D12 smoke |
+| 7 | 增量/全量 Mesh 自适应选择 | O6 | 默认/压力交叉点实验 |
+| 8 | merge 并行结果批量整理 | O5 | 子阶段计时、默认/压力 A/B |
+
+若某一步没有达到自身目标，应先解释、回退或调整该步，不进入下一步后再用其他改动掩盖结果。
+
+## 11. 正确性门槛
+
+所有性能优化必须满足：
+
+```text
+ActiveTriangleCount <= TriangleBudget
+PersistentSplitQueueSize == ActiveTriangleCount
+T-junction == 0
+InvalidNeighbor == 0
+InvalidTopology == 0
+同一固定相机序列具有确定性结果
+```
+
+必须运行：
+
+```text
+RelWithDebInfo build
+完整 CTest
+roam_budget_reentry_classic
+roam_budget_reentry_dod
+默认选项路径 runtime benchmark
+极限压力路径 runtime benchmark
+OpenGL GPU smoke
+D3D12 GPU smoke（涉及 render packet、Mesh 或 upload 时）
+```
+
+对 Mesh 改动还必须验证：
+
+```text
+顶点、索引、绕序和 debug 属性一致
+updated + reused == active
+dirty range 不越过 Mesh 尾部
+full upload 与 range upload 输出一致
+frame slot 延迟消费 ranges 时不会漏更新
+```
+
+## 12. 性能判断规则
+
+### 12.1 报告统计
+
+- 每组至少 5 轮；
+- 优先比较多轮中位数，同时记录 P95；
+- 排除初始化样本；
+- 保留原始 CSV 和自动生成的 Markdown；
+- 报告 Classic 与 DOD 的实际 split/merge 总量；
+- topology 必须同时给出每帧耗时和每操作耗时；
+- 不把 candidate mark、topology 和 Mesh emit 混成单一 `CPU update` 结论。
+
+### 12.2 改动接受条件
+
+满足以下条件才保留优化：
+
+1. 目标阶段在默认或压力路径中出现稳定改善；
+2. 另一条路径没有无法解释的显著退化；
+3. 拓扑事务数量和最终输出没有通过减少工作量伪造性能收益；
+4. 正确性门槛全部通过；
+5. 代码复杂度与收益相称。
+
+单轮小于计时波动的变化不得写成性能结论。若目标阶段改善但完整帧不变，应明确记录瓶颈转移，而不是否定局部优化。
+
+## 13. 停止条件
+
+### 13.1 串行 topology 停止条件
+
+完成 O1、O2、O4、O7、O3 和 O8 后，若 profiler 表明：
+
+- 不再存在 atomic、运行时串并行分支、邻域动态分配或完整 proxy 热点；
+- heap 和队列元数据访问已经是主要剩余成本；
+- 差距主要来自指针直接访问与 SoA 索引随机访问；
+- DOD 在压力路径整体 CPU update 已稳定优于 Classic；
+
+则停止继续追求串行 split/merge 与 Classic 完全相等，把剩余差距记录为当前数据布局的适用边界。
+
+### 13.2 不新增“第九个问题”的条件
+
+只有同时满足以下条件，才允许在本计划增加新问题：
+
+1. profiler 指向一个不能归入 O1-O8 的独立执行阶段；
+2. 该阶段只在 DOD 存在，或 DOD 稳定明显慢于 Classic；
+3. 默认和压力路径至少一条可重复复现；
+4. 控制拓扑事务数量后差距仍存在；
+5. 该阶段占 DOD CPU update 的比例足以影响结论。
+
+以下内容不得作为新增问题：
+
+- O4/O5 已覆盖的临时 vector 和排序；
+- O5 已覆盖的 worker 调度、join 和结果合并；
+- O6 已覆盖的 CPU/GPU buffer 完整上传；
+- O3/O7/O8 已覆盖的 cache miss、索引跳转、边界检查和节点代理；
+- Classic 与 DOD 都执行的 `CollectActiveSplitPaths`；
+- 已经快于 Classic 的 candidate mark；
+- 单轮 benchmark 波动。
+
+## 14. 非目标项
+
+本轮优化不修改：
+
+- ROAM 1997 误差公式和屏幕投影；
+- split/merge thresholds 的语义；
+- forced split、diamond merge 和裂缝约束；
+- 持久 `Q_s/Q_m` 的全局优先级口径；
+- triangle budget 和持续资源交换语义；
+- GPU ROAM-like shader 算法；
+- CBT 2024 路径；
+- ROAM 1997 完整最优性证明、triangle strip 或延期优先级复现。
+
+候选评分、方差树和最终活动叶收集已经不是 Classic/DOD 当前差距的主要来源，不在本计划中重复优化。
+
+## 15. 最终交付
+
+本计划完成后应交付：
+
+1. 一条精简且与 Classic 可解释对齐的 DOD 串行 topology 路径；
+2. 保留正确性约束的 DOD 并行 split/merge 路径；
+3. 稳定的活动叶视图和独立 split heap；
+4. DOD 增量/全量自适应 CPU Mesh 输出；
+5. OpenGL/D3D12 增量 upload；
+6. 默认与极限压力路径的多轮 A/B 报告；
+7. 对剩余 Classic/DOD 差距的 profiler 证据；
+8. 明确结论：哪些收益来自数据导向和并行，哪些成本来自随机拓扑修改，哪些功能只是补齐 Classic 已有能力。
+
+最终报告不得只写“DOD 比 Classic 快或慢”，必须按 candidate mark、topology commit、Mesh emit、finalize 和 upload 分阶段说明原因。
