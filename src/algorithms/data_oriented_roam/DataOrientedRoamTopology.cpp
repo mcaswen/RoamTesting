@@ -1212,6 +1212,20 @@ void RefineWithSplitQueue(DataOrientedRoamState& state)
         1024U,
         state.Settings.TriangleBudget * 8U + state.Nodes.size() * 4U);
     std::size_t iteration = 0U;
+    float crossoverMergeMilliseconds = 0.0F;
+    const auto mergeDuringSplitConvergence =
+        [&state, &crossoverMergeMilliseconds](DataOrientedRoamNodeIndex node) {
+            Tools::PerformanceTimer mergeTimer;
+            const bool merged = MergeNodeOrDiamondWithScoreLimit(
+                state,
+                node,
+                std::numeric_limits<float>::max());
+            const float elapsedMilliseconds = mergeTimer.Stop();
+            crossoverMergeMilliseconds += elapsedMilliseconds;
+            state.Stats.MergeCrossoverMilliseconds += elapsedMilliseconds;
+            state.Stats.MergeTopologySerialConvergenceMilliseconds += elapsedMilliseconds;
+            return merged;
+        };
     // 并行预提交之后仍需恢复双持久队列的严格优先级和预算语义。
     Tools::PerformanceTimer serialConvergenceTimer;
     while (iteration++ < maximumIterations)
@@ -1220,10 +1234,7 @@ void RefineWithSplitQueue(DataOrientedRoamState& state)
         float mergeScore = TopPersistentMergeQueueScore(state);
         if (state.IsValidNode(mergeNode) && mergeScore < state.Settings.MergeThreshold)
         {
-            if (!MergeNodeOrDiamondWithScoreLimit(
-                    state,
-                    mergeNode,
-                    std::numeric_limits<float>::max()))
+            if (!mergeDuringSplitConvergence(mergeNode))
             {
                 RemovePersistentMergeQueueCandidate(state, mergeNode);
                 ++state.Stats.RejectedMergeCount;
@@ -1255,10 +1266,7 @@ void RefineWithSplitQueue(DataOrientedRoamState& state)
         mergeScore = TopPersistentMergeQueueScore(state);
         if (closureNeedsBudget && state.IsValidNode(mergeNode) && splitScore > mergeScore)
         {
-            if (MergeNodeOrDiamondWithScoreLimit(
-                    state,
-                    mergeNode,
-                    std::numeric_limits<float>::max()))
+            if (mergeDuringSplitConvergence(mergeNode))
             {
                 ++state.Stats.QueueCrossoverCount;
                 continue;
@@ -1278,7 +1286,10 @@ void RefineWithSplitQueue(DataOrientedRoamState& state)
         // 约束闭包失败后节点仍属于 Q_s，但本次 Build 不能在 heap 顶部反复重试。
         BlockPersistentSplitQueueNodeForCurrentBuild(state, splitNode);
     }
-    state.Stats.SplitTopologySerialConvergenceMilliseconds += serialConvergenceTimer.Stop();
+    const float totalConvergenceMilliseconds = serialConvergenceTimer.Stop();
+    state.Stats.SplitTopologySerialConvergenceMilliseconds += std::max(
+        0.0F,
+        totalConvergenceMilliseconds - crossoverMergeMilliseconds);
 }
 
 void MergeWithDiamondQueue(DataOrientedRoamState& state)

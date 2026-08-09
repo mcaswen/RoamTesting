@@ -173,7 +173,8 @@ Terrain::TerrainMeshData DataOrientedRoamMeshBuilder::BuildInternal(
     AccumulateLeafStats(state, finalActiveLeaves);
     state.Stats.PersistentSplitQueueSize = finalActiveLeaves.size();
     state.Stats.PersistentMergeQueueSize = state.MergeQueue.size();
-    state.Stats.MergeMilliseconds = mergeMilliseconds;
+    // 预算交叉 merge 发生在 Split 收敛循环内，但统计上仍属于 Merge topology。
+    state.Stats.MergeMilliseconds = mergeMilliseconds + state.Stats.MergeCrossoverMilliseconds;
     state.Stats.SplitMilliseconds = splitMilliseconds;
     state.Stats.EmitMilliseconds = emitCpuMesh
         ? meshEmitMilliseconds

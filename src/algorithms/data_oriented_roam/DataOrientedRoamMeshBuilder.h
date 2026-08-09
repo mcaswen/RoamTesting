@@ -154,6 +154,8 @@ struct DataOrientedRoamStats
     float SplitTopologyResultMergeMilliseconds{0.0F};
     float SplitTopologyIndexQueueRefreshMilliseconds{0.0F};
     float SplitTopologySerialConvergenceMilliseconds{0.0F};
+    // Split 收敛循环中为释放预算而执行的 merge，不应归入 Split topology。
+    float MergeCrossoverMilliseconds{0.0F};
     float MergeTopologyChunkBuildMilliseconds{0.0F};
     float MergeTopologyQueueInvalidationMilliseconds{0.0F};
     float MergeTopologyParallelCommitMilliseconds{0.0F};

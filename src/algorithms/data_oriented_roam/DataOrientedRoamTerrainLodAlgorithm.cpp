@@ -189,7 +189,12 @@ TerrainLodStats DataOrientedRoamTerrainLodAlgorithm::ToTerrainLodStats(const Dat
     lodStats.CpuSplitCandidateMarkMilliseconds =
         stats.ActiveLeafCollectMilliseconds + stats.SplitCandidateMarkMilliseconds;
     lodStats.CpuSplitTopologyMilliseconds =
-        std::max(0.0F, stats.SplitMilliseconds - errorEvaluationMilliseconds - splitCollectMilliseconds);
+        std::max(
+            0.0F,
+            stats.SplitMilliseconds -
+                errorEvaluationMilliseconds -
+                splitCollectMilliseconds -
+                stats.MergeCrossoverMilliseconds);
     lodStats.CpuFinalLeafCollectMilliseconds = stats.FinalLeafCollectMilliseconds;
     lodStats.CpuMeshEmitMilliseconds = stats.MeshEmitMilliseconds;
     lodStats.CpuFinalizeMilliseconds = stats.FinalizeMilliseconds;
