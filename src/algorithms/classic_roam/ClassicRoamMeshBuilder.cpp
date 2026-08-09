@@ -99,7 +99,7 @@ const Terrain::TerrainMeshData& ClassicRoamMeshBuilder::Build(
     _stats.MergeMilliseconds =
         _stats.MergeCandidateMarkMilliseconds + _stats.MergeTopologyMilliseconds;
     _stats.SplitMilliseconds =
-        _stats.SplitInitialScanMilliseconds + _stats.SplitQueueTopologyMilliseconds;
+        _stats.SplitInitialScanMilliseconds + _stats.SplitSerialConvergenceMilliseconds;
     _stats.EmitMilliseconds = meshEmitMilliseconds;
     _stats.PrepareMilliseconds = prepareMilliseconds;
     // 活动 leaf 数由持久 Q_s 直接给出，不再为预算单独递归收集

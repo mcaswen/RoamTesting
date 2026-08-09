@@ -152,6 +152,10 @@ struct ClassicRoamStats
     float MergeTopologyMilliseconds{0.0F};
     float BudgetLeafCollectMilliseconds{0.0F};
     float SplitInitialScanMilliseconds{0.0F};
+    // Covers the post-priority-refresh split/merge convergence loop. Merge work
+    // performed for queue crossover is excluded from this field.
+    float SplitSerialConvergenceMilliseconds{0.0F};
+    // Per-accepted-split topology commit time kept as a lower-level diagnostic.
     float SplitQueueTopologyMilliseconds{0.0F};
     float FinalLeafCollectMilliseconds{0.0F};
     float MeshEmitMilliseconds{0.0F};

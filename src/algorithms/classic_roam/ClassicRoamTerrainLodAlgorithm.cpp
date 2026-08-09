@@ -146,7 +146,9 @@ TerrainLodStats ClassicRoamTerrainLodAlgorithm::ToTerrainLodStats(const ClassicR
     lodStats.CpuBudgetLeafCollectMilliseconds = stats.BudgetLeafCollectMilliseconds;
     // Classic computes screen error while scanning and popping the split priority queue.
     lodStats.CpuSplitCandidateMarkMilliseconds = stats.SplitInitialScanMilliseconds;
-    lodStats.CpuSplitTopologyMilliseconds = stats.SplitQueueTopologyMilliseconds;
+    lodStats.CpuSplitTopologySerialConvergenceMilliseconds =
+        stats.SplitSerialConvergenceMilliseconds;
+    lodStats.CpuSplitTopologyMilliseconds = stats.SplitSerialConvergenceMilliseconds;
     lodStats.CpuFinalLeafCollectMilliseconds = stats.FinalLeafCollectMilliseconds;
     lodStats.CpuMeshEmitMilliseconds = stats.MeshEmitMilliseconds;
     lodStats.CpuFinalizeMilliseconds = stats.FinalizeMilliseconds;

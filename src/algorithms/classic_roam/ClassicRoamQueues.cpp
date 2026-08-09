@@ -475,6 +475,15 @@ void ClassicRoamMeshBuilder::OptimizeWithPersistentDualQueues()
         1024U,
         _settings.TriangleBudget * 8U + _nodes.size() * 4U);
     std::size_t iteration = 0U;
+    float crossoverMergeMilliseconds = 0.0F;
+    const auto mergeDuringSplitConvergence =
+        [this, &crossoverMergeMilliseconds](ClassicRoamNode* node) {
+            Tools::PerformanceTimer mergeTimer(_stats.MergeTopologyMilliseconds);
+            const bool merged = MergeNodeOrDiamond(node, std::numeric_limits<float>::max());
+            crossoverMergeMilliseconds += mergeTimer.Stop();
+            return merged;
+        };
+    Tools::PerformanceTimer serialConvergenceTimer;
     while (iteration++ < maximumIterations)
     {
         ClassicRoamNode* splitNode = TopSplitQueueNode();
@@ -487,9 +496,7 @@ void ClassicRoamMeshBuilder::OptimizeWithPersistentDualQueues()
         // accuracy target 优先回收明确低于 merge threshold 的 diamond
         if (mergeNode != nullptr && mergeScore < _settings.MergeThreshold)
         {
-            Tools::PerformanceTimer mergeTimer(_stats.MergeTopologyMilliseconds);
-            const bool merged = MergeNodeOrDiamond(mergeNode, std::numeric_limits<float>::max());
-            mergeTimer.Stop();
+            const bool merged = mergeDuringSplitConvergence(mergeNode);
             if (!merged)
             {
                 RemoveMergeQueueCandidate(mergeNode);
@@ -523,9 +530,7 @@ void ClassicRoamMeshBuilder::OptimizeWithPersistentDualQueues()
             if (closureNeedsMoreBudget && mergeNode != nullptr && splitScore > currentMergeScore)
             {
                 // strict capacity 下先 merge 再重试 split，避免论文伪代码的瞬时超预算
-                Tools::PerformanceTimer mergeTimer(_stats.MergeTopologyMilliseconds);
-                const bool merged = MergeNodeOrDiamond(mergeNode, std::numeric_limits<float>::max());
-                mergeTimer.Stop();
+                const bool merged = mergeDuringSplitConvergence(mergeNode);
                 if (merged)
                 {
                     ++_stats.QueueCrossoverCount;
@@ -548,9 +553,7 @@ void ClassicRoamMeshBuilder::OptimizeWithPersistentDualQueues()
         // 已满预算时执行论文 crossover：只有回收损失低于最高 split 收益才交换资源
         if (mergeNode != nullptr && splitScore > mergeScore)
         {
-            Tools::PerformanceTimer mergeTimer(_stats.MergeTopologyMilliseconds);
-            const bool merged = MergeNodeOrDiamond(mergeNode, std::numeric_limits<float>::max());
-            mergeTimer.Stop();
+            const bool merged = mergeDuringSplitConvergence(mergeNode);
             if (merged)
             {
                 ++_stats.QueueCrossoverCount;
@@ -564,6 +567,10 @@ void ClassicRoamMeshBuilder::OptimizeWithPersistentDualQueues()
         ++_stats.BudgetRejectedSplitCount;
         break;
     }
+    const float totalConvergenceMilliseconds = serialConvergenceTimer.Stop();
+    _stats.SplitSerialConvergenceMilliseconds = std::max(
+        0.0F,
+        totalConvergenceMilliseconds - crossoverMergeMilliseconds);
 
     _stats.PersistentSplitQueueSize = _splitQueue.size();
     _stats.PersistentMergeQueueSize = _mergeQueue.size();

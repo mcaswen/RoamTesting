@@ -729,6 +729,8 @@ void WriteSummaryMarkdown(
                  << " | " << summary.AverageCpuUploadMilliseconds << " |\n";
     }
 
+    const float classicSplitTopologyDetailSum =
+        classicSummary.AverageCpuSplitTopologySerialConvergenceMilliseconds;
     const float dodSplitTopologyDetailSum =
         dodSummary.AverageCpuSplitTopologyChunkBuildMilliseconds +
         dodSummary.AverageCpuSplitTopologyQueueInvalidationMilliseconds +
@@ -743,13 +745,18 @@ void WriteSummaryMarkdown(
         dodSummary.AverageCpuMergeTopologyResultMergeMilliseconds +
         dodSummary.AverageCpuMergeTopologyIndexQueueRefreshMilliseconds +
         dodSummary.AverageCpuMergeTopologySerialConvergenceMilliseconds;
-    markdown << "\n### DOD 拓扑六段计时\n\n";
-    markdown << "六段均为互斥执行区间。`六段合计` 与原有 `Topology total` 的差值是函数调用、"
-             << "worker 数决策和少量循环控制等尚未单列的开销。\n\n";
+    markdown << "\n### CPU Split 拓扑阶段计时（统一口径）\n\n";
+    markdown << "六段均为互斥执行区间。Classic 不执行并行预提交，因此前五项为 0；它与 DOD 的"
+             << "`串行收敛` 都从候选刷新结束后开始，并扣除循环中执行的 merge。`六段合计` 与"
+             << "`Topology total` 的差值是函数调用、worker 数决策和少量循环控制等尚未单列的开销。\n\n";
     markdown << "| 操作 | 候选排序/分桶 | 队列邻域失效 | chunk 并行提交 | worker 结果汇总 | "
              << "活动叶索引/队列刷新 | 串行收敛 | 六段合计 | Topology total |\n";
     markdown << "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n";
-    markdown << "| Split | " << dodSummary.AverageCpuSplitTopologyChunkBuildMilliseconds
+    markdown << "| Classic Split | 0 | 0 | 0 | 0 | 0 | "
+             << classicSummary.AverageCpuSplitTopologySerialConvergenceMilliseconds
+             << " | " << classicSplitTopologyDetailSum
+             << " | " << classicSummary.AverageCpuSplitTopologyMilliseconds << " |\n";
+    markdown << "| DoD Split | " << dodSummary.AverageCpuSplitTopologyChunkBuildMilliseconds
              << " | " << dodSummary.AverageCpuSplitTopologyQueueInvalidationMilliseconds
              << " | " << dodSummary.AverageCpuSplitTopologyParallelCommitMilliseconds
              << " | " << dodSummary.AverageCpuSplitTopologyResultMergeMilliseconds

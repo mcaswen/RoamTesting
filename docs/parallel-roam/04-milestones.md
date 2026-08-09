@@ -287,6 +287,7 @@ assets/textures/Tex_Terrain_Debug_Diffuse.ppm
 - 历史版本曾使用独立 DOD `ErrorEvaluation` pass，随后又将评分并入临时 split 候选扫描；当前实现改为并行刷新持久 `Q_s` 的全部优先级，再原地建堆；
 - 自动 worker 模式会按硬件线程数保守封顶，小批量 leaf 保持串行以避免调度成本吞掉收益；
 - `CpuErrorEvalMilliseconds` 与 `CpuBudgetLeafCollectMilliseconds` 在 DOD 中作为兼容字段保持为 0；`Q_s` 的优先级刷新、原地建堆和提交快照生成统一记录到 `CpuSplitCandidateMarkMilliseconds`，split 拓扑仍独立记录到 `CpuSplitTopologyMilliseconds`；
+- Classic 与 DOD 的 `CpuSplitTopologySerialConvergenceMilliseconds` 现在采用同一范围：从 split 候选刷新结束到收敛循环结束，包含 split 拓扑提交和循环控制，但扣除收敛循环中为释放预算而执行的 merge；Classic 的 `SplitQueueTopologyMilliseconds` 仅保留为单次 `SplitNode` 提交的细粒度诊断。
 - 统一 UI 和 benchmark 输出实际 worker 数、CPU 占用率及 `CPU split scan/mark ms`，该字段现在表示持久 `Q_s` 的优先级刷新、原地建堆和并行提交快照生成；
 - topology commit、约束传播继续与只读扫描分开；安全 chunk 内候选可并行预提交，其余路径串行收敛。
 

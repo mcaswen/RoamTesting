@@ -398,7 +398,9 @@ struct TerrainLodStats
     float CpuPrepareMilliseconds{0.0F};
     float CpuMergeCandidateMarkMilliseconds{0.0F};
     float CpuMergeTopologyMilliseconds{0.0F};
-    // DOD 将 split/merge topology 各自拆成六个互斥阶段；其他算法保持为零。
+    // Split/merge topology detail fields are optional sub-stage diagnostics;
+    // serial convergence is shared by Classic and DoD, while parallel-only
+    // fields remain zero for Classic.
     float CpuSplitTopologyChunkBuildMilliseconds{0.0F};
     float CpuSplitTopologyQueueInvalidationMilliseconds{0.0F};
     float CpuSplitTopologyParallelCommitMilliseconds{0.0F};

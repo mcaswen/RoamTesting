@@ -824,7 +824,7 @@ TriangleCount = ActiveLeafCount
 - 规模：`NodeCount`、`ActiveTriangleCount`、`Original/Subdivided/RebuiltTriangleCount`、`ActiveSplitCount`、`MaxDepthReached`。
 - 队列与事件：`PersistentSplitQueueSize`、`PersistentMergeQueueSize`、`QueueCrossoverCount`、`QueueMembershipUpdateCount`、`SplitCount`、`ForcedSplitCount`、`MergeCount`、`ConstraintPassCount`、`CandidatePeakCount` 和各类拒绝计数。
 - 正确性：`CrackRiskCount`、`TjunctionCount`、`InvalidNeighborCount`、`InvalidTopologyCount`。
-- 互斥阶段时间：`PrepareMilliseconds`、`MergeCandidateMarkMilliseconds`、`MergeTopologyMilliseconds`、`BudgetLeafCollectMilliseconds`、`SplitInitialScanMilliseconds`、`SplitQueueTopologyMilliseconds`、`FinalLeafCollectMilliseconds`、`MeshEmitMilliseconds`、`ValidateMilliseconds`、`FinalizeMilliseconds`；这些阶段之和应接近外层 `UpdateMilliseconds`。
+- 互斥阶段时间：`PrepareMilliseconds`、`MergeCandidateMarkMilliseconds`、`MergeTopologyMilliseconds`、`BudgetLeafCollectMilliseconds`、`SplitInitialScanMilliseconds`、`SplitSerialConvergenceMilliseconds`、`FinalLeafCollectMilliseconds`、`MeshEmitMilliseconds`、`ValidateMilliseconds`、`FinalizeMilliseconds`；其中 `SplitQueueTopologyMilliseconds` 仅保留为每次 `SplitNode` 提交的细粒度诊断，不再作为统一 Split 阶段总计。上述阶段之和应接近外层 `UpdateMilliseconds`。
 - 增量输出计数：`MeshFullRebuildCount`、`MeshUpdatedTriangleCount`、`MeshReusedTriangleCount`、`MeshDirtyRangeCount`。
 - 原生 pass 包络时间：`SplitMilliseconds`、`MergeMilliseconds`、`EmitMilliseconds`、`ValidateMilliseconds`。它们与上述互斥阶段重叠，只用于观察实现原有 pass，不能再次相加到 `UpdateMilliseconds`。
 
