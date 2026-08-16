@@ -1,5 +1,6 @@
 #include "algorithms/data_oriented_roam/DataOrientedRoamParallel.h"
-#include "algorithms/data_oriented_roam/DataOrientedRoamState.h"
+#include "algorithms/data_oriented_roam/DataOrientedRoamMeshEmit.h"
+#include "algorithms/data_oriented_roam/DataOrientedRoamScoring.h"
 
 #include "algorithms/RoamGeometry.h"
 

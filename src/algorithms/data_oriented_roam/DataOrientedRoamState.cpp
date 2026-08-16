@@ -1,4 +1,7 @@
-#include "algorithms/data_oriented_roam/DataOrientedRoamState.h"
+#include "algorithms/data_oriented_roam/DataOrientedRoamStateOps.h"
+#include "algorithms/data_oriented_roam/DataOrientedRoamQueues.h"
+#include "algorithms/data_oriented_roam/DataOrientedRoamScoring.h"
+#include "algorithms/data_oriented_roam/DataOrientedRoamVariance.h"
 
 #include <algorithm>
 #include <limits>

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "algorithms/data_oriented_roam/DataOrientedRoamMeshBuilder.h"
+#include "algorithms/data_oriented_roam/DataOrientedRoamTypes.h"
 
 #include <array>
 #include <atomic>
@@ -137,6 +137,8 @@ struct DataOrientedRoamNodeRef
 
 /// <summary>
 /// Data-Oriented ROAM 的 SoA 节点池，拓扑、误差、深度和 flag 分别连续存储
+/// 由 DataOrientedRoamState 独占；ResetTopology 清空，AddNode 追加，merge 后保留 child index 供复用
+/// state 初始化和 topology pass 会修改它；其他 pass 通过索引访问，不持有节点地址
 /// </summary>
 struct DataOrientedRoamNodePool
 {
@@ -285,6 +287,8 @@ struct DataOrientedRoamNodePool
 
 /// <summary>
 /// DOD ROAM 的可变工作集，所有 pass 都只通过这个状态对象交换数据
+/// 由 DataOrientedRoamMeshBuilder 创建并跨帧保存；Build 期间由各 pass 修改，builder 析构时释放
+/// MeshBuilder 持有它；HeightMap、ThreadPool 仅在 Build 调用期间借用
 /// </summary>
 struct DataOrientedRoamState
 {
@@ -347,140 +351,4 @@ struct DataOrientedRoamState
     }
 };
 
-[[nodiscard]] std::uint64_t LeftChildPathId(std::uint64_t parentPathId);
-[[nodiscard]] std::uint64_t RightChildPathId(std::uint64_t parentPathId);
-
-// ComputeInteriorChunkId 把完全落入同一分块的 domain 编码成 row-major id
-[[nodiscard]] DataOrientedRoamChunkId ComputeInteriorChunkId(const TriangleDomain& domain);
-
-// AddNode 是唯一写入 node pool 并计算 geometric error 的入口
-[[nodiscard]] DataOrientedRoamNodeIndex AddNode(
-    DataOrientedRoamState& state,
-    const TriangleDomain& domain,
-    DataOrientedRoamNodeIndex parent,
-    int depth,
-    std::uint64_t pathId,
-    std::uint8_t varianceTreeIndex,
-    std::size_t varianceIndex);
-
-void RebuildVarianceTrees(DataOrientedRoamState& state, int finestDepth);
-void RefreshNodeVarianceErrors(DataOrientedRoamState& state);
-[[nodiscard]] float VarianceError(
-    const DataOrientedRoamState& state,
-    std::uint8_t varianceTreeIndex,
-    std::size_t varianceIndex);
-
-// ReserveNodePool 只优化扩容频率，算法正确性不能依赖地址稳定
-void ReserveNodePool(DataOrientedRoamState& state);
-
-// ResetTopology 只在输入资源或拓扑上限不兼容时调用
-void ResetTopology(DataOrientedRoamState& state);
-
-// NeedsTopologyReset 在本帧状态写入前比较旧 state 与新输入
-[[nodiscard]] bool NeedsTopologyReset(
-    const DataOrientedRoamState& state,
-    const Terrain::HeightMap& heightMap,
-    float terrainSize,
-    float heightScale,
-    const DataOrientedRoamSettings& settings);
-
-// CollectLeafNodes 独立递归遍历 active topology，仅供 validator 交叉校验活动索引。
-void CollectLeafNodes(const DataOrientedRoamState& state, std::vector<DataOrientedRoamNodeIndex>& leafNodes);
-
-void CollectActiveSplitPaths(DataOrientedRoamState& state);
-
-void AccumulateLeafStats(
-    DataOrientedRoamState& state,
-    const std::vector<DataOrientedRoamNodeIndex>& leafNodes);
-
-// merge 先回收低误差 diamond，split 再按高误差顺序消费剩余预算
-void RefineWithSplitQueue(DataOrientedRoamState& state);
-void MergeWithDiamondQueue(DataOrientedRoamState& state);
-
-void InitializePersistentMergeQueue(DataOrientedRoamState& state);
-void InitializePersistentSplitQueue(DataOrientedRoamState& state);
-void RefreshPersistentSplitQueuePriorities(DataOrientedRoamState& state);
-void InsertPersistentSplitQueueNode(
-    DataOrientedRoamState& state,
-    DataOrientedRoamNodeIndex node);
-void RemovePersistentSplitQueueNode(
-    DataOrientedRoamState& state,
-    DataOrientedRoamNodeIndex node);
-void BlockPersistentSplitQueueNodeForCurrentBuild(
-    DataOrientedRoamState& state,
-    DataOrientedRoamNodeIndex node);
-[[nodiscard]] DataOrientedRoamNodeIndex TopPersistentSplitQueueNode(
-    const DataOrientedRoamState& state);
-[[nodiscard]] float TopPersistentSplitQueueScore(const DataOrientedRoamState& state);
-void SnapshotPersistentSplitQueueCandidates(
-    const DataOrientedRoamState& state,
-    std::vector<DataOrientedRoamSplitCandidate>& candidates);
-void RefreshPersistentMergeQueuePriorities(DataOrientedRoamState& state);
-void AppendPersistentMergeQueueNeighborhood(
-    const DataOrientedRoamState& state,
-    DataOrientedRoamNodeIndex node,
-    std::vector<DataOrientedRoamNodeIndex>& nodes);
-void InvalidatePersistentMergeQueueNeighborhood(
-    DataOrientedRoamState& state,
-    const std::vector<DataOrientedRoamNodeIndex>& nodes);
-void RefreshPersistentMergeQueueNeighborhood(
-    DataOrientedRoamState& state,
-    const std::vector<DataOrientedRoamNodeIndex>& nodes);
-void RemovePersistentMergeQueueCandidate(
-    DataOrientedRoamState& state,
-    DataOrientedRoamNodeIndex node);
-[[nodiscard]] DataOrientedRoamNodeIndex TopPersistentMergeQueueNode(
-    const DataOrientedRoamState& state);
-[[nodiscard]] float TopPersistentMergeQueueScore(const DataOrientedRoamState& state);
-void SnapshotPersistentMergeQueueCandidates(
-    const DataOrientedRoamState& state,
-    float maximumScore,
-    std::vector<DataOrientedRoamMergeCandidate>& candidates);
-[[nodiscard]] std::size_t CountPersistentQueueInvariantViolations(
-    const DataOrientedRoamState& state);
-
-// ValidateTopology 是可选 debug pass，不主动修复拓扑
-void ValidateTopology(DataOrientedRoamState& state);
-
-void EmitLeafTriangles(
-    DataOrientedRoamState& state,
-    Terrain::TerrainMeshData& meshData,
-    const std::vector<DataOrientedRoamNodeIndex>& leafNodes);
-
-[[nodiscard]] DataOrientedRoamMergeCandidateEvaluation EvaluateMergeCandidate(
-    const DataOrientedRoamState& state,
-    DataOrientedRoamNodeIndex node,
-    float maximumScore);
-
-// CanMergeNode 只检查 diamond merge 前置条件，不修改拓扑
-[[nodiscard]] bool CanMergeNode(const DataOrientedRoamState& state, DataOrientedRoamNodeIndex node);
-
-[[nodiscard]] bool CanMergeNode(
-    const DataOrientedRoamState& state,
-    DataOrientedRoamNodeIndex node,
-    float maximumScore);
-
-// ShouldSplitWithScore 汇总 split 阈值、merge 阈值和 hysteresis 规则
-[[nodiscard]] bool ShouldSplitWithScore(
-    const DataOrientedRoamState& state,
-    DataOrientedRoamNodeIndex node,
-    float screenErrorScore);
-
-// WasSplitLastFrame 只读取上一帧最终 active split path
-[[nodiscard]] bool WasSplitLastFrame(
-    const DataOrientedRoamState& state,
-    DataOrientedRoamNodeIndex node);
-
-[[nodiscard]] DataOrientedRoamLeafDebugClass ClassifyLeafDebug(
-    const DataOrientedRoamState& state,
-    DataOrientedRoamNodeConstRef node);
-
-// DebugColorForLeaf 和 DebugHighlightForLeaf 必须与 ImGui legend 语义一致
-[[nodiscard]] glm::vec3 DebugColorForLeaf(const DataOrientedRoamState& state, DataOrientedRoamNodeConstRef node);
-[[nodiscard]] float DebugHighlightForLeaf(const DataOrientedRoamState& state, DataOrientedRoamNodeConstRef node);
-
-// ComputeScreenErrorScore 是当前 split/merge 队列排序的统一评分
-[[nodiscard]] float ComputeScreenErrorScore(
-    const DataOrientedRoamState& state,
-    DataOrientedRoamNodeIndex node);
 } // namespace ParallelRoam::Algorithms::DataOrientedRoam

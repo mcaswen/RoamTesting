@@ -12,6 +12,8 @@ namespace ParallelRoam::Algorithms::DataOrientedRoam
 {
 /// <summary>
 /// DOD ROAM 内部复用的轻量线程池，避免每个 pass 重复创建 worker
+/// 由 MeshBuilder 创建并跨帧复用；EnsureWorkerCount 扩容，Shutdown 或析构时 join 并释放 worker
+/// DataOrientedRoamMeshBuilder 持有它；各 pass 只提交临时 task，不拥有线程
 /// </summary>
 class DataOrientedRoamThreadPool
 {

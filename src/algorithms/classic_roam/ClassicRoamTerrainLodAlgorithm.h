@@ -7,6 +7,7 @@ namespace ParallelRoam::Algorithms::ClassicRoam
 {
 /// <summary>
 /// 将现有 ClassicRoamMeshBuilder 适配到三版本共享的 Terrain LOD 算法接口
+/// 由算法工厂创建并长期持有；内部 builder 跨帧复用，Reset 时清空持久拓扑
 /// </summary>
 class ClassicRoamTerrainLodAlgorithm final : public ITerrainLodAlgorithm
 {

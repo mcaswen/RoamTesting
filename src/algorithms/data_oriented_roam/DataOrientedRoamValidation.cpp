@@ -1,4 +1,6 @@
-#include "algorithms/data_oriented_roam/DataOrientedRoamState.h"
+#include "algorithms/data_oriented_roam/DataOrientedRoamStateOps.h"
+#include "algorithms/data_oriented_roam/DataOrientedRoamQueues.h"
+#include "algorithms/data_oriented_roam/DataOrientedRoamValidation.h"
 
 #include <algorithm>
 #include <array>

@@ -1,4 +1,5 @@
-#include "algorithms/data_oriented_roam/DataOrientedRoamState.h"
+#include "algorithms/data_oriented_roam/DataOrientedRoamCandidateMarking.h"
+#include "algorithms/data_oriented_roam/DataOrientedRoamScoring.h"
 
 #include <algorithm>
 

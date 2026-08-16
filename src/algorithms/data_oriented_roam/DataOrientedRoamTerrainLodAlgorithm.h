@@ -7,6 +7,7 @@ namespace ParallelRoam::Algorithms::DataOrientedRoam
 {
 /// <summary>
 /// 将 SoA Data-Oriented ROAM 接入三版本共享的 Terrain LOD 算法接口
+/// 由算法工厂创建并长期持有；每次 Build 转发输入到 MeshBuilder，Stats 在调用后可读取
 /// </summary>
 class DataOrientedRoamTerrainLodAlgorithm final : public ITerrainLodAlgorithm
 {

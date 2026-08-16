@@ -2,8 +2,16 @@
 
 #include "algorithms/ITerrainLodAlgorithm.h"
 #include "algorithms/RoamNestedWedgie.h"
+#include "algorithms/data_oriented_roam/DataOrientedRoamCandidateMarking.h"
+#include "algorithms/data_oriented_roam/DataOrientedRoamMeshEmit.h"
+#include "algorithms/data_oriented_roam/DataOrientedRoamQueues.h"
+#include "algorithms/data_oriented_roam/DataOrientedRoamScoring.h"
 #include "algorithms/data_oriented_roam/DataOrientedRoamState.h"
+#include "algorithms/data_oriented_roam/DataOrientedRoamStateOps.h"
 #include "algorithms/data_oriented_roam/DataOrientedRoamThreadPool.h"
+#include "algorithms/data_oriented_roam/DataOrientedRoamTopology.h"
+#include "algorithms/data_oriented_roam/DataOrientedRoamValidation.h"
+#include "algorithms/data_oriented_roam/DataOrientedRoamVariance.h"
 #include "tools/PerformanceTimer.h"
 
 #include <algorithm>

@@ -1,4 +1,5 @@
-#include "algorithms/data_oriented_roam/DataOrientedRoamState.h"
+#include "algorithms/data_oriented_roam/DataOrientedRoamScoring.h"
+#include "algorithms/data_oriented_roam/DataOrientedRoamVariance.h"
 
 #include "algorithms/ITerrainLodAlgorithm.h"
 #include "algorithms/RoamGeometry.h"
