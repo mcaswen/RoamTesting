@@ -461,7 +461,8 @@ void RefreshPersistentSplitQueuePriorities(DataOrientedRoamState& state)
     const std::size_t remainingBudget = state.Settings.TriangleBudget > entryCount
         ? state.Settings.TriangleBudget - entryCount
         : 0U;
-    state.RemainingSplitBudget.store(remainingBudget, std::memory_order_relaxed);
+    state.RemainingSerialSplitBudget = remainingBudget;
+    state.RemainingParallelSplitBudget.store(remainingBudget, std::memory_order_relaxed);
 }
 
 void InsertPersistentSplitQueueNode(DataOrientedRoamState& state, DataOrientedRoamNodeIndex node)

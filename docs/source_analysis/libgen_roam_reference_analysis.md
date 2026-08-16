@@ -632,7 +632,7 @@ allocate children in 256-record blocks as split progresses
 | Split closure | 一次函数原子拆完整 diamond | requested split + 递归 forced base split | 同语义，索引拓扑与部分 chunk 提交 |
 | Merge | 未实现，降低目标时全量重建 | 持久 `Q_m` + 动态 diamond merge | 持久 `Q_m`，每个 diamond 只入队一次；并行预提交 + 动态级联 |
 | 跨帧拓扑 | 无，每次 optimize flush | 持久 child/topology 与 `Q_s/Q_m` 队列成员 | 持久 index topology 与 `Q_s/Q_m` 队列成员 |
-| 预算 | `ntri >= ntrimax` 后停止，可超目标 | active leaf 硬上限 + forced token + merge-first crossover | 同硬上限与原子 token；持续交换至队首条件收敛 |
+| 预算 | `ntri >= ntrimax` 后停止，可超目标 | active leaf 硬上限 + forced token + merge-first crossover | 同硬上限；串行普通 token、并行原子 token，持续交换至队首条件收敛 |
 | 视锥/FOV/屏幕 | 未进入评分 | 公式 (2)/(3) 角点保守像素 bound + 可见性 | 同 Classic；shader 同口径 |
 | 输出 | OpenGL immediate mode，每 leaf 3 顶点 | 持久 dense slots + dirty ranges 的增量 indexed CPU Mesh | CPU Mesh 或 GPU snapshot，直接读 `ActiveLeafNodes` |
 | 并行 | 串行 | 串行 baseline | 批量扫描及安全 chunk 并行 |

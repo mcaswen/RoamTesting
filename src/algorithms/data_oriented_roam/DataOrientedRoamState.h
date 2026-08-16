@@ -326,8 +326,10 @@ struct DataOrientedRoamState
     std::array<glm::vec4, 6> FrustumPlanes{};
     std::uint32_t DrawableWidth{1U};
     std::uint32_t DrawableHeight{1U};
-    // 并行 split commit 通过原子 token 共享同一硬预算
-    std::atomic<std::size_t> RemainingSplitBudget{0U};
+    // 串行 topology 使用普通计数；不会在每个事务里执行 atomic load/CAS。
+    std::size_t RemainingSerialSplitBudget{0U};
+    // 并行 commit 的 worker 之间通过 atomic token 共享硬预算。
+    std::atomic<std::size_t> RemainingParallelSplitBudget{0U};
     float TerrainSize{1.0F};
     float HeightScale{1.0F};
     int TopologyMaxDepth{0};

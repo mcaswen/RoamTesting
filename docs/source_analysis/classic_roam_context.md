@@ -948,7 +948,7 @@ TriangleCount = ActiveLeafCount
 | 邻接表达 | 指针 | 索引 | packed NodeRecord/index |
 | 并行适配性 | 较差 | 较好，按 pass/chunk 分解 | 计算/emit 适合 GPU；动态拓扑仍受限 |
 | merge | CPU diamond merge + 持久 `Q_m`，每个 diamond 只入队一次 | 持久 `Q_m`，每个 diamond 只入队一次；安全 chunk 并行预提交后动态 parent 同帧级联 | 能力标记为 true，但 D3D12 注释明确 GPU merge candidate 尚未提交；CPU DOD 基线仍 merge |
-| 活动三角形预算 | 串行 token 硬上限；持久 dual-queue merge-first crossover | 原子 token 硬上限，覆盖并行 commit 与 forced closure；持续交换至队首条件收敛 | CPU DOD 快照先重平衡并占用预算；GPU 原子分配剩余 token，边界 split=1、diamond pair=2，最终输出受同一上限 |
+| 活动三角形预算 | 串行 token 硬上限；持久 dual-queue merge-first crossover | 串行 topology 使用普通 token，并行 worker commit 使用原子 token；join 后按活动叶数量一次同步，forced closure 与持续队首交换语义不变 | CPU DOD 快照先重平衡并占用预算；GPU 原子分配剩余 token，边界 split=1、diamond pair=2，最终输出受同一上限 |
 | 输出统计 | 统一 stats，worker=1 | 统一 stats + 多 pass/worker 内部统计 | 统一 CPU/GPU timing/resource stats |
 | 工程角色 | 对象式正确性/性能 baseline | 数据导向 CPU 对照 | 实验性 GPU 管线 |
 

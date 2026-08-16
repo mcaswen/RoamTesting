@@ -1,7 +1,7 @@
 # DOD 与 Classic ROAM 优化问题规划
 
 > 日期：2026-08-10  
-> 状态：实施规划 v1.0  
+> 状态：实施规划 v1.1，B1 已完成
 > 范围：Data-Oriented CPU ROAM 相对 Classic CPU ROAM 的 CPU 热路径  
 > 基准：`RelWithDebInfo`、统一 ROAM 误差公式、持久 `Q_s/Q_m`、相同阈值与固定活动叶三角形预算
 
@@ -25,7 +25,7 @@
 - 两者都持久维护 `Q_s/Q_m`，并在预算饱和时持续执行低损失 merge 与高收益 split 的资源交换；
 - DOD 已直接复用 `ActiveLeafNodes`，不再递归收集或复制最终活动叶节点；
 - DOD 的队列评分和候选标记已经快于 Classic，不再是下一阶段的主要优化对象；
-- 当前串行 split 对比中，DOD 的并行 split 选项关闭，但预算 token 仍使用 atomic；
+- DOD 串行 topology 已使用普通预算计数和编译期专用入口；atomic token 只供并行 worker commit；
 - Classic 已实现增量 Mesh slot、dirty range 和增量 upload，DOD 仍完整 emit CPU Mesh。
 
 最新单轮参考报告：
@@ -53,8 +53,8 @@
 
 | ID | 问题 | 性质 | Classic 现状 | 优先级 | 主要依赖 |
 | --- | --- | --- | --- | --- | --- |
-| O1 | 串行路径仍使用 atomic triangle budget | 串行对齐 + 保留并行能力 | 普通 `size_t` 预算 | P0 | 与 O2 同阶段 |
-| O2 | 串行和并行共用带运行时分支的拓扑函数 | 串行对齐 + 保留并行能力 | 精简串行函数 | P0 | O1、O7 |
+| O1（已完成） | 串行路径仍使用 atomic triangle budget | 串行对齐 + 保留并行能力 | 普通 `size_t` 预算 | P0 | 与 O2 同阶段 |
+| O2（已完成） | 串行和并行共用带运行时分支的拓扑函数 | 串行对齐 + 保留并行能力 | 精简串行函数 | P0 | O1、O7 |
 | O3 | `ActiveLeafNodes` 同时承担活动集合和 split heap | 追平 Classic 的 heap 局部性 | 独立 `{Node, Score}` heap | P1 | O8；为 O6 提供稳定槽位基础 |
 | O4 | 串行拓扑事务反复分配、排序和去重队列邻域 | 主要追平 Classic | 小邻域即时去重 | P0 | O2 |
 | O5 | merge 并行批处理的整理成本高于 worker 提交成本 | DOD 额外能力 | 无并行 merge 对应物 | P2 | O3、O4、O8 稳定后再做 |
@@ -142,9 +142,9 @@ merge 单操作成本 = sum(cpuMergeTopologyMilliseconds) / sum(merges)
 
 ### B1. O1 + O2：串行预算与串行拓扑专用路径
 
-#### 当前问题
+#### 实现前问题
 
-[`TryAcquireSplitBudget`](../../src/algorithms/data_oriented_roam/DataOrientedRoamTopology.cpp#L312) 在串行 split 中仍执行 atomic load/CAS；[`SplitNode`](../../src/algorithms/data_oriented_roam/DataOrientedRoamTopology.cpp#L451)、`MergeSingleNode` 和多个统计 helper 通过 `TopologyCommitCounters*` 同时服务串行和并行路径。
+旧版 [`TryAcquireSplitBudget`](../../src/algorithms/data_oriented_roam/DataOrientedRoamTopology.cpp#L312) 在串行 split 中仍执行 atomic load/CAS；旧版 [`SplitNode`](../../src/algorithms/data_oriented_roam/DataOrientedRoamTopology.cpp#L451)、`MergeSingleNode` 和多个统计 helper 通过 `TopologyCommitCounters*` 同时服务串行和并行路径。
 
 #### 实施内容
 
@@ -154,6 +154,18 @@ merge 单操作成本 = sum(cpuMergeTopologyMilliseconds) / sum(merges)
 4. 保持 forced split closure 的预算预留和失败归还语义；
 5. 邻接修复、child 复用和 diamond 规则仍共用底层 helper，避免复制两套拓扑算法；
 6. 串行路径不创建 worker-local counter，也不执行 `counters == nullptr` 分支。
+
+#### 实现结果（2026-08-16）
+
+- `DataOrientedRoamState` 分离 `RemainingSerialSplitBudget` 与 `RemainingParallelSplitBudget`；
+- `SerialTopologyCommitPolicy` 直接修改普通预算和全局统计，`ParallelTopologyCommitPolicy` 只修改 atomic token 与 worker-local counters；
+- `SplitNodeImpl`、`MergeSingleNodeImpl` 和 `MergeNodeOrDiamondWithScoreLimitImpl` 通过模板策略在编译期裁剪串行/并行差异，forced split、邻接修复、child 复用和 diamond 规则仍只有一份实现；
+- 并行 split join 后按 `ActiveLeafNodes.size()` 一次性恢复串行剩余预算，串行收敛期间不再访问 atomic token；
+- 修改前后 smoke 6 帧、budget-reentry 5 帧和 standard 64 帧逐帧对照，活动叶、节点数、split、forced split、merge、预算拒绝和拓扑错误均无差异；RelWithDebInfo 构建和 CTest 10/10 通过；
+- 应用级串行路径 8 个离散采样点完整通过，DOD 并行 Split 关闭时最大活动叶为 12591、拓扑问题为 0；20 万预算的 budget-saturation 24 帧保持 199999-200000 个活动叶，使用最多 8 workers，发生并行 split/merge commit 且拓扑问题为 0；
+- 本轮 headless profile 只用于正确性回归，不能据此给出稳定性能结论；串行 split/merge 单操作收益仍需在新的离散采样 runtime benchmark 中隔离进程并多轮验证。
+
+当前代码证据：[`SerialTopologyCommitPolicy`](../../src/algorithms/data_oriented_roam/DataOrientedRoamTopology.cpp#L279)、[`ParallelTopologyCommitPolicy`](../../src/algorithms/data_oriented_roam/DataOrientedRoamTopology.cpp#L340)、[`SplitNodeImpl`](../../src/algorithms/data_oriented_roam/DataOrientedRoamTopology.cpp#L503)、[`SynchronizeSerialSplitBudget`](../../src/algorithms/data_oriented_roam/DataOrientedRoamTopology.cpp#L413)。
 
 #### 验收
 

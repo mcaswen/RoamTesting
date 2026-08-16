@@ -182,7 +182,7 @@ void DeactivateLeafNode(DataOrientedRoamState& state, DataOrientedRoamNodeIndex 
 void ApplySplitIndexTransition(DataOrientedRoamState& state, DataOrientedRoamNodeIndex node)
 {
     // 一个 leaf split 的集合变化固定为 -1 leaf、+1 internal、+2 leaf。
-    // 净增一个 leaf，与 RemainingSplitBudget 的 token 语义完全一致。
+    // 净增一个 leaf，与两种 split budget 的 token 语义完全一致。
     DeactivateLeafNode(state, node);
     ActivateInternalNode(state, node);
     ActivateLeafNode(state, state.Nodes[node].LeftChild);
@@ -197,8 +197,6 @@ void ApplyMergeIndexTransition(DataOrientedRoamState& state, DataOrientedRoamNod
     DeactivateLeafNode(state, state.Nodes[node].LeftChild);
     DeactivateLeafNode(state, state.Nodes[node].RightChild);
     ActivateLeafNode(state, node);
-    // 每个 parent merge 净释放一个 leaf token；diamond 会执行两次转换。
-    state.RemainingSplitBudget.fetch_add(1U, std::memory_order_relaxed);
 }
 
 DataOrientedRoamChunkId InteriorChunkIdForNode(const DataOrientedRoamState& state, DataOrientedRoamNodeIndex node)
@@ -273,101 +271,151 @@ void MergeCountersIntoStats(DataOrientedRoamState& state, const TopologyCommitCo
     state.Stats.MergeCount += counters.MergeCount;
 }
 
-void RecordConstraintPass(DataOrientedRoamState& state, TopologyCommitCounters* counters)
+/// <summary>
+/// 串行 topology 的预算和统计写入策略。
+/// 普通计数只由主线程访问，避免每次 split 执行 atomic CAS；
+/// shared index 也由同一调用栈立即维护，因此后续队列始终可直接消费。
+/// </summary>
+struct SerialTopologyCommitPolicy
 {
-    if (counters != nullptr)
+    static constexpr bool UpdatesSharedIndices = true;
+
+    bool TryAcquireSplitBudget(DataOrientedRoamState& state) const
     {
-        // 并发路径只写本地计数器
-        ++counters->ConstraintPassCount;
-        return;
-    }
-
-    ++state.Stats.ConstraintPassCount;
-}
-
-void RecordRejectedSplit(DataOrientedRoamState& state, TopologyCommitCounters* counters)
-{
-    if (counters != nullptr)
-    {
-        // 并发路径延迟合并 rejected split
-        ++counters->RejectedSplitCount;
-        return;
-    }
-
-    ++state.Stats.RejectedSplitCount;
-}
-
-void RecordBudgetRejectedSplit(DataOrientedRoamState& state, TopologyCommitCounters* counters)
-{
-    RecordRejectedSplit(state, counters);
-    if (counters != nullptr)
-    {
-        ++counters->BudgetRejectedSplitCount;
-        return;
-    }
-
-    ++state.Stats.BudgetRejectedSplitCount;
-}
-
-bool TryAcquireSplitBudget(DataOrientedRoamState& state, TopologyCommitCounters* counters)
-{
-    std::size_t remaining = state.RemainingSplitBudget.load(std::memory_order_relaxed);
-    while (remaining > 0U)
-    {
-        if (state.RemainingSplitBudget.compare_exchange_weak(
-                remaining,
-                remaining - 1U,
-                std::memory_order_relaxed,
-                std::memory_order_relaxed))
+        if (state.RemainingSerialSplitBudget == 0U)
         {
-            return true;
+            RecordBudgetRejectedSplit(state);
+            return false;
         }
+
+        --state.RemainingSerialSplitBudget;
+        return true;
     }
 
-    RecordBudgetRejectedSplit(state, counters);
-    return false;
-}
-
-void ReleaseSplitBudget(DataOrientedRoamState& state)
-{
-    state.RemainingSplitBudget.fetch_add(1U, std::memory_order_relaxed);
-}
-
-void RecordSplit(
-    DataOrientedRoamState& state,
-    std::uint64_t parentPathId,
-    DataOrientedRoamSplitReason reason,
-    TopologyCommitCounters* counters)
-{
-    if (counters != nullptr)
+    void ReleaseSplitBudget(DataOrientedRoamState& state) const
     {
-        // 并发 split 不直接写 CurrentSplitPaths
-        ++counters->SplitCount;
+        ++state.RemainingSerialSplitBudget;
+    }
+
+    void RecordConstraintPass(DataOrientedRoamState& state) const
+    {
+        ++state.Stats.ConstraintPassCount;
+    }
+
+    void RecordRejectedSplit(DataOrientedRoamState& state) const
+    {
+        ++state.Stats.RejectedSplitCount;
+    }
+
+    void RecordBudgetRejectedSplit(DataOrientedRoamState& state) const
+    {
+        RecordRejectedSplit(state);
+        ++state.Stats.BudgetRejectedSplitCount;
+    }
+
+    void RecordSplit(
+        DataOrientedRoamState& state,
+        std::uint64_t parentPathId,
+        DataOrientedRoamSplitReason reason) const
+    {
+        state.CurrentSplitPaths.insert(parentPathId);
+        ++state.Stats.SplitCount;
         if (reason != DataOrientedRoamSplitReason::Requested)
         {
-            ++counters->ForcedSplitCount;
+            ++state.Stats.ForcedSplitCount;
         }
-        return;
     }
 
-    state.CurrentSplitPaths.insert(parentPathId);
-    ++state.Stats.SplitCount;
-    if (reason != DataOrientedRoamSplitReason::Requested)
+    void RecordMerge(DataOrientedRoamState& state) const
     {
-        ++state.Stats.ForcedSplitCount;
+        ++state.Stats.MergeCount;
     }
-}
+};
 
-void RecordMerge(DataOrientedRoamState& state, TopologyCommitCounters* counters)
+/// <summary>
+/// 并行 topology worker 的提交策略。
+/// worker 只竞争 atomic budget 并写自己的 counters，不能修改共享活动索引；
+/// join 后由主线程统一合并统计、索引和持久队列邻域。
+/// </summary>
+struct ParallelTopologyCommitPolicy
 {
-    if (counters != nullptr)
+    static constexpr bool UpdatesSharedIndices = false;
+
+    explicit ParallelTopologyCommitPolicy(TopologyCommitCounters& counters)
+        : Counters(counters)
     {
-        // 并发 merge 只累积本地成功次数
-        ++counters->MergeCount;
-        return;
     }
 
-    ++state.Stats.MergeCount;
+    bool TryAcquireSplitBudget(DataOrientedRoamState& state) const
+    {
+        std::size_t remaining = state.RemainingParallelSplitBudget.load(std::memory_order_relaxed);
+        while (remaining > 0U)
+        {
+            if (state.RemainingParallelSplitBudget.compare_exchange_weak(
+                    remaining,
+                    remaining - 1U,
+                    std::memory_order_relaxed,
+                    std::memory_order_relaxed))
+            {
+                return true;
+            }
+        }
+
+        RecordBudgetRejectedSplit(state);
+        return false;
+    }
+
+    void ReleaseSplitBudget(DataOrientedRoamState& state) const
+    {
+        state.RemainingParallelSplitBudget.fetch_add(1U, std::memory_order_relaxed);
+    }
+
+    void RecordConstraintPass(DataOrientedRoamState&) const
+    {
+        ++Counters.ConstraintPassCount;
+    }
+
+    void RecordRejectedSplit(DataOrientedRoamState&) const
+    {
+        ++Counters.RejectedSplitCount;
+    }
+
+    void RecordBudgetRejectedSplit(DataOrientedRoamState& state) const
+    {
+        RecordRejectedSplit(state);
+        ++Counters.BudgetRejectedSplitCount;
+    }
+
+    void RecordSplit(
+        DataOrientedRoamState&,
+        std::uint64_t,
+        DataOrientedRoamSplitReason reason) const
+    {
+        ++Counters.SplitCount;
+        if (reason != DataOrientedRoamSplitReason::Requested)
+        {
+            ++Counters.ForcedSplitCount;
+        }
+    }
+
+    void RecordMerge(DataOrientedRoamState&) const
+    {
+        ++Counters.MergeCount;
+    }
+
+    TopologyCommitCounters& Counters;
+};
+
+/// <summary>
+/// 并行预提交结束后，根据已经合并完成的活动叶集合恢复串行预算。
+/// 这是 atomic 与普通计数之间唯一的 Build 内同步点，后续串行收敛只访问普通字段。
+/// </summary>
+void SynchronizeSerialSplitBudget(DataOrientedRoamState& state)
+{
+    const std::size_t activeLeafCount = state.ActiveLeafNodes.size();
+    state.RemainingSerialSplitBudget = state.Settings.TriangleBudget > activeLeafCount
+        ? state.Settings.TriangleBudget - activeLeafCount
+        : 0U;
 }
 
 void ReplaceNeighborReference(
@@ -448,12 +496,17 @@ void LinkSplitNeighbors(
     }
 }
 
-bool SplitNode(
+/// <summary>
+/// split、forced split 和邻接修复共用同一份实现；
+/// CommitPolicy 在编译期决定预算来源、统计落点和 shared index 是否立即更新。
+/// </summary>
+template <typename CommitPolicy>
+bool SplitNodeImpl(
     DataOrientedRoamState& state,
     DataOrientedRoamNodeIndex node,
     DataOrientedRoamSplitReason reason,
     DataOrientedRoamNodeIndex forcedFrom,
-    TopologyCommitCounters* counters = nullptr)
+    CommitPolicy& commitPolicy)
 {
     if (!state.IsValidNode(node) || !state.IsLeaf(node))
     {
@@ -464,13 +517,13 @@ bool SplitNode(
     if (state.Nodes.DepthAt(node) >= state.Settings.MaxDepth)
     {
         // maxDepth 是硬限制，不进入约束传播
-        RecordRejectedSplit(state, counters);
+        commitPolicy.RecordRejectedSplit(state);
         return false;
     }
 
     // One leaf split adds exactly one active triangle. Reserve the token before
     // forced propagation so the complete constraint closure stays inside the cap.
-    if (!TryAcquireSplitBudget(state, counters))
+    if (!commitPolicy.TryAcquireSplitBudget(state))
     {
         return false;
     }
@@ -487,11 +540,16 @@ bool SplitNode(
                state.Nodes.BaseNeighborAt(baseNeighbor) != node &&
                guard < state.Settings.MaxDepth + 2)
         {
-            RecordConstraintPass(state, counters);
-            if (!SplitNode(state, baseNeighbor, DataOrientedRoamSplitReason::ForcedByBaseNeighbor, node, counters))
+            commitPolicy.RecordConstraintPass(state);
+            if (!SplitNodeImpl(
+                    state,
+                    baseNeighbor,
+                    DataOrientedRoamSplitReason::ForcedByBaseNeighbor,
+                    node,
+                    commitPolicy))
             {
                 // 约束传播失败时当前 split 也必须失败
-                ReleaseSplitBudget(state);
+                commitPolicy.ReleaseSplitBudget(state);
                 return false;
             }
 
@@ -507,11 +565,16 @@ bool SplitNode(
     {
         // 对侧仍是 leaf 时先补齐 base neighbor split
         // forcedFrom 防止互为 base 的两个 leaf 递归回跳
-        RecordConstraintPass(state, counters);
-        if (!SplitNode(state, baseNeighbor, DataOrientedRoamSplitReason::ForcedByBaseNeighbor, node, counters))
+        commitPolicy.RecordConstraintPass(state);
+        if (!SplitNodeImpl(
+                state,
+                baseNeighbor,
+                DataOrientedRoamSplitReason::ForcedByBaseNeighbor,
+                node,
+                commitPolicy))
         {
             // 对侧 leaf 无法补齐时不能单侧 split
-            ReleaseSplitBudget(state);
+            commitPolicy.ReleaseSplitBudget(state);
             return false;
         }
 
@@ -552,7 +615,7 @@ bool SplitNode(
     }
 
     std::vector<DataOrientedRoamNodeIndex> mergeQueueNeighborhood;
-    if (counters == nullptr)
+    if constexpr (CommitPolicy::UpdatesSharedIndices)
     {
         mergeQueueNeighborhood.reserve(32U);
         AppendPersistentMergeQueueNeighborhood(state, node, mergeQueueNeighborhood);
@@ -581,7 +644,7 @@ bool SplitNode(
     rightChild.ActivatedByForcedSplit = reason != DataOrientedRoamSplitReason::Requested;
 
     LinkSplitNeighbors(state, node, baseNeighbor);
-    if (counters == nullptr)
+    if constexpr (CommitPolicy::UpdatesSharedIndices)
     {
         // 并行提交由 join 后的主线程统一更新索引，避免 worker 竞争 vector
         ApplySplitIndexTransition(state, node);
@@ -591,14 +654,18 @@ bool SplitNode(
         RefreshPersistentMergeQueueNeighborhood(state, mergeQueueNeighborhood);
     }
     // 串行路径会记录 path，最终仍由 CollectActiveSplitPaths 重建一次
-    RecordSplit(state, parentPathId, reason, counters);
+    commitPolicy.RecordSplit(state, parentPathId, reason);
     return true;
 }
 
-void MergeSingleNode(
+/// <summary>
+/// 单侧 parent merge 的拓扑修改保持统一，预算释放与索引维护由策略接管。
+/// </summary>
+template <typename CommitPolicy>
+void MergeSingleNodeImpl(
     DataOrientedRoamState& state,
     DataOrientedRoamNodeIndex node,
-    TopologyCommitCounters* counters = nullptr)
+    CommitPolicy& commitPolicy)
 {
     if (!state.IsValidNode(node) ||
         !state.IsValidNode(state.Nodes[node].LeftChild) ||
@@ -621,19 +688,25 @@ void MergeSingleNode(
     state.Nodes[node].ActivatedBuildId = state.BuildSequence;
     state.Nodes[node].MergeBuildId = state.BuildSequence;
     state.Nodes[node].ActivatedByForcedSplit = false;
-    if (counters == nullptr)
+    if constexpr (CommitPolicy::UpdatesSharedIndices)
     {
         // parent 重新成为 leaf，同时两个 child 退出 active leaf 集合。
         ApplyMergeIndexTransition(state, node);
     }
-    RecordMerge(state, counters);
+    // 每个 parent merge 净释放一个 leaf token；diamond 会调用两次。
+    commitPolicy.ReleaseSplitBudget(state);
+    commitPolicy.RecordMerge(state);
 }
 
-bool MergeNodeOrDiamondWithScoreLimit(
+/// <summary>
+/// diamond 判定和双侧 merge 规则不因串行/并行入口而复制。
+/// </summary>
+template <typename CommitPolicy>
+bool MergeNodeOrDiamondWithScoreLimitImpl(
     DataOrientedRoamState& state,
     DataOrientedRoamNodeIndex node,
     float maximumScore,
-    TopologyCommitCounters* counters = nullptr)
+    CommitPolicy& commitPolicy)
 {
     if (!CanMergeNode(state, node, maximumScore))
     {
@@ -642,7 +715,7 @@ bool MergeNodeOrDiamondWithScoreLimit(
 
     const DataOrientedRoamNodeIndex baseNeighbor = state.Nodes[node].BaseNeighbor;
     std::vector<DataOrientedRoamNodeIndex> mergeQueueNeighborhood;
-    if (counters == nullptr)
+    if constexpr (CommitPolicy::UpdatesSharedIndices)
     {
         mergeQueueNeighborhood.reserve(48U);
         AppendPersistentMergeQueueNeighborhood(state, node, mergeQueueNeighborhood);
@@ -663,11 +736,11 @@ bool MergeNodeOrDiamondWithScoreLimit(
         state.Nodes[node].BaseNeighbor = baseNeighbor;
         state.Nodes[baseNeighbor].BaseNeighbor = node;
         // MergeSingleNode 不改 baseNeighbor，互指关系需要前后显式保持
-        MergeSingleNode(state, node, counters);
-        MergeSingleNode(state, baseNeighbor, counters);
+        MergeSingleNodeImpl(state, node, commitPolicy);
+        MergeSingleNodeImpl(state, baseNeighbor, commitPolicy);
         state.Nodes[node].BaseNeighbor = baseNeighbor;
         state.Nodes[baseNeighbor].BaseNeighbor = node;
-        if (counters == nullptr)
+        if constexpr (CommitPolicy::UpdatesSharedIndices)
         {
             AppendPersistentMergeQueueNeighborhood(state, node, mergeQueueNeighborhood);
             AppendPersistentMergeQueueNeighborhood(state, baseNeighbor, mergeQueueNeighborhood);
@@ -677,8 +750,8 @@ bool MergeNodeOrDiamondWithScoreLimit(
         return true;
     }
 
-    MergeSingleNode(state, node, counters);
-    if (counters == nullptr)
+    MergeSingleNodeImpl(state, node, commitPolicy);
+    if constexpr (CommitPolicy::UpdatesSharedIndices)
     {
         AppendPersistentMergeQueueNeighborhood(state, node, mergeQueueNeighborhood);
         NormalizeQueueNeighborhood(mergeQueueNeighborhood);
@@ -687,16 +760,64 @@ bool MergeNodeOrDiamondWithScoreLimit(
     return true;
 }
 
-bool MergeNodeOrDiamond(
+template <typename CommitPolicy>
+bool MergeNodeOrDiamondImpl(
     DataOrientedRoamState& state,
     DataOrientedRoamNodeIndex node,
-    TopologyCommitCounters* counters = nullptr)
+    CommitPolicy& commitPolicy)
 {
-    return MergeNodeOrDiamondWithScoreLimit(
+    return MergeNodeOrDiamondWithScoreLimitImpl(
         state,
         node,
         state.Settings.MergeThreshold,
-        counters);
+        commitPolicy);
+}
+
+bool SplitNodeSerial(
+    DataOrientedRoamState& state,
+    DataOrientedRoamNodeIndex node,
+    DataOrientedRoamSplitReason reason,
+    DataOrientedRoamNodeIndex forcedFrom)
+{
+    SerialTopologyCommitPolicy commitPolicy;
+    return SplitNodeImpl(state, node, reason, forcedFrom, commitPolicy);
+}
+
+bool SplitNodeParallel(
+    DataOrientedRoamState& state,
+    DataOrientedRoamNodeIndex node,
+    DataOrientedRoamSplitReason reason,
+    DataOrientedRoamNodeIndex forcedFrom,
+    TopologyCommitCounters& counters)
+{
+    ParallelTopologyCommitPolicy commitPolicy{counters};
+    return SplitNodeImpl(state, node, reason, forcedFrom, commitPolicy);
+}
+
+bool MergeNodeOrDiamondSerialWithScoreLimit(
+    DataOrientedRoamState& state,
+    DataOrientedRoamNodeIndex node,
+    float maximumScore)
+{
+    SerialTopologyCommitPolicy commitPolicy;
+    return MergeNodeOrDiamondWithScoreLimitImpl(state, node, maximumScore, commitPolicy);
+}
+
+bool MergeNodeOrDiamondSerial(
+    DataOrientedRoamState& state,
+    DataOrientedRoamNodeIndex node)
+{
+    SerialTopologyCommitPolicy commitPolicy;
+    return MergeNodeOrDiamondImpl(state, node, commitPolicy);
+}
+
+bool MergeNodeOrDiamondParallel(
+    DataOrientedRoamState& state,
+    DataOrientedRoamNodeIndex node,
+    TopologyCommitCounters& counters)
+{
+    ParallelTopologyCommitPolicy commitPolicy{counters};
+    return MergeNodeOrDiamondImpl(state, node, commitPolicy);
 }
 
 bool HasReusableChildren(const DataOrientedRoamState& state, DataOrientedRoamNodeIndex node)
@@ -1016,12 +1137,12 @@ std::vector<CommittedSplit> CommitInteriorSplitChunks(
 
                 const DataOrientedRoamNodeIndex baseNeighborBeforeSplit = state.Nodes[node].BaseNeighbor;
                 // 并发 split 只允许不分配新 node 的安全候选
-                if (SplitNode(
+                if (SplitNodeParallel(
                         state,
                         node,
                         DataOrientedRoamSplitReason::Requested,
                         InvalidDataOrientedRoamNodeIndex,
-                        &localCounters[workerIndex]))
+                        localCounters[workerIndex]))
                 {
                     // child 会在主线程重新入队，保持级联细分
                     localCommittedSplits[workerIndex].push_back(CommittedSplit{node, baseNeighborBeforeSplit});
@@ -1131,7 +1252,7 @@ std::vector<CommittedMerge> CommitInteriorMergeChunks(
                 const DataOrientedRoamNodeIndex baseParent = state.IsValidNode(baseNeighbor)
                     ? state.Nodes[baseNeighbor].Parent
                     : InvalidDataOrientedRoamNodeIndex;
-                if (MergeNodeOrDiamond(state, node, &localCounters[workerIndex]))
+                if (MergeNodeOrDiamondParallel(state, node, localCounters[workerIndex]))
                 {
                     localCommittedMerges[workerIndex].push_back(
                         CommittedMerge{node, baseNeighbor, mergedBaseNeighbor, parent, baseParent});
@@ -1206,6 +1327,8 @@ void RefineWithSplitQueue(DataOrientedRoamState& state)
         state.Stats.SplitCandidateCount = 0U;
         state.Stats.SplitCandidateMarkMilliseconds = candidateMarkTimer.Stop();
     }
+    // worker join 后只同步一次普通预算；后续串行 split/merge 不再访问 atomic token。
+    SynchronizeSerialSplitBudget(state);
     state.Stats.CandidatePeakCount = std::max(
         state.Stats.CandidatePeakCount,
         state.ActiveLeafNodes.size() + state.MergeQueue.size());
@@ -1218,7 +1341,7 @@ void RefineWithSplitQueue(DataOrientedRoamState& state)
     const auto mergeDuringSplitConvergence =
         [&state, &crossoverMergeMilliseconds](DataOrientedRoamNodeIndex node) {
             Tools::PerformanceTimer mergeTimer;
-            const bool merged = MergeNodeOrDiamondWithScoreLimit(
+            const bool merged = MergeNodeOrDiamondSerialWithScoreLimit(
                 state,
                 node,
                 std::numeric_limits<float>::max());
@@ -1253,7 +1376,7 @@ void RefineWithSplitQueue(DataOrientedRoamState& state)
         }
 
         const std::size_t budgetRejectedBefore = state.Stats.BudgetRejectedSplitCount;
-        if (SplitNode(
+        if (SplitNodeSerial(
                 state,
                 splitNode,
                 DataOrientedRoamSplitReason::Requested,
@@ -1325,7 +1448,7 @@ void MergeWithDiamondQueue(DataOrientedRoamState& state)
         {
             break;
         }
-        if (!MergeNodeOrDiamond(state, node))
+        if (!MergeNodeOrDiamondSerial(state, node))
         {
             RemovePersistentMergeQueueCandidate(state, node);
             ++state.Stats.RejectedMergeCount;
