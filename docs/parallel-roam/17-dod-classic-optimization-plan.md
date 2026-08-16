@@ -1,7 +1,7 @@
 # DOD 与 Classic ROAM 优化问题规划
 
 > 日期：2026-08-10  
-> 状态：实施规划 v1.1，B1 已完成
+> 状态：实施规划 v1.2，B1、B2 已完成
 > 范围：Data-Oriented CPU ROAM 相对 Classic CPU ROAM 的 CPU 热路径  
 > 基准：`RelWithDebInfo`、统一 ROAM 误差公式、持久 `Q_s/Q_m`、相同阈值与固定活动叶三角形预算
 
@@ -184,7 +184,7 @@ merge 单操作成本 = sum(cpuMergeTopologyMilliseconds) / sum(merges)
 
 #### 当前问题
 
-DoD 的 [`NormalizeQueueNeighborhood`](../../src/algorithms/data_oriented_roam/DataOrientedRoamTopology.cpp#L953) 对串行 split/merge 的小邻域反复执行 `sort + unique`；Classic 的 [`AppendQueueNeighborhood`](../../src/algorithms/classic_roam/ClassicRoamQueues.cpp#L386) 在插入时完成小集合去重。
+DoD 的 [`NormalizeQueueNeighborhood`](../../src/algorithms/data_oriented_roam/DataOrientedRoamTopology.cpp#L1071) 对并行批处理的邻域执行 `sort + unique`；Classic 的 [`AppendQueueNeighborhood`](../../src/algorithms/classic_roam/ClassicRoamQueues.cpp#L386) 在插入时完成小集合去重。
 
 #### 实施内容
 
@@ -194,6 +194,13 @@ DoD 的 [`NormalizeQueueNeighborhood`](../../src/algorithms/data_oriented_roam/D
 4. 容量不足时保留可验证的安全回退，不允许静默丢失节点；
 5. 并行批处理仍允许集中收集后统一去重；
 6. 失效和刷新尽量复用同一份规范化邻域。
+
+#### 实现结果（2026-08-16）
+
+- 新增 `DataOrientedRoamNeighborhood`，常规串行邻域使用 96 个索引的栈内固定容量；该容量覆盖一次事务最多四个 seed 的邻域扩张，并保留超限后的可扩容安全回退；
+- 串行 `SplitNodeImpl` 和 `MergeNodeOrDiamondWithScoreLimitImpl` 改为插入时线性去重，不再创建邻域 `vector`，也不调用 `NormalizeQueueNeighborhood`；
+- 并行 split/merge 的批量邻域仍使用 `vector + sort/unique`，因此没有改变 worker 提交和主线程整理语义；
+- RelWithDebInfo 编译、CTest 10/10 和 [runtime-benchmark-20260816-220741.md](../../benchmark-output/runtime-benchmark-20260816-220741.md) 通过；当前 benchmark 用于回归确认，B2 的单操作成本收益仍需与 B1 基线做独立多轮 A/B。
 
 #### 验收
 

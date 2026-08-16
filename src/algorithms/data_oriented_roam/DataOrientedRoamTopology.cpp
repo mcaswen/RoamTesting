@@ -618,13 +618,11 @@ bool SplitNodeImpl(
         state.Nodes[node].RightChild = rightChild;
     }
 
-    std::vector<DataOrientedRoamNodeIndex> mergeQueueNeighborhood;
+    DataOrientedRoamNeighborhood mergeQueueNeighborhood;
     if constexpr (CommitPolicy::UpdatesSharedIndices)
     {
-        mergeQueueNeighborhood.reserve(32U);
         AppendPersistentMergeQueueNeighborhood(state, node, mergeQueueNeighborhood);
         AppendPersistentMergeQueueNeighborhood(state, baseNeighbor, mergeQueueNeighborhood);
-        NormalizeQueueNeighborhood(mergeQueueNeighborhood);
         InvalidatePersistentMergeQueueNeighborhood(state, mergeQueueNeighborhood);
     }
 
@@ -654,7 +652,6 @@ bool SplitNodeImpl(
         ApplySplitIndexTransition(state, node);
         AppendPersistentMergeQueueNeighborhood(state, node, mergeQueueNeighborhood);
         AppendPersistentMergeQueueNeighborhood(state, baseNeighbor, mergeQueueNeighborhood);
-        NormalizeQueueNeighborhood(mergeQueueNeighborhood);
         RefreshPersistentMergeQueueNeighborhood(state, mergeQueueNeighborhood);
     }
     // 串行路径会记录 path，最终仍由 CollectActiveSplitPaths 重建一次
@@ -718,13 +715,11 @@ bool MergeNodeOrDiamondWithScoreLimitImpl(
     }
 
     const DataOrientedRoamNodeIndex baseNeighbor = state.Nodes[node].BaseNeighbor;
-    std::vector<DataOrientedRoamNodeIndex> mergeQueueNeighborhood;
+    DataOrientedRoamNeighborhood mergeQueueNeighborhood;
     if constexpr (CommitPolicy::UpdatesSharedIndices)
     {
-        mergeQueueNeighborhood.reserve(48U);
         AppendPersistentMergeQueueNeighborhood(state, node, mergeQueueNeighborhood);
         AppendPersistentMergeQueueNeighborhood(state, baseNeighbor, mergeQueueNeighborhood);
-        NormalizeQueueNeighborhood(mergeQueueNeighborhood);
         InvalidatePersistentMergeQueueNeighborhood(state, mergeQueueNeighborhood);
     }
 
@@ -748,7 +743,6 @@ bool MergeNodeOrDiamondWithScoreLimitImpl(
         {
             AppendPersistentMergeQueueNeighborhood(state, node, mergeQueueNeighborhood);
             AppendPersistentMergeQueueNeighborhood(state, baseNeighbor, mergeQueueNeighborhood);
-            NormalizeQueueNeighborhood(mergeQueueNeighborhood);
             RefreshPersistentMergeQueueNeighborhood(state, mergeQueueNeighborhood);
         }
         return true;
@@ -758,7 +752,6 @@ bool MergeNodeOrDiamondWithScoreLimitImpl(
     if constexpr (CommitPolicy::UpdatesSharedIndices)
     {
         AppendPersistentMergeQueueNeighborhood(state, node, mergeQueueNeighborhood);
-        NormalizeQueueNeighborhood(mergeQueueNeighborhood);
         RefreshPersistentMergeQueueNeighborhood(state, mergeQueueNeighborhood);
     }
     return true;

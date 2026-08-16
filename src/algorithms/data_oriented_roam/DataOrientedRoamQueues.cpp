@@ -384,8 +384,7 @@ void InsertMergeQueueNodeIfEligible(DataOrientedRoamState& state, DataOrientedRo
         state.ActiveLeafNodes.size() + state.MergeQueue.size());
 }
 
-// 邻域收集阶段允许重复项。串行修改只涉及很小的列表；并行路径则在批量
-// 收集完成后统一排序和去重。
+// 并行批量收集保留重复项，调用方最后统一排序和去重。
 void AppendIfValid(
     const DataOrientedRoamState& state,
     DataOrientedRoamNodeIndex node,
@@ -394,6 +393,18 @@ void AppendIfValid(
     if (state.IsValidNode(node))
     {
         nodes.push_back(node);
+    }
+}
+
+// 串行局部邻域在插入时直接去重，避免事务结束后再排序。
+void AppendIfValid(
+    const DataOrientedRoamState& state,
+    DataOrientedRoamNodeIndex node,
+    DataOrientedRoamNeighborhood& nodes)
+{
+    if (state.IsValidNode(node))
+    {
+        nodes.append_unique(node);
     }
 }
 } // 匿名命名空间
@@ -652,6 +663,40 @@ void AppendPersistentMergeQueueNeighborhood(
     }
 }
 
+void AppendPersistentMergeQueueNeighborhood(
+    const DataOrientedRoamState& state,
+    DataOrientedRoamNodeIndex node,
+    DataOrientedRoamNeighborhood& nodes)
+{
+    if (!state.IsValidNode(node))
+    {
+        return;
+    }
+
+    const DataOrientedRoamNodeConstRef seed = state.Nodes[node];
+    const DataOrientedRoamNodeIndex directNodes[] = {
+        node,
+        seed.Parent,
+        seed.LeftChild,
+        seed.RightChild,
+        seed.BaseNeighbor,
+        seed.LeftNeighbor,
+        seed.RightNeighbor,
+    };
+    for (DataOrientedRoamNodeIndex directNode : directNodes)
+    {
+        AppendIfValid(state, directNode, nodes);
+    }
+    for (DataOrientedRoamNodeIndex directNode : directNodes)
+    {
+        if (state.IsValidNode(directNode))
+        {
+            AppendIfValid(state, state.Nodes[directNode].Parent, nodes);
+            AppendIfValid(state, state.Nodes[directNode].BaseNeighbor, nodes);
+        }
+    }
+}
+
 // 串行拓扑修改之前或并行 worker 启动之前，先移除受影响的队列项，避免 heap
 // 继续排序已经发生变化的 diamond。
 void InvalidatePersistentMergeQueueNeighborhood(
@@ -664,11 +709,31 @@ void InvalidatePersistentMergeQueueNeighborhood(
     }
 }
 
+void InvalidatePersistentMergeQueueNeighborhood(
+    DataOrientedRoamState& state,
+    const DataOrientedRoamNeighborhood& nodes)
+{
+    for (DataOrientedRoamNodeIndex node : nodes)
+    {
+        RemovePersistentMergeQueueCandidate(state, node);
+    }
+}
+
 // 活动 leaf/internal 索引提交完成后再刷新邻域。刚变得可合并的节点会立即进入
 // Q_m，使 merge 能在同一个 Build 内向父级连续传播。
 void RefreshPersistentMergeQueueNeighborhood(
     DataOrientedRoamState& state,
     const std::vector<DataOrientedRoamNodeIndex>& nodes)
+{
+    for (DataOrientedRoamNodeIndex node : nodes)
+    {
+        InsertMergeQueueNodeIfEligible(state, node);
+    }
+}
+
+void RefreshPersistentMergeQueueNeighborhood(
+    DataOrientedRoamState& state,
+    const DataOrientedRoamNeighborhood& nodes)
 {
     for (DataOrientedRoamNodeIndex node : nodes)
     {
