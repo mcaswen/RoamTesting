@@ -213,8 +213,8 @@ void ClassicRoamMeshBuilder::ReplaceMeshChildrenWithLeaf(ClassicRoamNode* parent
     const std::size_t lastSlot = _meshSlotOwners.size() - 1U;
     if (retainedChild->MeshSlot == lastSlot)
     {
-        // RemoveMeshLeaf compacts the last slot into the removed hole. Keep the
-        // non-last child so that compaction cannot overwrite the new parent.
+        // RemoveMeshLeaf 会把末尾槽位压入被删除的空洞
+        // 保留非末尾 child，避免压缩过程覆盖新 parent
         std::swap(retainedChild, removedChild);
     }
 

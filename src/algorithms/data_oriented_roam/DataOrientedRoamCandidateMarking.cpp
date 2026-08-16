@@ -25,8 +25,8 @@ DataOrientedRoamMergeCandidateEvaluation EvaluateMergeCandidateImpl(
         return {};
     }
 
-    // Commit-time validation deliberately recomputes only the selected parent.
-    // Persistent Q_m owns frame-wide scoring and topology membership discovery.
+    // 提交时校验只重新计算当前选中的 parent
+    // 持久 Q_m 负责整帧评分和拓扑成员发现
     const float score = ComputeScreenErrorScore(state, node);
     if (score > maximumScore)
     {
@@ -39,8 +39,7 @@ DataOrientedRoamMergeCandidateEvaluation EvaluateMergeCandidateImpl(
         return DataOrientedRoamMergeCandidateEvaluation{true, score, score};
     }
 
-    // An internal opposite parent must form a mutual diamond whose children are
-    // still leaves at the instant the topology transaction is committed.
+    // 对侧 internal parent 必须组成互指 diamond，且提交拓扑事务时其 child 仍然都是 leaf
     const DataOrientedRoamNodeIndex baseLeftChild = state.Nodes.LeftChildAt(baseNeighbor);
     const DataOrientedRoamNodeIndex baseRightChild = state.Nodes.RightChildAt(baseNeighbor);
     if (state.Nodes.BaseNeighborAt(baseNeighbor) != node ||
@@ -58,8 +57,7 @@ DataOrientedRoamMergeCandidateEvaluation EvaluateMergeCandidateImpl(
         return {};
     }
 
-    // PairScore is the loss of the complete diamond transaction and therefore the
-    // same max(parent priorities) key used by persistent Q_m.
+    // PairScore 表示完整 diamond 事务的误差损失，因此使用持久 Q_m 相同的 max(parent priority) 键
     return DataOrientedRoamMergeCandidateEvaluation{
         true,
         score,

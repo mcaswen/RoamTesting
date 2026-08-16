@@ -26,7 +26,7 @@ layout(std430, binding = 3) buffer CounterBuffer
 
 void main()
 {
-    // The next compaction must allocate its dense leaf output from slot zero.
+    // 下一次 compaction 必须从槽位 0 开始分配 dense leaf 输出
     activeLeafCount = 0u;
 }
 )";
@@ -43,14 +43,14 @@ bool EnsureGpuRoamActiveLeafResetProgram(std::uint32_t& programId, std::string* 
 
 void RunGpuRoamActiveLeafResetPass(std::uint32_t programId, std::uint32_t counterBufferId)
 {
-    // This is a compute pass instead of glBufferSubData so OpenGL and D3D12 report
-    // the same algorithm stage and no CPU upload is mislabeled as shader work.
-    // The preceding split pass has completed behind an SSBO memory barrier.
+    // 这里使用 compute pass，而不是 glBufferSubData
+    // 这样 OpenGL 和 D3D12 都能统计相同算法阶段，且不会把 CPU 上传误记为 shader 工作
+    // 前一个 split pass 已在 SSBO memory barrier 后完成
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, counterBufferId);
     glUseProgram(programId);
-    // One invocation is sufficient because only one shared counter is modified.
+    // 只修改一个共享计数器，因此一次 invocation 就足够
     glDispatchCompute(1U, 1U, 1U);
-    // Final compaction reads activeLeafCount immediately in the next dispatch.
+    // 下一次 dispatch 会立即读取 activeLeafCount 完成最终 compaction
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 }
 } // namespace ParallelRoam::Algorithms::GpuRoam

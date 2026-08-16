@@ -5,13 +5,13 @@
 
 namespace ParallelRoam::Algorithms::GpuRoam
 {
-// Compiles and caches the one-invocation reset shader used between split and
-// final compaction. Keeping this as a named pass makes backend timings comparable.
+// 编译并缓存 split 和最终 compaction 之间使用的单 invocation reset shader
+// 将它作为独立 pass 保留，便于后端计时口径一致
 [[nodiscard]] bool EnsureGpuRoamActiveLeafResetProgram(
     std::uint32_t& programId,
     std::string* errorMessage);
 
-// Resets ActiveLeafCount while preserving allocation, budget and split counters.
-// The function records commands only; completion remains asynchronous.
+// 在保留 allocation、budget 和 split counter 的同时重置 ActiveLeafCount
+// 该函数只记录命令，完成过程仍然异步执行
 void RunGpuRoamActiveLeafResetPass(std::uint32_t programId, std::uint32_t counterBufferId);
 } // namespace ParallelRoam::Algorithms::GpuRoam

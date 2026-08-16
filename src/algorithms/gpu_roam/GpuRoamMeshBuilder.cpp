@@ -292,8 +292,8 @@ bool ResolveTimingReadbackSlot(
             &elapsedNanoseconds[passIndex]);
     }
     queryWaitMilliseconds += queryWaitTimer.Stop();
-    // OpenGL keeps timer results in query objects rather than a readback buffer;
-    // count the logical seven 64-bit results so the CSV still exposes their transfer size.
+    // OpenGL 将 timer 结果保存在 query object 中，而不是回读 buffer
+    // 这里按逻辑上的七个 64 位结果统计，使 CSV 仍能展示对应传输大小
     readbackBytes += GpuRoamGpuPassCount * sizeof(GLuint64);
 
     GpuRoamCounters counters{};
@@ -732,8 +732,8 @@ bool GpuRoamMeshBuilder::RunGpuAlgorithmPasses(
     RunGpuRoamCandidateMarkingPass(candidateInput);
     glEndQuery(GL_TIME_ELAPSED);
 
-    // Merge scoring is a separate ROAM decision stage. It produces diagnostic
-    // candidates only; CPU DOD already committed the persistent merge topology.
+    // merge scoring 是独立的 ROAM 决策阶段，只生成诊断候选
+    // 持久 merge topology 已经由 CPU DOD 提交
     candidateInput.Kind = GpuRoamCandidateKind::Merge;
     glBeginQuery(
         GL_TIME_ELAPSED,

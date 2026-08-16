@@ -371,8 +371,8 @@ void ReserveNodePool(DataOrientedRoamState& state)
     }
     // 超过精确移位范围时使用固定 fallback，避免一次性巨大预分配
 
-    // The active budget bounds the useful initial working set. Historical inactive
-    // nodes may grow past it later, and index-based references remain valid on resize.
+    // active budget 只约束初始有效工作集
+    // 历史 inactive 节点之后可能超过该预算，但按索引引用在扩容后仍然有效
     const std::size_t budgetCapacity = state.Settings.TriangleBudget <=
             std::numeric_limits<std::size_t>::max() / 2U
         ? state.Settings.TriangleBudget * 2U

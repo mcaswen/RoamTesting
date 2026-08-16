@@ -385,8 +385,8 @@ void ValidateTopology(DataOrientedRoamState& state)
         }
     }
 
-    // Heap order, intrusive positions, diamond canonicalization, and membership
-    // completeness are checked by the queue module that owns those invariants.
+    // heap 顺序、intrusive position、diamond canonicalization 和成员完整性
+    // 由负责这些不变量的 queue 模块统一检查
     state.Stats.InvalidTopologyCount += CountPersistentQueueInvariantViolations(state);
 }
 } // 命名空间 ParallelRoam::Algorithms::DataOrientedRoam

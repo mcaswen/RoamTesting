@@ -561,8 +561,8 @@ bool SplitNodeImpl(
         return false;
     }
 
-    // One leaf split adds exactly one active triangle. Reserve the token before
-    // forced propagation so the complete constraint closure stays inside the cap.
+    // 每次 leaf split 恰好增加一个 active triangle，先预留 token 再传播 forced split
+    // 这样完整的约束闭包始终不会超过预算上限
     if (!commitPolicy.TryAcquireSplitBudget(state))
     {
         return false;

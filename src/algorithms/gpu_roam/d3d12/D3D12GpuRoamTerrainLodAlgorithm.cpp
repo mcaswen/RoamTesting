@@ -1091,7 +1091,7 @@ bool D3D12GpuRoamTerrainLodAlgorithm::BuildRenderData(
     heightGpu.ptr += static_cast<UINT64>(9U) * _state->DescriptorSize;
     commandList->SetComputeRootDescriptorTable(2, heightGpu);
 
-    // Nine boundaries produce eight non-overlapping shader-pass durations.
+    // 九个边界划分出八段互不重叠的 shader pass 耗时
     const std::uint32_t queryStart = frameIndex * TimestampCountPerFrame;
     commandList->EndQuery(_state->QueryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, queryStart);
     // 从 CPU 快照重新压缩活动叶节点
@@ -1106,8 +1106,7 @@ bool D3D12GpuRoamTerrainLodAlgorithm::BuildRenderData(
         _state->SplitCandidatePipeline.Get(),
         DispatchCount(activeLeafCapacity));
     commandList->EndQuery(_state->QueryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, queryStart + 3U);
-    // Merge candidate scoring is measured separately, but this hybrid path
-    // still commits persistent merge topology in the CPU DOD baseline.
+    // merge candidate scoring 单独计时，但这条混合路径仍在 CPU DOD baseline 中提交持久 merge topology
     DispatchPipeline(
         commandList,
         _state->MergeCandidatePipeline.Get(),

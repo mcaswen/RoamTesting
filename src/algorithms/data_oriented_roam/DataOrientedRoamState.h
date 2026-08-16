@@ -340,7 +340,7 @@ struct DataOrientedRoamState
     std::vector<std::size_t> ActiveLeafNodePositions;
     std::vector<std::uint64_t> SplitQueueBlockedBuildIds;
 
-    // One canonical representative is stored for each mergeable diamond.
+    // 每个可 merge 的 diamond 只保存一个 canonical representative
     std::vector<DataOrientedRoamMergeQueueEntry> MergeQueue;
     std::vector<std::size_t> MergeQueuePositions;
     std::vector<DataOrientedRoamNodeIndex> MergeQueueRepresentatives;

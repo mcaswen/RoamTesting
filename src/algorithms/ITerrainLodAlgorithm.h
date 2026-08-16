@@ -360,7 +360,7 @@ struct TerrainLodStats
     std::size_t CrackRiskCount{0};
     std::size_t ConstraintPassCount{0};
     std::size_t CandidatePeakCount{0};
-    // Classic and DOD populate persistent topology queue diagnostics.
+    // Classic 和 DOD 填充持久 topology queue diagnostics
     std::size_t PersistentSplitQueueSize{0};
     std::size_t PersistentMergeQueueSize{0};
     std::size_t QueueCrossoverCount{0};
@@ -398,9 +398,8 @@ struct TerrainLodStats
     float CpuPrepareMilliseconds{0.0F};
     float CpuMergeCandidateMarkMilliseconds{0.0F};
     float CpuMergeTopologyMilliseconds{0.0F};
-    // Split/merge topology detail fields are optional sub-stage diagnostics;
-    // serial convergence is shared by Classic and DoD, while parallel-only
-    // fields remain zero for Classic.
+    // split/merge topology detail fields 是可选的子阶段诊断
+    // Classic 和 DOD 共享 serial convergence，parallel-only 字段在 Classic 中保持为 0
     float CpuSplitTopologyChunkBuildMilliseconds{0.0F};
     float CpuSplitTopologyQueueInvalidationMilliseconds{0.0F};
     float CpuSplitTopologyParallelCommitMilliseconds{0.0F};
@@ -421,8 +420,8 @@ struct TerrainLodStats
     float CpuMeshEmitMilliseconds{0.0F};
     float CpuFinalizeMilliseconds{0.0F};
     float CpuUploadMilliseconds{0.0F};
-    // GPU pass timings are delayed query results. Each field names the algorithm work
-    // performed between two synchronization boundaries instead of collapsing the chain.
+    // GPU pass timings 是延迟 query 结果，每个字段都表示两个同步边界之间执行的算法工作
+    // 这里不把整条 pass 链压缩成一个 compute 耗时
     float GpuInitialLeafCompactionMilliseconds{0.0F};
     float GpuErrorEvaluationMilliseconds{0.0F};
     float GpuSplitCandidateMarkingMilliseconds{0.0F};
