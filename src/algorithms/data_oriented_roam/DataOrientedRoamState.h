@@ -183,10 +183,9 @@ struct DataOrientedRoamNodePool
         return Domains.size();
     }
 
-    // Hot-path scalar accessors avoid materializing the full 20-field proxy
-    // when a pass needs only one SoA column.
-    // They intentionally expose read-only columns except for the cached score.
-    // Bounds checks remain the caller's responsibility, matching operator[].
+    // 热路径只读取单个 SoA 字段时不再构造完整的 20 字段代理
+    // 除缓存 score 外均只提供只读访问，写操作交给专用拓扑函数
+    // 与 operator[] 一致，由调用方保证索引有效
     [[nodiscard]] const TriangleDomain& DomainAt(DataOrientedRoamNodeIndex node) const noexcept
     {
         return Domains[node];
@@ -210,6 +209,21 @@ struct DataOrientedRoamNodePool
     [[nodiscard]] DataOrientedRoamNodeIndex BaseNeighborAt(DataOrientedRoamNodeIndex node) const noexcept
     {
         return BaseNeighbors[node];
+    }
+
+    [[nodiscard]] DataOrientedRoamNodeIndex LeftNeighborAt(DataOrientedRoamNodeIndex node) const noexcept
+    {
+        return LeftNeighbors[node];
+    }
+
+    [[nodiscard]] DataOrientedRoamNodeIndex RightNeighborAt(DataOrientedRoamNodeIndex node) const noexcept
+    {
+        return RightNeighbors[node];
+    }
+
+    [[nodiscard]] DataOrientedRoamChunkId InteriorChunkIdAt(DataOrientedRoamNodeIndex node) const noexcept
+    {
+        return InteriorChunkIds[node];
     }
 
     [[nodiscard]] float GeometricErrorAt(DataOrientedRoamNodeIndex node) const noexcept
@@ -242,6 +256,11 @@ struct DataOrientedRoamNodePool
         return MergeBuildIds[node];
     }
 
+    [[nodiscard]] std::uint64_t ActivatedBuildIdAt(DataOrientedRoamNodeIndex node) const noexcept
+    {
+        return ActivatedBuildIds[node];
+    }
+
     [[nodiscard]] int DepthAt(DataOrientedRoamNodeIndex node) const noexcept
     {
         return Depths[node];
@@ -260,6 +279,11 @@ struct DataOrientedRoamNodePool
     [[nodiscard]] bool IsSplitAt(DataOrientedRoamNodeIndex node) const noexcept
     {
         return IsSplits[node] != 0U;
+    }
+
+    [[nodiscard]] bool ActivatedByForcedSplitAt(DataOrientedRoamNodeIndex node) const noexcept
+    {
+        return ActivatedByForcedSplits[node] != 0U;
     }
 
     [[nodiscard]] std::size_t capacity() const;

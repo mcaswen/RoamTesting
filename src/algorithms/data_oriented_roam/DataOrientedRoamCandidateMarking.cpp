@@ -17,9 +17,10 @@ DataOrientedRoamMergeCandidateEvaluation EvaluateMergeCandidateImpl(
         return {};
     }
 
-    const DataOrientedRoamNodeConstRef candidate = state.Nodes[node];
-    if (!state.IsValidNode(candidate.LeftChild) || !state.IsValidNode(candidate.RightChild) ||
-        !state.IsLeaf(candidate.LeftChild) || !state.IsLeaf(candidate.RightChild))
+    const DataOrientedRoamNodeIndex leftChild = state.Nodes.LeftChildAt(node);
+    const DataOrientedRoamNodeIndex rightChild = state.Nodes.RightChildAt(node);
+    if (!state.IsValidNode(leftChild) || !state.IsValidNode(rightChild) ||
+        !state.IsLeaf(leftChild) || !state.IsLeaf(rightChild))
     {
         return {};
     }
@@ -32,7 +33,7 @@ DataOrientedRoamMergeCandidateEvaluation EvaluateMergeCandidateImpl(
         return {};
     }
 
-    const DataOrientedRoamNodeIndex baseNeighbor = candidate.BaseNeighbor;
+    const DataOrientedRoamNodeIndex baseNeighbor = state.Nodes.BaseNeighborAt(node);
     if (!state.IsValidNode(baseNeighbor) || state.IsLeaf(baseNeighbor))
     {
         return DataOrientedRoamMergeCandidateEvaluation{true, score, score};
@@ -40,11 +41,13 @@ DataOrientedRoamMergeCandidateEvaluation EvaluateMergeCandidateImpl(
 
     // An internal opposite parent must form a mutual diamond whose children are
     // still leaves at the instant the topology transaction is committed.
-    if (state.Nodes[baseNeighbor].BaseNeighbor != node ||
-        !state.IsValidNode(state.Nodes[baseNeighbor].LeftChild) ||
-        !state.IsValidNode(state.Nodes[baseNeighbor].RightChild) ||
-        !state.IsLeaf(state.Nodes[baseNeighbor].LeftChild) ||
-        !state.IsLeaf(state.Nodes[baseNeighbor].RightChild))
+    const DataOrientedRoamNodeIndex baseLeftChild = state.Nodes.LeftChildAt(baseNeighbor);
+    const DataOrientedRoamNodeIndex baseRightChild = state.Nodes.RightChildAt(baseNeighbor);
+    if (state.Nodes.BaseNeighborAt(baseNeighbor) != node ||
+        !state.IsValidNode(baseLeftChild) ||
+        !state.IsValidNode(baseRightChild) ||
+        !state.IsLeaf(baseLeftChild) ||
+        !state.IsLeaf(baseRightChild))
     {
         return {};
     }

@@ -351,8 +351,8 @@ void InsertMergeQueueNodeIfEligible(DataOrientedRoamState& state, DataOrientedRo
 
     // base neighbor 不是互指 internal 节点时，这是单 parent merge；只有双方
     // internal parent 互为 base neighbor 时才记录 partner。
-    DataOrientedRoamNodeIndex partner = state.Nodes[representative].BaseNeighbor;
-    if (!IsActiveInternalNode(state, partner) || state.Nodes[partner].BaseNeighbor != representative)
+    DataOrientedRoamNodeIndex partner = state.Nodes.BaseNeighborAt(representative);
+    if (!IsActiveInternalNode(state, partner) || state.Nodes.BaseNeighborAt(partner) != representative)
     {
         partner = InvalidDataOrientedRoamNodeIndex;
     }
@@ -639,15 +639,14 @@ void AppendPersistentMergeQueueNeighborhood(
         return;
     }
 
-    const DataOrientedRoamNodeConstRef seed = state.Nodes[node];
     const DataOrientedRoamNodeIndex directNodes[] = {
         node,
-        seed.Parent,
-        seed.LeftChild,
-        seed.RightChild,
-        seed.BaseNeighbor,
-        seed.LeftNeighbor,
-        seed.RightNeighbor,
+        state.Nodes.ParentAt(node),
+        state.Nodes.LeftChildAt(node),
+        state.Nodes.RightChildAt(node),
+        state.Nodes.BaseNeighborAt(node),
+        state.Nodes.LeftNeighborAt(node),
+        state.Nodes.RightNeighborAt(node),
     };
     for (DataOrientedRoamNodeIndex directNode : directNodes)
     {
@@ -657,8 +656,8 @@ void AppendPersistentMergeQueueNeighborhood(
     {
         if (state.IsValidNode(directNode))
         {
-            AppendIfValid(state, state.Nodes[directNode].Parent, nodes);
-            AppendIfValid(state, state.Nodes[directNode].BaseNeighbor, nodes);
+            AppendIfValid(state, state.Nodes.ParentAt(directNode), nodes);
+            AppendIfValid(state, state.Nodes.BaseNeighborAt(directNode), nodes);
         }
     }
 }
@@ -673,15 +672,14 @@ void AppendPersistentMergeQueueNeighborhood(
         return;
     }
 
-    const DataOrientedRoamNodeConstRef seed = state.Nodes[node];
     const DataOrientedRoamNodeIndex directNodes[] = {
         node,
-        seed.Parent,
-        seed.LeftChild,
-        seed.RightChild,
-        seed.BaseNeighbor,
-        seed.LeftNeighbor,
-        seed.RightNeighbor,
+        state.Nodes.ParentAt(node),
+        state.Nodes.LeftChildAt(node),
+        state.Nodes.RightChildAt(node),
+        state.Nodes.BaseNeighborAt(node),
+        state.Nodes.LeftNeighborAt(node),
+        state.Nodes.RightNeighborAt(node),
     };
     for (DataOrientedRoamNodeIndex directNode : directNodes)
     {
@@ -691,8 +689,8 @@ void AppendPersistentMergeQueueNeighborhood(
     {
         if (state.IsValidNode(directNode))
         {
-            AppendIfValid(state, state.Nodes[directNode].Parent, nodes);
-            AppendIfValid(state, state.Nodes[directNode].BaseNeighbor, nodes);
+            AppendIfValid(state, state.Nodes.ParentAt(directNode), nodes);
+            AppendIfValid(state, state.Nodes.BaseNeighborAt(directNode), nodes);
         }
     }
 }

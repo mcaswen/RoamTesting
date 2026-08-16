@@ -55,28 +55,27 @@ bool WasSplitLastFrame(const DataOrientedRoamState& state, DataOrientedRoamNodeI
 
 DataOrientedRoamLeafDebugClass ClassifyLeafDebug(
     const DataOrientedRoamState& state,
-    DataOrientedRoamNodeConstRef node)
+    DataOrientedRoamNodeIndex node)
 {
-    // Rebuilt 同时覆盖新 split child 和本帧 merge 回来的 parent
-    // debug color 用它突出本帧拓扑变化区域
-    if (node.ActivatedBuildId == state.BuildSequence || node.MergeBuildId == state.BuildSequence)
+    if (state.Nodes.ActivatedBuildIdAt(node) == state.BuildSequence ||
+        state.Nodes.MergeBuildIdAt(node) == state.BuildSequence)
     {
         return DataOrientedRoamLeafDebugClass::Rebuilt;
     }
 
-    if (node.Depth > 0)
+    if (state.Nodes.DepthAt(node) > 0)
     {
-        // 非 root leaf 但本帧未变化时归为历史细分
         return DataOrientedRoamLeafDebugClass::Subdivided;
     }
 
     return DataOrientedRoamLeafDebugClass::Original;
 }
 
-glm::vec3 DebugColorForLeaf(const DataOrientedRoamState& state, DataOrientedRoamNodeConstRef node)
+glm::vec3 DebugColorForLeaf(const DataOrientedRoamState& state, DataOrientedRoamNodeIndex node)
 {
     const float depthRatio = std::clamp(
-        static_cast<float>(node.Depth) / static_cast<float>(std::max(state.Settings.MaxDepth, 1)),
+        static_cast<float>(state.Nodes.DepthAt(node)) /
+            static_cast<float>(std::max(state.Settings.MaxDepth, 1)),
         0.0F,
         1.0F);
 
@@ -87,20 +86,18 @@ glm::vec3 DebugColorForLeaf(const DataOrientedRoamState& state, DataOrientedRoam
     case DataOrientedRoamLeafDebugClass::Subdivided:
         return glm::mix(glm::vec3{0.08F, 0.72F, 0.62F}, glm::vec3{0.10F, 0.34F, 0.95F}, depthRatio);
     case DataOrientedRoamLeafDebugClass::Rebuilt:
-        // forced split 高亮 crack repair 传播路径
-        if (node.ActivatedByForcedSplit)
+        if (state.Nodes.ActivatedByForcedSplitAt(node))
         {
             return glm::mix(glm::vec3{0.96F, 0.34F, 0.90F}, glm::vec3{0.96F, 0.16F, 0.42F}, depthRatio);
         }
 
-        // 普通 rebuild 使用暖色表示本帧主动拓扑变化
         return glm::mix(glm::vec3{1.0F, 0.68F, 0.15F}, glm::vec3{1.0F, 0.34F, 0.10F}, depthRatio);
     }
 
     return glm::vec3{0.28F, 0.34F, 0.30F};
 }
 
-float DebugHighlightForLeaf(const DataOrientedRoamState& state, DataOrientedRoamNodeConstRef node)
+float DebugHighlightForLeaf(const DataOrientedRoamState& state, DataOrientedRoamNodeIndex node)
 {
     switch (ClassifyLeafDebug(state, node))
     {

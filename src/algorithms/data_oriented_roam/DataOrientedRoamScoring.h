@@ -21,13 +21,13 @@ namespace ParallelRoam::Algorithms::DataOrientedRoam
 // 调试分类只依赖当前节点生命周期标记，不改变活动叶集合
 [[nodiscard]] DataOrientedRoamLeafDebugClass ClassifyLeafDebug(
     const DataOrientedRoamState& state,
-    DataOrientedRoamNodeConstRef node);
+    DataOrientedRoamNodeIndex node);
 [[nodiscard]] glm::vec3 DebugColorForLeaf(
     const DataOrientedRoamState& state,
-    DataOrientedRoamNodeConstRef node);
+    DataOrientedRoamNodeIndex node);
 [[nodiscard]] float DebugHighlightForLeaf(
     const DataOrientedRoamState& state,
-    DataOrientedRoamNodeConstRef node);
+    DataOrientedRoamNodeIndex node);
 
 // score 同时服务 split queue 和 merge queue，单位由当前 screen-error 公式定义
 [[nodiscard]] float ComputeScreenErrorScore(

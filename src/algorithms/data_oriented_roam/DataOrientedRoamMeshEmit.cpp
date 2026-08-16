@@ -46,12 +46,12 @@ std::size_t ResolveEmitWorkerCount(const DataOrientedRoamState& state, std::size
 
 void WriteDomainTriangle(
     const DataOrientedRoamState& state,
-    DataOrientedRoamNodeConstRef node,
+    DataOrientedRoamNodeIndex node,
     Terrain::TerrainMeshData& meshData,
     std::size_t triangleIndex)
 {
     const auto baseIndex = static_cast<std::uint32_t>(triangleIndex * 3U);
-    const TriangleDomain& domain = node.Domain;
+    const TriangleDomain& domain = state.Nodes.DomainAt(node);
     // uvs 直接引用 domain 三个顶点，emit 不创建持久顶点缓存
     const std::array<glm::vec2, 3> uvs{domain.A, domain.B, domain.C};
     // debug 属性按 leaf 计算一次，再复制到三个顶点
@@ -113,7 +113,7 @@ void EmitLeafRange(
         if (state.IsLeaf(node))
         {
             // leafNodes 来自最终 active 拓扑，这里保留防御检查
-            WriteDomainTriangle(state, state.Nodes[node], meshData, index);
+            WriteDomainTriangle(state, node, meshData, index);
         }
     }
 }

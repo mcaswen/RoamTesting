@@ -1,8 +1,11 @@
 # DOD 与 Classic ROAM 优化问题规划
 
-> 日期：2026-08-10  
-> 状态：实施规划 v1.2，B1、B2 已完成
-> 范围：Data-Oriented CPU ROAM 相对 Classic CPU ROAM 的 CPU 热路径  
+> 日期：2026-08-10
+>
+> 状态：实施规划 v1.3，B1、B2、B3 已完成
+>
+> 范围：Data-Oriented CPU ROAM 相对 Classic CPU ROAM 的 CPU 热路径
+>
 > 基准：`RelWithDebInfo`、统一 ROAM 误差公式、持久 `Q_s/Q_m`、相同阈值与固定活动叶三角形预算
 
 ## 1. 目标
@@ -59,7 +62,7 @@
 | O4 | 串行拓扑事务反复分配、排序和去重队列邻域 | 主要追平 Classic | 小邻域即时去重 | P0 | O2 |
 | O5 | merge 并行批处理的整理成本高于 worker 提交成本 | DOD 额外能力 | 无并行 merge 对应物 | P2 | O3、O4、O8 稳定后再做 |
 | O6 | DOD 每帧完整 emit 和 upload CPU Mesh | 追平 Classic + 自适应扩展 | 增量 Mesh slot/range | P1 | O3 的稳定叶节点/slot 语义 |
-| O7 | 拓扑热路径仍构造完整 SoA proxy | 追平 Classic 的直接字段成本 | 指针直接访问字段 | P0 | 与 O2、O4 一起完成 |
+| O7（已完成） | 拓扑热路径仍构造完整 SoA proxy | 追平 Classic 的直接字段成本 | 指针直接访问字段 | P0 | 与 O2、O4 一起完成 |
 | O8 | 活动索引和 merge queue 旁路数组访问分散 | 混合：对齐 + DOD 连续索引能力 | 节点内 intrusive 状态 | P1 | O3、O5 |
 
 ## 4. 优先级定义
@@ -209,23 +212,33 @@ DoD 的 [`NormalizeQueueNeighborhood`](../../src/algorithms/data_oriented_roam/D
 - queue membership 和 heap validator 无新增错误；
 - 单操作 topology 成本下降。
 
-### B3. O7：完成热路径 proxy 清理
+### B3. O7（已完成）：完成热路径 proxy 清理
 
 #### 当前问题
 
 评分路径已经使用标量访问器，但以下热路径仍存在完整 proxy：
 
-- [`SplitNode`](../../src/algorithms/data_oriented_roam/DataOrientedRoamTopology.cpp#L564) 的 parent/child 写入；
-- `IsSafeInteriorSplit`、`IsSafeInteriorMerge` 和 chunk 安全检查；
+- [`SplitNodeImpl`](../../src/algorithms/data_oriented_roam/DataOrientedRoamTopology.cpp#L544) 的 parent/child 写入；
+- `SafeInteriorSplitChunkId`、`SafeInteriorMergeChunkId` 和 chunk 安全检查；
 - [`EvaluateMergeCandidateImpl`](../../src/algorithms/data_oriented_roam/DataOrientedRoamCandidateMarking.cpp#L10)；
-- [`AppendPersistentMergeQueueNeighborhood`](../../src/algorithms/data_oriented_roam/DataOrientedRoamQueues.cpp#L619)。
+- [`AppendPersistentMergeQueueNeighborhood`](../../src/algorithms/data_oriented_roam/DataOrientedRoamQueues.cpp#L632)。
 
 #### 实施内容
 
 1. 只读判断改用标量访问器；
 2. 多字段写入改为专用操作，例如设置 split 状态、清空 child 邻接、更新 parent 邻接；
-3. 保留完整 proxy 给低频验证和调试代码；
+3. 保留完整 proxy 给低频验证代码；
 4. 不为每个 SoA 字段机械增加公开接口，只覆盖实际热路径。
+
+#### 实施结果（2026-08-16）
+
+- [`DataOrientedRoamNodePool`](../../src/algorithms/data_oriented_roam/DataOrientedRoamState.h#L143) 只增加 neighbor、chunk 和调试状态所需的标量只读访问器，写入仍由拓扑专用操作统一完成；
+- [`EvaluateMergeCandidateImpl`](../../src/algorithms/data_oriented_roam/DataOrientedRoamCandidateMarking.cpp#L10) 与 [`AppendPersistentMergeQueueNeighborhood`](../../src/algorithms/data_oriented_roam/DataOrientedRoamQueues.cpp#L632) 已改为按 node index 读取单个 SoA 字段；
+- [`PrepareSplitNodeState`](../../src/algorithms/data_oriented_roam/DataOrientedRoamTopology.cpp#L455) 和 [`PrepareMergedNodeState`](../../src/algorithms/data_oriented_roam/DataOrientedRoamTopology.cpp#L478) 集中完成 split/merge 的多字段状态写入，neighbor 修复和 chunk 安全检查也不再构造完整 proxy；
+- [`WriteDomainTriangle`](../../src/algorithms/data_oriented_roam/DataOrientedRoamMeshEmit.cpp#L47) 与活动叶统计直接接收 node index，正常 Build 的 emit/finalize 路径不再为了读取少数字段构造 proxy；
+- `DataOrientedRoamNodeRef`、`DataOrientedRoamNodeConstRef` 和 `operator[]` 继续保留给 reset、递归诊断和拓扑 validator，不再出现在候选评分、持久队列、拓扑提交、chunk 检查及 emit 热路径；
+- RelWithDebInfo 编译通过，CTest 10/10 通过；汇编级内联结果仍需 profiler 或反汇编确认，因此本阶段只确认源码热路径已经消除 `operator[]` 调用。
+- [B3 默认路径报告](../../benchmark-output/runtime-benchmark-20260816-224629.md) 中 Classic 与 DOD 的平均/最大活动叶三角形数完全一致，拓扑问题为 0；DOD Split topology 为 0.0817 ms，Merge topology 为 0.0519 ms。相对 B2 单轮报告的 0.0932 ms / 0.0618 ms 没有出现回退，但两次是不同进程采样，不能代替同进程 A/B 或 profiler 结论。
 
 #### 验收
 

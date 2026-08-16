@@ -189,8 +189,8 @@ void ApplySplitIndexTransition(DataOrientedRoamState& state, DataOrientedRoamNod
     // 净增一个 leaf，与两种 split budget 的 token 语义完全一致。
     DeactivateLeafNode(state, node);
     ActivateInternalNode(state, node);
-    ActivateLeafNode(state, state.Nodes[node].LeftChild);
-    ActivateLeafNode(state, state.Nodes[node].RightChild);
+    ActivateLeafNode(state, state.Nodes.LeftChildAt(node));
+    ActivateLeafNode(state, state.Nodes.RightChildAt(node));
 }
 
 void ApplyMergeIndexTransition(DataOrientedRoamState& state, DataOrientedRoamNodeIndex node)
@@ -198,8 +198,8 @@ void ApplyMergeIndexTransition(DataOrientedRoamState& state, DataOrientedRoamNod
     // 一个 parent merge 是 split 的逆操作：两个 child 退出，parent 回到 leaf 集合。
     // diamond merge 会由调用者分别对两侧 parent 执行一次转换。
     DeactivateInternalNode(state, node);
-    DeactivateLeafNode(state, state.Nodes[node].LeftChild);
-    DeactivateLeafNode(state, state.Nodes[node].RightChild);
+    DeactivateLeafNode(state, state.Nodes.LeftChildAt(node));
+    DeactivateLeafNode(state, state.Nodes.RightChildAt(node));
     ActivateLeafNode(state, node);
 }
 
@@ -212,7 +212,7 @@ DataOrientedRoamChunkId InteriorChunkIdForNode(const DataOrientedRoamState& stat
     }
 
     // node 创建时已缓存 chunk 归属
-    return state.Nodes[node].InteriorChunkId;
+    return state.Nodes.InteriorChunkIdAt(node);
 }
 
 bool NodeBelongsToChunk(
@@ -433,23 +433,55 @@ void ReplaceNeighborReference(
         return;
     }
 
-    if (state.Nodes[neighbor].BaseNeighbor == oldNode)
+    if (state.Nodes.BaseNeighbors[neighbor] == oldNode)
     {
         // base edge 对应旧 parent 时改到 split 后 child
-        state.Nodes[neighbor].BaseNeighbor = newNode;
+        state.Nodes.BaseNeighbors[neighbor] = newNode;
     }
 
-    if (state.Nodes[neighbor].LeftNeighbor == oldNode)
+    if (state.Nodes.LeftNeighbors[neighbor] == oldNode)
     {
         // left edge 引用旧 parent 时同步替换
-        state.Nodes[neighbor].LeftNeighbor = newNode;
+        state.Nodes.LeftNeighbors[neighbor] = newNode;
     }
 
-    if (state.Nodes[neighbor].RightNeighbor == oldNode)
+    if (state.Nodes.RightNeighbors[neighbor] == oldNode)
     {
         // right edge 引用旧 parent 时同步替换
-        state.Nodes[neighbor].RightNeighbor = newNode;
+        state.Nodes.RightNeighbors[neighbor] = newNode;
     }
+}
+
+void PrepareSplitNodeState(
+    DataOrientedRoamState& state,
+    DataOrientedRoamNodeIndex node,
+    DataOrientedRoamNodeIndex leftChild,
+    DataOrientedRoamNodeIndex rightChild,
+    DataOrientedRoamSplitReason reason)
+{
+    // parent 转为 internal，两个可复用 child 清除旧邻接后进入当前 Build
+    state.Nodes.IsSplits[node] = 1U;
+    state.Nodes.SplitBuildIds[node] = state.BuildSequence;
+
+    const auto activateChild = [&state, reason](DataOrientedRoamNodeIndex child) {
+        state.Nodes.BaseNeighbors[child] = InvalidDataOrientedRoamNodeIndex;
+        state.Nodes.LeftNeighbors[child] = InvalidDataOrientedRoamNodeIndex;
+        state.Nodes.RightNeighbors[child] = InvalidDataOrientedRoamNodeIndex;
+        state.Nodes.ActivatedBuildIds[child] = state.BuildSequence;
+        state.Nodes.ActivatedByForcedSplits[child] =
+            reason == DataOrientedRoamSplitReason::Requested ? 0U : 1U;
+    };
+    activateChild(leftChild);
+    activateChild(rightChild);
+}
+
+void PrepareMergedNodeState(DataOrientedRoamState& state, DataOrientedRoamNodeIndex node)
+{
+    // parent 恢复为 leaf，并记录本次回收供统计和调试着色使用
+    state.Nodes.IsSplits[node] = 0U;
+    state.Nodes.ActivatedBuildIds[node] = state.BuildSequence;
+    state.Nodes.MergeBuildIds[node] = state.BuildSequence;
+    state.Nodes.ActivatedByForcedSplits[node] = 0U;
 }
 
 void LinkSplitNeighbors(
@@ -462,23 +494,25 @@ void LinkSplitNeighbors(
         return;
     }
 
-    const DataOrientedRoamNodeIndex leftChild = state.Nodes[node].LeftChild;
-    const DataOrientedRoamNodeIndex rightChild = state.Nodes[node].RightChild;
+    const DataOrientedRoamNodeIndex leftChild = state.Nodes.LeftChildAt(node);
+    const DataOrientedRoamNodeIndex rightChild = state.Nodes.RightChildAt(node);
     if (!state.IsValidNode(leftChild) || !state.IsValidNode(rightChild))
     {
         return;
     }
 
-    state.Nodes[leftChild].LeftNeighbor = rightChild;
-    state.Nodes[rightChild].RightNeighbor = leftChild;
+    state.Nodes.LeftNeighbors[leftChild] = rightChild;
+    state.Nodes.RightNeighbors[rightChild] = leftChild;
     // 两个 child 之间共享 split 中线
 
     // child 的 base edge 分别来自父节点 left edge 和 right edge
     // 外侧 neighbor 若仍指向旧 parent，必须改到共享完整边的 child
-    state.Nodes[leftChild].BaseNeighbor = state.Nodes[node].LeftNeighbor;
-    state.Nodes[rightChild].BaseNeighbor = state.Nodes[node].RightNeighbor;
-    ReplaceNeighborReference(state, state.Nodes[node].LeftNeighbor, node, leftChild);
-    ReplaceNeighborReference(state, state.Nodes[node].RightNeighbor, node, rightChild);
+    const DataOrientedRoamNodeIndex leftNeighbor = state.Nodes.LeftNeighborAt(node);
+    const DataOrientedRoamNodeIndex rightNeighbor = state.Nodes.RightNeighborAt(node);
+    state.Nodes.BaseNeighbors[leftChild] = leftNeighbor;
+    state.Nodes.BaseNeighbors[rightChild] = rightNeighbor;
+    ReplaceNeighborReference(state, leftNeighbor, node, leftChild);
+    ReplaceNeighborReference(state, rightNeighbor, node, rightChild);
 
     if (!state.IsValidNode(baseNeighbor) || state.IsLeaf(baseNeighbor))
     {
@@ -487,16 +521,18 @@ void LinkSplitNeighbors(
     }
 
     // baseNeighbor 已 split 时四个 child 共同组成 diamond
-    state.Nodes[leftChild].RightNeighbor = state.Nodes[baseNeighbor].RightChild;
-    state.Nodes[rightChild].LeftNeighbor = state.Nodes[baseNeighbor].LeftChild;
-    if (state.IsValidNode(state.Nodes[baseNeighbor].RightChild))
+    const DataOrientedRoamNodeIndex baseLeftChild = state.Nodes.LeftChildAt(baseNeighbor);
+    const DataOrientedRoamNodeIndex baseRightChild = state.Nodes.RightChildAt(baseNeighbor);
+    state.Nodes.RightNeighbors[leftChild] = baseRightChild;
+    state.Nodes.LeftNeighbors[rightChild] = baseLeftChild;
+    if (state.IsValidNode(baseRightChild))
     {
-        state.Nodes[state.Nodes[baseNeighbor].RightChild].LeftNeighbor = leftChild;
+        state.Nodes.LeftNeighbors[baseRightChild] = leftChild;
     }
 
-    if (state.IsValidNode(state.Nodes[baseNeighbor].LeftChild))
+    if (state.IsValidNode(baseLeftChild))
     {
-        state.Nodes[state.Nodes[baseNeighbor].LeftChild].RightNeighbor = rightChild;
+        state.Nodes.RightNeighbors[baseLeftChild] = rightChild;
     }
 }
 
@@ -614,8 +650,8 @@ bool SplitNodeImpl(
                 RightChildPathId(parentPathId),
                 varianceTreeIndex,
                 varianceIndex * 2U + 2U);
-        state.Nodes[node].LeftChild = leftChild;
-        state.Nodes[node].RightChild = rightChild;
+        state.Nodes.LeftChildren[node] = leftChild;
+        state.Nodes.RightChildren[node] = rightChild;
     }
 
     DataOrientedRoamNeighborhood mergeQueueNeighborhood;
@@ -626,25 +662,12 @@ bool SplitNodeImpl(
         InvalidatePersistentMergeQueueNeighborhood(state, mergeQueueNeighborhood);
     }
 
-    auto parent = state.Nodes[node];
+    const DataOrientedRoamNodeIndex leftChild = state.Nodes.LeftChildAt(node);
+    const DataOrientedRoamNodeIndex rightChild = state.Nodes.RightChildAt(node);
     // parent 留在 node pool 中，但不再是 active leaf
-    parent.IsSplit = true;
-    parent.SplitBuildId = state.BuildSequence;
+    PrepareSplitNodeState(state, node, leftChild, rightChild, reason);
 
-    auto leftChild = state.Nodes[parent.LeftChild];
-    auto rightChild = state.Nodes[parent.RightChild];
     // child 可能从历史 merge 状态复用，激活前必须清空旧 neighbor
-    leftChild.BaseNeighbor = InvalidDataOrientedRoamNodeIndex;
-    leftChild.LeftNeighbor = InvalidDataOrientedRoamNodeIndex;
-    leftChild.RightNeighbor = InvalidDataOrientedRoamNodeIndex;
-    rightChild.BaseNeighbor = InvalidDataOrientedRoamNodeIndex;
-    rightChild.LeftNeighbor = InvalidDataOrientedRoamNodeIndex;
-    rightChild.RightNeighbor = InvalidDataOrientedRoamNodeIndex;
-    leftChild.ActivatedBuildId = state.BuildSequence;
-    rightChild.ActivatedBuildId = state.BuildSequence;
-    leftChild.ActivatedByForcedSplit = reason != DataOrientedRoamSplitReason::Requested;
-    rightChild.ActivatedByForcedSplit = reason != DataOrientedRoamSplitReason::Requested;
-
     LinkSplitNeighbors(state, node, baseNeighbor);
     if constexpr (CommitPolicy::UpdatesSharedIndices)
     {
@@ -669,26 +692,23 @@ void MergeSingleNodeImpl(
     CommitPolicy& commitPolicy)
 {
     if (!state.IsValidNode(node) ||
-        !state.IsValidNode(state.Nodes[node].LeftChild) ||
-        !state.IsValidNode(state.Nodes[node].RightChild))
+        !state.IsValidNode(state.Nodes.LeftChildAt(node)) ||
+        !state.IsValidNode(state.Nodes.RightChildAt(node)))
     {
         return;
     }
 
-    const DataOrientedRoamNodeIndex leftChild = state.Nodes[node].LeftChild;
-    const DataOrientedRoamNodeIndex rightChild = state.Nodes[node].RightChild;
-    const DataOrientedRoamNodeIndex newLeftNeighbor = state.Nodes[leftChild].BaseNeighbor;
-    const DataOrientedRoamNodeIndex newRightNeighbor = state.Nodes[rightChild].BaseNeighbor;
+    const DataOrientedRoamNodeIndex leftChild = state.Nodes.LeftChildAt(node);
+    const DataOrientedRoamNodeIndex rightChild = state.Nodes.RightChildAt(node);
+    const DataOrientedRoamNodeIndex newLeftNeighbor = state.Nodes.BaseNeighborAt(leftChild);
+    const DataOrientedRoamNodeIndex newRightNeighbor = state.Nodes.BaseNeighborAt(rightChild);
 
     // parent 重新成为 leaf 后，外部 neighbor 必须从 inactive child 改回 parent
     ReplaceNeighborReference(state, newLeftNeighbor, leftChild, node);
     ReplaceNeighborReference(state, newRightNeighbor, rightChild, node);
-    state.Nodes[node].LeftNeighbor = newLeftNeighbor;
-    state.Nodes[node].RightNeighbor = newRightNeighbor;
-    state.Nodes[node].IsSplit = false;
-    state.Nodes[node].ActivatedBuildId = state.BuildSequence;
-    state.Nodes[node].MergeBuildId = state.BuildSequence;
-    state.Nodes[node].ActivatedByForcedSplit = false;
+    state.Nodes.LeftNeighbors[node] = newLeftNeighbor;
+    state.Nodes.RightNeighbors[node] = newRightNeighbor;
+    PrepareMergedNodeState(state, node);
     if constexpr (CommitPolicy::UpdatesSharedIndices)
     {
         // parent 重新成为 leaf，同时两个 child 退出 active leaf 集合。
@@ -714,7 +734,7 @@ bool MergeNodeOrDiamondWithScoreLimitImpl(
         return false;
     }
 
-    const DataOrientedRoamNodeIndex baseNeighbor = state.Nodes[node].BaseNeighbor;
+    const DataOrientedRoamNodeIndex baseNeighbor = state.Nodes.BaseNeighborAt(node);
     DataOrientedRoamNeighborhood mergeQueueNeighborhood;
     if constexpr (CommitPolicy::UpdatesSharedIndices)
     {
@@ -727,18 +747,18 @@ bool MergeNodeOrDiamondWithScoreLimitImpl(
     {
         // 完整 diamond merge 要同时回收两侧 parent
         // 只回收一侧会让对侧 child 贴上粗边
-        if (state.Nodes[baseNeighbor].BaseNeighbor != node)
+        if (state.Nodes.BaseNeighborAt(baseNeighbor) != node)
         {
             return false;
         }
 
-        state.Nodes[node].BaseNeighbor = baseNeighbor;
-        state.Nodes[baseNeighbor].BaseNeighbor = node;
+        state.Nodes.BaseNeighbors[node] = baseNeighbor;
+        state.Nodes.BaseNeighbors[baseNeighbor] = node;
         // MergeSingleNode 不改 baseNeighbor，互指关系需要前后显式保持
         MergeSingleNodeImpl(state, node, commitPolicy);
         MergeSingleNodeImpl(state, baseNeighbor, commitPolicy);
-        state.Nodes[node].BaseNeighbor = baseNeighbor;
-        state.Nodes[baseNeighbor].BaseNeighbor = node;
+        state.Nodes.BaseNeighbors[node] = baseNeighbor;
+        state.Nodes.BaseNeighbors[baseNeighbor] = node;
         if constexpr (CommitPolicy::UpdatesSharedIndices)
         {
             AppendPersistentMergeQueueNeighborhood(state, node, mergeQueueNeighborhood);
@@ -821,8 +841,8 @@ bool HasReusableChildren(const DataOrientedRoamState& state, DataOrientedRoamNod
 {
     // 并发 split 第一版不做 node pool 分配，只复用历史 child
     return state.IsValidNode(node) &&
-           state.IsValidNode(state.Nodes[node].LeftChild) &&
-           state.IsValidNode(state.Nodes[node].RightChild);
+           state.IsValidNode(state.Nodes.LeftChildAt(node)) &&
+           state.IsValidNode(state.Nodes.RightChildAt(node));
 }
 
 bool SplitWouldNeedForcedNeighbor(const DataOrientedRoamState& state, DataOrientedRoamNodeIndex node)
@@ -833,7 +853,7 @@ bool SplitWouldNeedForcedNeighbor(const DataOrientedRoamState& state, DataOrient
         return false;
     }
 
-    const DataOrientedRoamNodeIndex baseNeighbor = state.Nodes[node].BaseNeighbor;
+    const DataOrientedRoamNodeIndex baseNeighbor = state.Nodes.BaseNeighborAt(node);
     if (!state.IsValidNode(baseNeighbor))
     {
         // 地形边界没有对侧三角形
@@ -847,7 +867,7 @@ bool SplitWouldNeedForcedNeighbor(const DataOrientedRoamState& state, DataOrient
     }
 
     // 非互指 diamond 需要沿 neighbor 链修复，也交给串行路径
-    return state.Nodes[baseNeighbor].BaseNeighbor != node;
+    return state.Nodes.BaseNeighborAt(baseNeighbor) != node;
 }
 
 DataOrientedRoamChunkId SafeInteriorSplitChunkId(const DataOrientedRoamState& state, DataOrientedRoamNodeIndex node)
@@ -869,23 +889,24 @@ DataOrientedRoamChunkId SafeInteriorSplitChunkId(const DataOrientedRoamState& st
         return InvalidDataOrientedRoamChunkId;
     }
 
-    const DataOrientedRoamNodeConstRef candidate = state.Nodes[node];
+    const DataOrientedRoamNodeIndex leftChild = state.Nodes.LeftChildAt(node);
+    const DataOrientedRoamNodeIndex rightChild = state.Nodes.RightChildAt(node);
+    const DataOrientedRoamNodeIndex baseNeighbor = state.Nodes.BaseNeighborAt(node);
     // split 会写 parent、两个 child 和左右外侧 neighbor
-    if (!NodeBelongsToChunk(state, candidate.LeftChild, chunkId) ||
-        !NodeBelongsToChunk(state, candidate.RightChild, chunkId) ||
-        !NodeBelongsToChunk(state, candidate.LeftNeighbor, chunkId) ||
-        !NodeBelongsToChunk(state, candidate.RightNeighbor, chunkId))
+    if (!NodeBelongsToChunk(state, leftChild, chunkId) ||
+        !NodeBelongsToChunk(state, rightChild, chunkId) ||
+        !NodeBelongsToChunk(state, state.Nodes.LeftNeighborAt(node), chunkId) ||
+        !NodeBelongsToChunk(state, state.Nodes.RightNeighborAt(node), chunkId))
     {
         return InvalidDataOrientedRoamChunkId;
     }
 
-    const DataOrientedRoamNodeIndex baseNeighbor = candidate.BaseNeighbor;
     if (state.IsValidNode(baseNeighbor) && !state.IsLeaf(baseNeighbor))
     {
         // diamond 对侧已 split 时还会写入对侧 child 的 neighbor
         if (!NodeBelongsToChunk(state, baseNeighbor, chunkId) ||
-            !NodeBelongsToChunk(state, state.Nodes[baseNeighbor].LeftChild, chunkId) ||
-            !NodeBelongsToChunk(state, state.Nodes[baseNeighbor].RightChild, chunkId))
+            !NodeBelongsToChunk(state, state.Nodes.LeftChildAt(baseNeighbor), chunkId) ||
+            !NodeBelongsToChunk(state, state.Nodes.RightChildAt(baseNeighbor), chunkId))
         {
             return InvalidDataOrientedRoamChunkId;
         }
@@ -902,17 +923,18 @@ bool HasMergeReadyChildren(const DataOrientedRoamState& state, DataOrientedRoamN
         return false;
     }
 
-    const DataOrientedRoamNodeConstRef candidate = state.Nodes[node];
+    const DataOrientedRoamNodeIndex leftChild = state.Nodes.LeftChildAt(node);
+    const DataOrientedRoamNodeIndex rightChild = state.Nodes.RightChildAt(node);
     // 分桶时只检查拓扑形状，score 校验留到提交前
-    return state.IsValidNode(candidate.LeftChild) &&
-           state.IsValidNode(candidate.RightChild) &&
-           state.IsLeaf(candidate.LeftChild) &&
-           state.IsLeaf(candidate.RightChild);
+    return state.IsValidNode(leftChild) &&
+           state.IsValidNode(rightChild) &&
+           state.IsLeaf(leftChild) &&
+           state.IsLeaf(rightChild);
 }
 
 bool HasMergeReadyDiamond(const DataOrientedRoamState& state, DataOrientedRoamNodeIndex node)
 {
-    const DataOrientedRoamNodeIndex baseNeighbor = state.Nodes[node].BaseNeighbor;
+    const DataOrientedRoamNodeIndex baseNeighbor = state.Nodes.BaseNeighborAt(node);
     if (!state.IsValidNode(baseNeighbor) || state.IsLeaf(baseNeighbor))
     {
         // 没有对侧 internal diamond 时可以单侧 merge
@@ -920,7 +942,7 @@ bool HasMergeReadyDiamond(const DataOrientedRoamState& state, DataOrientedRoamNo
     }
 
     // 对侧 diamond 也必须是可回收的两片 leaf
-    return state.Nodes[baseNeighbor].BaseNeighbor == node && HasMergeReadyChildren(state, baseNeighbor);
+    return state.Nodes.BaseNeighborAt(baseNeighbor) == node && HasMergeReadyChildren(state, baseNeighbor);
 }
 
 DataOrientedRoamChunkId SafeInteriorMergeChunkId(
@@ -947,25 +969,32 @@ DataOrientedRoamChunkId SafeInteriorMergeChunkId(
         return InvalidDataOrientedRoamChunkId;
     }
 
-    const DataOrientedRoamNodeConstRef candidate = state.Nodes[node];
+    const DataOrientedRoamNodeIndex leftChild = state.Nodes.LeftChildAt(node);
+    const DataOrientedRoamNodeIndex rightChild = state.Nodes.RightChildAt(node);
     // MergeSingleNode 会写两个 child 的 base neighbor 所指向的外侧节点
-    if (!NodeBelongsToChunk(state, candidate.LeftChild, chunkId) ||
-        !NodeBelongsToChunk(state, candidate.RightChild, chunkId) ||
-        !NodeBelongsToChunk(state, state.Nodes[candidate.LeftChild].BaseNeighbor, chunkId) ||
-        !NodeBelongsToChunk(state, state.Nodes[candidate.RightChild].BaseNeighbor, chunkId))
+    if (!NodeBelongsToChunk(state, leftChild, chunkId) ||
+        !NodeBelongsToChunk(state, rightChild, chunkId) ||
+        !NodeBelongsToChunk(state, state.Nodes.BaseNeighborAt(leftChild), chunkId) ||
+        !NodeBelongsToChunk(state, state.Nodes.BaseNeighborAt(rightChild), chunkId))
     {
         return InvalidDataOrientedRoamChunkId;
     }
 
-    const DataOrientedRoamNodeIndex baseNeighbor = candidate.BaseNeighbor;
+    const DataOrientedRoamNodeIndex baseNeighbor = state.Nodes.BaseNeighborAt(node);
     if (state.IsValidNode(baseNeighbor) && !state.IsLeaf(baseNeighbor))
     {
         // diamond merge 会同时回收 base neighbor 一侧
         if (!NodeBelongsToChunk(state, baseNeighbor, chunkId) ||
-            !NodeBelongsToChunk(state, state.Nodes[baseNeighbor].LeftChild, chunkId) ||
-            !NodeBelongsToChunk(state, state.Nodes[baseNeighbor].RightChild, chunkId) ||
-            !NodeBelongsToChunk(state, state.Nodes[state.Nodes[baseNeighbor].LeftChild].BaseNeighbor, chunkId) ||
-            !NodeBelongsToChunk(state, state.Nodes[state.Nodes[baseNeighbor].RightChild].BaseNeighbor, chunkId))
+            !NodeBelongsToChunk(state, state.Nodes.LeftChildAt(baseNeighbor), chunkId) ||
+            !NodeBelongsToChunk(state, state.Nodes.RightChildAt(baseNeighbor), chunkId) ||
+            !NodeBelongsToChunk(
+                state,
+                state.Nodes.BaseNeighborAt(state.Nodes.LeftChildAt(baseNeighbor)),
+                chunkId) ||
+            !NodeBelongsToChunk(
+                state,
+                state.Nodes.BaseNeighborAt(state.Nodes.RightChildAt(baseNeighbor)),
+                chunkId))
         {
             return InvalidDataOrientedRoamChunkId;
         }
@@ -1132,7 +1161,7 @@ std::vector<CommittedSplit> CommitInteriorSplitChunks(
                     continue;
                 }
 
-                const DataOrientedRoamNodeIndex baseNeighborBeforeSplit = state.Nodes[node].BaseNeighbor;
+                const DataOrientedRoamNodeIndex baseNeighborBeforeSplit = state.Nodes.BaseNeighborAt(node);
                 // 并发 split 只允许不分配新 node 的安全候选
                 if (SplitNodeParallel(
                         state,
@@ -1243,11 +1272,11 @@ std::vector<CommittedMerge> CommitInteriorMergeChunks(
                 }
 
                 // 真正提交前仍复用原 diamond merge 逻辑
-                const DataOrientedRoamNodeIndex baseNeighbor = state.Nodes[node].BaseNeighbor;
+                const DataOrientedRoamNodeIndex baseNeighbor = state.Nodes.BaseNeighborAt(node);
                 const bool mergedBaseNeighbor = state.IsValidNode(baseNeighbor) && !state.IsLeaf(baseNeighbor);
-                const DataOrientedRoamNodeIndex parent = state.Nodes[node].Parent;
+                const DataOrientedRoamNodeIndex parent = state.Nodes.ParentAt(node);
                 const DataOrientedRoamNodeIndex baseParent = state.IsValidNode(baseNeighbor)
-                    ? state.Nodes[baseNeighbor].Parent
+                    ? state.Nodes.ParentAt(baseNeighbor)
                     : InvalidDataOrientedRoamNodeIndex;
                 if (MergeNodeOrDiamondParallel(state, node, localCounters[workerIndex]))
                 {

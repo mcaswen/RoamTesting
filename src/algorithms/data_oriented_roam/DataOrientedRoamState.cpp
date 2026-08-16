@@ -515,9 +515,10 @@ void AccumulateLeafStats(
     for (DataOrientedRoamNodeIndex leafIndex : leafNodes)
     {
         // inactive child 仍留在 node pool 中但不参与当前帧统计
-        const DataOrientedRoamNodeConstRef leaf = state.Nodes[leafIndex];
-        state.Stats.MaxDepthReached = std::max(state.Stats.MaxDepthReached, leaf.Depth);
-        switch (ClassifyLeafDebug(state, leaf))
+        state.Stats.MaxDepthReached = std::max(
+            state.Stats.MaxDepthReached,
+            state.Nodes.DepthAt(leafIndex));
+        switch (ClassifyLeafDebug(state, leafIndex))
         {
         case DataOrientedRoamLeafDebugClass::Original:
             ++state.Stats.OriginalTriangleCount;
