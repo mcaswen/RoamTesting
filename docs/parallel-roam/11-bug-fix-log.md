@@ -253,7 +253,7 @@
 - 严重级别：`高`
 - 发生阶段：阶段 3 Data-Oriented CPU ROAM 对照基线复核
 - 现象：Classic 升级完整方差、像素 SSE、视锥感知、硬预算和同帧级联合并后，DOD 仍只缓存节点局部误差、只接收相机位置、使用 unitless 距离启发式、无活动 leaf 上限，merge 也依赖 pass 开始时的固定候选。两者虽然共享接口，但已无法在同一质量与资源约束下比较数据布局和并行化收益。
-- 定位：`DataOrientedRoamMeshBuilder` 的 view 输入退化为 `CameraPosition`；SoA 节点没有方差树归属/索引；`ComputeScreenErrorScore` 不读取 Projection、drawable height 或 frustum planes；并行 topology commit 没有跨 worker 的统一预算；`CommitInteriorMergeChunks` 不返回新满足条件的父层候选。
+- 定位：`DataOrientedRoamPipeline` 的 view 输入退化为 `CameraPosition`；SoA 节点没有方差树归属/索引；`ComputeScreenErrorScore` 不读取 Projection、drawable height 或 frustum planes；并行 topology commit 没有跨 worker 的统一预算；`CommitInteriorMergeChunks` 不返回新满足条件的父层候选。
 - 解决方案：为两个根预计算完整方差树，并在 SoA 中加入 `VarianceTreeIndex/VarianceIndex`；builder 改为接收完整 `TerrainLodViewInput`，使用与 Classic 相同的像素 SSE 和方差扩张 AABB 六平面测试；加入默认 20,000 活动 leaf 预算，所有串行、并行和 forced split 通过同一原子 token 消费上限；保留安全 chunk merge 并行预提交，同时把成功回收后新可合并的 parent 放入动态最小堆，单次 Build 内持续向上级联；UI、renderer 重建判定和 benchmark 断言同步覆盖 Classic/DOD。
 - 验证：OpenGL 与 D3D12 RelWithDebInfo 构建通过；CTest 4/4 通过；Classic/DOD 六视点 smoke 均通过并得到相同活动三角形序列 `7072/528/2/2110/376/528`，所有 topology issue 为 0 且未超过 20,000 预算；`center -> away` 单次 Build 从 528 回收到 2。DOD standard 64 帧也通过，活动三角形范围为 `12906..20000`，实际触达硬上限但没有越界。
 - 后续：评分、视锥和最终硬预算口径已由 BUG-021 迁移完成；GPU topology 状态持久化、GPU merge 提交和依赖感知的全局预算调度仍是后续独立工作。
@@ -312,7 +312,7 @@
 - 严重级别：`中`
 - 发生阶段：阶段 3 Data-Oriented CPU ROAM 输出和统计
 - 现象：DOD 已用 `ActiveLeafNodes` / `ActiveLeafNodePositions` 增量维护活动叶，但每次 Build 在 split/merge 稳定后仍调用 `CollectLeafNodes`，从两个 root 递归遍历活动树并填充第二份 `FinalActiveLeaves`，随后 CPU emit、统计和 GPU snapshot 才读取该副本。
-- 定位：冗余入口位于 `DataOrientedRoamMeshBuilder::BuildInternal`；`BuildGpuRoamBufferSnapshot` 也绑定 `FinalActiveLeaves`。独立递归遍历对 validator 有价值，但正常输出路径没有在 Build 完成后到 emit/packing 之间修改拓扑，不需要用它重新发现 leaf。
+- 定位：冗余入口位于 `DataOrientedRoamPipeline::BuildInternal`；`BuildGpuRoamBufferSnapshot` 也绑定 `FinalActiveLeaves`。独立递归遍历对 validator 有价值，但正常输出路径没有在 Build 完成后到 emit/packing 之间修改拓扑，不需要用它重新发现 leaf。
 - 解决方案：删除 `FinalActiveLeaves`，让 CPU emit、`AccumulateLeafStats` 和 GPU snapshot 直接只读消费 `ActiveLeafNodes`；DOD 的统一兼容字段 `CpuFinalLeafCollectMilliseconds` 置 0。`CollectLeafNodes` 仅保留给 `ValidateTopology`，继续交叉检查活动索引集合、重复项和反向 position。
 - 验证：OpenGL/D3D12 RelWithDebInfo 构建通过，OpenGL CTest 6/6 通过；DOD standard 64 帧 PASS，活动三角形范围为 `12906..20000`。同参数 runtime 基线 `20260801-195558` 到最终报告 `20260801-221506` 中，DOD `Final leaf collect/view` 从 `0.2383 ms` 变为 `0.0000 ms`，平均 triangles/nodes 变化均小于 0.1%，最大 topology issues 保持 0。
 - 后续：`CollectActiveSplitPaths` 仍从 root 递归生成跨帧 hysteresis path 集合，它维护的是不同状态，不能仅因本次 leaf 输出优化直接删除；是否值得改为增量维护需要单独分析正确性和成本。

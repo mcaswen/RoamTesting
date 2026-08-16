@@ -648,7 +648,7 @@ allocate children in 256-record blocks as split progresses
 - [`ClassicRoamMeshBuilder::ApplyIncrementalMeshUpdates`](../../src/algorithms/classic_roam/ClassicRoamMeshEmit.cpp) 按 split/merge edit 维护 dense slots，并将 dirty ranges 交给 OpenGL/D3D12 renderer 部分上传；
 - [`DataOrientedRoamState::ActiveLeafNodes`](../../src/algorithms/data_oriented_roam/DataOrientedRoamState.h) 同时保存活动叶和持久 `Q_s` heap；
 - [`RefreshPersistentSplitQueuePriorities`](../../src/algorithms/data_oriented_roam/DataOrientedRoamQueues.cpp) 与 [`RefreshPersistentMergeQueuePriorities`](../../src/algorithms/data_oriented_roam/DataOrientedRoamQueues.cpp) 并行刷新现有成员优先级；split/merge 事务只更新局部队列成员；
-- [`DataOrientedRoamMeshBuilder::BuildInternal`](../../src/algorithms/data_oriented_roam/DataOrientedRoamMeshBuilder.cpp#L76) 在拓扑稳定后直接复用 `ActiveLeafNodes` 作为输出视图。
+- [`DataOrientedRoamPipeline::BuildInternal`](../../src/algorithms/data_oriented_roam/DataOrientedRoamPipeline.cpp#L76) 在拓扑稳定后直接复用 `ActiveLeafNodes` 作为输出视图。
 
 如果研究问题是“论文式 Classic ROAM 与 DOD+现代 CPU 优化相比如何”，合理口径应是：
 

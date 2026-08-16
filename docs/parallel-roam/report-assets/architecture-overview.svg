@@ -102,7 +102,7 @@
   <rect x="396" y="692" width="308" height="90" rx="8" class="dod"/>
   <text x="550" y="721" text-anchor="middle" class="code">DataOrientedRoamTerrainLodAlgorithm</text>
   <text x="550" y="745" text-anchor="middle" class="small">SoA node pool + CPU 并行 pass</text>
-  <text x="550" y="766" text-anchor="middle" class="code">DataOrientedRoamMeshBuilder</text>
+  <text x="550" y="766" text-anchor="middle" class="code">DataOrientedRoamPipeline</text>
 
   <rect x="747" y="692" width="308" height="90" rx="8" class="gpu"/>
   <text x="901" y="721" text-anchor="middle" class="code">GpuRoamTerrainLodAlgorithm</text>

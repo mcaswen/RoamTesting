@@ -1,4 +1,4 @@
-#include "algorithms/data_oriented_roam/DataOrientedRoamMeshBuilder.h"
+#include "algorithms/data_oriented_roam/DataOrientedRoamPipeline.h"
 
 #include "algorithms/ITerrainLodAlgorithm.h"
 #include "algorithms/RoamNestedWedgie.h"
@@ -24,27 +24,27 @@ namespace
 constexpr int MaximumSupportedDepth = 20;
 }
 
-DataOrientedRoamMeshBuilder::DataOrientedRoamMeshBuilder()
+DataOrientedRoamPipeline::DataOrientedRoamPipeline()
     : _state(std::make_unique<DataOrientedRoamState>())
     , _threadPool(std::make_unique<DataOrientedRoamThreadPool>())
 {
     _state->ThreadPool = _threadPool.get();
 }
 
-DataOrientedRoamMeshBuilder::~DataOrientedRoamMeshBuilder() = default;
+DataOrientedRoamPipeline::~DataOrientedRoamPipeline() = default;
 
-DataOrientedRoamMeshBuilder::DataOrientedRoamMeshBuilder(DataOrientedRoamMeshBuilder&& other) noexcept
+DataOrientedRoamPipeline::DataOrientedRoamPipeline(DataOrientedRoamPipeline&& other) noexcept
     : _state(std::move(other._state))
     , _threadPool(std::move(other._threadPool))
 {
     if (_state != nullptr)
     {
-        // state 只借用线程池指针，builder move 后必须重新绑定
+        // state 只借用线程池指针，pipeline move 后必须重新绑定
         _state->ThreadPool = _threadPool.get();
     }
 }
 
-DataOrientedRoamMeshBuilder& DataOrientedRoamMeshBuilder::operator=(DataOrientedRoamMeshBuilder&& other) noexcept
+DataOrientedRoamPipeline& DataOrientedRoamPipeline::operator=(DataOrientedRoamPipeline&& other) noexcept
 {
     if (this == &other)
     {
@@ -62,7 +62,7 @@ DataOrientedRoamMeshBuilder& DataOrientedRoamMeshBuilder::operator=(DataOriented
     return *this;
 }
 
-Terrain::TerrainMeshData DataOrientedRoamMeshBuilder::Build(
+Terrain::TerrainMeshData DataOrientedRoamPipeline::Build(
     const Terrain::HeightMap& heightMap,
     float terrainSize,
     float heightScale,
@@ -72,7 +72,7 @@ Terrain::TerrainMeshData DataOrientedRoamMeshBuilder::Build(
     return BuildInternal(heightMap, terrainSize, heightScale, view, settings, true);
 }
 
-void DataOrientedRoamMeshBuilder::UpdateTopology(
+void DataOrientedRoamPipeline::UpdateTopology(
     const Terrain::HeightMap& heightMap,
     float terrainSize,
     float heightScale,
@@ -82,7 +82,7 @@ void DataOrientedRoamMeshBuilder::UpdateTopology(
     (void)BuildInternal(heightMap, terrainSize, heightScale, view, settings, false);
 }
 
-Terrain::TerrainMeshData DataOrientedRoamMeshBuilder::BuildInternal(
+Terrain::TerrainMeshData DataOrientedRoamPipeline::BuildInternal(
     const Terrain::HeightMap& heightMap,
     float terrainSize,
     float heightScale,
@@ -206,12 +206,12 @@ Terrain::TerrainMeshData DataOrientedRoamMeshBuilder::BuildInternal(
     return meshData;
 }
 
-const DataOrientedRoamStats& DataOrientedRoamMeshBuilder::Stats() const
+const DataOrientedRoamStats& DataOrientedRoamPipeline::Stats() const
 {
     return _state->Stats;
 }
 
-const DataOrientedRoamState& DataOrientedRoamMeshBuilder::State() const
+const DataOrientedRoamState& DataOrientedRoamPipeline::State() const
 {
     return *_state;
 }

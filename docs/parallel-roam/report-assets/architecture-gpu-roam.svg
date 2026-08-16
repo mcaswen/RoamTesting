@@ -39,7 +39,7 @@
   <path d="M655 146 L810 225" class="line"/>
 
   <rect x="95" y="225" width="390" height="86" rx="8" class="cpu"/>
-  <text x="290" y="251" text-anchor="middle" class="code">DataOrientedRoamMeshBuilder</text>
+  <text x="290" y="251" text-anchor="middle" class="code">DataOrientedRoamPipeline</text>
   <text x="290" y="274" text-anchor="middle" class="code">_cpuTopologyBuilder.UpdateTopology() 只更新 DOD 拓扑</text>
   <text x="290" y="298" text-anchor="middle" class="caption">沿用 DOD CPU 的 crack-free split / merge 语义</text>
   <path d="M290 311 L290 340" class="line"/>

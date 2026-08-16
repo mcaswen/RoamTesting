@@ -1,7 +1,7 @@
 #pragma once
 
 #include "algorithms/ITerrainLodAlgorithm.h"
-#include "algorithms/data_oriented_roam/DataOrientedRoamMeshBuilder.h"
+#include "algorithms/data_oriented_roam/DataOrientedRoamPipeline.h"
 
 namespace ParallelRoam::Algorithms::DataOrientedRoam
 {
@@ -27,7 +27,7 @@ private:
     [[nodiscard]] static DataOrientedRoamSettings ToDataOrientedSettings(const TerrainLodSettings& settings);
     [[nodiscard]] static TerrainLodStats ToTerrainLodStats(const DataOrientedRoamStats& stats);
 
-    DataOrientedRoamMeshBuilder _builder;
+    DataOrientedRoamPipeline _pipeline;
     TerrainLodStats _stats;
 };
 } // 命名空间 ParallelRoam::Algorithms::DataOrientedRoam

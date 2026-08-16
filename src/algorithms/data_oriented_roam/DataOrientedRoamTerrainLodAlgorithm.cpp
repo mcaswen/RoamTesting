@@ -64,14 +64,14 @@ bool DataOrientedRoamTerrainLodAlgorithm::BuildRenderData(
     // 并行误差评估不改变 renderer 消费方式
     outPacket.Mode = TerrainLodRenderMode::CpuMesh;
     const TerrainLodCpuSample cpuSampleStart = CaptureTerrainLodCpuSample();
-    outPacket.CpuMesh = _builder.Build(
+    outPacket.CpuMesh = _pipeline.Build(
         *input.HeightMap,
         input.Settings.TerrainSize,
         input.Settings.HeightScale,
         input.View,
         ToDataOrientedSettings(input.Settings));
     const TerrainLodCpuSample cpuSampleEnd = CaptureTerrainLodCpuSample();
-    _stats = ToTerrainLodStats(_builder.Stats());
+    _stats = ToTerrainLodStats(_pipeline.Stats());
     _stats.CpuUtilizationPercent = ComputeCpuUtilizationPercent(cpuSampleStart, cpuSampleEnd);
     outPacket.ActiveTriangleCount = _stats.ActiveTriangleCount;
     outPacket.IndexCount = outPacket.CpuMesh.Indices.size();
@@ -87,7 +87,7 @@ void DataOrientedRoamTerrainLodAlgorithm::Reset()
 {
     // Reset 丢弃 index pool 和 hysteresis path
     // 下一帧会重新建立 root diamond
-    _builder = DataOrientedRoamMeshBuilder{};
+    _pipeline = DataOrientedRoamPipeline{};
     _stats = {};
 }
 

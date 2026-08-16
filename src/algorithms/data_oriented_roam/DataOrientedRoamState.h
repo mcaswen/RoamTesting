@@ -287,8 +287,8 @@ struct DataOrientedRoamNodePool
 
 /// <summary>
 /// DOD ROAM 的可变工作集，所有 pass 都只通过这个状态对象交换数据
-/// 由 DataOrientedRoamMeshBuilder 创建并跨帧保存；Build 期间由各 pass 修改，builder 析构时释放
-/// MeshBuilder 持有它；HeightMap、ThreadPool 仅在 Build 调用期间借用
+/// 由 DataOrientedRoamPipeline 创建并跨帧保存；Build 期间由各 pass 修改，pipeline 析构时释放
+/// Pipeline 持有它；HeightMap、ThreadPool 仅在 Build 调用期间借用
 /// </summary>
 struct DataOrientedRoamState
 {

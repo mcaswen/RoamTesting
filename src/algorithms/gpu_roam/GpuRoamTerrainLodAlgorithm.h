@@ -1,7 +1,7 @@
 #pragma once
 
 #include "algorithms/ITerrainLodAlgorithm.h"
-#include "algorithms/data_oriented_roam/DataOrientedRoamMeshBuilder.h"
+#include "algorithms/data_oriented_roam/DataOrientedRoamPipeline.h"
 #include "algorithms/gpu_roam/GpuRoamMeshBuilder.h"
 
 #include <string>
@@ -26,7 +26,7 @@ public:
     void Reset() override;
 
 private:
-    DataOrientedRoam::DataOrientedRoamMeshBuilder _cpuTopologyBuilder;
+    DataOrientedRoam::DataOrientedRoamPipeline _cpuTopologyPipeline;
     GpuRoamMeshBuilder _gpuMeshBuilder;
     TerrainLodStats _stats{};
 };

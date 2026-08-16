@@ -10,7 +10,7 @@ namespace ParallelRoam::Algorithms::DataOrientedRoam
 {
 /// <summary>
 /// DOD pass 的 worker 调度适配层
-/// 只在单次 Build 的并行阶段调用；线程池由 MeshBuilder 持有，task 由当前 pass 临时提供
+/// 只在单次 Build 的并行阶段调用；线程池由 Pipeline 持有，task 由当前 pass 临时提供
 /// </summary>
 inline void RunDataOrientedRoamWorkers(
     DataOrientedRoamState& state,

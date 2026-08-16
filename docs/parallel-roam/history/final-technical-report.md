@@ -565,7 +565,7 @@ GPU 类 ROAM 的子架构如图3-4 所示。这个版本目前仍然保留 DOD C
 
 窗口模块负责 SDL2 窗口、OpenGL 上下文、垂直同步设置和窗口尺寸刷新。输入模块维护键盘、鼠标和窗口事件状态，相机控制模块根据输入更新观察位置和朝向。渲染模块的核心类是 `TerrainRenderer`，它统一接收界面设置和算法输出，并负责网格上传、着色器统一变量、绘制调用和统计数据。地形加载模块由 `HeightMap` 类承担，支持 PGM 和 PNG 资源。
 
-算法模块都实现同一个抽象接口 `ITerrainLodAlgorithm`。这样地形渲染器不需要知道内部到底是经典版本、DOD 版本还是 GPU 版本，只要传入高度图、相机位置和 LOD 参数，就能得到统一的渲染数据包。经典算法的核心类是 `ClassicRoamMeshBuilder`，DOD 算法的核心类是 `DataOrientedRoamMeshBuilder`，GPU 算法的核心类是 `GpuRoamTerrainLodAlgorithm` 和 `GpuRoamMeshBuilder`。我觉得这个统一接口很重要，因为它让三种算法能在同一个基准测试里公平对比，而不是每种算法写一套单独测试逻辑。
+算法模块都实现同一个抽象接口 `ITerrainLodAlgorithm`。这样地形渲染器不需要知道内部到底是经典版本、DOD 版本还是 GPU 版本，只要传入高度图、相机位置和 LOD 参数，就能得到统一的渲染数据包。经典算法的核心类是 `ClassicRoamMeshBuilder`，DOD 算法的核心类是 `DataOrientedRoamPipeline`，GPU 算法的核心类是 `GpuRoamTerrainLodAlgorithm` 和 `GpuRoamMeshBuilder`。我觉得这个统一接口很重要，因为它让三种算法能在同一个基准测试里公平对比，而不是每种算法写一套单独测试逻辑。
 
 基准测试模块分为两类。第一类是无窗口算法层基准测试，适合做冒烟测试和基础回归；第二类是真实应用内运行时基准测试，它会在 OpenGL 上下文存在的情况下运行，所以能测到 GPU、网格上传、帧耗时和界面参数。第四章的数据主要来自运行时基准测试。
 
@@ -758,7 +758,7 @@ for (LeafTriangle leaf : activeLeaves)
 
 #### 3.4.2 数据导向 CPU ROAM：把节点关系改成可批处理的数据流
 
-DOD 版本的核心类是 `DataOrientedRoamMeshBuilder`，属于数据导向 ROAM 算法模块。它仍然做 ROAM 的分裂、合并和裂缝约束，但内部不再主要依赖对象指针，而是把节点放进基于索引的节点池。节点的父子、邻居、深度、标记和误差分数都可以按数组连续访问。这个改动是后面并行扫描、候选标记、拓扑分块和 GPU 快照构建的基础。
+DOD 版本的核心类是 `DataOrientedRoamPipeline`，属于数据导向 ROAM 算法模块。它仍然做 ROAM 的分裂、合并和裂缝约束，但内部不再主要依赖对象指针，而是把节点放进基于索引的节点池。节点的父子、邻居、深度、标记和误差分数都可以按数组连续访问。这个改动是后面并行扫描、候选标记、拓扑分块和 GPU 快照构建的基础。
 
 ```cpp
 struct DataOrientedRoamNodePool
@@ -785,7 +785,7 @@ struct DataOrientedRoamNodePool
 每帧更新时，DOD 版本先整理状态，再执行合并、分裂、验证、叶节点收集和网格输出。它和经典版本的算法顺序相似，但每个阶段尽量使用节点索引和批量数组。
 
 ```cpp
-TerrainMeshData DataOrientedRoamMeshBuilder::BuildInternal(
+TerrainMeshData DataOrientedRoamPipeline::BuildInternal(
     const HeightMap& heightMap,
     const glm::vec3& cameraPosition,
     bool emitCpuMesh)

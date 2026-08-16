@@ -1009,17 +1009,17 @@ bool D3D12GpuRoamTerrainLodAlgorithm::BuildRenderData(
     // 当前桥接实现仍先在 CPU 完成 DOD ROAM 拓扑更新
     // CPU 只负责产生持久拓扑真值，后续活动叶压缩和网格生成均在 GPU 完成
     const TerrainLodCpuSample cpuStart = CaptureTerrainLodCpuSample();
-    _cpuTopologyBuilder.UpdateTopology(
+    _cpuTopologyPipeline.UpdateTopology(
         *input.HeightMap,
         input.Settings.TerrainSize,
         input.Settings.HeightScale,
         input.View,
         ToDataSettings(input.Settings));
-    _stats = ToLodStats(_cpuTopologyBuilder.Stats());
+    _stats = ToLodStats(_cpuTopologyPipeline.Stats());
     // 将 SoA CPU 状态打包为与 HLSL NodeRecord 一致的结构化快照
     // 快照冻结本帧输入，compute pass 不再读取正在变化的 CPU node pool
     Tools::PerformanceTimer snapshotTimer;
-    const GpuRoamBufferSnapshot snapshot = BuildGpuRoamBufferSnapshot(_cpuTopologyBuilder.State());
+    const GpuRoamBufferSnapshot snapshot = BuildGpuRoamBufferSnapshot(_cpuTopologyPipeline.State());
     _stats.GpuSnapshotBuildMilliseconds = snapshotTimer.Stop();
     if (snapshot.Nodes.empty() || snapshot.ActiveLeafIndices.empty())
     {
@@ -1196,7 +1196,7 @@ const TerrainLodStats& D3D12GpuRoamTerrainLodAlgorithm::Stats() const
 void D3D12GpuRoamTerrainLodAlgorithm::Reset()
 {
     // 保留昂贵的 PSO 和缓冲容量，只清除拓扑历史与延迟统计
-    _cpuTopologyBuilder = DataOrientedRoam::DataOrientedRoamMeshBuilder{};
+    _cpuTopologyPipeline = DataOrientedRoam::DataOrientedRoamPipeline{};
     _stats = {};
     if (_state != nullptr)
     {

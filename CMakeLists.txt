@@ -81,7 +81,7 @@ if(PARALLEL_ROAM_BUILD_APP)
                 src/algorithms/classic_roam/ClassicRoamValidation.cpp
                 src/algorithms/data_oriented_roam/DataOrientedRoamTerrainLodAlgorithm.cpp
                 src/algorithms/data_oriented_roam/DataOrientedRoamCandidateMarking.cpp
-                src/algorithms/data_oriented_roam/DataOrientedRoamMeshBuilder.cpp
+                src/algorithms/data_oriented_roam/DataOrientedRoamPipeline.cpp
                 src/algorithms/data_oriented_roam/DataOrientedRoamMeshEmit.cpp
                 src/algorithms/data_oriented_roam/DataOrientedRoamQueues.cpp
                 src/algorithms/data_oriented_roam/DataOrientedRoamScoring.cpp
@@ -144,7 +144,7 @@ if(PARALLEL_ROAM_BUILD_APP)
                 src/algorithms/classic_roam/ClassicRoamValidation.cpp
                 src/algorithms/data_oriented_roam/DataOrientedRoamTerrainLodAlgorithm.cpp
                 src/algorithms/data_oriented_roam/DataOrientedRoamCandidateMarking.cpp
-                src/algorithms/data_oriented_roam/DataOrientedRoamMeshBuilder.cpp
+                src/algorithms/data_oriented_roam/DataOrientedRoamPipeline.cpp
                 src/algorithms/data_oriented_roam/DataOrientedRoamMeshEmit.cpp
                 src/algorithms/data_oriented_roam/DataOrientedRoamQueues.cpp
                 src/algorithms/data_oriented_roam/DataOrientedRoamScoring.cpp

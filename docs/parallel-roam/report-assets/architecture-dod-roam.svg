@@ -26,11 +26,11 @@
   <rect x="250" y="60" width="600" height="86" rx="8" class="adapter"/>
   <text x="550" y="90" text-anchor="middle" class="section">DataOrientedRoamTerrainLodAlgorithm</text>
   <text x="550" y="115" text-anchor="middle" class="code">BuildRenderData() 接入统一接口并复用 builder 状态</text>
-  <text x="550" y="136" text-anchor="middle" class="caption">算法接口适配层，持有 DataOrientedRoamMeshBuilder _builder</text>
+  <text x="550" y="136" text-anchor="middle" class="caption">算法接口适配层，持有 DataOrientedRoamPipeline _builder</text>
   <path d="M550 146 L550 178" class="line"/>
 
   <rect x="235" y="178" width="630" height="122" rx="8" class="builder"/>
-  <text x="550" y="208" text-anchor="middle" class="section">DataOrientedRoamMeshBuilder</text>
+  <text x="550" y="208" text-anchor="middle" class="section">DataOrientedRoamPipeline</text>
   <text x="550" y="233" text-anchor="middle" class="code">Build() 输出 CPU mesh；UpdateTopology() 仅更新拓扑</text>
   <text x="550" y="256" text-anchor="middle" class="code">BuildInternal() 用 emitCpuMesh 切换输出路径</text>
   <text x="550" y="279" text-anchor="middle" class="caption">用 _state 交换 pass 数据；用 _threadPool 支撑 error / mark / emit 并行</text>

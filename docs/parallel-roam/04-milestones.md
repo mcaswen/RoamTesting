@@ -258,7 +258,7 @@ assets/textures/Tex_Terrain_Debug_Diffuse.ppm
 
 当前状态：
 
-- 已新增 `DataOrientedRoamMeshBuilder`，节点池由 `std::vector` 预分配管理，parent / child / neighbor 统一使用 `NodeIndex`；
+- 已新增 `DataOrientedRoamPipeline`，节点池由 `std::vector` 预分配管理，parent / child / neighbor 统一使用 `NodeIndex`；
 - 已通过统一 `ITerrainLodAlgorithm` 接口接入 benchmark，`--algorithm dod` 可运行 index-based 3A 版本；
 - 3A 已作为 index-based baseline 保留在提交历史中，当前主线已进入 3B SoA 节点池实现。
 

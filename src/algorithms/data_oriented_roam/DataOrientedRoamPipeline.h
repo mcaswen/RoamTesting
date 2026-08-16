@@ -17,19 +17,19 @@ class DataOrientedRoamThreadPool;
 
 /// <summary>
 /// Data-Oriented CPU ROAM 在 SoA 节点池上维护持久拓扑并生成 CPU Mesh
-/// 由 DataOrientedRoamTerrainLodAlgorithm 持有；内部 state、线程池和 mesh 缓存跨帧复用
+/// 由 DataOrientedRoamTerrainLodAlgorithm 持有；内部 state 和线程池跨帧复用
 /// Build/UpdateTopology 会修改它；调用方只读取输出 mesh、State 和 Stats
 /// </summary>
-class DataOrientedRoamMeshBuilder
+class DataOrientedRoamPipeline
 {
 public:
-    DataOrientedRoamMeshBuilder();
-    ~DataOrientedRoamMeshBuilder();
+    DataOrientedRoamPipeline();
+    ~DataOrientedRoamPipeline();
 
-    DataOrientedRoamMeshBuilder(const DataOrientedRoamMeshBuilder&) = delete;
-    DataOrientedRoamMeshBuilder& operator=(const DataOrientedRoamMeshBuilder&) = delete;
-    DataOrientedRoamMeshBuilder(DataOrientedRoamMeshBuilder&&) noexcept;
-    DataOrientedRoamMeshBuilder& operator=(DataOrientedRoamMeshBuilder&&) noexcept;
+    DataOrientedRoamPipeline(const DataOrientedRoamPipeline&) = delete;
+    DataOrientedRoamPipeline& operator=(const DataOrientedRoamPipeline&) = delete;
+    DataOrientedRoamPipeline(DataOrientedRoamPipeline&&) noexcept;
+    DataOrientedRoamPipeline& operator=(DataOrientedRoamPipeline&&) noexcept;
 
     [[nodiscard]] Terrain::TerrainMeshData Build(
         const Terrain::HeightMap& heightMap,

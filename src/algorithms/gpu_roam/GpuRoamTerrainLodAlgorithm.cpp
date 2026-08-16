@@ -161,16 +161,16 @@ bool GpuRoamTerrainLodAlgorithm::BuildRenderData(
     }
 
     const TerrainLodCpuSample cpuSampleStart = CaptureTerrainLodCpuSample();
-    _cpuTopologyBuilder.UpdateTopology(
+    _cpuTopologyPipeline.UpdateTopology(
         *input.HeightMap,
         input.Settings.TerrainSize,
         input.Settings.HeightScale,
         input.View,
         ToDataOrientedSettings(input.Settings));
 
-    _stats = ToTerrainLodStats(_cpuTopologyBuilder.Stats());
+    _stats = ToTerrainLodStats(_cpuTopologyPipeline.Stats());
     Tools::PerformanceTimer snapshotTimer;
-    const GpuRoamBufferSnapshot snapshot = BuildGpuRoamBufferSnapshot(_cpuTopologyBuilder.State());
+    const GpuRoamBufferSnapshot snapshot = BuildGpuRoamBufferSnapshot(_cpuTopologyPipeline.State());
     _stats.GpuSnapshotBuildMilliseconds = snapshotTimer.Stop();
     if (!_gpuMeshBuilder.Build(snapshot, input, outPacket, _stats, errorMessage))
     {
@@ -190,7 +190,7 @@ const TerrainLodStats& GpuRoamTerrainLodAlgorithm::Stats() const
 void GpuRoamTerrainLodAlgorithm::Reset()
 {
     _gpuMeshBuilder.Reset();
-    _cpuTopologyBuilder = DataOrientedRoam::DataOrientedRoamMeshBuilder{};
+    _cpuTopologyPipeline = DataOrientedRoam::DataOrientedRoamPipeline{};
     _stats = {};
 }
 

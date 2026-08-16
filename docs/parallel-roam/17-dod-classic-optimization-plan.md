@@ -292,7 +292,7 @@ Classic 的 [`SplitQueueEntry`](../../src/algorithms/classic_roam/ClassicRoamMes
 
 #### 当前问题
 
-DoD 在 [`DataOrientedRoamMeshBuilder::Build`](../../src/algorithms/data_oriented_roam/DataOrientedRoamMeshBuilder.cpp#L163) 中把全部 `ActiveLeafNodes` 交给 [`EmitLeafTriangles`](../../src/algorithms/data_oriented_roam/DataOrientedRoamMeshEmit.cpp#L121)，每帧重新 resize 和写入完整 CPU Mesh。
+DoD 在 [`DataOrientedRoamPipeline::Build`](../../src/algorithms/data_oriented_roam/DataOrientedRoamPipeline.cpp#L163) 中把全部 `ActiveLeafNodes` 交给 [`EmitLeafTriangles`](../../src/algorithms/data_oriented_roam/DataOrientedRoamMeshEmit.cpp#L121)，每帧重新 resize 和写入完整 CPU Mesh。
 
 Classic 已通过 [`ApplyIncrementalMeshUpdates`](../../src/algorithms/classic_roam/ClassicRoamMeshEmit.cpp#L89) 实现稳定 slot、topology edit、dirty slot 和 update range，并由 adapter 发布借用 Mesh 与增量上传契约。
 
