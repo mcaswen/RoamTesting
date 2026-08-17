@@ -27,6 +27,7 @@ DataOrientedRoam::DataOrientedRoamSettings ToDataOrientedSettings(const TerrainL
     dataSettings.MergeThreshold = settings.ScreenSpaceMergeThresholdPixels;
     dataSettings.TriangleBudget = settings.TriangleBudget;
     dataSettings.ErrorEvaluationWorkerCount = 0U;
+    dataSettings.MirrorSplitScoresToNodePool = true;
     dataSettings.EnableLocalConstraints = settings.EnableLocalConstraints;
     dataSettings.EnableTopologyValidation = settings.EnableTopologyValidation;
     return dataSettings;

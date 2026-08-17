@@ -333,6 +333,10 @@ void ValidateTopology(DataOrientedRoamState& state)
     {
         ++state.Stats.InvalidTopologyCount;
     }
+    if (state.SplitQueuePositions.size() != state.Nodes.size())
+    {
+        ++state.Stats.InvalidTopologyCount;
+    }
 
     for (std::size_t position = 0U; position < state.ActiveInternalNodes.size(); ++position)
     {
@@ -356,7 +360,7 @@ void ValidateTopology(DataOrientedRoamState& state)
         }
     }
 
-    // active leaf 索引必须与原有 root 遍历结果相同，且反向 position 唯一。
+    // active leaf 索引必须与原有 root 遍历结果相同，且反向 position 唯一
     // 这里故意保留独立 root traversal，避免 validator 与被验证索引共享同一个真值来源。
     if (state.ActiveLeafNodes.size() != leafNodes.size())
     {

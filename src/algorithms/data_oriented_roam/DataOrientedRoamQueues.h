@@ -98,7 +98,7 @@ private:
 /// </summary>
 void InitializePersistentMergeQueue(DataOrientedRoamState& state);
 void InitializePersistentSplitQueue(DataOrientedRoamState& state);
-// split queue 在当前活动叶集合上保存高误差候选
+// split queue 独立于活动叶视图保存 node/score，活动叶顺序不受 heapify 影响
 void RefreshPersistentSplitQueuePriorities(DataOrientedRoamState& state);
 
 // 下列接口维护 split queue 的 membership、堆顶和候选快照

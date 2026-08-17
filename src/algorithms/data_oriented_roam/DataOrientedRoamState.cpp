@@ -187,7 +187,7 @@ void DataOrientedRoamNodePool::reserve(std::size_t capacity)
     LeftNeighbors.reserve(capacity);
     RightNeighbors.reserve(capacity);
     InteriorChunkIds.reserve(capacity);
-    // error 数组单独连续，可批量写入 ScreenErrors
+    // 几何误差和方差树索引与拓扑字段分离
     GeometricErrors.reserve(capacity);
     ScreenErrors.reserve(capacity);
     VarianceIndices.reserve(capacity);
@@ -227,7 +227,6 @@ DataOrientedRoamNodeIndex DataOrientedRoamNodePool::Add(
     RightNeighbors.push_back(InvalidDataOrientedRoamNodeIndex);
     InteriorChunkIds.push_back(ComputeInteriorChunkId(domain));
     GeometricErrors.push_back(geometricError);
-    // 新节点还没有经过 screen error pass
     ScreenErrors.push_back(0.0F);
     VarianceIndices.push_back(varianceIndex);
     // PathId 独立于 SoA 下标，用于跨帧 hysteresis
@@ -352,6 +351,7 @@ DataOrientedRoamNodeIndex AddNode(
     // 新节点默认为 leaf，后续 split 才会加入 active internal 索引
     state.ActiveInternalNodePositions.push_back(InvalidActiveNodePosition);
     state.ActiveLeafNodePositions.push_back(InvalidActiveNodePosition);
+    state.SplitQueuePositions.push_back(std::numeric_limits<std::size_t>::max());
     state.SplitQueueBlockedBuildIds.push_back(0U);
     state.MergeQueuePositions.push_back(std::numeric_limits<std::size_t>::max());
     state.MergeQueueRepresentatives.push_back(InvalidDataOrientedRoamNodeIndex);
@@ -390,6 +390,8 @@ void ReserveNodePool(DataOrientedRoamState& state)
     state.ActiveInternalNodes.reserve(targetCapacity / 2U);
     state.ActiveLeafNodePositions.reserve(targetCapacity);
     state.ActiveLeafNodes.reserve(targetCapacity / 2U + 1U);
+    state.SplitQueue.reserve(targetCapacity / 2U + 1U);
+    state.SplitQueuePositions.reserve(targetCapacity);
     state.SplitQueueBlockedBuildIds.reserve(targetCapacity);
     state.MergeQueue.reserve(targetCapacity / 2U);
     state.MergeQueuePositions.reserve(targetCapacity);
@@ -408,6 +410,8 @@ void ResetTopology(DataOrientedRoamState& state)
     state.ActiveInternalNodePositions.clear();
     state.ActiveLeafNodes.clear();
     state.ActiveLeafNodePositions.clear();
+    state.SplitQueue.clear();
+    state.SplitQueuePositions.clear();
     state.SplitQueueBlockedBuildIds.clear();
     state.MergeQueue.clear();
     state.MergeQueuePositions.clear();

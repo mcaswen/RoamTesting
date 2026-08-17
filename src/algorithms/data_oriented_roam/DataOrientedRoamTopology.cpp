@@ -173,14 +173,45 @@ void DeactivateInternalNode(DataOrientedRoamState& state, DataOrientedRoamNodeIn
 
 void ActivateLeafNode(DataOrientedRoamState& state, DataOrientedRoamNodeIndex node)
 {
-    // ActiveLeafNodes 同时承担持久 Q_s 存储，插入必须维护 max-heap。
+    // 活动叶视图保持稠密但不再承担 heap，评分刷新不会改变这里的顺序
+    if (!state.IsValidNode(node) || !state.IsLeaf(node) ||
+        node >= state.ActiveLeafNodePositions.size())
+    {
+        return;
+    }
+
+    if (state.ActiveLeafNodePositions[node] == InvalidActiveNodePosition)
+    {
+        state.ActiveLeafNodePositions[node] = state.ActiveLeafNodes.size();
+        state.ActiveLeafNodes.push_back(node);
+    }
     InsertPersistentSplitQueueNode(state, node);
 }
 
 void DeactivateLeafNode(DataOrientedRoamState& state, DataOrientedRoamNodeIndex node)
 {
-    // indexed heap 支持按 node O(log N) 删除，同时修正反向位置。
+    // 先从 Q_s 删除，随后用 O(1) swap-remove 更新独立活动叶视图
     RemovePersistentSplitQueueNode(state, node);
+    if (!state.IsValidNode(node) || node >= state.ActiveLeafNodePositions.size())
+    {
+        return;
+    }
+
+    const std::size_t position = state.ActiveLeafNodePositions[node];
+    if (position == InvalidActiveNodePosition || position >= state.ActiveLeafNodes.size())
+    {
+        return;
+    }
+
+    const std::size_t last = state.ActiveLeafNodes.size() - 1U;
+    if (position != last)
+    {
+        const DataOrientedRoamNodeIndex movedNode = state.ActiveLeafNodes.back();
+        state.ActiveLeafNodes[position] = movedNode;
+        state.ActiveLeafNodePositions[movedNode] = position;
+    }
+    state.ActiveLeafNodes.pop_back();
+    state.ActiveLeafNodePositions[node] = InvalidActiveNodePosition;
 }
 
 void ApplySplitIndexTransition(DataOrientedRoamState& state, DataOrientedRoamNodeIndex node)

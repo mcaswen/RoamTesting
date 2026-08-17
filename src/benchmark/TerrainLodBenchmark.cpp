@@ -661,6 +661,13 @@ BenchmarkAlgorithmRun RunAlgorithm(
         frame.Passed = ValidateFrame(scenario, renderPacket, stats, buildSucceeded) &&
             (!usesRoamBudget ||
              stats.ActiveTriangleCount <= scenario.Settings.TriangleBudget);
+        if (selection == BenchmarkAlgorithmSelection::DataOriented)
+        {
+            // C1 契约：活动叶视图直接供最终输出使用，独立 Q_s 必须覆盖同一活动切分。
+            frame.Passed = frame.Passed &&
+                stats.PersistentSplitQueueSize == stats.ActiveTriangleCount &&
+                stats.CpuFinalLeafCollectMilliseconds == 0.0F;
+        }
         if (usesRoamBudget && camera.Name == "away" && !run.Frames.empty())
         {
             // 同一位置转向后背离地形，视锥感知应在单次 Build 中回收活动拓扑

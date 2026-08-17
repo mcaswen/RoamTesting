@@ -179,7 +179,7 @@ Terrain::TerrainMeshData DataOrientedRoamPipeline::BuildInternal(
     // GPU 路径不生成 CPU mesh，active triangle 数直接来自持久活动 leaf 索引。
     Tools::PerformanceTimer finalizeTimer;
     AccumulateLeafStats(state, finalActiveLeaves);
-    state.Stats.PersistentSplitQueueSize = finalActiveLeaves.size();
+    state.Stats.PersistentSplitQueueSize = state.SplitQueue.size();
     state.Stats.PersistentMergeQueueSize = state.MergeQueue.size();
     // 预算交叉 merge 发生在 Split 收敛循环内，但统计上仍属于 Merge topology。
     state.Stats.MergeMilliseconds = mergeMilliseconds + state.Stats.MergeCrossoverMilliseconds;

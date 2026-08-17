@@ -82,33 +82,40 @@ float SplitQueueScore(const DataOrientedRoamState& state, DataOrientedRoamNodeIn
     return ComputeScreenErrorScore(state, node);
 }
 
+void MirrorSplitQueueScore(
+    DataOrientedRoamState& state,
+    DataOrientedRoamNodeIndex node,
+    float score)
+{
+    if (state.Settings.MirrorSplitScoresToNodePool)
+    {
+        state.Nodes.ScreenErrorAt(node) = score;
+    }
+}
+
 bool SplitEntryPrecedes(
     const DataOrientedRoamState& state,
-    DataOrientedRoamNodeIndex left,
-    DataOrientedRoamNodeIndex right)
+    const DataOrientedRoamSplitQueueEntry& left,
+    const DataOrientedRoamSplitQueueEntry& right)
 {
-    // Q_s 按缓存的屏幕误差组成最大堆。分数相同时使用 PathId 稳定排序，
-    // 使结果不受 ActiveLeafNodes 交换历史影响。
-    const float leftScore = state.Nodes.ScreenErrorAt(left);
-    const float rightScore = state.Nodes.ScreenErrorAt(right);
-    if (leftScore != rightScore)
+    // 常规比较直接读取连续 heap entry；只有同分时才访问稳定 PathId
+    if (left.Score != right.Score)
     {
-        return leftScore > rightScore;
+        return left.Score > right.Score;
     }
-    return state.Nodes.PathIdAt(left) < state.Nodes.PathIdAt(right);
+    return state.Nodes.PathIdAt(left.Node) < state.Nodes.PathIdAt(right.Node);
 }
 
 void SwapSplitQueueEntries(DataOrientedRoamState& state, std::size_t left, std::size_t right)
 {
-    // ActiveLeafNodes 同时保存完整活动切分和 heap 数据，避免为 DOD 热路径中
-    // 使用最频繁的活动叶集合再维护一份重复 vector。
+    // Q_s 与活动叶视图分离，heap 交换只修正自己的反向位置
     if (left == right)
     {
         return;
     }
-    std::swap(state.ActiveLeafNodes[left], state.ActiveLeafNodes[right]);
-    state.ActiveLeafNodePositions[state.ActiveLeafNodes[left]] = left;
-    state.ActiveLeafNodePositions[state.ActiveLeafNodes[right]] = right;
+    std::swap(state.SplitQueue[left], state.SplitQueue[right]);
+    state.SplitQueuePositions[state.SplitQueue[left].Node] = left;
+    state.SplitQueuePositions[state.SplitQueue[right].Node] = right;
 }
 
 void SiftSplitQueueUp(DataOrientedRoamState& state, std::size_t index)
@@ -117,7 +124,7 @@ void SiftSplitQueueUp(DataOrientedRoamState& state, std::size_t index)
     while (index > 0U)
     {
         const std::size_t parent = (index - 1U) / 2U;
-        if (!SplitEntryPrecedes(state, state.ActiveLeafNodes[index], state.ActiveLeafNodes[parent]))
+        if (!SplitEntryPrecedes(state, state.SplitQueue[index], state.SplitQueue[parent]))
         {
             break;
         }
@@ -132,18 +139,18 @@ void SiftSplitQueueDown(DataOrientedRoamState& state, std::size_t index)
     for (;;)
     {
         const std::size_t left = index * 2U + 1U;
-        if (left >= state.ActiveLeafNodes.size())
+        if (left >= state.SplitQueue.size())
         {
             return;
         }
         const std::size_t right = left + 1U;
         std::size_t best = left;
-        if (right < state.ActiveLeafNodes.size() &&
-            SplitEntryPrecedes(state, state.ActiveLeafNodes[right], state.ActiveLeafNodes[left]))
+        if (right < state.SplitQueue.size() &&
+            SplitEntryPrecedes(state, state.SplitQueue[right], state.SplitQueue[left]))
         {
             best = right;
         }
-        if (!SplitEntryPrecedes(state, state.ActiveLeafNodes[best], state.ActiveLeafNodes[index]))
+        if (!SplitEntryPrecedes(state, state.SplitQueue[best], state.SplitQueue[index]))
         {
             return;
         }
@@ -156,14 +163,14 @@ void RestoreSplitQueueAt(DataOrientedRoamState& state, std::size_t index)
 {
     // 删除任意位置后可能需要向上或向下调整。先检查 parent，可以避免
     // 两个方向都执行一次 heap 修复。
-    if (index >= state.ActiveLeafNodes.size())
+    if (index >= state.SplitQueue.size())
     {
         return;
     }
     if (index > 0U && SplitEntryPrecedes(
             state,
-            state.ActiveLeafNodes[index],
-            state.ActiveLeafNodes[(index - 1U) / 2U]))
+            state.SplitQueue[index],
+            state.SplitQueue[(index - 1U) / 2U]))
     {
         SiftSplitQueueUp(state, index);
     }
@@ -413,13 +420,17 @@ void AppendIfValid(
 // 因此 Q_m 为空；这条路径也支持以后扩展其他 reset 初始形态。
 void InitializePersistentSplitQueue(DataOrientedRoamState& state)
 {
-    // ResetTopology 已建立准确的 root 队列成员和反向位置；这里仅计算优先级
-    // 并建立 heap 顺序。
+    // ResetTopology 先建立活动叶视图，这里据此创建独立 Q_s 和反向位置
+    state.SplitQueue.clear();
+    state.SplitQueuePositions.assign(state.Nodes.size(), InvalidQueuePosition);
     for (DataOrientedRoamNodeIndex node : state.ActiveLeafNodes)
     {
-        state.Nodes.ScreenErrorAt(node) = SplitQueueScore(state, node);
+        const float score = SplitQueueScore(state, node);
+        MirrorSplitQueueScore(state, node, score);
+        state.SplitQueuePositions[node] = state.SplitQueue.size();
+        state.SplitQueue.push_back(DataOrientedRoamSplitQueueEntry{score, node});
     }
-    for (std::size_t index = state.ActiveLeafNodes.size() / 2U; index > 0U; --index)
+    for (std::size_t index = state.SplitQueue.size() / 2U; index > 0U; --index)
     {
         SiftSplitQueueDown(state, index - 1U);
     }
@@ -429,7 +440,15 @@ void RefreshPersistentSplitQueuePriorities(DataOrientedRoamState& state)
 {
     // 相机移动会使全部分数失效，但不会改变队列成员。DOD 并行评估互不重叠的
     // SoA 区间，最后用一次线性复杂度的原地建堆恢复顺序。
-    const std::size_t entryCount = state.ActiveLeafNodes.size();
+    std::vector<DataOrientedRoamNodeIndex> activeLeafOrderBeforeRefresh;
+    if (state.Settings.EnableTopologyValidation)
+    {
+        // C1 将活动叶视图与 Q_s 分离；验证模式下直接锁定这条契约，
+        // 防止以后误把 heap swap 再次写回 Mesh 输出顺序。
+        activeLeafOrderBeforeRefresh = state.ActiveLeafNodes;
+    }
+
+    const std::size_t entryCount = state.SplitQueue.size();
     const std::size_t workerCount = ResolvePriorityRefreshWorkerCount(state, entryCount);
     state.Stats.CollectWorkerCount = std::max(state.Stats.CollectWorkerCount, workerCount);
     state.Stats.ErrorEvaluationWorkerCount = workerCount;
@@ -438,12 +457,12 @@ void RefreshPersistentSplitQueuePriorities(DataOrientedRoamState& state)
         workerCount);
 
     const auto refreshRange = [&state](std::size_t begin, std::size_t end) {
-        // 所有评分 worker 结束前，ActiveLeafNodes 保持只读。每个 worker 写入
-        // 互不重叠的 ScreenErrors 区间，因此不需要同步。
+        // 所有评分 worker 结束前 Q_s 结构保持只读，每个 worker 只写自己的 entry score
         for (std::size_t index = begin; index < end; ++index)
         {
-            const DataOrientedRoamNodeIndex node = state.ActiveLeafNodes[index];
-            state.Nodes.ScreenErrorAt(node) = SplitQueueScore(state, node);
+            DataOrientedRoamSplitQueueEntry& entry = state.SplitQueue[index];
+            entry.Score = SplitQueueScore(state, entry.Node);
+            MirrorSplitQueueScore(state, entry.Node, entry.Score);
         }
     };
     if (workerCount <= 1U)
@@ -464,14 +483,20 @@ void RefreshPersistentSplitQueuePriorities(DataOrientedRoamState& state)
     }
 
     // 自底向上建堆为 O(N)，比逐个重新插入全部叶节点的 O(N log N) 更低。
-    for (std::size_t index = state.ActiveLeafNodes.size() / 2U; index > 0U; --index)
+    for (std::size_t index = state.SplitQueue.size() / 2U; index > 0U; --index)
     {
         SiftSplitQueueDown(state, index - 1U);
     }
+    if (state.Settings.EnableTopologyValidation &&
+        state.ActiveLeafNodes != activeLeafOrderBeforeRefresh)
+    {
+        ++state.Stats.InvalidTopologyCount;
+    }
     state.Stats.ErrorEvaluationCount = entryCount;
     // Q_s 的准确成员数量同时用于计算硬预算剩余 token。
-    const std::size_t remainingBudget = state.Settings.TriangleBudget > entryCount
-        ? state.Settings.TriangleBudget - entryCount
+    const std::size_t activeLeafCount = state.ActiveLeafNodes.size();
+    const std::size_t remainingBudget = state.Settings.TriangleBudget > activeLeafCount
+        ? state.Settings.TriangleBudget - activeLeafCount
         : 0U;
     state.RemainingSerialSplitBudget = remainingBudget;
     state.RemainingParallelSplitBudget.store(remainingBudget, std::memory_order_relaxed);
@@ -479,18 +504,19 @@ void RefreshPersistentSplitQueuePriorities(DataOrientedRoamState& state)
 
 void InsertPersistentSplitQueueNode(DataOrientedRoamState& state, DataOrientedRoamNodeIndex node)
 {
-    // 调用本函数前拓扑标记已经更新；反向位置哨兵让重复通知保持幂等。
-    if (!state.IsValidNode(node) || !state.IsLeaf(node) ||
-        state.ActiveLeafNodePositions[node] != InvalidActiveNodePosition)
+    // 调用本函数前活动叶视图已经更新，Q_s 反向位置让重复通知保持幂等
+    if (!IsActiveLeafNode(state, node) || !state.IsLeaf(node) ||
+        node >= state.SplitQueuePositions.size() ||
+        state.SplitQueuePositions[node] != InvalidQueuePosition)
     {
         return;
     }
 
-    // SplitQueueScore 会检查 IsActiveLeafNode，因此必须先写入队列成员关系。
-    const std::size_t position = state.ActiveLeafNodes.size();
-    state.ActiveLeafNodePositions[node] = position;
-    state.ActiveLeafNodes.push_back(node);
-    state.Nodes.ScreenErrorAt(node) = SplitQueueScore(state, node);
+    const std::size_t position = state.SplitQueue.size();
+    const float score = SplitQueueScore(state, node);
+    MirrorSplitQueueScore(state, node, score);
+    state.SplitQueuePositions[node] = position;
+    state.SplitQueue.push_back(DataOrientedRoamSplitQueueEntry{score, node});
     SiftSplitQueueUp(state, position);
     ++state.Stats.QueueMembershipUpdateCount;
 }
@@ -499,24 +525,24 @@ void RemovePersistentSplitQueueNode(DataOrientedRoamState& state, DataOrientedRo
 {
     // forced split 可能删除不在 heap 顶部的候选，因此 Q_s 必须支持按索引删除，
     // 不能只提供弹出队首的 priority_queue 语义。
-    if (!state.IsValidNode(node) || node >= state.ActiveLeafNodePositions.size())
+    if (!state.IsValidNode(node) || node >= state.SplitQueuePositions.size())
     {
         return;
     }
-    const std::size_t position = state.ActiveLeafNodePositions[node];
-    if (position == InvalidActiveNodePosition || position >= state.ActiveLeafNodes.size())
+    const std::size_t position = state.SplitQueuePositions[node];
+    if (position == InvalidQueuePosition || position >= state.SplitQueue.size())
     {
         return;
     }
 
     // swap-remove 保持存储连续，只需修复被换入位置的节点。
-    const std::size_t last = state.ActiveLeafNodes.size() - 1U;
+    const std::size_t last = state.SplitQueue.size() - 1U;
     if (position != last)
     {
         SwapSplitQueueEntries(state, position, last);
     }
-    state.ActiveLeafNodes.pop_back();
-    state.ActiveLeafNodePositions[node] = InvalidActiveNodePosition;
+    state.SplitQueue.pop_back();
+    state.SplitQueuePositions[node] = InvalidQueuePosition;
     RestoreSplitQueueAt(state, position);
     ++state.Stats.QueueMembershipUpdateCount;
 }
@@ -532,23 +558,28 @@ void BlockPersistentSplitQueueNodeForCurrentBuild(
         return;
     }
     state.SplitQueueBlockedBuildIds[node] = state.BuildSequence;
-    state.Nodes.ScreenErrorAt(node) = BlockedSplitScore;
-    RestoreSplitQueueAt(state, state.ActiveLeafNodePositions[node]);
+    const std::size_t position = state.SplitQueuePositions[node];
+    if (position == InvalidQueuePosition || position >= state.SplitQueue.size())
+    {
+        return;
+    }
+    state.SplitQueue[position].Score = BlockedSplitScore;
+    MirrorSplitQueueScore(state, node, BlockedSplitScore);
+    RestoreSplitQueueAt(state, position);
 }
 
 DataOrientedRoamNodeIndex TopPersistentSplitQueueNode(const DataOrientedRoamState& state)
 {
     // heap 顶部是当前视点下全局优先级最高的活动叶节点。
-    return state.ActiveLeafNodes.empty()
+    return state.SplitQueue.empty()
         ? InvalidDataOrientedRoamNodeIndex
-        : state.ActiveLeafNodes.front();
+        : state.SplitQueue.front().Node;
 }
 
 float TopPersistentSplitQueueScore(const DataOrientedRoamState& state)
 {
     // Q_s 为空时返回与不可 split 叶节点相同的屏蔽分数。
-    const DataOrientedRoamNodeIndex node = TopPersistentSplitQueueNode(state);
-    return state.IsValidNode(node) ? state.Nodes.ScreenErrorAt(node) : BlockedSplitScore;
+    return state.SplitQueue.empty() ? BlockedSplitScore : state.SplitQueue.front().Score;
 }
 
 void SnapshotPersistentSplitQueueCandidates(
@@ -558,15 +589,14 @@ void SnapshotPersistentSplitQueueCandidates(
     // 并行 chunk 提交读取不可变快照；所有 worker 结束后，串行约束闭包继续
     // 直接消费实时 heap。
     candidates.clear();
-    candidates.reserve(state.ActiveLeafNodes.size());
+    candidates.reserve(state.SplitQueue.size());
     std::uint64_t sequence = 0U;
-    for (DataOrientedRoamNodeIndex node : state.ActiveLeafNodes)
+    for (const DataOrientedRoamSplitQueueEntry& entry : state.SplitQueue)
     {
         // 当前 Build 已统一刷新过分数，生成快照时不再重复计算屏幕误差。
-        const float score = state.Nodes.ScreenErrorAt(node);
-        if (ShouldSplitWithScore(state, node, score))
+        if (ShouldSplitWithScore(state, entry.Node, entry.Score))
         {
-            candidates.push_back(DataOrientedRoamSplitCandidate{score, sequence++, node});
+            candidates.push_back(DataOrientedRoamSplitCandidate{entry.Score, sequence++, entry.Node});
         }
     }
 }
@@ -821,6 +851,7 @@ std::size_t CountPersistentQueueInvariantViolations(const DataOrientedRoamState&
     std::size_t violations = 0U;
     const std::size_t nodeCount = state.Nodes.size();
     if (state.ActiveLeafNodePositions.size() != nodeCount ||
+        state.SplitQueuePositions.size() != nodeCount ||
         state.SplitQueueBlockedBuildIds.size() != nodeCount ||
         state.MergeQueuePositions.size() != nodeCount ||
         state.MergeQueueRepresentatives.size() != nodeCount ||
@@ -830,12 +861,19 @@ std::size_t CountPersistentQueueInvariantViolations(const DataOrientedRoamState&
         return 1U;
     }
 
+    if (state.SplitQueue.size() != state.ActiveLeafNodes.size())
+    {
+        ++violations;
+    }
+
     // Q_s 必须满足最大堆顺序，每一项都必须能通过反向位置查回自身。
     // 活动切分是否完整由 validator 通过独立路径检查。
-    for (std::size_t index = 0U; index < state.ActiveLeafNodes.size(); ++index)
+    for (std::size_t index = 0U; index < state.SplitQueue.size(); ++index)
     {
-        const DataOrientedRoamNodeIndex node = state.ActiveLeafNodes[index];
-        if (!state.IsValidNode(node) || state.ActiveLeafNodePositions[node] != index)
+        const DataOrientedRoamSplitQueueEntry& entry = state.SplitQueue[index];
+        const DataOrientedRoamNodeIndex node = entry.Node;
+        if (!state.IsValidNode(node) || state.SplitQueuePositions[node] != index ||
+            !IsActiveLeafNode(state, node))
         {
             ++violations;
             continue;
@@ -843,13 +881,24 @@ std::size_t CountPersistentQueueInvariantViolations(const DataOrientedRoamState&
         // 按 Q_s 最大堆比较规则，child 不能排在 parent 前面。
         const std::size_t left = index * 2U + 1U;
         const std::size_t right = left + 1U;
-        if (left < state.ActiveLeafNodes.size() &&
-            SplitEntryPrecedes(state, state.ActiveLeafNodes[left], node))
+        if (left < state.SplitQueue.size() &&
+            SplitEntryPrecedes(state, state.SplitQueue[left], entry))
         {
             ++violations;
         }
-        if (right < state.ActiveLeafNodes.size() &&
-            SplitEntryPrecedes(state, state.ActiveLeafNodes[right], node))
+        if (right < state.SplitQueue.size() &&
+            SplitEntryPrecedes(state, state.SplitQueue[right], entry))
+        {
+            ++violations;
+        }
+    }
+
+    // 每个活动 leaf 必须在独立 Q_s 中恰好出现一次
+    for (DataOrientedRoamNodeIndex node : state.ActiveLeafNodes)
+    {
+        const std::size_t position = state.SplitQueuePositions[node];
+        if (position == InvalidQueuePosition || position >= state.SplitQueue.size() ||
+            state.SplitQueue[position].Node != node)
         {
             ++violations;
         }

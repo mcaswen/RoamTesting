@@ -56,6 +56,15 @@ struct DataOrientedRoamSplitCandidate
 };
 
 /// <summary>
+/// split 持久队列中的连续 heap 项，score 与 node 放在同一个位置供比较直接读取
+/// </summary>
+struct DataOrientedRoamSplitQueueEntry
+{
+    float Score{0.0F};
+    DataOrientedRoamNodeIndex Node{InvalidDataOrientedRoamNodeIndex};
+};
+
+/// <summary>
 /// merge 队列的候选快照，拓扑提交前不会修改节点关系
 /// </summary>
 struct DataOrientedRoamMergeCandidate
@@ -160,6 +169,7 @@ struct DataOrientedRoamNodePool
 
     // GeometricErrors 保存 nested wedgie thickness，与相机无关且可跨帧复用
     std::vector<float> GeometricErrors;
+    // ScreenErrors 仅按需镜像给 GPU 快照，DOD 的 Q_s score 由 SplitQueue 独立持有
     std::vector<float> ScreenErrors;
     std::vector<std::size_t> VarianceIndices;
 
@@ -335,9 +345,13 @@ struct DataOrientedRoamState
     std::vector<DataOrientedRoamNodeIndex> ActiveInternalNodes;
     // 节点索引到 ActiveInternalNodes 位置的反向表，支持 O(1) swap-remove
     std::vector<std::size_t> ActiveInternalNodePositions;
-    // 当前 active leaf 的连续索引同时承担持久 Q_s heap 存储。
+    // 当前活动 leaf 的稠密视图只随拓扑变化，评分和 heapify 不再改变它的顺序
     std::vector<DataOrientedRoamNodeIndex> ActiveLeafNodes;
     std::vector<std::size_t> ActiveLeafNodePositions;
+
+    // 持久 Q_s 独立保存 node/score，反向位置支持 forced split 按 node 删除
+    std::vector<DataOrientedRoamSplitQueueEntry> SplitQueue;
+    std::vector<std::size_t> SplitQueuePositions;
     std::vector<std::uint64_t> SplitQueueBlockedBuildIds;
 
     // 每个可 merge 的 diamond 只保存一个 canonical representative

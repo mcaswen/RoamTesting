@@ -160,6 +160,14 @@ if(TARGET parallel_roam)
             --profile budget-reentry
     )
     add_test(
+        NAME roam_split_queue_view_dod
+        COMMAND
+            $<TARGET_FILE:parallel_roam>
+            --benchmark
+            --algorithm dod
+            --profile smoke
+    )
+    add_test(
         NAME roam_incremental_mesh_emit_classic
         COMMAND
             $<TARGET_FILE:parallel_roam>
@@ -170,6 +178,7 @@ if(TARGET parallel_roam)
     set_tests_properties(
         roam_budget_reentry_classic
         roam_budget_reentry_dod
+        roam_split_queue_view_dod
         roam_incremental_mesh_emit_classic
         PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."
     )
