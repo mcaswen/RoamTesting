@@ -10,4 +10,5 @@ namespace ParallelRoam::Algorithms::DataOrientedRoam
 /// </summary>
 // ValidateTopology 是可选 debug pass，不主动修复拓扑
 void ValidateTopology(DataOrientedRoamState& state);
+void ValidateIncrementalMesh(DataOrientedRoamState& state);
 } // namespace ParallelRoam::Algorithms::DataOrientedRoam

@@ -62,14 +62,15 @@ DataOrientedRoamPipeline& DataOrientedRoamPipeline::operator=(DataOrientedRoamPi
     return *this;
 }
 
-Terrain::TerrainMeshData DataOrientedRoamPipeline::Build(
+const Terrain::TerrainMeshData& DataOrientedRoamPipeline::Build(
     const Terrain::HeightMap& heightMap,
     float terrainSize,
     float heightScale,
     const TerrainLodViewInput& view,
     const DataOrientedRoamSettings& settings)
 {
-    return BuildInternal(heightMap, terrainSize, heightScale, view, settings, true);
+    BuildInternal(heightMap, terrainSize, heightScale, view, settings, true);
+    return _state->IncrementalMesh.Data;
 }
 
 void DataOrientedRoamPipeline::UpdateTopology(
@@ -79,10 +80,10 @@ void DataOrientedRoamPipeline::UpdateTopology(
     const TerrainLodViewInput& view,
     const DataOrientedRoamSettings& settings)
 {
-    (void)BuildInternal(heightMap, terrainSize, heightScale, view, settings, false);
+    BuildInternal(heightMap, terrainSize, heightScale, view, settings, false);
 }
 
-Terrain::TerrainMeshData DataOrientedRoamPipeline::BuildInternal(
+void DataOrientedRoamPipeline::BuildInternal(
     const Terrain::HeightMap& heightMap,
     float terrainSize,
     float heightScale,
@@ -118,17 +119,13 @@ Terrain::TerrainMeshData DataOrientedRoamPipeline::BuildInternal(
     state.DrawableHeight = std::max(view.DrawableHeight, 1U);
     state.TerrainSize = terrainSize;
     state.HeightScale = heightScale;
-
-    Terrain::TerrainMeshData meshData{};
-    meshData.GridWidth = heightMap.Width();
-    meshData.GridHeight = heightMap.Height();
-    meshData.TerrainSize = terrainSize;
-    meshData.HeightScale = heightScale;
+    BeginIncrementalMeshUpdate(state, resetTopology, emitCpuMesh);
 
     if (!heightMap.IsValid())
     {
         // 保持返回空 mesh 的语义和 Classic builder 一致
-        return meshData;
+        ResetIncrementalMeshStorage(state);
+        return;
     }
 
     if (rebuildVarianceTrees)
@@ -136,10 +133,15 @@ Terrain::TerrainMeshData DataOrientedRoamPipeline::BuildInternal(
         RebuildVarianceTrees(state, varianceTreeDepth);
     }
 
-    ReserveNodePool(state);
     if (resetTopology)
     {
         // reset 只发生在缓存误差或深度上限不再兼容时
+        ResetIncrementalMeshStorage(state);
+    }
+    // Mesh reset 会释放 node-to-slot 和 slot owner 容量，因此统一在 reset 之后预留。
+    ReserveNodePool(state);
+    if (resetTopology)
+    {
         ResetTopology(state);
     }
     else if (rebuildVarianceTrees)
@@ -159,22 +161,27 @@ Terrain::TerrainMeshData DataOrientedRoamPipeline::BuildInternal(
     RefineWithSplitQueue(state);
     const float splitMilliseconds = splitTimer.Stop();
 
-    if (state.Settings.EnableTopologyValidation)
-    {
-        Tools::PerformanceTimer validateTimer;
-        ValidateTopology(state);
-        state.Stats.ValidateMilliseconds = validateTimer.Stop();
-    }
-
     // split/merge 已增量维护 ActiveLeafNodes；拓扑稳定后直接复用这份只读输出视图，
     // 避免为了 emit、统计和 GPU snapshot 再从两个 root 递归遍历或复制活动 leaf。
     const std::vector<DataOrientedRoamNodeIndex>& finalActiveLeaves = state.ActiveLeafNodes;
     Tools::PerformanceTimer meshEmitTimer;
     if (emitCpuMesh)
     {
-        EmitLeafTriangles(state, meshData, finalActiveLeaves);
+        ApplyIncrementalMeshUpdates(state);
+        FinalizeIncrementalMeshUpdate(state);
     }
     const float meshEmitMilliseconds = meshEmitTimer.Stop();
+
+    if (state.Settings.EnableTopologyValidation)
+    {
+        Tools::PerformanceTimer validateTimer;
+        ValidateTopology(state);
+        if (emitCpuMesh)
+        {
+            ValidateIncrementalMesh(state);
+        }
+        state.Stats.ValidateMilliseconds = validateTimer.Stop();
+    }
 
     // GPU 路径不生成 CPU mesh，active triangle 数直接来自持久活动 leaf 索引。
     Tools::PerformanceTimer finalizeTimer;
@@ -203,7 +210,6 @@ Terrain::TerrainMeshData DataOrientedRoamPipeline::BuildInternal(
     state.TopologyMaxDepth = state.Settings.MaxDepth;
     state.Stats.FinalizeMilliseconds = finalizeTimer.Stop();
     state.Stats.UpdateMilliseconds = updateTimer.Stop();
-    return meshData;
 }
 
 const DataOrientedRoamStats& DataOrientedRoamPipeline::Stats() const
@@ -214,5 +220,20 @@ const DataOrientedRoamStats& DataOrientedRoamPipeline::Stats() const
 const DataOrientedRoamState& DataOrientedRoamPipeline::State() const
 {
     return *_state;
+}
+
+const std::vector<DataOrientedRoamMeshUpdateRange>& DataOrientedRoamPipeline::MeshUpdateRanges() const
+{
+    return _state->IncrementalMesh.UpdateRanges;
+}
+
+bool DataOrientedRoamPipeline::MeshRequiresFullUpload() const
+{
+    return _state->IncrementalMesh.RequiresFullUpload;
+}
+
+std::uint64_t DataOrientedRoamPipeline::MeshGeneration() const
+{
+    return _state->IncrementalMesh.Generation;
 }
 } // 命名空间 ParallelRoam::Algorithms::DataOrientedRoam

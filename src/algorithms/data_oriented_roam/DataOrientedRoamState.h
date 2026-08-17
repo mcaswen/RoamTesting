@@ -102,6 +102,39 @@ struct DataOrientedRoamNodeMembership
 };
 static_assert(sizeof(DataOrientedRoamNodeMembership) == 24U);
 
+enum class DataOrientedRoamMeshTopologyEditType
+{
+    Split,
+    Merge,
+};
+
+struct DataOrientedRoamMeshTopologyEdit
+{
+    DataOrientedRoamMeshTopologyEditType Type{DataOrientedRoamMeshTopologyEditType::Split};
+    DataOrientedRoamNodeIndex Node{InvalidDataOrientedRoamNodeIndex};
+};
+
+/// <summary>
+/// DOD CPU 输出的持久 Mesh 状态。
+/// NodeSlots 是独立的单字段 SoA 反向索引；SlotOwners 是稠密活动 cut，
+/// topology edit 只在主线程重放，不让并行 topology worker 直接写 Mesh。
+/// </summary>
+struct DataOrientedRoamIncrementalMesh
+{
+    Terrain::TerrainMeshData Data;
+    std::vector<DataOrientedRoamPosition> NodeSlots;
+    std::vector<DataOrientedRoamNodeIndex> SlotOwners;
+    std::vector<std::uint64_t> SlotDirtyGenerations;
+    std::vector<DataOrientedRoamPosition> DirtySlots;
+    std::vector<DataOrientedRoamMeshUpdateRange> UpdateRanges;
+    std::vector<DataOrientedRoamNodeIndex> DebugTransitionLeaves;
+    std::vector<DataOrientedRoamMeshTopologyEdit> TopologyEdits;
+    std::uint64_t Generation{0U};
+    bool RequiresFullUpload{true};
+    bool NeedsInitialization{true};
+    bool TracksTopologyEdits{false};
+};
+
 struct DataOrientedRoamMergeCandidateEvaluation
 {
     // NodeScore 保持普通 merge 候选的原排序语义；PairScore 用于预算重平衡时衡量整个 diamond。
@@ -369,6 +402,9 @@ struct DataOrientedRoamState
     std::vector<DataOrientedRoamNodeIndex> ActiveLeafNodes;
     // 每个 node 的活动/队列 membership 使用紧凑 sidecar，避免六组旁路数组分散访问
     std::vector<DataOrientedRoamNodeMembership> NodeMembership;
+
+    // CPU adapter 跨 Build 借用这份持久 Mesh；GPU topology-only 路径不维护其 edit。
+    DataOrientedRoamIncrementalMesh IncrementalMesh;
 
     // 持久 Q_s 独立保存 node/score，反向位置支持 forced split 按 node 删除
     std::vector<DataOrientedRoamSplitQueueEntry> SplitQueue;

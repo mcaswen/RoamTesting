@@ -27,6 +27,16 @@ struct TriangleDomainChildren
     TriangleDomain Right;
 };
 
+/// <summary>
+/// DOD 持久 CPU Mesh 的连续三角形更新范围。
+/// adapter 会把三角形槽位换算为统一 packet 的 vertex/index 范围。
+/// </summary>
+struct DataOrientedRoamMeshUpdateRange
+{
+    std::size_t FirstTriangle{0U};
+    std::size_t TriangleCount{0U};
+};
+
 [[nodiscard]] TriangleDomainChildren SplitTriangleDomain(const TriangleDomain& domain);
 
 /// <summary>
@@ -96,6 +106,11 @@ struct DataOrientedRoamStats
     // mesh emit 和持久队列统计
     // mesh emit 阶段采用的 worker 数
     std::size_t EmitWorkerCount{0};
+    // 持久 Mesh 的完整重建、增量重写、复用和 dirty range 数量
+    std::size_t MeshFullRebuildCount{0};
+    std::size_t MeshUpdatedTriangleCount{0};
+    std::size_t MeshReusedTriangleCount{0};
+    std::size_t MeshDirtyRangeCount{0};
     // Q_s/Q_m 成员规模和 topology chunk 规模
     std::size_t SplitCandidateCount{0};
     // 持久 split/merge queue 在帧边界保留成员

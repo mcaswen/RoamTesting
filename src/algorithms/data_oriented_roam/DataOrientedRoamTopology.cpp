@@ -1,5 +1,6 @@
 #include "algorithms/data_oriented_roam/DataOrientedRoamParallel.h"
 #include "algorithms/data_oriented_roam/DataOrientedRoamCandidateMarking.h"
+#include "algorithms/data_oriented_roam/DataOrientedRoamMeshEmit.h"
 #include "algorithms/data_oriented_roam/DataOrientedRoamQueues.h"
 #include "algorithms/data_oriented_roam/DataOrientedRoamScoring.h"
 #include "algorithms/data_oriented_roam/DataOrientedRoamStateOps.h"
@@ -228,6 +229,8 @@ void ApplySplitIndexTransition(DataOrientedRoamState& state, DataOrientedRoamNod
     ActivateInternalNode(state, node);
     ActivateLeafNode(state, state.Nodes.LeftChildAt(node));
     ActivateLeafNode(state, state.Nodes.RightChildAt(node));
+    // 串行提交和并行 join 后都从这里进入，因此 Mesh edit 始终由主线程记录。
+    RecordMeshSplit(state, node);
 }
 
 void ApplyMergeIndexTransition(DataOrientedRoamState& state, DataOrientedRoamNodeIndex node)
@@ -238,6 +241,7 @@ void ApplyMergeIndexTransition(DataOrientedRoamState& state, DataOrientedRoamNod
     DeactivateLeafNode(state, state.Nodes.LeftChildAt(node));
     DeactivateLeafNode(state, state.Nodes.RightChildAt(node));
     ActivateLeafNode(state, node);
+    RecordMeshMerge(state, node);
 }
 
 DataOrientedRoamChunkId InteriorChunkIdForNode(const DataOrientedRoamState& state, DataOrientedRoamNodeIndex node)

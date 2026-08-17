@@ -60,22 +60,35 @@ bool DataOrientedRoamTerrainLodAlgorithm::BuildRenderData(
         return false;
     }
 
-    // 当前路径仍然输出 CPU mesh
-    // 并行误差评估不改变 renderer 消费方式
+    // DOD 与 Classic 共用 borrowed CPU Mesh/update range 契约。
     outPacket.Mode = TerrainLodRenderMode::CpuMesh;
     const TerrainLodCpuSample cpuSampleStart = CaptureTerrainLodCpuSample();
-    outPacket.CpuMesh = _pipeline.Build(
+    const Terrain::TerrainMeshData& meshData = _pipeline.Build(
         *input.HeightMap,
         input.Settings.TerrainSize,
         input.Settings.HeightScale,
         input.View,
         ToDataOrientedSettings(input.Settings));
+    outPacket.BorrowedCpuMesh = &meshData;
+    outPacket.CpuMeshLifetime = TerrainLodCpuMeshLifetime::UntilNextBuildOrReset;
+    outPacket.CpuMeshRequiresFullUpload = _pipeline.MeshRequiresFullUpload();
+    outPacket.CpuMeshGeneration = _pipeline.MeshGeneration();
+    outPacket.CpuMeshUpdateRanges.reserve(_pipeline.MeshUpdateRanges().size());
+    for (const DataOrientedRoamMeshUpdateRange& range : _pipeline.MeshUpdateRanges())
+    {
+        outPacket.CpuMeshUpdateRanges.push_back(TerrainLodCpuMeshUpdateRange{
+            range.FirstTriangle * 3U,
+            range.TriangleCount * 3U,
+            range.FirstTriangle * 3U,
+            range.TriangleCount * 3U,
+        });
+    }
     const TerrainLodCpuSample cpuSampleEnd = CaptureTerrainLodCpuSample();
     _stats = ToTerrainLodStats(_pipeline.Stats());
     _stats.CpuUtilizationPercent = ComputeCpuUtilizationPercent(cpuSampleStart, cpuSampleEnd);
     outPacket.ActiveTriangleCount = _stats.ActiveTriangleCount;
-    outPacket.IndexCount = outPacket.CpuMesh.Indices.size();
-    return !outPacket.CpuMesh.Vertices.empty() && !outPacket.CpuMesh.Indices.empty();
+    outPacket.IndexCount = meshData.Indices.size();
+    return !meshData.Vertices.empty() && !meshData.Indices.empty();
 }
 
 const TerrainLodStats& DataOrientedRoamTerrainLodAlgorithm::Stats() const
@@ -130,6 +143,10 @@ TerrainLodStats DataOrientedRoamTerrainLodAlgorithm::ToTerrainLodStats(const Dat
     lodStats.PersistentMergeQueueSize = stats.PersistentMergeQueueSize;
     lodStats.QueueCrossoverCount = stats.QueueCrossoverCount;
     lodStats.QueueMembershipUpdateCount = stats.QueueMembershipUpdateCount;
+    lodStats.CpuMeshFullRebuildCount = stats.MeshFullRebuildCount;
+    lodStats.CpuMeshUpdatedTriangleCount = stats.MeshUpdatedTriangleCount;
+    lodStats.CpuMeshReusedTriangleCount = stats.MeshReusedTriangleCount;
+    lodStats.CpuMeshDirtyRangeCount = stats.MeshDirtyRangeCount;
     lodStats.RejectedSplitCount = stats.RejectedSplitCount;
     lodStats.BudgetRejectedSplitCount = stats.BudgetRejectedSplitCount;
     lodStats.RejectedMergeCount = stats.RejectedMergeCount;

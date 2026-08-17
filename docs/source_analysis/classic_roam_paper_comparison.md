@@ -860,14 +860,14 @@ Classic 裸指针 node 在堆上分散，拓扑访问更容易出现 cache miss�
 
 | 阶段 | Classic | DOD |
 | --- | --- | --- |
-| Build 入口 | [`ClassicRoamMeshBuilder::Build()`](../../src/algorithms/classic_roam/ClassicRoamMeshBuilder.cpp#L16) 返回 builder 持有的 mesh 引用 | [`DataOrientedRoamPipeline::BuildInternal()`](../../src/algorithms/data_oriented_roam/DataOrientedRoamPipeline.cpp#L77) 返回本帧 `TerrainMeshData`；`UpdateTopology()` 可关闭 CPU emit |
+| Build 入口 | [`ClassicRoamMeshBuilder::Build()`](../../src/algorithms/classic_roam/ClassicRoamMeshBuilder.cpp#L16) 返回 builder 持有的 mesh 引用 | [`DataOrientedRoamPipeline::Build()`](../../src/algorithms/data_oriented_roam/DataOrientedRoamPipeline.cpp#L65) 返回 pipeline 持有的持久 Mesh 引用；`UpdateTopology()` 可关闭 CPU emit |
 | priority refresh | [`RefreshPersistentQueuePriorities()`](../../src/algorithms/classic_roam/ClassicRoamQueues.cpp#L447) 串行刷新 `Q_s/Q_m` | [`RefreshPersistentSplitQueuePriorities()`](../../src/algorithms/data_oriented_roam/DataOrientedRoamQueues.cpp#L414) 与 [`RefreshPersistentMergeQueuePriorities()`](../../src/algorithms/data_oriented_roam/DataOrientedRoamQueues.cpp#L575) 可按连续区间并行 |
 | merge 调度 | [`OptimizeWithPersistentDualQueues()`](../../src/algorithms/classic_roam/ClassicRoamQueues.cpp#L466) 在一个循环内统一处理阈值 merge、split 和预算 crossover | [`MergeWithDiamondQueue()`](../../src/algorithms/data_oriented_roam/DataOrientedRoamTopology.cpp#L1251) 先批量处理低分 merge；[`RefineWithSplitQueue()`](../../src/algorithms/data_oriented_roam/DataOrientedRoamTopology.cpp#L1163) 再处理 split，并在预算不足时继续消费实时 `Q_m` crossover |
 | 候选收集 | 直接读取 heap 顶部，不创建全量提交快照 | split/merge 都从缓存 score 生成候选快照；merge 快照排序，split 快照按优先级分 chunk |
 | 拓扑提交 | 串行执行完整 forced-split closure 或 diamond merge | 满足安全条件的 interior 候选先 chunk 并行提交；首次 child 分配、forced split、跨 chunk 和不安全候选仍由实时 heap 串行提交 |
 | 活动叶视图 | `_meshSlotOwners` | `ActiveLeafNodes` | 两者都避免默认输出前递归 collect |
-| CPU mesh emit | [`ApplyIncrementalMeshUpdates()`](../../src/algorithms/classic_roam/ClassicRoamMeshEmit.cpp#L89) 只重写持久 `_meshData` 的 dirty slots | [`EmitLeafTriangles()`](../../src/algorithms/data_oriented_roam/DataOrientedRoamMeshEmit.cpp#L121) 对本次 `BuildInternal()` 的局部 `meshData` resize 后完整写出全部活动叶三角形，可分段并行 |
-| renderer 交付 | `BorrowedCpuMesh`、generation、dirty ranges，支持局部 buffer upload | `CpuMesh` 按值放入 packet，当前没有 dirty ranges | Classic 当前输出链更增量；DOD 当前输出链更适合大批量顺序写入 |
+| CPU mesh emit | [`ApplyIncrementalMeshUpdates()`](../../src/algorithms/classic_roam/ClassicRoamMeshEmit.cpp#L89) 只重写持久 `_meshData` 的 dirty slots | [`ApplyIncrementalMeshUpdates()`](../../src/algorithms/data_oriented_roam/DataOrientedRoamMeshEmit.cpp#L390) 重放 NodeIndex edit，只批量写持久 Mesh 的 dirty slots；初始化或 topology-only 后重新进入 CPU 路径才完整建立 cut |
+| renderer 交付 | `BorrowedCpuMesh`、generation、dirty ranges，支持局部 buffer upload | 同样发布 `BorrowedCpuMesh`、generation 和 dirty ranges；NodeIndex/SoA 只改变内部 slot 维护方式 | 两者共享增量输出契约；DOD 当前保留 dirty slot 的批量 worker 写入 |
 | 帧末状态 | 递归收集 active split paths；mesh slots 和 queues 跨帧保留 | 同样递归收集 active split paths；活动索引、queues 和 node pool 跨帧保留 | 两者都尚未消除这次 internal topology 遍历 |
 
 ### 25.4 真正属于 DOD 的优势
@@ -879,7 +879,7 @@ Classic 裸指针 node 在堆上分散，拓扑访问更容易出现 cache miss�
 5. **按实测门槛启用并行。** split interior 候选少于 32、merge interior 候选少于 160，或只有一个非空 chunk 时保持串行，避免小任务调度成本反噬。这里没有限制算法候选总数，只决定提交方式。
 6. **持久 worker。** `DataOrientedRoamThreadPool` 只在需要时扩容并跨帧复用，避免每个 pass 重复创建线程。
 7. **成组预分配和容量统计。** `ReserveNodePool()` 依据 `MaxDepth` 与 Triangle Budget 为全部 SoA、活动集合和队列反向表预留容量；stats 还能报告节点存储字节数和数组数量，便于验证内存布局成本。
-8. **大 mesh 顺序并行写入。** 活动叶三角形不少于 256 时，DOD 预设最终数组大小，让各 worker 写独占三角形区间，不需要锁或原子追加。
+8. **dirty Mesh 批量写入。** DOD 按连续 slot 排序 dirty 列表；数量不少于 256 时沿用持久 worker 分段写入独占三角形槽位，不需要锁或原子追加。高变化率完整 emit 选择仍未在 D1 实现。
 
 这些优势的核心不是“把 Classic 同一段代码开更多线程”，而是先把状态改成可索引、可分区、可批量访问的数据，再对满足无写冲突条件的工作启用并行。
 
@@ -953,7 +953,7 @@ Classic 还具有较低的固定调度成本：它不生成全量候选快照，
 | [`DataOrientedRoamPipeline.cpp`](../../src/algorithms/data_oriented_roam/DataOrientedRoamPipeline.cpp) | `BuildInternal`, `UpdateTopology` | DOD 的 merge/split/emit 顺序和 topology-only 入口 |
 | [`DataOrientedRoamQueues.cpp`](../../src/algorithms/data_oriented_roam/DataOrientedRoamQueues.cpp) | priority refresh、持久 `Q_s/Q_m`、候选快照 | DOD 批量评分、heap 维护和缓存 score 复用 |
 | [`DataOrientedRoamTopology.cpp`](../../src/algorithms/data_oriented_roam/DataOrientedRoamTopology.cpp) | `CommitInteriorSplitChunks`, `CommitInteriorMergeChunks`, `RefineWithSplitQueue`, `MergeWithDiamondQueue` | DOD chunk 分类、条件并行提交和串行回退 |
-| [`DataOrientedRoamMeshEmit.cpp`](../../src/algorithms/data_oriented_roam/DataOrientedRoamMeshEmit.cpp) | `EmitLeafTriangles` | DOD 完整 CPU mesh 的分段并行写入 |
+| [`DataOrientedRoamMeshEmit.cpp`](../../src/algorithms/data_oriented_roam/DataOrientedRoamMeshEmit.cpp) | `ApplyIncrementalMeshUpdates`, `FinalizeIncrementalMeshUpdate` | DOD NodeIndex slot edit replay、dirty Mesh 批量写入和 range 发布 |
 | [`DataOrientedRoamThreadPool.cpp`](../../src/algorithms/data_oriented_roam/DataOrientedRoamThreadPool.cpp) | `ParallelFor`, `WorkerLoop` | DOD 跨帧复用 worker 的任务执行器 |
 | [`DataOrientedRoamTerrainLodAlgorithm.cpp`](../../src/algorithms/data_oriented_roam/DataOrientedRoamTerrainLodAlgorithm.cpp) | adapter, stats mapping | DOD 接入统一 CPU mesh 和 Benchmark 统计 |
 | [`GpuRoamShaderCommon.h`](../../src/algorithms/gpu_roam/GpuRoamShaderCommon.h) | `GpuRoamScoreCommonGlsl` | OpenGL 两个 compute pass 共用的 GPU ROAM-like score 逻辑 |

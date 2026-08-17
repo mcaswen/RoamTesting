@@ -31,7 +31,7 @@ public:
     DataOrientedRoamPipeline(DataOrientedRoamPipeline&&) noexcept;
     DataOrientedRoamPipeline& operator=(DataOrientedRoamPipeline&&) noexcept;
 
-    [[nodiscard]] Terrain::TerrainMeshData Build(
+    [[nodiscard]] const Terrain::TerrainMeshData& Build(
         const Terrain::HeightMap& heightMap,
         float terrainSize,
         float heightScale,
@@ -47,9 +47,12 @@ public:
 
     [[nodiscard]] const DataOrientedRoamStats& Stats() const;
     [[nodiscard]] const DataOrientedRoamState& State() const;
+    [[nodiscard]] const std::vector<DataOrientedRoamMeshUpdateRange>& MeshUpdateRanges() const;
+    [[nodiscard]] bool MeshRequiresFullUpload() const;
+    [[nodiscard]] std::uint64_t MeshGeneration() const;
 
 private:
-    [[nodiscard]] Terrain::TerrainMeshData BuildInternal(
+    void BuildInternal(
         const Terrain::HeightMap& heightMap,
         float terrainSize,
         float heightScale,

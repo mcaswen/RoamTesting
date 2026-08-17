@@ -5,11 +5,27 @@
 namespace ParallelRoam::Algorithms::DataOrientedRoam
 {
 /// <summary>
-/// DOD active leaf 到 CPU Mesh 的输出接口
-/// 在 topology 收敛后调用；读取 state 的最终 leaf 集合，写入调用方拥有的 meshData，不改变拓扑
+/// 开始一个持久 Mesh generation；GPU topology-only Build 会关闭 edit tracking。
 /// </summary>
-void EmitLeafTriangles(
+void BeginIncrementalMeshUpdate(
     DataOrientedRoamState& state,
-    Terrain::TerrainMeshData& meshData,
-    const std::vector<DataOrientedRoamNodeIndex>& leafNodes);
+    bool resetTopology,
+    bool emitCpuMesh);
+
+/// <summary>
+/// 丢弃持久 Mesh 数据；下一次 CPU Build 从当前 active leaf cut 做完整初始化。
+/// </summary>
+void ResetIncrementalMeshStorage(DataOrientedRoamState& state);
+
+/// <summary>
+/// 记录已经成功提交的 topology edit；只在主线程活动索引更新点调用。
+/// </summary>
+void RecordMeshSplit(DataOrientedRoamState& state, DataOrientedRoamNodeIndex node);
+void RecordMeshMerge(DataOrientedRoamState& state, DataOrientedRoamNodeIndex node);
+
+/// <summary>
+/// 拓扑稳定后重放 slot edit，并只重写本 Build 的 dirty triangle。
+/// </summary>
+void ApplyIncrementalMeshUpdates(DataOrientedRoamState& state);
+void FinalizeIncrementalMeshUpdate(DataOrientedRoamState& state);
 } // namespace ParallelRoam::Algorithms::DataOrientedRoam

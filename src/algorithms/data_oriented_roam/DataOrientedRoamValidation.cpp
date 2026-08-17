@@ -387,4 +387,82 @@ void ValidateTopology(DataOrientedRoamState& state)
     // 由负责这些不变量的 queue 模块统一检查
     state.Stats.InvalidTopologyCount += CountPersistentQueueInvariantViolations(state);
 }
+
+void ValidateIncrementalMesh(DataOrientedRoamState& state)
+{
+    constexpr std::size_t elementsPerTriangle = 3U;
+    const DataOrientedRoamIncrementalMesh& mesh = state.IncrementalMesh;
+    if (mesh.NeedsInitialization || mesh.NodeSlots.size() != state.Nodes.size() ||
+        mesh.SlotOwners.size() != state.ActiveLeafNodes.size() ||
+        mesh.SlotDirtyGenerations.size() != mesh.SlotOwners.size() ||
+        mesh.Data.Vertices.size() != mesh.SlotOwners.size() * elementsPerTriangle ||
+        mesh.Data.Indices.size() != mesh.SlotOwners.size() * elementsPerTriangle)
+    {
+        ++state.Stats.InvalidTopologyCount;
+        return;
+    }
+
+    std::vector<std::uint8_t> meshOwners(state.Nodes.size(), 0U);
+    for (std::size_t slot = 0U; slot < mesh.SlotOwners.size(); ++slot)
+    {
+        const DataOrientedRoamNodeIndex node = mesh.SlotOwners[slot];
+        if (!state.IsLeaf(node) || node >= mesh.NodeSlots.size() ||
+            mesh.NodeSlots[node] != slot || meshOwners[node] != 0U)
+        {
+            ++state.Stats.InvalidTopologyCount;
+            continue;
+        }
+        meshOwners[node] = 1U;
+
+        const std::size_t baseIndex = slot * elementsPerTriangle;
+        const TriangleDomain& domain = state.Nodes.DomainAt(node);
+        const std::array<glm::vec2, elementsPerTriangle> expectedUvs{
+            domain.A,
+            domain.B,
+            domain.C,
+        };
+        for (std::size_t localIndex = 0U; localIndex < elementsPerTriangle; ++localIndex)
+        {
+            const std::uint32_t index = mesh.Data.Indices[baseIndex + localIndex];
+            const glm::vec2& actualUv = mesh.Data.Vertices[baseIndex + localIndex].TexCoord;
+            if (index < baseIndex || index >= baseIndex + elementsPerTriangle ||
+                actualUv.x != expectedUvs[localIndex].x ||
+                actualUv.y != expectedUvs[localIndex].y)
+            {
+                ++state.Stats.InvalidTopologyCount;
+            }
+        }
+    }
+
+    for (std::size_t node = 0U; node < state.Nodes.size(); ++node)
+    {
+        const bool activeLeaf = node < state.NodeMembership.size() &&
+            state.NodeMembership[node].ActiveLeafPosition != InvalidActiveNodePosition;
+        const bool ownsMeshSlot = mesh.NodeSlots[node] != InvalidDataOrientedRoamPosition;
+        if (activeLeaf != ownsMeshSlot || ownsMeshSlot != (meshOwners[node] != 0U))
+        {
+            ++state.Stats.InvalidTopologyCount;
+        }
+    }
+
+    std::size_t coveredTriangles = 0U;
+    for (const DataOrientedRoamMeshUpdateRange& range : mesh.UpdateRanges)
+    {
+        if (range.FirstTriangle > mesh.SlotOwners.size() ||
+            range.TriangleCount > mesh.SlotOwners.size() - range.FirstTriangle)
+        {
+            ++state.Stats.InvalidTopologyCount;
+            continue;
+        }
+        coveredTriangles += range.TriangleCount;
+    }
+
+    if (state.Stats.MeshUpdatedTriangleCount + state.Stats.MeshReusedTriangleCount !=
+            mesh.SlotOwners.size() ||
+        state.Stats.MeshDirtyRangeCount != mesh.UpdateRanges.size() ||
+        coveredTriangles != state.Stats.MeshUpdatedTriangleCount)
+    {
+        ++state.Stats.InvalidTopologyCount;
+    }
+}
 } // 命名空间 ParallelRoam::Algorithms::DataOrientedRoam

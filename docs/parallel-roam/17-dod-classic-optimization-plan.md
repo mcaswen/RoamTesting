@@ -2,7 +2,7 @@
 
 > 日期：2026-08-10
 >
-> 状态：实施规划 v1.4，B1、B2、B3、B4 已完成，下一步进入阶段 C
+> 状态：实施规划 v1.5，B1-B4、C1-C2、D1 增量基础已完成；D1 自适应选择暂缓
 >
 > 范围：Data-Oriented CPU ROAM 相对 Classic CPU ROAM 的 CPU 热路径
 >
@@ -338,13 +338,16 @@ DOD 特有的实现收益只来自数据布局：连续活动索引服务并行 
 - sidecar 理论占用从 40-byte/node 降为 24-byte/node，node pool 的 SoA 数值字段和 Classic 路径均未改变；
 - CTest、budget-reentry 和 split queue view 回归继续使用原有队列/拓扑契约，C2 不新增另一套 DOD-only 拓扑规则。
 
-## 8. 阶段 D：DOD 增量与全量自适应 Mesh
+## 8. 阶段 D：DOD 增量 Mesh 与后续全量策略
 
 ### D1. O6：补齐增量 Mesh 输出契约
 
+> 状态：增量基础已完成。按 2026-08-18 的实现决定，本阶段暂不加入 dirty 比例选择策略；
+> 交叉点实验和高变化率完整并行 emit 保留为后续独立步骤。
+
 #### 当前问题
 
-DoD 在 [`DataOrientedRoamPipeline::Build`](../../src/algorithms/data_oriented_roam/DataOrientedRoamPipeline.cpp#L163) 中把全部 `ActiveLeafNodes` 交给 [`EmitLeafTriangles`](../../src/algorithms/data_oriented_roam/DataOrientedRoamMeshEmit.cpp#L121)，每帧重新 resize 和写入完整 CPU Mesh。
+历史实现曾在 [`DataOrientedRoamPipeline::BuildInternal`](../../src/algorithms/data_oriented_roam/DataOrientedRoamPipeline.cpp#L77) 中把全部 `ActiveLeafNodes` 交给完整 emit，每帧重新 resize 和写入 CPU Mesh；该问题已由本节的持久 slot/replay 路径解决。
 
 Classic 已通过 [`ApplyIncrementalMeshUpdates`](../../src/algorithms/classic_roam/ClassicRoamMeshEmit.cpp#L89) 实现稳定 slot、topology edit、dirty slot 和 update range，并由 adapter 发布借用 Mesh 与增量上传契约。
 
@@ -358,6 +361,20 @@ Classic 已通过 [`ApplyIncrementalMeshUpdates`](../../src/algorithms/classic_r
 6. 增加 DOD 版 incremental-emit 回归测试；
 7. 用 A/B 实验确定增量 emit 与全量并行 emit 的交叉点；
 8. 当本帧 dirty triangle 比例超过交叉点时，允许完整并行 emit，不设置拓扑操作数量上限。
+
+#### 实施结果（2026-08-18）
+
+- DOD 使用独立的 `NodeSlots<uint32_t>` SoA 反向索引和连续 `SlotOwners<NodeIndex>`；没有把 Mesh slot 塞入 C2 的 queue membership sidecar；
+- split/merge 仍执行与 Classic 相同的 slot 继承、尾部追加和 move-last 回收语义；并行 topology worker 不写 Mesh，edit 在 join 后的共享活动索引更新点由主线程记录；
+- 拓扑稳定后按提交顺序重放 edit，同一 generation 的 dirty slot 去重后批量生成顶点并合并连续 update ranges；
+- `DataOrientedRoamTerrainLodAlgorithm` 改为发布 borrowed persistent Mesh、generation、full-upload 标记和 update ranges，OpenGL/D3D12 继续消费既有统一 packet；
+- 新增 `roam_incremental_mesh_emit_dod`，并把 Mesh slot owner、反向索引、局部索引、UV、range 边界和 `updated + reused == active` 纳入 DOD validator；
+- 这部分是补齐 Classic 已有的增量输出能力，不记为 DOD 独有优化。DOD 与 Classic 的逻辑契约一致，差异仅来自 SoA node index 和并行提交后的集中 edit 表达；
+- 本次没有实现第 7、8 项的自适应选择，也不把 dirty 批次的 worker 分段宣称为 DOD 独占能力。
+
+默认 OpenGL runtime benchmark 的同机单轮对比为：DOD `Mesh emit` 从 `0.6923 ms` 降到 `0.0498 ms`，`CPU upload` 从 `0.2048 ms` 降到 `0.0227 ms`，`CPU update` 从 `1.6710 ms` 降到 `0.9924 ms`。该数据证明默认路径的目标阶段明显下降；最终性能结论仍按多轮中位数规则验收。
+
+预算饱和单轮中，固定增量路径每帧中位更新约 `138923 / 200000` 个三角形并产生 `36738` 个 dirty ranges，`Mesh emit` 中位数为 `19.5109 ms`；C2 全量并行基线为 `17.1440 ms`。这说明高变化率已经进入增量路径的不适用区间。按当前决定保留该边界，不在 D1 基础实现中加入自动选择，也不把默认路径收益外推到压力路径。
 
 #### 验收
 

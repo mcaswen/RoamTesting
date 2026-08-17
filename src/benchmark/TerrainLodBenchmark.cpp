@@ -555,7 +555,8 @@ bool ValidateRunShape(const BenchmarkScenario& scenario, std::vector<BenchmarkFr
     }
 
     if (scenario.Name == "incremental-emit" && frames.size() >= 3U &&
-        frames.front().AlgorithmName == "classic_cpu_roam")
+        (frames.front().AlgorithmName == "classic_cpu_roam" ||
+         frames.front().AlgorithmName == "data_oriented_cpu_roam"))
     {
         const bool initializedOnce = frames[0].Stats.CpuMeshFullRebuildCount == 1U;
         const bool secondBuildStayedIncremental = frames[1].Stats.CpuMeshFullRebuildCount == 0U;

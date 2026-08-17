@@ -717,18 +717,19 @@ void WriteSummaryMarkdown(
              << " | " << dodSummary.AverageCpuMeshEmitMilliseconds
              << " | " << gpuSummary.AverageCpuMeshEmitMilliseconds
              << " | " << gpuSummary.AverageGpuMeshEmitMilliseconds
-             << " | Classic 只重写拓扑变化影响的稳定槽位；DOD 仍完整 emit；GPU 输出非共享顶点、索引和 indirect draw argument |\n";
+             << " | Classic 与 DOD 都只重写拓扑变化影响的稳定槽位；DOD 将较大的 dirty-slot 列表分段交给 worker；GPU 输出非共享顶点、索引和 indirect draw argument |\n";
     markdown << "| Finalize / 发布 packet | " << classicSummary.AverageCpuFinalizeMilliseconds
              << " | " << dodSummary.AverageCpuFinalizeMilliseconds
              << " | " << gpuSummary.AverageCpuFinalizeMilliseconds
-             << " | N/A | CPU 发布统计和 renderer 资源契约 |\n";
+             << " | N/A | CPU 汇总活动叶统计、重建 active split path/hysteresis 状态，并发布 renderer 资源契约 |\n";
 
     markdown << "\n## CPU 实现阶段\n\n";
     markdown << "`CPU update` 包含下表中互斥的物理执行区间；`CPU upload` 是算法返回后的 renderer 上传。"
              << "Classic 与 DOD 都持久维护 Q_s/Q_m，并在每个 Build 刷新现有成员的优先级。DOD 对两队列的评分并行化，"
              << "`Split scan/mark` 包含 Q_s 优先级刷新、原地建堆和提交快照生成，`Merge mark` 对应 Q_m 的同类工作。"
              << "DOD 满预算时持续执行 merge-first 资源交换，直到 max(Q_s) 不再高于 min(Q_m)。"
-             << "两者单独的 `Error eval` 都为零；Classic 的 `Mesh emit` 是 dirty-slot 增量更新，不再等同于完整网格构建；"
+             << "两者单独的 `Error eval` 都为零；Classic 与 DOD 的 `Mesh emit` 都是 dirty-slot 增量更新，"
+             << "DOD 对较大的 dirty 批次沿用 worker 分段，因此两者差异不能解释为增量与全量策略差异；"
              << "GPU shader 仍保留独立 dispatch。\n\n";
     markdown << "| Algorithm | CPU update | Prepare | Merge mark | Merge topology | Budget leaf collect | "
              << "Error eval | Split scan/mark | Split topology | Final leaf collect/view | Mesh emit | "
@@ -798,7 +799,7 @@ void WriteSummaryMarkdown(
 
     markdown << "\n### 增量 CPU Mesh 输出\n\n";
     markdown << "`Full rebuilds` 是采样窗口内的全量初始化次数；其余列是逐帧平均值。"
-             << "当前只有 Classic 填充这些字段，其他算法为零不代表它们也采用了增量输出。"
+             << "Classic 与 DOD 都填充稳定 slot、dirty range 和复用统计；GPU 路径的零值不代表增量 CPU 输出。"
              << "D3D12 的 frame slot 会延迟消费两次使用之间积累的 dirty range 并集，"
              << "因此 `Max upload bytes` 表示实际补齐量，不要求等于当前 Build 的 updated triangles。\n\n";
     markdown << "| Algorithm | Full rebuilds | Updated triangles | Reused triangles | Dirty ranges | Max upload bytes |\n";
