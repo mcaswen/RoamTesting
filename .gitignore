@@ -64,6 +64,10 @@ CMakeUserPresets.json
 coverage/
 *.profraw
 *.profdata
+*.etl
+*.symcache
+benchmark-output/*-profile-detail.txt
+benchmark-output/*-profile-stacks.txt
 
 # Logs and generated experiment data
 *.log

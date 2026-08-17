@@ -2,7 +2,7 @@
 
 > 日期：2026-08-10
 >
-> 状态：实施规划 v1.3，B1、B2、B3 已完成
+> 状态：实施规划 v1.4，B1、B2、B3、B4 已完成，下一步进入阶段 C
 >
 > 范围：Data-Oriented CPU ROAM 相对 Classic CPU ROAM 的 CPU 热路径
 >
@@ -247,13 +247,24 @@ DoD 的 [`NormalizeQueueNeighborhood`](../../src/algorithms/data_oriented_roam/D
 - 汇编或 profiler 中不再出现热路径 `operator[]` 调用；
 - 正确性结果不变。
 
-### B4. 阶段 B 决策点
+### B4. 阶段 B 决策点（已完成）
 
 阶段 B 完成后先停止实现并重新测量：
 
 - 若默认和压力路径的 DOD 串行 split/merge 单操作成本已接近 Classic，进入阶段 C；
 - 若差距仍明显，使用 profiler 只检查 `SplitNode`、`MergeSingleNode`、heap 维护和邻域队列更新；
 - 若 profiler 显示主要剩余时间来自随机 SoA 索引访问，而不是额外函数、分支或分配，则把该差距记录为当前数据布局对随机拓扑修改的成本，不继续增加新问题。
+
+#### 决策结果：2026-08-17
+
+- RelWithDebInfo 构建与 CTest 10/10 通过；
+- 默认路径剔除 `timeSeconds == 0` 的初始化样本后，DOD 相对 Classic 的单次 split/merge 拓扑成本仍分别高约 33% 和 52%，但绝对差值合计只有约 0.0185 ms/帧；
+- 20 万预算压力路径剔除初始化样本后，两者都持续保持 199999–200000 个活动叶三角形，Classic 执行 878879 次 split/merge，DOD 执行 879591 次，工作量差异只有约 0.08%；
+- 压力路径中 Classic 的 split topology 为 80.041 ms/帧，DOD 总计为 94.236 ms/帧，但 DOD 的串行收敛只有 78.324 ms/帧；多出的时间主要来自 15.384 ms/帧的并行 chunk 构建，不来自串行 `SplitNodeImpl`；
+- Classic 的 merge topology 为 47.265 ms/帧，DOD 总计为 51.020 ms/帧；DOD 串行收敛为 38.818 ms/帧，额外成本主要是 8.800 ms/帧的活动索引/队列刷新和 2.115 ms/帧的邻域失效；
+- WPR 共取得 18396 个目标进程 CPU 样本。`ClassicRoamMeshBuilder::SplitNode` 有 2126 个包含样本，DOD 串行 `SplitNodeImpl` 有 2031 个；Classic `MergeNodeOrDiamond` 有 1112 个，DOD 串行 `MergeNodeOrDiamondWithScoreLimitImpl` 有 897 个。串行拓扑核心已经不慢于 Classic；
+- DOD 的 `SplitEntryPrecedes`、`RefreshPersistentMergeQueueNeighborhood` 和 `InsertMergeQueueNodeIfEligible` 仍明显高于 Classic 对应函数，剩余优化对象与阶段 C 的 O3/O8 完全一致；
+- B4 决策为进入阶段 C，不再为串行 `SplitNode`/`MergeSingleNode` 增加新的优化问题。完整数据见 [B4 阶段决策报告](../../benchmark-output/b4-stage-b-decision-20260817.md)。
 
 ## 7. 阶段 C：队列和活动索引布局
 
