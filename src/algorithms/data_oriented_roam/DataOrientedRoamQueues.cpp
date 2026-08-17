@@ -10,7 +10,7 @@ namespace ParallelRoam::Algorithms::DataOrientedRoam
 {
 namespace
 {
-constexpr std::size_t InvalidQueuePosition = std::numeric_limits<std::size_t>::max();
+constexpr DataOrientedRoamPosition InvalidQueuePosition = InvalidDataOrientedRoamPosition;
 constexpr std::size_t MinParallelPriorityRefreshCount = 256U;
 constexpr std::size_t MaxPriorityRefreshWorkerCount = 8U;
 constexpr float BlockedSplitScore = -std::numeric_limits<float>::max();
@@ -46,26 +46,24 @@ std::size_t ResolvePriorityRefreshWorkerCount(
 // SoA 节点池中，因此这里只看 IsSplit 无法区分节点是否仍然活动。
 bool IsActiveInternalNode(const DataOrientedRoamState& state, DataOrientedRoamNodeIndex node)
 {
-    if (!state.IsValidNode(node) || node >= state.ActiveInternalNodePositions.size())
+    if (!state.IsValidNode(node) || node >= state.NodeMembership.size())
     {
         return false;
     }
-    const std::size_t position = state.ActiveInternalNodePositions[node];
-    return position != InvalidActiveNodePosition && position < state.ActiveInternalNodes.size() &&
-           state.ActiveInternalNodes[position] == node;
+    // membership position 是 topology commit 的权威活动标记；完整的正向/反向
+    // 对照只在 validator 中执行，热路径不再额外读取 ActiveInternalNodes。
+    return state.NodeMembership[node].ActiveInternalPosition != InvalidActiveNodePosition;
 }
 
 // 反向位置表让检查不依赖节点池的历史状态，也能在过期的活动索引项进入
 // 持久 heap 之前将其拦截。
 bool IsActiveLeafNode(const DataOrientedRoamState& state, DataOrientedRoamNodeIndex node)
 {
-    if (!state.IsValidNode(node) || node >= state.ActiveLeafNodePositions.size())
+    if (!state.IsValidNode(node) || node >= state.NodeMembership.size())
     {
         return false;
     }
-    const std::size_t position = state.ActiveLeafNodePositions[node];
-    return position != InvalidActiveNodePosition && position < state.ActiveLeafNodes.size() &&
-           state.ActiveLeafNodes[position] == node;
+    return state.NodeMembership[node].ActiveLeafPosition != InvalidActiveNodePosition;
 }
 
 float SplitQueueScore(const DataOrientedRoamState& state, DataOrientedRoamNodeIndex node)
@@ -114,8 +112,10 @@ void SwapSplitQueueEntries(DataOrientedRoamState& state, std::size_t left, std::
         return;
     }
     std::swap(state.SplitQueue[left], state.SplitQueue[right]);
-    state.SplitQueuePositions[state.SplitQueue[left].Node] = left;
-    state.SplitQueuePositions[state.SplitQueue[right].Node] = right;
+    state.NodeMembership[state.SplitQueue[left].Node].SplitQueuePosition =
+        static_cast<DataOrientedRoamPosition>(left);
+    state.NodeMembership[state.SplitQueue[right].Node].SplitQueuePosition =
+        static_cast<DataOrientedRoamPosition>(right);
 }
 
 void SiftSplitQueueUp(DataOrientedRoamState& state, std::size_t index)
@@ -241,7 +241,7 @@ DataOrientedRoamNodeIndex CanonicalMergeQueueNode(
 // 形成的 diamond 会被暂时屏蔽，避免立即发生反向 merge。
 float MergeQueueScore(const DataOrientedRoamState& state, DataOrientedRoamNodeIndex node)
 {
-    const DataOrientedRoamNodeIndex partner = state.MergeQueuePartners[node];
+    const DataOrientedRoamNodeIndex partner = state.NodeMembership[node].MergeQueuePartner;
     if (state.Nodes.SplitBuildIdAt(node) == state.BuildSequence ||
         (state.IsValidNode(partner) && state.Nodes.SplitBuildIdAt(partner) == state.BuildSequence))
     {
@@ -279,8 +279,10 @@ void SwapMergeQueueEntries(DataOrientedRoamState& state, std::size_t left, std::
         return;
     }
     std::swap(state.MergeQueue[left], state.MergeQueue[right]);
-    state.MergeQueuePositions[state.MergeQueue[left].Node] = left;
-    state.MergeQueuePositions[state.MergeQueue[right].Node] = right;
+    state.NodeMembership[state.MergeQueue[left].Node].MergeQueuePosition =
+        static_cast<DataOrientedRoamPosition>(left);
+    state.NodeMembership[state.MergeQueue[right].Node].MergeQueuePosition =
+        static_cast<DataOrientedRoamPosition>(right);
 }
 
 // 局部插入复杂度为 O(log M)，M 是当前可 merge 的 diamond 数量。
@@ -345,13 +347,14 @@ void RestoreMergeQueueAt(DataOrientedRoamState& state, std::size_t index)
     }
 }
 
-// 每个 diamond 只插入唯一的代表节点。MergeQueueRepresentatives 将双方 parent
+// 每个 diamond 只插入唯一的代表节点。sidecar representative 将双方 parent
 // 都关联到同一个 heap 项，因此从任意一侧都能删除该 diamond。
 void InsertMergeQueueNodeIfEligible(DataOrientedRoamState& state, DataOrientedRoamNodeIndex node)
 {
     const DataOrientedRoamNodeIndex representative = CanonicalMergeQueueNode(state, node);
     if (!state.IsValidNode(representative) ||
-        state.MergeQueueRepresentatives[representative] != InvalidDataOrientedRoamNodeIndex)
+        state.NodeMembership[representative].MergeQueueRepresentative !=
+            InvalidDataOrientedRoamNodeIndex)
     {
         return;
     }
@@ -366,22 +369,24 @@ void InsertMergeQueueNodeIfEligible(DataOrientedRoamState& state, DataOrientedRo
     // 防御性清理用于避免局部过期关联让同一个 parent 同时属于两个 diamond；
     // 正常拓扑事务不应触发这条路径。
     if (state.IsValidNode(partner) &&
-        state.MergeQueueRepresentatives[partner] != InvalidDataOrientedRoamNodeIndex)
+        state.NodeMembership[partner].MergeQueueRepresentative !=
+            InvalidDataOrientedRoamNodeIndex)
     {
         RemovePersistentMergeQueueCandidate(state, partner);
     }
 
-    state.MergeQueueRepresentatives[representative] = representative;
-    state.MergeQueuePartners[representative] = partner;
+    state.NodeMembership[representative].MergeQueueRepresentative = representative;
+    state.NodeMembership[representative].MergeQueuePartner = partner;
     if (state.IsValidNode(partner))
     {
-        state.MergeQueueRepresentatives[partner] = representative;
+        state.NodeMembership[partner].MergeQueueRepresentative = representative;
     }
 
     // 同一个 Build 内相机参数保持不变，因此入队时直接计算分数；下一次 Build
     // 会在读取 heap 前刷新所有仍在队列中的节点。
     const std::size_t position = state.MergeQueue.size();
-    state.MergeQueuePositions[representative] = position;
+    state.NodeMembership[representative].MergeQueuePosition =
+        static_cast<DataOrientedRoamPosition>(position);
     state.MergeQueue.push_back(
         DataOrientedRoamMergeQueueEntry{MergeQueueScore(state, representative), representative});
     SiftMergeQueueUp(state, position);
@@ -422,12 +427,16 @@ void InitializePersistentSplitQueue(DataOrientedRoamState& state)
 {
     // ResetTopology 先建立活动叶视图，这里据此创建独立 Q_s 和反向位置
     state.SplitQueue.clear();
-    state.SplitQueuePositions.assign(state.Nodes.size(), InvalidQueuePosition);
+    for (DataOrientedRoamNodeMembership& membership : state.NodeMembership)
+    {
+        membership.SplitQueuePosition = InvalidQueuePosition;
+    }
     for (DataOrientedRoamNodeIndex node : state.ActiveLeafNodes)
     {
         const float score = SplitQueueScore(state, node);
         MirrorSplitQueueScore(state, node, score);
-        state.SplitQueuePositions[node] = state.SplitQueue.size();
+        state.NodeMembership[node].SplitQueuePosition = static_cast<DataOrientedRoamPosition>(
+            state.SplitQueue.size());
         state.SplitQueue.push_back(DataOrientedRoamSplitQueueEntry{score, node});
     }
     for (std::size_t index = state.SplitQueue.size() / 2U; index > 0U; --index)
@@ -506,8 +515,8 @@ void InsertPersistentSplitQueueNode(DataOrientedRoamState& state, DataOrientedRo
 {
     // 调用本函数前活动叶视图已经更新，Q_s 反向位置让重复通知保持幂等
     if (!IsActiveLeafNode(state, node) || !state.IsLeaf(node) ||
-        node >= state.SplitQueuePositions.size() ||
-        state.SplitQueuePositions[node] != InvalidQueuePosition)
+        node >= state.NodeMembership.size() ||
+        state.NodeMembership[node].SplitQueuePosition != InvalidQueuePosition)
     {
         return;
     }
@@ -515,7 +524,7 @@ void InsertPersistentSplitQueueNode(DataOrientedRoamState& state, DataOrientedRo
     const std::size_t position = state.SplitQueue.size();
     const float score = SplitQueueScore(state, node);
     MirrorSplitQueueScore(state, node, score);
-    state.SplitQueuePositions[node] = position;
+    state.NodeMembership[node].SplitQueuePosition = static_cast<DataOrientedRoamPosition>(position);
     state.SplitQueue.push_back(DataOrientedRoamSplitQueueEntry{score, node});
     SiftSplitQueueUp(state, position);
     ++state.Stats.QueueMembershipUpdateCount;
@@ -525,11 +534,11 @@ void RemovePersistentSplitQueueNode(DataOrientedRoamState& state, DataOrientedRo
 {
     // forced split 可能删除不在 heap 顶部的候选，因此 Q_s 必须支持按索引删除，
     // 不能只提供弹出队首的 priority_queue 语义。
-    if (!state.IsValidNode(node) || node >= state.SplitQueuePositions.size())
+    if (!state.IsValidNode(node) || node >= state.NodeMembership.size())
     {
         return;
     }
-    const std::size_t position = state.SplitQueuePositions[node];
+    const std::size_t position = state.NodeMembership[node].SplitQueuePosition;
     if (position == InvalidQueuePosition || position >= state.SplitQueue.size())
     {
         return;
@@ -542,7 +551,7 @@ void RemovePersistentSplitQueueNode(DataOrientedRoamState& state, DataOrientedRo
         SwapSplitQueueEntries(state, position, last);
     }
     state.SplitQueue.pop_back();
-    state.SplitQueuePositions[node] = InvalidQueuePosition;
+    state.NodeMembership[node].SplitQueuePosition = InvalidQueuePosition;
     RestoreSplitQueueAt(state, position);
     ++state.Stats.QueueMembershipUpdateCount;
 }
@@ -558,7 +567,7 @@ void BlockPersistentSplitQueueNodeForCurrentBuild(
         return;
     }
     state.SplitQueueBlockedBuildIds[node] = state.BuildSequence;
-    const std::size_t position = state.SplitQueuePositions[node];
+    const std::size_t position = state.NodeMembership[node].SplitQueuePosition;
     if (position == InvalidQueuePosition || position >= state.SplitQueue.size())
     {
         return;
@@ -606,9 +615,12 @@ void InitializePersistentMergeQueue(DataOrientedRoamState& state)
     // reset 时允许遍历一次全部活动 internal 节点来建立初始真值。
     // 正常 Build 不再走这条全量路径，之后完全由局部拓扑事务维护。
     state.MergeQueue.clear();
-    state.MergeQueuePositions.assign(state.Nodes.size(), InvalidQueuePosition);
-    state.MergeQueueRepresentatives.assign(state.Nodes.size(), InvalidDataOrientedRoamNodeIndex);
-    state.MergeQueuePartners.assign(state.Nodes.size(), InvalidDataOrientedRoamNodeIndex);
+    for (DataOrientedRoamNodeMembership& membership : state.NodeMembership)
+    {
+        membership.MergeQueuePosition = InvalidQueuePosition;
+        membership.MergeQueueRepresentative = InvalidDataOrientedRoamNodeIndex;
+        membership.MergeQueuePartner = InvalidDataOrientedRoamNodeIndex;
+    }
     for (DataOrientedRoamNodeIndex node : state.ActiveInternalNodes)
     {
         InsertMergeQueueNodeIfEligible(state, node);
@@ -777,18 +789,20 @@ void RemovePersistentMergeQueueCandidate(
 {
     // node 可以是代表节点，也可以是 diamond 的另一侧；反向关联会先把它们
     // 统一解析到同一个 heap 位置，确保一次删除同时清理双方状态。
-    if (!state.IsValidNode(node) || node >= state.MergeQueueRepresentatives.size())
+    if (!state.IsValidNode(node) || node >= state.NodeMembership.size())
     {
         return;
     }
-    const DataOrientedRoamNodeIndex representative = state.MergeQueueRepresentatives[node];
+    const DataOrientedRoamNodeIndex representative =
+        state.NodeMembership[node].MergeQueueRepresentative;
     if (!state.IsValidNode(representative))
     {
         return;
     }
 
-    const DataOrientedRoamNodeIndex partner = state.MergeQueuePartners[representative];
-    const std::size_t position = state.MergeQueuePositions[representative];
+    const DataOrientedRoamNodeIndex partner =
+        state.NodeMembership[representative].MergeQueuePartner;
+    const std::size_t position = state.NodeMembership[representative].MergeQueuePosition;
     if (position != InvalidQueuePosition && position < state.MergeQueue.size())
     {
         // 将末尾项移入空位，再修复它的 heap 关系。
@@ -802,12 +816,15 @@ void RemovePersistentMergeQueueCandidate(
         ++state.Stats.QueueMembershipUpdateCount;
     }
 
-    state.MergeQueuePositions[representative] = InvalidQueuePosition;
-    state.MergeQueueRepresentatives[representative] = InvalidDataOrientedRoamNodeIndex;
-    state.MergeQueuePartners[representative] = InvalidDataOrientedRoamNodeIndex;
+    state.NodeMembership[representative].MergeQueuePosition = InvalidQueuePosition;
+    state.NodeMembership[representative].MergeQueueRepresentative =
+        InvalidDataOrientedRoamNodeIndex;
+    state.NodeMembership[representative].MergeQueuePartner =
+        InvalidDataOrientedRoamNodeIndex;
     if (state.IsValidNode(partner))
     {
-        state.MergeQueueRepresentatives[partner] = InvalidDataOrientedRoamNodeIndex;
+        state.NodeMembership[partner].MergeQueueRepresentative =
+            InvalidDataOrientedRoamNodeIndex;
     }
 }
 
@@ -850,12 +867,8 @@ std::size_t CountPersistentQueueInvariantViolations(const DataOrientedRoamState&
     // 该检查只在启用拓扑验证时运行，不进入默认性能测试的热路径。
     std::size_t violations = 0U;
     const std::size_t nodeCount = state.Nodes.size();
-    if (state.ActiveLeafNodePositions.size() != nodeCount ||
-        state.SplitQueuePositions.size() != nodeCount ||
-        state.SplitQueueBlockedBuildIds.size() != nodeCount ||
-        state.MergeQueuePositions.size() != nodeCount ||
-        state.MergeQueueRepresentatives.size() != nodeCount ||
-        state.MergeQueuePartners.size() != nodeCount)
+    if (state.NodeMembership.size() != nodeCount ||
+        state.SplitQueueBlockedBuildIds.size() != nodeCount)
     {
         // 反向表长度不匹配时，后续所有索引检查都不再安全。
         return 1U;
@@ -872,7 +885,8 @@ std::size_t CountPersistentQueueInvariantViolations(const DataOrientedRoamState&
     {
         const DataOrientedRoamSplitQueueEntry& entry = state.SplitQueue[index];
         const DataOrientedRoamNodeIndex node = entry.Node;
-        if (!state.IsValidNode(node) || state.SplitQueuePositions[node] != index ||
+        if (!state.IsValidNode(node) ||
+            state.NodeMembership[node].SplitQueuePosition != index ||
             !IsActiveLeafNode(state, node))
         {
             ++violations;
@@ -896,7 +910,7 @@ std::size_t CountPersistentQueueInvariantViolations(const DataOrientedRoamState&
     // 每个活动 leaf 必须在独立 Q_s 中恰好出现一次
     for (DataOrientedRoamNodeIndex node : state.ActiveLeafNodes)
     {
-        const std::size_t position = state.SplitQueuePositions[node];
+        const std::size_t position = state.NodeMembership[node].SplitQueuePosition;
         if (position == InvalidQueuePosition || position >= state.SplitQueue.size() ||
             state.SplitQueue[position].Node != node)
         {
@@ -909,8 +923,9 @@ std::size_t CountPersistentQueueInvariantViolations(const DataOrientedRoamState&
     for (std::size_t index = 0U; index < state.MergeQueue.size(); ++index)
     {
         const DataOrientedRoamNodeIndex node = state.MergeQueue[index].Node;
-        if (!state.IsValidNode(node) || state.MergeQueuePositions[node] != index ||
-            state.MergeQueueRepresentatives[node] != node ||
+        if (!state.IsValidNode(node) ||
+            state.NodeMembership[node].MergeQueuePosition != index ||
+            state.NodeMembership[node].MergeQueueRepresentative != node ||
             CanonicalMergeQueueNode(state, node) != node)
         {
             ++violations;
@@ -919,9 +934,9 @@ std::size_t CountPersistentQueueInvariantViolations(const DataOrientedRoamState&
 
         // PathId 顺序用于确认该项确实是互指 diamond 中稳定且较小的一侧，
         // 而不是由遍历顺序任意选出的 parent。
-        const DataOrientedRoamNodeIndex partner = state.MergeQueuePartners[node];
+        const DataOrientedRoamNodeIndex partner = state.NodeMembership[node].MergeQueuePartner;
         if (state.IsValidNode(partner) &&
-            (state.MergeQueueRepresentatives[partner] != node ||
+            (state.NodeMembership[partner].MergeQueueRepresentative != node ||
              state.Nodes.PathIdAt(node) >= state.Nodes.PathIdAt(partner)))
         {
             ++violations;
@@ -951,7 +966,7 @@ std::size_t CountPersistentQueueInvariantViolations(const DataOrientedRoamState&
         // 增量维护这项关系。
         const DataOrientedRoamNodeIndex representative = CanonicalMergeQueueNode(state, node);
         if (state.IsValidNode(representative) &&
-            state.MergeQueueRepresentatives[node] != representative)
+            state.NodeMembership[node].MergeQueueRepresentative != representative)
         {
             ++violations;
         }

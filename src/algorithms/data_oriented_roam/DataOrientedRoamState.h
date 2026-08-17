@@ -16,8 +16,14 @@ class DataOrientedRoamThreadPool;
 using DataOrientedRoamNodeIndex = std::uint32_t;
 constexpr DataOrientedRoamNodeIndex InvalidDataOrientedRoamNodeIndex =
     std::numeric_limits<DataOrientedRoamNodeIndex>::max();
-constexpr std::size_t InvalidActiveNodePosition =
-    std::numeric_limits<std::size_t>::max();
+// NodeIndex 已经限制 node pool 为 uint32_t；所有活动列表和持久队列都是
+// node pool 的子集，因此 position 可以使用相同宽度，避免 64 位旁路索引。
+using DataOrientedRoamPosition = std::uint32_t;
+constexpr DataOrientedRoamPosition InvalidDataOrientedRoamPosition =
+    std::numeric_limits<DataOrientedRoamPosition>::max();
+constexpr DataOrientedRoamPosition InvalidActiveNodePosition =
+    InvalidDataOrientedRoamPosition;
+static_assert(sizeof(DataOrientedRoamNodeIndex) == sizeof(DataOrientedRoamPosition));
 // chunk id 是并发 topology commit 的 ownership 键
 using DataOrientedRoamChunkId = std::uint32_t;
 constexpr DataOrientedRoamChunkId InvalidDataOrientedRoamChunkId =
@@ -79,6 +85,22 @@ struct DataOrientedRoamMergeQueueEntry
     float Score{0.0F};
     DataOrientedRoamNodeIndex Node{InvalidDataOrientedRoamNodeIndex};
 };
+
+/// <summary>
+/// DOD 节点的动态 membership sidecar。
+/// node pool 仍保持 SoA；只把需要按 node 随机定位的活动/队列元数据收拢，
+/// 对应 Classic 节点内的 intrusive position、representative 和 partner 字段。
+/// </summary>
+struct DataOrientedRoamNodeMembership
+{
+    DataOrientedRoamPosition ActiveInternalPosition{InvalidDataOrientedRoamPosition};
+    DataOrientedRoamPosition ActiveLeafPosition{InvalidDataOrientedRoamPosition};
+    DataOrientedRoamPosition SplitQueuePosition{InvalidDataOrientedRoamPosition};
+    DataOrientedRoamPosition MergeQueuePosition{InvalidDataOrientedRoamPosition};
+    DataOrientedRoamNodeIndex MergeQueueRepresentative{InvalidDataOrientedRoamNodeIndex};
+    DataOrientedRoamNodeIndex MergeQueuePartner{InvalidDataOrientedRoamNodeIndex};
+};
+static_assert(sizeof(DataOrientedRoamNodeMembership) == 24U);
 
 struct DataOrientedRoamMergeCandidateEvaluation
 {
@@ -343,22 +365,17 @@ struct DataOrientedRoamState
 
     // 当前活动 internal 节点的连续索引，避免 merge 每帧扫描历史 node pool
     std::vector<DataOrientedRoamNodeIndex> ActiveInternalNodes;
-    // 节点索引到 ActiveInternalNodes 位置的反向表，支持 O(1) swap-remove
-    std::vector<std::size_t> ActiveInternalNodePositions;
     // 当前活动 leaf 的稠密视图只随拓扑变化，评分和 heapify 不再改变它的顺序
     std::vector<DataOrientedRoamNodeIndex> ActiveLeafNodes;
-    std::vector<std::size_t> ActiveLeafNodePositions;
+    // 每个 node 的活动/队列 membership 使用紧凑 sidecar，避免六组旁路数组分散访问
+    std::vector<DataOrientedRoamNodeMembership> NodeMembership;
 
     // 持久 Q_s 独立保存 node/score，反向位置支持 forced split 按 node 删除
     std::vector<DataOrientedRoamSplitQueueEntry> SplitQueue;
-    std::vector<std::size_t> SplitQueuePositions;
     std::vector<std::uint64_t> SplitQueueBlockedBuildIds;
 
     // 每个可 merge 的 diamond 只保存一个 canonical representative
     std::vector<DataOrientedRoamMergeQueueEntry> MergeQueue;
-    std::vector<std::size_t> MergeQueuePositions;
-    std::vector<DataOrientedRoamNodeIndex> MergeQueueRepresentatives;
-    std::vector<DataOrientedRoamNodeIndex> MergeQueuePartners;
 
     // RootA 和 RootB 构成初始 diamond
     DataOrientedRoamNodeIndex RootA{InvalidDataOrientedRoamNodeIndex};

@@ -325,15 +325,7 @@ void ValidateTopology(DataOrientedRoamState& state)
         stack.push_back(state.Nodes[nodeIndex].RightChild);
     }
 
-    if (state.ActiveInternalNodePositions.size() != state.Nodes.size())
-    {
-        ++state.Stats.InvalidTopologyCount;
-    }
-    if (state.ActiveLeafNodePositions.size() != state.Nodes.size())
-    {
-        ++state.Stats.InvalidTopologyCount;
-    }
-    if (state.SplitQueuePositions.size() != state.Nodes.size())
+    if (state.NodeMembership.size() != state.Nodes.size())
     {
         ++state.Stats.InvalidTopologyCount;
     }
@@ -342,8 +334,8 @@ void ValidateTopology(DataOrientedRoamState& state)
     {
         const DataOrientedRoamNodeIndex nodeIndex = state.ActiveInternalNodes[position];
         if (!state.IsValidNode(nodeIndex) ||
-            nodeIndex >= state.ActiveInternalNodePositions.size() ||
-            state.ActiveInternalNodePositions[nodeIndex] != position ||
+            nodeIndex >= state.NodeMembership.size() ||
+            state.NodeMembership[nodeIndex].ActiveInternalPosition != position ||
             reachableInternal[nodeIndex] == 0U)
         {
             ++state.Stats.InvalidTopologyCount;
@@ -352,8 +344,9 @@ void ValidateTopology(DataOrientedRoamState& state)
 
     for (std::size_t nodeIndex = 0U; nodeIndex < state.Nodes.size(); ++nodeIndex)
     {
-        const bool indexed = nodeIndex < state.ActiveInternalNodePositions.size() &&
-                             state.ActiveInternalNodePositions[nodeIndex] != InvalidActiveNodePosition;
+        const bool indexed = nodeIndex < state.NodeMembership.size() &&
+                             state.NodeMembership[nodeIndex].ActiveInternalPosition !=
+                                 InvalidActiveNodePosition;
         if (indexed != (reachableInternal[nodeIndex] != 0U))
         {
             ++state.Stats.InvalidTopologyCount;
@@ -371,8 +364,8 @@ void ValidateTopology(DataOrientedRoamState& state)
         // 正向表中的每个元素都必须反查到当前位置，并且确实属于可达 leaf 集合。
         const DataOrientedRoamNodeIndex nodeIndex = state.ActiveLeafNodes[position];
         if (!state.IsValidNode(nodeIndex) ||
-            nodeIndex >= state.ActiveLeafNodePositions.size() ||
-            state.ActiveLeafNodePositions[nodeIndex] != position ||
+            nodeIndex >= state.NodeMembership.size() ||
+            state.NodeMembership[nodeIndex].ActiveLeafPosition != position ||
             !leafSet[nodeIndex])
         {
             ++state.Stats.InvalidTopologyCount;
@@ -381,8 +374,9 @@ void ValidateTopology(DataOrientedRoamState& state)
     for (std::size_t nodeIndex = 0U; nodeIndex < state.Nodes.size(); ++nodeIndex)
     {
         // 反向全扫捕获漏登记 leaf，以及 merge 后仍残留 position 的 inactive child。
-        const bool indexed = nodeIndex < state.ActiveLeafNodePositions.size() &&
-                             state.ActiveLeafNodePositions[nodeIndex] != InvalidActiveNodePosition;
+        const bool indexed = nodeIndex < state.NodeMembership.size() &&
+                             state.NodeMembership[nodeIndex].ActiveLeafPosition !=
+                                 InvalidActiveNodePosition;
         if (indexed != leafSet[nodeIndex])
         {
             ++state.Stats.InvalidTopologyCount;

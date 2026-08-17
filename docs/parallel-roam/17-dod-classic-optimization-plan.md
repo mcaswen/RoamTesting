@@ -304,18 +304,39 @@ Classic 的 [`SplitQueueEntry`](../../src/algorithms/classic_roam/ClassicRoamMes
 
 #### 实施内容
 
-1. 增加紧凑的 active 状态或 generation 标记，降低活动性判断成本；
-2. 在可证明节点容量不会溢出的前提下评估 32 位 position；
-3. 将 merge queue 的 position、representative、partner 按实际访问模式重组；
-4. 批量 commit 继续集中更新旁路索引；
-5. 不删除 `ActiveInternalNodes`。已有 A/B 已证明它能避免扫描历史 node pool，并显著降低 merge candidate mark。
+1. 保留 `ActiveInternalNodes` 和 `ActiveLeafNodes` 的连续索引，把 node-to-position、queue position、merge representative/partner 收拢到单一 `DataOrientedRoamNodeMembership` sidecar；
+2. 在 `DataOrientedRoamNodeIndex == uint32_t` 的容量边界内，将所有 position 改为 32 位 sentinel 索引；
+3. 用 sidecar 的 sentinel position 作为热路径 active 状态，完整的正向列表/反向位置交叉检查只留在 topology validator；
+4. 将 merge queue 的 position、representative、partner 按“按 node 随机定位、同一事务连续更新”的访问模式重组；
+5. 批量 commit 继续集中更新 sidecar，保持 Classic 的 O(1) swap-remove、O(log N) indexed heap 删除和 canonical diamond 语义；
+6. 不删除 `ActiveInternalNodes`。已有 A/B 已证明它能避免扫描历史 node pool，并显著降低 merge candidate mark。
+
+#### 实现边界：Classic 对齐与 DOD 专属区间
+
+本阶段不把 Classic 也能实现、但 Classic 尚未实现的通用拓扑或 heap 优化只施加给 DOD。Classic 已经把活动状态和 queue 反向位置放在节点内；C2 只在 DOD 的 SoA 节点池之外建立语义等价的紧凑 sidecar，因此两条路径仍共享以下行为契约：
+
+- 活动 membership 由显式索引维护，而不是依赖历史 node pool 的 `IsSplit` 推断；
+- split/merge 事务使用 O(1) swap-remove 和反向位置更新；
+- 持久 Q_s/Q_m 仍使用 indexed heap、canonical diamond 和相同的优先级/删除语义；
+- validator 仍检查正向连续列表、反向位置、heap 成员和拓扑闭包。
+
+DOD 特有的实现收益只来自数据布局：连续活动索引服务并行 candidate mark，sidecar 将六组按 node 随机访问的元数据压成一个 24-byte/node 的 `uint32_t` 容器，同时不把动态状态重新塞回数值 SoA。旧布局为四组 64 位 position 加两组 32 位 node metadata，共 40-byte/node；这不是新的通用算法，而是 SoA 索引设计下对 Classic intrusive 字段的紧凑外置表达。
 
 #### 验收
 
 - active leaf/internal 判断减少随机数组读取；
 - queue membership update 数保持一致；
 - merge candidate mark 不退化；
-- node pool 和旁路数组总内存不增加，或增加量有明确收益依据。
+- node pool 和旁路数组总内存不增加，或增加量有明确收益依据；
+- 对照 Classic 的行为契约不变，新增收益必须能归因于 DOD 连续索引或 sidecar 数据布局，而不是只在 DOD 引入的通用算法变化。
+
+#### 实现结果（2026-08-17）
+
+- `DataOrientedRoamState::NodeMembership` 取代活动 internal、活动 leaf、Q_s position 以及 Q_m position/representative/partner 的六组分散 node-to-position 数组；
+- 热路径 `IsActiveInternalNode`/`IsActiveLeafNode` 只读取 sidecar sentinel，validator 继续做完整反向一致性验证；
+- position 从 `size_t` 压缩为 `uint32_t`。因为 node index 本身就是 `uint32_t`，活动列表和 queue 都是 node pool 的子集，不改变可表示的有效状态；
+- sidecar 理论占用从 40-byte/node 降为 24-byte/node，node pool 的 SoA 数值字段和 Classic 路径均未改变；
+- CTest、budget-reentry 和 split queue view 回归继续使用原有队列/拓扑契约，C2 不新增另一套 DOD-only 拓扑规则。
 
 ## 8. 阶段 D：DOD 增量与全量自适应 Mesh
 

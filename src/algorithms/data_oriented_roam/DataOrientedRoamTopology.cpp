@@ -134,17 +134,19 @@ void ActivateInternalNode(DataOrientedRoamState& state, DataOrientedRoamNodeInde
 {
     // active index 由主线程维护：串行提交直接调用，并行提交在 join 后调用。
     // position 非 sentinel 表示节点已被登记，重复 split 不能制造重复条目。
-    if (!state.IsValidNode(node) || node >= state.ActiveInternalNodePositions.size())
+    if (!state.IsValidNode(node) || node >= state.NodeMembership.size())
     {
         return;
     }
 
-    if (state.ActiveInternalNodePositions[node] != InvalidActiveNodePosition)
+    DataOrientedRoamNodeMembership& membership = state.NodeMembership[node];
+    if (membership.ActiveInternalPosition != InvalidActiveNodePosition)
     {
         return;
     }
 
-    state.ActiveInternalNodePositions[node] = state.ActiveInternalNodes.size();
+    membership.ActiveInternalPosition = static_cast<DataOrientedRoamPosition>(
+        state.ActiveInternalNodes.size());
     state.ActiveInternalNodes.push_back(node);
 }
 
@@ -152,12 +154,12 @@ void DeactivateInternalNode(DataOrientedRoamState& state, DataOrientedRoamNodeIn
 {
     // swap-remove 保持移除为 O(1)，同时修正被移动节点的反向位置。
     // 集合顺序不承载优先级，merge candidate 会在后续阶段按 score 排序。
-    if (!state.IsValidNode(node) || node >= state.ActiveInternalNodePositions.size())
+    if (!state.IsValidNode(node) || node >= state.NodeMembership.size())
     {
         return;
     }
 
-    const std::size_t position = state.ActiveInternalNodePositions[node];
+    const std::size_t position = state.NodeMembership[node].ActiveInternalPosition;
     if (position == InvalidActiveNodePosition ||
         position >= state.ActiveInternalNodes.size())
     {
@@ -166,23 +168,26 @@ void DeactivateInternalNode(DataOrientedRoamState& state, DataOrientedRoamNodeIn
 
     const DataOrientedRoamNodeIndex movedNode = state.ActiveInternalNodes.back();
     state.ActiveInternalNodes[position] = movedNode;
-    state.ActiveInternalNodePositions[movedNode] = position;
+    state.NodeMembership[movedNode].ActiveInternalPosition =
+        static_cast<DataOrientedRoamPosition>(position);
     state.ActiveInternalNodes.pop_back();
-    state.ActiveInternalNodePositions[node] = InvalidActiveNodePosition;
+    state.NodeMembership[node].ActiveInternalPosition = InvalidActiveNodePosition;
 }
 
 void ActivateLeafNode(DataOrientedRoamState& state, DataOrientedRoamNodeIndex node)
 {
     // 活动叶视图保持稠密但不再承担 heap，评分刷新不会改变这里的顺序
     if (!state.IsValidNode(node) || !state.IsLeaf(node) ||
-        node >= state.ActiveLeafNodePositions.size())
+        node >= state.NodeMembership.size())
     {
         return;
     }
 
-    if (state.ActiveLeafNodePositions[node] == InvalidActiveNodePosition)
+    DataOrientedRoamNodeMembership& membership = state.NodeMembership[node];
+    if (membership.ActiveLeafPosition == InvalidActiveNodePosition)
     {
-        state.ActiveLeafNodePositions[node] = state.ActiveLeafNodes.size();
+        membership.ActiveLeafPosition = static_cast<DataOrientedRoamPosition>(
+            state.ActiveLeafNodes.size());
         state.ActiveLeafNodes.push_back(node);
     }
     InsertPersistentSplitQueueNode(state, node);
@@ -192,12 +197,12 @@ void DeactivateLeafNode(DataOrientedRoamState& state, DataOrientedRoamNodeIndex 
 {
     // 先从 Q_s 删除，随后用 O(1) swap-remove 更新独立活动叶视图
     RemovePersistentSplitQueueNode(state, node);
-    if (!state.IsValidNode(node) || node >= state.ActiveLeafNodePositions.size())
+    if (!state.IsValidNode(node) || node >= state.NodeMembership.size())
     {
         return;
     }
 
-    const std::size_t position = state.ActiveLeafNodePositions[node];
+    const std::size_t position = state.NodeMembership[node].ActiveLeafPosition;
     if (position == InvalidActiveNodePosition || position >= state.ActiveLeafNodes.size())
     {
         return;
@@ -208,10 +213,11 @@ void DeactivateLeafNode(DataOrientedRoamState& state, DataOrientedRoamNodeIndex 
     {
         const DataOrientedRoamNodeIndex movedNode = state.ActiveLeafNodes.back();
         state.ActiveLeafNodes[position] = movedNode;
-        state.ActiveLeafNodePositions[movedNode] = position;
+        state.NodeMembership[movedNode].ActiveLeafPosition =
+            static_cast<DataOrientedRoamPosition>(position);
     }
     state.ActiveLeafNodes.pop_back();
-    state.ActiveLeafNodePositions[node] = InvalidActiveNodePosition;
+    state.NodeMembership[node].ActiveLeafPosition = InvalidActiveNodePosition;
 }
 
 void ApplySplitIndexTransition(DataOrientedRoamState& state, DataOrientedRoamNodeIndex node)
