@@ -1,2 +1,3 @@
-third_party/** -text
-tools/cmake/** -text
+third_party/** -text linguist-vendored=true
+tools/cmake/** -text linguist-vendored=true
+benchmark-output/** linguist-generated=true
