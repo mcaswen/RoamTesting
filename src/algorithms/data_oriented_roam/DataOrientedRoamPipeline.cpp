@@ -69,18 +69,8 @@ const Terrain::TerrainMeshData& DataOrientedRoamPipeline::Build(
     const TerrainLodViewInput& view,
     const DataOrientedRoamSettings& settings)
 {
-    BuildInternal(heightMap, terrainSize, heightScale, view, settings, true);
+    BuildInternal(heightMap, terrainSize, heightScale, view, settings);
     return _state->IncrementalMesh.Data;
-}
-
-void DataOrientedRoamPipeline::UpdateTopology(
-    const Terrain::HeightMap& heightMap,
-    float terrainSize,
-    float heightScale,
-    const TerrainLodViewInput& view,
-    const DataOrientedRoamSettings& settings)
-{
-    BuildInternal(heightMap, terrainSize, heightScale, view, settings, false);
 }
 
 void DataOrientedRoamPipeline::BuildInternal(
@@ -88,8 +78,7 @@ void DataOrientedRoamPipeline::BuildInternal(
     float terrainSize,
     float heightScale,
     const TerrainLodViewInput& view,
-    const DataOrientedRoamSettings& settings,
-    bool emitCpuMesh)
+    const DataOrientedRoamSettings& settings)
 {
     DataOrientedRoamState& state = *_state;
     Tools::PerformanceTimer updateTimer;
@@ -119,7 +108,7 @@ void DataOrientedRoamPipeline::BuildInternal(
     state.DrawableHeight = std::max(view.DrawableHeight, 1U);
     state.TerrainSize = terrainSize;
     state.HeightScale = heightScale;
-    BeginIncrementalMeshUpdate(state, resetTopology, emitCpuMesh);
+    BeginIncrementalMeshUpdate(state, resetTopology);
 
     if (!heightMap.IsValid())
     {
@@ -165,25 +154,18 @@ void DataOrientedRoamPipeline::BuildInternal(
     // 避免为了 emit、统计和 GPU snapshot 再从两个 root 递归遍历或复制活动 leaf。
     const std::vector<DataOrientedRoamNodeIndex>& finalActiveLeaves = state.ActiveLeafNodes;
     Tools::PerformanceTimer meshEmitTimer;
-    if (emitCpuMesh)
-    {
-        ApplyIncrementalMeshUpdates(state);
-        FinalizeIncrementalMeshUpdate(state);
-    }
+    ApplyIncrementalMeshUpdates(state);
+    FinalizeIncrementalMeshUpdate(state);
     const float meshEmitMilliseconds = meshEmitTimer.Stop();
 
     if (state.Settings.EnableTopologyValidation)
     {
         Tools::PerformanceTimer validateTimer;
         ValidateTopology(state);
-        if (emitCpuMesh)
-        {
-            ValidateIncrementalMesh(state);
-        }
+        ValidateIncrementalMesh(state);
         state.Stats.ValidateMilliseconds = validateTimer.Stop();
     }
 
-    // GPU 路径不生成 CPU mesh，active triangle 数直接来自持久活动 leaf 索引。
     Tools::PerformanceTimer finalizeTimer;
     AccumulateLeafStats(state, finalActiveLeaves);
     state.Stats.PersistentSplitQueueSize = state.SplitQueue.size();
@@ -191,17 +173,13 @@ void DataOrientedRoamPipeline::BuildInternal(
     // 预算交叉 merge 发生在 Split 收敛循环内，但统计上仍属于 Merge topology。
     state.Stats.MergeMilliseconds = mergeMilliseconds + state.Stats.MergeCrossoverMilliseconds;
     state.Stats.SplitMilliseconds = splitMilliseconds;
-    state.Stats.EmitMilliseconds = emitCpuMesh
-        ? meshEmitMilliseconds
-        : 0.0F;
+    state.Stats.EmitMilliseconds = meshEmitMilliseconds;
     state.Stats.PrepareMilliseconds = prepareMilliseconds;
     // DOD 直接用 Q_s.size() 计算预算，不再有独立的 leaf collect。
     state.Stats.BudgetLeafCollectMilliseconds = 0.0F;
     // 字段为统一报告 schema 保留；DOD 不再执行最终 leaf collect/copy pass。
     state.Stats.FinalLeafCollectMilliseconds = 0.0F;
-    state.Stats.MeshEmitMilliseconds = emitCpuMesh
-        ? meshEmitMilliseconds
-        : 0.0F;
+    state.Stats.MeshEmitMilliseconds = meshEmitMilliseconds;
 
     CollectActiveSplitPaths(state);
     // split path 集合是 hysteresis 的跨帧状态

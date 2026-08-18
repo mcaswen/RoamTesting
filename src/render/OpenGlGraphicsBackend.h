@@ -40,7 +40,6 @@ public:
     [[nodiscard]] bool UsesZeroToOneDepth() const override;
     [[nodiscard]] const std::string& AdapterName() const override;
     [[nodiscard]] const std::string& VersionString() const override;
-    [[nodiscard]] bool SupportsGpuRoamLike() const override;
     [[nodiscard]] const GraphicsDeviceCapabilities& GraphicsCapabilities() const override;
     [[nodiscard]] float LastGpuFrameMilliseconds() const override;
     [[nodiscard]] float LastGpuWaitMilliseconds() const override;

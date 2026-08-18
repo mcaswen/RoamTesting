@@ -1,6 +1,6 @@
-# 面向固定拓扑预算的 GPU 自适应网格细分：兼容闭包感知的全局资源分配
+# 面向固定拓扑预算的自适应网格细分：兼容闭包感知的全局资源分配
 
-本项目是一个面向高度图地形的自适应网格细分研究与实验平台。项目以 ROAM 1997 核心算法思想为基础，实现了 Classic CPU ROAM、Data-Oriented CPU ROAM 和 GPU ROAM-like 三条对照路径，并正在复现与适配 CBT 2024 的 GPU 动态拓扑方法。在此基础上，项目拟研究固定拓扑池容量下兼顾视觉收益、兼容闭包成本与 GPU 并行性的全局资源分配方法。
+本项目是一个面向高度图地形的自适应网格细分研究与实验平台。项目以 ROAM 1997 核心算法思想为基础，实现 Classic CPU ROAM、Data-Oriented CPU ROAM 两条对照路径，并正在复现与适配 CBT 2024 的 GPU 动态拓扑方法。此前的 GPU ROAM-like 实验已移至 `archive/gpu-roam-like` 分支，主分支不再构建或运行该路径。
 
 **研究状态：基线建设与问题定义阶段。**
 
@@ -64,13 +64,12 @@ subject to cost(S) <= available_capacity
 | --- | --- | --- | --- |
 | Classic CPU ROAM | 对象式节点、裸指针二叉三角树、串行索引堆 | 持久 `Q_s/Q_m`、统一交叉调度、split、forced split、diamond merge、视锥感知、固定叶三角形预算、增量 indexed CPU Mesh | 采用工程等价复现口径：公式、连续拓扑和增量输出对应 ROAM 1997 论文主要效果，但不追求完整最优性证明 |
 | Data-Oriented CPU ROAM | SoA 节点池、索引邻接、持久 `Q_s/Q_m`、批量评分与条件并行 | 与 Classic 使用相同的误差公式、阈值、预算和拓扑验证口径；并行刷新队列优先级，局部维护队列成员，并持续执行预算交换直至队首条件收敛 | 拓扑依赖限制并行度，最终仍生成 CPU Mesh |
-| GPU ROAM-like | CPU DOD 持久拓扑快照 + compute shader | GPU 叶三角形 compaction、误差评估、候选标记、单轮 split、Mesh emit、indirect draw | 混合管线；GPU merge 只评分不提交，GPU split 不回写 CPU 持久真值 |
 | CBT 2024 | D3D12、OCBT 位域/归约树、GPU 基础二分器资源 | 四档 OCBT、基础拓扑、程序化间接绘制及专项验证 | 动态 split/merge、兼容传播和高度图自适应路径尚待实现 |
 | 闭包感知预算调度器 | 计划中的独立研究变体 | 研究问题、假设、基线和验收标准已定义 | 尚未实现；必须在忠实 CBT 基线冻结后开展 |
 
 ### 统一误差、预算与拓扑语义
 
-三种 ROAM 路径当前共享：
+两种 CPU ROAM 路径当前共享：
 
 - ROAM 1997 论文第 6.1 节，自底向上预计算嵌套楔形厚度的公式 (1)；
 - ROAM 1997 论文第 6.2 节，将楔形厚度转换为屏幕空间几何畸变上界的保守投影的公式 (2)/(3)；
@@ -102,13 +101,13 @@ DOD 也持久维护同口径的 `Q_s/Q_m`。预算满载时，只要 `max(Q_s) >
 ### 已完成的工作
 
 - C++20、CMake 与 SDL2 应用框架；
-- OpenGL 4.3 和 D3D12 双渲染后端；
+- OpenGL 4.1 和 D3D12 双渲染后端；
 - Dear ImGui 参数、LOD 调试着色与阶段化性能面板；
-- CPU Mesh、GPU buffer 和 indirect draw 统一渲染包；
-- 基于 ITerrainLodAlgorithm 统一接口实现并优化 Classic、DOD 和 GPU ROAM-like 路径；
-- Classic、DOD 和 GPU ROAM-like 的阶段化 CPU/GPU 性能统计；
+- CPU Mesh、CBT 程序化 indirect draw 统一渲染包；
+- 基于 ITerrainLodAlgorithm 统一接口实现并优化 Classic、DOD 和 CBT 路径；
+- Classic、DOD 的阶段化 CPU 性能统计；
 - 自动相机路径 benchmark，输出中文 Markdown 与逐帧 CSV；
-- CTest、预算重入测试、GPU smoke test 和 CBT 专项 smoke test；
+- CTest、预算重入测试和 CBT 专项 smoke test；
 - 拓扑预算、邻接、T-junction 和资源契约检查。
 
 ## 快速开始
@@ -117,7 +116,7 @@ DOD 也持久维护同口径的 `Q_s/Q_m`。预算满载时，只要 `max(Q_s) >
 
 - C++20 编译器；
 - CMake 3.24 或更高版本；
-- OpenGL 4.3 驱动，或 Windows D3D12 环境；
+- OpenGL 4.1 驱动，或 Windows D3D12 环境；
 - Shader Model 6.6、64 位整数运算能力；
 - Visual Studio C++ 工具链和 Windows SDK。
 
@@ -184,9 +183,6 @@ powershell -ExecutionPolicy Bypass -File scripts/setup_cbt_dx12_dependencies.ps1
 # 窗口、资源和基础渲染
 .\build\relwithdebinfo-fetch\bin\ParallelROAM.exe --smoke-test
 
-# GPU ROAM-like：32 帧 compute、compaction、emit 和 indirect draw
-.\build\relwithdebinfo-fetch\bin\ParallelROAM.exe --gpu-smoke-test
-
 # D3D12 CBT 专项验证
 .\build\relwithdebinfo-d3d12-fetch\bin\ParallelROAM.exe --cbt-ocbt-smoke-test
 .\build\relwithdebinfo-d3d12-fetch\bin\ParallelROAM.exe --cbt-base-topology-smoke-test
@@ -206,7 +202,7 @@ powershell -ExecutionPolicy Bypass -File scripts/setup_cbt_dx12_dependencies.ps1
   --profile standard
 ```
 
-可选算法为 `classic|dod|gpu|all`，profile 为 `smoke|budget-reentry|incremental-emit|standard`。`incremental-emit` 用三个相同 Classic 视点验证首帧初始化、一次调试属性过渡和随后零 dirty-range 复用；无图形上下文时 GPU 路径可能被跳过。
+可选算法为 `classic|dod|all`，profile 为 `smoke|budget-reentry|incremental-emit|standard`。`incremental-emit` 用三个相同视点验证首帧初始化、一次属性过渡和随后零 dirty-range 复用。
 
 ### 应用级运行时实验
 
@@ -239,7 +235,7 @@ powershell -ExecutionPolicy Bypass -File scripts/setup_cbt_dx12_dependencies.ps1
 │   └── source_analysis/     ROAM 1997 论文、参考实现和源码上下文分析
 ├── scripts/                 构建、运行、smoke test 与报告脚本
 ├── src/
-│   ├── algorithms/          Classic、DOD、GPU ROAM-like、CBT 2024
+│   ├── algorithms/          Classic、DOD、CBT 2024
 │   ├── app/                 主循环、相机和 runtime benchmark
 │   ├── benchmark/           无窗口 benchmark 与 probe
 │   ├── gui/                 ImGui 控制和统计面板
@@ -270,14 +266,14 @@ powershell -ExecutionPolicy Bypass -File scripts/setup_cbt_dx12_dependencies.ps1
 - split/merge 像素阈值与拓扑预算；
 - 可绘制区域分辨率、FOV、相机路径和 VSync 状态；
 - warm-up、路径采样点数、重复次数和随机种子；
-- CPU/GPU 各逻辑阶段耗时；
+- 各逻辑阶段耗时和 renderer 上传开销；
 - 最大/P95/平均屏幕误差、预算利用率、拓扑错误和确定性；
 
 ## 当前限制
 
 - 兼容闭包感知调度器目前仅完成问题定义、假设、基线和实验计划，算法实现与 H1–H5 验证尚未开展；
 - CBT 2024 当前只到基础拓扑和程序化绘制，完整动态 split/merge 尚未接入；
-- GPU ROAM-like 是 CPU DOD + GPU split-only/emit 的混合路径，仅供当前实验探索和参考；
+- GPU ROAM-like 已移至 `archive/gpu-roam-like` 分支，不属于主分支构建目标；
 - Classic 已实现公式 (1)-(3)、连续二叉三角树/diamond 拓扑、持久双队列和增量 Mesh 输出；最终 priority、硬预算和输出格式是项目变体，当前研究不追求补齐 ROAM 1997 论文完整最优性证明；
 - 当前正式场景数量和 DEM 多样性不足，旧性能数据也需要在新误差口径下重跑；
 

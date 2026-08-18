@@ -28,7 +28,6 @@ int main(int argc, char** argv)
     // 参数分流必须早于 Application 初始化
     int maxFrameCount = -1;
     bool fixedFrameSmokeTest = false;
-    bool gpuSmokeTest = false;
     bool cbtProceduralSmokeTest = false;
     bool cbtOccupancyTreeSmokeTest = false;
     bool cbtBaseTopologySmokeTest = false;
@@ -116,12 +115,6 @@ int main(int argc, char** argv)
         {
             fixedFrameSmokeTest = true;
             maxFrameCount = 3;
-        }
-
-        if (argument == "--gpu-smoke-test")
-        {
-            gpuSmokeTest = true;
-            maxFrameCount = 32;
         }
 
         if (argument == "--cbt-procedural-smoke-test")
@@ -321,7 +314,7 @@ int main(int argc, char** argv)
 
         if (argument == "--benchmark")
         {
-            // --benchmark 走三算法共享 benchmark
+            // --benchmark 走两种 CPU ROAM 共享 benchmark
             // benchmark 必须在 Application 创建前分流
             return ParallelRoam::Benchmark::RunTerrainLodBenchmarkFromCommandLine(argc, argv);
         }
@@ -334,18 +327,17 @@ int main(int argc, char** argv)
     }
 
     const int specializedSmokeTestCount =
-        static_cast<int>(gpuSmokeTest) +
         static_cast<int>(cbtProceduralSmokeTest) +
         static_cast<int>(cbtOccupancyTreeSmokeTest) +
         static_cast<int>(cbtBaseTopologySmokeTest);
     if (specializedSmokeTestCount > 1)
     {
-        std::cerr << "GPU and CBT smoke-test options cannot be combined.\n";
+        std::cerr << "CBT smoke-test options cannot be combined.\n";
         return 2;
     }
 
     if (automaticRuntimeBenchmark &&
-        (fixedFrameSmokeTest || gpuSmokeTest || cbtProceduralSmokeTest || cbtOccupancyTreeSmokeTest ||
+        (fixedFrameSmokeTest || cbtProceduralSmokeTest || cbtOccupancyTreeSmokeTest ||
          cbtBaseTopologySmokeTest))
     {
         std::cerr << "--runtime-benchmark cannot be combined with a smoke-test option.\n";
@@ -356,10 +348,6 @@ int main(int argc, char** argv)
     if (hasRuntimeBenchmarkOverrides)
     {
         application.ConfigureRuntimeBenchmark(runtimeBenchmarkOverrides);
-    }
-    if (gpuSmokeTest)
-    {
-        application.EnableGpuSmokeTest();
     }
     if (cbtProceduralSmokeTest)
     {

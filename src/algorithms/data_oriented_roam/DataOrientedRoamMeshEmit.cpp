@@ -339,8 +339,7 @@ void EmitDirtyMeshSlots(DataOrientedRoamState& state)
 
 void BeginIncrementalMeshUpdate(
     DataOrientedRoamState& state,
-    bool resetTopology,
-    bool emitCpuMesh)
+    bool resetTopology)
 {
     DataOrientedRoamIncrementalMesh& mesh = state.IncrementalMesh;
     mesh.DirtySlots.clear();
@@ -348,14 +347,6 @@ void BeginIncrementalMeshUpdate(
     mesh.TopologyEdits.clear();
     mesh.RequiresFullUpload = false;
     mesh.TracksTopologyEdits = false;
-
-    if (!emitCpuMesh)
-    {
-        // topology-only Build 会让旧 Mesh 与 active cut 失去同步；
-        // 不记录 edit 可避免 GPU adapter 长时间运行时积累无消费者的事件。
-        mesh.NeedsInitialization = true;
-        return;
-    }
 
     ++mesh.Generation;
     if (mesh.Generation == 0U)

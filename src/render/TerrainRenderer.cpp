@@ -5,7 +5,6 @@
 #include "algorithms/TerrainLodView.h"
 #include "algorithms/classic_roam/ClassicRoamTerrainLodAlgorithm.h"
 #include "algorithms/data_oriented_roam/DataOrientedRoamTerrainLodAlgorithm.h"
-#include "algorithms/gpu_roam/GpuRoamTerrainLodAlgorithm.h"
 #include "tools/PerformanceTimer.h"
 
 #include <glad/gl.h>
@@ -188,11 +187,6 @@ std::unique_ptr<Algorithms::ITerrainLodAlgorithm> CreateTerrainLodAlgorithm(
         return std::make_unique<Algorithms::DataOrientedRoam::DataOrientedRoamTerrainLodAlgorithm>();
     }
 
-    if (algorithmId == Algorithms::TerrainLodAlgorithmId::GpuRoamLike)
-    {
-        return std::make_unique<Algorithms::GpuRoam::GpuRoamTerrainLodAlgorithm>();
-    }
-
     return nullptr;
 }
 } // 匿名命名空间
@@ -305,8 +299,7 @@ bool TerrainRenderer::UpdateForView(const RenderContext& context, std::string* e
                                        glm::dot(buildDelta, buildDelta) >= rebuildDistance * rebuildDistance;
         const bool usesRoamView =
             _settings.TerrainLodAlgorithm == Algorithms::TerrainLodAlgorithmId::ClassicCpuRoam ||
-            _settings.TerrainLodAlgorithm == Algorithms::TerrainLodAlgorithmId::DataOrientedCpuRoam ||
-            _settings.TerrainLodAlgorithm == Algorithms::TerrainLodAlgorithmId::GpuRoamLike;
+            _settings.TerrainLodAlgorithm == Algorithms::TerrainLodAlgorithmId::DataOrientedCpuRoam;
         const bool roamViewChanged = usesRoamView &&
             (!_hasRoamBuildView || RoamViewInputsChanged(_lastRoamBuildContext, context));
 
@@ -335,9 +328,6 @@ void TerrainRenderer::ResetTerrainLodAlgorithm()
     _terrainLodStatusMessage.clear();
     _terrainLodTotalMilliseconds = 0.0F;
     _terrainLodCpuUploadMilliseconds = 0.0F;
-    _gpuVertexBufferId = 0;
-    _gpuIndexBufferId = 0;
-    _gpuIndirectDrawBufferId = 0;
     _drawVertexCount = 0U;
     _drawIndexCount = 0U;
     _drawTriangleCount = 0U;
@@ -382,9 +372,6 @@ void TerrainRenderer::Shutdown()
         _vertexArrayId = 0;
     }
 
-    _gpuVertexBufferId = 0;
-    _gpuIndexBufferId = 0;
-    _gpuIndirectDrawBufferId = 0;
     _drawVertexCount = 0U;
     _drawIndexCount = 0U;
     _drawTriangleCount = 0U;
@@ -433,20 +420,11 @@ void TerrainRenderer::Render(const RenderContext& context)
         glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
     }
 
-    if (_renderMode == Algorithms::TerrainLodRenderMode::GpuIndirect)
-    {
-        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, _gpuIndirectDrawBufferId);
-        glDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT, nullptr);
-        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
-    }
-    else
-    {
-        glDrawElements(
-            GL_TRIANGLES,
-            static_cast<GLsizei>(_drawIndexCount),
-            GL_UNSIGNED_INT,
-            nullptr);
-    }
+    glDrawElements(
+        GL_TRIANGLES,
+        static_cast<GLsizei>(_drawIndexCount),
+        GL_UNSIGNED_INT,
+        nullptr);
 
     if (_settings.Wireframe)
     {
@@ -548,24 +526,6 @@ TerrainRenderStats TerrainRenderer::Stats() const
     stats.RoamMergeMilliseconds = _terrainLodStats.MergeMilliseconds;
     stats.RoamEmitMilliseconds = _terrainLodStats.EmitMilliseconds;
     stats.RoamValidateMilliseconds = _terrainLodStats.ValidateMilliseconds;
-    stats.RoamGpuInitialLeafCompactionMilliseconds =
-        _terrainLodStats.GpuInitialLeafCompactionMilliseconds;
-    stats.RoamGpuErrorEvaluationMilliseconds = _terrainLodStats.GpuErrorEvaluationMilliseconds;
-    stats.RoamGpuSplitCandidateMarkingMilliseconds =
-        _terrainLodStats.GpuSplitCandidateMarkingMilliseconds;
-    stats.RoamGpuMergeCandidateMarkingMilliseconds =
-        _terrainLodStats.GpuMergeCandidateMarkingMilliseconds;
-    stats.RoamGpuSplitTopologyMilliseconds = _terrainLodStats.GpuSplitTopologyMilliseconds;
-    stats.RoamGpuActiveLeafResetMilliseconds = _terrainLodStats.GpuActiveLeafResetMilliseconds;
-    stats.RoamGpuFinalLeafCompactionMilliseconds =
-        _terrainLodStats.GpuFinalLeafCompactionMilliseconds;
-    stats.RoamGpuMeshEmitMilliseconds = _terrainLodStats.GpuMeshEmitMilliseconds;
-    stats.RoamGpuPassSumMilliseconds = _terrainLodStats.GpuPassSumMilliseconds;
-    stats.RoamGpuSnapshotBuildMilliseconds = _terrainLodStats.GpuSnapshotBuildMilliseconds;
-    stats.RoamGpuBufferAllocationMilliseconds = _terrainLodStats.GpuBufferAllocationMilliseconds;
-    stats.RoamGpuDispatchWallMilliseconds = _terrainLodStats.GpuDispatchWallMilliseconds;
-    stats.RoamGpuQueryWaitMilliseconds = _terrainLodStats.GpuQueryWaitMilliseconds;
-    stats.RoamGpuReadbackWaitMilliseconds = _terrainLodStats.GpuReadbackWaitMilliseconds;
     stats.RoamRenderMilliseconds = _terrainLodStats.RenderMilliseconds;
     stats.RoamCpuGpuUploadBytes = _terrainLodStats.CpuGpuUploadBytes;
     stats.RoamCpuGpuReadbackBytes = _terrainLodStats.CpuGpuReadbackBytes;
@@ -740,17 +700,12 @@ bool TerrainRenderer::RebuildTerrainLod(const RenderContext& context, std::strin
         return true;
     }
 
-    _meshData = {};
-    _borrowedCpuMeshData = nullptr;
-    if (!BindGpuTerrainBuffers(renderPacket, errorMessage))
+    if (errorMessage != nullptr)
     {
-        _meshDirty = true;
-        return false;
+        *errorMessage = "OpenGL terrain LOD returned an unsupported render mode";
     }
-
-    _meshDirty = false;
-    _terrainLodTotalMilliseconds = rebuildTimer.Stop();
-    return true;
+    _terrainLodStatusMessage = "OpenGL terrain LOD returned an unsupported render mode";
+    return false;
 }
 
 bool TerrainRenderer::UploadMesh(std::string* errorMessage)
@@ -867,9 +822,6 @@ bool TerrainRenderer::UploadMeshData(
     }
 
     _renderMode = Algorithms::TerrainLodRenderMode::CpuMesh;
-    _gpuVertexBufferId = 0;
-    _gpuIndexBufferId = 0;
-    _gpuIndirectDrawBufferId = 0;
     _drawVertexCount = meshData.Vertices.size();
     _drawIndexCount = meshData.Indices.size();
     _drawTriangleCount = meshData.Indices.size() / 3U;
@@ -963,65 +915,11 @@ bool TerrainRenderer::ConfigureTerrainVertexArray(
     return true;
 }
 
-bool TerrainRenderer::BindGpuTerrainBuffers(
-    const Algorithms::TerrainLodRenderPacket& renderPacket,
-    std::string* errorMessage)
-{
-    if (!renderPacket.HasConsistentResourceContract() ||
-        (renderPacket.Mode != Algorithms::TerrainLodRenderMode::GpuBuffers &&
-         renderPacket.Mode != Algorithms::TerrainLodRenderMode::GpuIndirect) ||
-        renderPacket.GpuVertexBufferId == 0U ||
-        renderPacket.GpuIndexBufferId == 0U ||
-        renderPacket.IndexCount == 0U ||
-        renderPacket.ActiveTriangleCount == 0U)
-    {
-        if (errorMessage != nullptr)
-        {
-            *errorMessage = "Terrain LOD GPU buffer packet is incomplete";
-        }
-        _terrainLodStatusMessage = "Terrain LOD GPU buffer packet is incomplete";
-        return false;
-    }
-
-    if (renderPacket.Mode == Algorithms::TerrainLodRenderMode::GpuIndirect &&
-        renderPacket.IndirectDrawBufferId == 0U)
-    {
-        if (errorMessage != nullptr)
-        {
-            *errorMessage = "Terrain LOD indirect draw packet is incomplete";
-        }
-        _terrainLodStatusMessage = "Terrain LOD indirect draw packet is incomplete";
-        return false;
-    }
-
-    _renderMode = renderPacket.Mode;
-    _gpuVertexBufferId = renderPacket.GpuVertexBufferId;
-    _gpuIndexBufferId = renderPacket.GpuIndexBufferId;
-    _gpuIndirectDrawBufferId = renderPacket.IndirectDrawBufferId;
-    _drawVertexCount = renderPacket.ActiveTriangleCount * 3U;
-    _drawIndexCount = renderPacket.IndexCount;
-    _drawTriangleCount = renderPacket.ActiveTriangleCount;
-    return ConfigureTerrainVertexArray(_gpuVertexBufferId, _gpuIndexBufferId, errorMessage);
-}
-
 bool TerrainRenderer::HasDrawableTerrain() const
 {
     if (_renderMode == Algorithms::TerrainLodRenderMode::CpuMesh)
     {
         return _drawIndexCount > 0U && _vertexBufferId != 0 && _indexBufferId != 0;
-    }
-
-    if (_renderMode == Algorithms::TerrainLodRenderMode::GpuBuffers)
-    {
-        return _drawIndexCount > 0U && _gpuVertexBufferId != 0 && _gpuIndexBufferId != 0;
-    }
-
-    if (_renderMode == Algorithms::TerrainLodRenderMode::GpuIndirect)
-    {
-        return _drawIndexCount > 0U &&
-               _gpuVertexBufferId != 0 &&
-               _gpuIndexBufferId != 0 &&
-               _gpuIndirectDrawBufferId != 0;
     }
 
     return false;

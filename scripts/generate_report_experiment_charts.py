@@ -11,24 +11,8 @@ ROOT = Path("benchmark-output/report-experiments")
 COLORS = {
     "Classic CPU ROAM": "#4C78A8",
     "Data-Oriented CPU ROAM": "#F58518",
-    "GPU ROAM-like": "#54A24B",
     "CPU update": "#4C78A8",
     "CPU upload": "#F58518",
-    "GPU snapshot": "#B279A2",
-    "GPU alloc": "#FF9DA6",
-    "GPU dispatch": "#E45756",
-    "GPU query wait": "#BAB0AC",
-    "GPU initial compact": "#4C78A8",
-    "GPU error evaluation": "#F58518",
-    "GPU split candidate": "#ECA82C",
-    "GPU merge candidate": "#9C755F",
-    "GPU candidate unsplit": "#BAB0AC",
-    "GPU split topology": "#E45756",
-    "GPU leaf reset": "#B279A2",
-    "GPU final compact": "#72B7B2",
-    "GPU mesh emit": "#54A24B",
-    "GPU pass unattributed": "#9D755D",
-    "GPU readback": "#72B7B2",
     "Other LOD": "#9D755D",
     "Split": "#4C78A8",
     "Merge": "#F58518",
@@ -44,7 +28,6 @@ COLORS = {
 ALGORITHM_LABELS = {
     "Classic CPU ROAM": "经典 CPU ROAM",
     "Data-Oriented CPU ROAM": "DOD CPU ROAM",
-    "GPU ROAM-like": "GPU 类 ROAM",
 }
 
 CASE_LABELS = {
@@ -65,26 +48,8 @@ CASE_LABELS = {
 COMPONENT_LABELS = {
     "Snapshot": "快照构建",
     "Buffer alloc": "缓冲区分配",
-    "Dispatch wall": "调度墙钟",
-    "Query wait": "查询等待",
-    "Readback wait": "读回等待",
-    "GPU initial compact": "GPU 初始叶压缩",
-    "GPU error evaluation": "GPU 误差评估",
-    "GPU split candidate": "GPU split 候选标记",
-    "GPU merge candidate": "GPU merge 候选评分",
-    "GPU candidate unsplit": "旧数据 GPU 候选未拆分",
-    "GPU split topology": "GPU 分裂拓扑提交",
-    "GPU leaf reset": "GPU 活动叶计数重置",
-    "GPU final compact": "GPU 最终叶压缩",
-    "GPU mesh emit": "GPU 网格输出",
-    "GPU pass unattributed": "旧数据未拆分 GPU pass",
     "CPU update": "CPU 更新",
     "CPU upload": "CPU 上传",
-    "GPU snapshot": "GPU 快照",
-    "GPU alloc": "GPU 分配",
-    "GPU dispatch": "GPU 调度",
-    "GPU query wait": "GPU 查询等待",
-    "GPU readback": "GPU 读回",
     "Other LOD": "其他 LOD",
     "Split": "分裂",
     "Merge": "合并",
@@ -108,24 +73,6 @@ NUMERIC_COLUMNS = [
     "lodTotalMilliseconds",
     "cpuUpdateMilliseconds",
     "cpuUploadMilliseconds",
-    "gpuInitialLeafCompactionMilliseconds",
-    "gpuErrorEvaluationMilliseconds",
-    "gpuSplitCandidateMarkingMilliseconds",
-    "gpuMergeCandidateMarkingMilliseconds",
-    # Intermediate reports used one mixed split/merge candidate dispatch.
-    "gpuCandidateMarkingMilliseconds",
-    "gpuSplitTopologyMilliseconds",
-    "gpuActiveLeafResetMilliseconds",
-    "gpuFinalLeafCompactionMilliseconds",
-    "gpuMeshEmitMilliseconds",
-    "gpuPassSumMilliseconds",
-    # Kept only so historical experiment CSV files remain readable.
-    "gpuComputeMilliseconds",
-    "gpuSnapshotBuildMilliseconds",
-    "gpuBufferAllocationMilliseconds",
-    "gpuDispatchWallMilliseconds",
-    "gpuQueryWaitMilliseconds",
-    "gpuReadbackWaitMilliseconds",
     "splitMilliseconds",
     "mergeMilliseconds",
     "emitMilliseconds",
@@ -222,27 +169,6 @@ def stats_for(rows: list[dict[str, object]]) -> dict[str, float]:
     triangles = [float(row["triangles"]) for row in rows]
     cpu_update = [float(row["cpuUpdateMilliseconds"]) for row in rows]
     upload = [float(row["cpuUploadMilliseconds"]) for row in rows]
-    gpu_pass_sum = metric_values(rows, "gpuPassSumMilliseconds", "gpuComputeMilliseconds")
-    gpu_initial_compact = metric_values(rows, "gpuInitialLeafCompactionMilliseconds")
-    gpu_error_evaluation = metric_values(rows, "gpuErrorEvaluationMilliseconds")
-    gpu_split_candidate = metric_values(rows, "gpuSplitCandidateMarkingMilliseconds")
-    gpu_merge_candidate = metric_values(rows, "gpuMergeCandidateMarkingMilliseconds")
-    gpu_candidate_unsplit = [
-        float(row.get("gpuCandidateMarkingMilliseconds", 0.0))
-        if "gpuSplitCandidateMarkingMilliseconds" not in row and
-           "gpuMergeCandidateMarkingMilliseconds" not in row
-        else 0.0
-        for row in rows
-    ]
-    gpu_split_topology = metric_values(rows, "gpuSplitTopologyMilliseconds")
-    gpu_leaf_reset = metric_values(rows, "gpuActiveLeafResetMilliseconds")
-    gpu_final_compact = metric_values(rows, "gpuFinalLeafCompactionMilliseconds")
-    gpu_mesh_emit = metric_values(rows, "gpuMeshEmitMilliseconds")
-    snapshot = [float(row["gpuSnapshotBuildMilliseconds"]) for row in rows]
-    alloc = [float(row["gpuBufferAllocationMilliseconds"]) for row in rows]
-    dispatch = [float(row["gpuDispatchWallMilliseconds"]) for row in rows]
-    query = [float(row["gpuQueryWaitMilliseconds"]) for row in rows]
-    readback = [float(row["gpuReadbackWaitMilliseconds"]) for row in rows]
     split = [float(row["splitMilliseconds"]) for row in rows]
     merge = [float(row["mergeMilliseconds"]) for row in rows]
     emit = [float(row["emitMilliseconds"]) for row in rows]
@@ -255,32 +181,14 @@ def stats_for(rows: list[dict[str, object]]) -> dict[str, float]:
     components = {
         "cpuUpdateMs": mean(cpu_update),
         "cpuUploadMs": mean(upload),
-        "gpuSnapshotMs": mean(snapshot),
-        "gpuAllocMs": mean(alloc),
-        "gpuDispatchMs": mean(dispatch),
-        "gpuQueryWaitMs": mean(query),
-        "gpuReadbackMs": mean(readback),
     }
-    gpu_pass_components = {
-        "gpuInitialCompactMs": mean(gpu_initial_compact),
-        "gpuErrorEvaluationMs": mean(gpu_error_evaluation),
-        "gpuSplitCandidateMarkingMs": mean(gpu_split_candidate),
-        "gpuMergeCandidateMarkingMs": mean(gpu_merge_candidate),
-        "gpuCandidateUnsplitMs": mean(gpu_candidate_unsplit),
-        "gpuSplitTopologyMs": mean(gpu_split_topology),
-        "gpuLeafResetMs": mean(gpu_leaf_reset),
-        "gpuFinalCompactMs": mean(gpu_final_compact),
-        "gpuMeshEmitMs": mean(gpu_mesh_emit),
-    }
-    gpu_pass_sum_ms = mean(gpu_pass_sum)
-    gpu_pass_unattributed_ms = max(gpu_pass_sum_ms - sum(gpu_pass_components.values()), 0.0)
     stage_components = {
         "splitMs": mean(split),
         "mergeMs": mean(merge),
         "emitMs": mean(emit),
         "validateMs": mean(validate),
     }
-    known = sum(components.values()) + gpu_pass_sum_ms
+    known = sum(components.values())
     stage_known = sum(stage_components.values())
     return {
         "samples": float(len(rows)),
@@ -299,10 +207,7 @@ def stats_for(rows: list[dict[str, object]]) -> dict[str, float]:
         "lodMsPer10kTriangles": (avg_lod / avg_triangles * 10000.0) if avg_triangles else 0.0,
         "otherLodMs": max(avg_lod - known, 0.0),
         "otherStageMs": max(avg_lod - stage_known, 0.0),
-        "gpuPassSumMs": gpu_pass_sum_ms,
-        "gpuPassUnattributedMs": gpu_pass_unattributed_ms,
         **components,
-        **gpu_pass_components,
         **stage_components,
     }
 
@@ -556,22 +461,6 @@ def write_analysis_csv(folder: Path, rows: list[dict[str, object]]) -> dict[tupl
         "lodMsPer10kTriangles",
         "cpuUpdateMs",
         "cpuUploadMs",
-        "gpuSnapshotMs",
-        "gpuAllocMs",
-        "gpuDispatchMs",
-        "gpuQueryWaitMs",
-        "gpuInitialCompactMs",
-        "gpuErrorEvaluationMs",
-        "gpuSplitCandidateMarkingMs",
-        "gpuMergeCandidateMarkingMs",
-        "gpuCandidateUnsplitMs",
-        "gpuSplitTopologyMs",
-        "gpuLeafResetMs",
-        "gpuFinalCompactMs",
-        "gpuMeshEmitMs",
-        "gpuPassSumMs",
-        "gpuPassUnattributedMs",
-        "gpuReadbackMs",
         "otherLodMs",
         "splitMs",
         "mergeMs",
@@ -606,7 +495,7 @@ def cases_for_folder(folder_name: str) -> list[str]:
 
 
 def generate_common_charts(folder: Path, stats: dict[tuple[str, str], dict[str, float]]) -> None:
-    algorithms = ["Classic CPU ROAM", "Data-Oriented CPU ROAM", "GPU ROAM-like"]
+    algorithms = ["Classic CPU ROAM", "Data-Oriented CPU ROAM"]
     cases = cases_for_folder(folder.name)
     cases = [case for case in cases if all((case, algorithm) in stats for algorithm in algorithms)]
 
@@ -640,28 +529,6 @@ def generate_common_charts(folder: Path, stats: dict[tuple[str, str], dict[str, 
         "CPU 利用率（%）",
     )
 
-    gpu_cases = [case for case in cases if (case, "GPU ROAM-like") in stats]
-    if gpu_cases:
-        components = [
-            ("GPU snapshot", [stats[(case, "GPU ROAM-like")]["gpuSnapshotMs"] for case in gpu_cases], COLORS["GPU snapshot"]),
-            ("GPU alloc", [stats[(case, "GPU ROAM-like")]["gpuAllocMs"] for case in gpu_cases], COLORS["GPU alloc"]),
-            ("GPU dispatch", [stats[(case, "GPU ROAM-like")]["gpuDispatchMs"] for case in gpu_cases], COLORS["GPU dispatch"]),
-            ("GPU query wait", [stats[(case, "GPU ROAM-like")]["gpuQueryWaitMs"] for case in gpu_cases], COLORS["GPU query wait"]),
-            ("GPU readback", [stats[(case, "GPU ROAM-like")]["gpuReadbackMs"] for case in gpu_cases], COLORS["GPU readback"]),
-            ("GPU initial compact", [stats[(case, "GPU ROAM-like")]["gpuInitialCompactMs"] for case in gpu_cases], COLORS["GPU initial compact"]),
-            ("GPU error evaluation", [stats[(case, "GPU ROAM-like")]["gpuErrorEvaluationMs"] for case in gpu_cases], COLORS["GPU error evaluation"]),
-            ("GPU split candidate", [stats[(case, "GPU ROAM-like")]["gpuSplitCandidateMarkingMs"] for case in gpu_cases], COLORS["GPU split candidate"]),
-            ("GPU merge candidate", [stats[(case, "GPU ROAM-like")]["gpuMergeCandidateMarkingMs"] for case in gpu_cases], COLORS["GPU merge candidate"]),
-            ("GPU candidate unsplit", [stats[(case, "GPU ROAM-like")]["gpuCandidateUnsplitMs"] for case in gpu_cases], COLORS["GPU candidate unsplit"]),
-            ("GPU split topology", [stats[(case, "GPU ROAM-like")]["gpuSplitTopologyMs"] for case in gpu_cases], COLORS["GPU split topology"]),
-            ("GPU leaf reset", [stats[(case, "GPU ROAM-like")]["gpuLeafResetMs"] for case in gpu_cases], COLORS["GPU leaf reset"]),
-            ("GPU final compact", [stats[(case, "GPU ROAM-like")]["gpuFinalCompactMs"] for case in gpu_cases], COLORS["GPU final compact"]),
-            ("GPU mesh emit", [stats[(case, "GPU ROAM-like")]["gpuMeshEmitMs"] for case in gpu_cases], COLORS["GPU mesh emit"]),
-            ("GPU pass unattributed", [stats[(case, "GPU ROAM-like")]["gpuPassUnattributedMs"] for case in gpu_cases], COLORS["GPU pass unattributed"]),
-        ]
-        stacked_bar_chart(folder / "chart_gpu_breakdown_ms.svg", "GPU 类 ROAM 分项平均耗时", gpu_cases, components, "毫秒")
-
-
 def roam_stage_components(data: dict[str, dict[str, float]], algorithms: list[str]) -> list[tuple[str, list[float], str]]:
     return [
         ("Split", [data[a]["splitMs"] for a in algorithms], COLORS["Split"]),
@@ -674,7 +541,7 @@ def roam_stage_components(data: dict[str, dict[str, float]], algorithms: list[st
 
 def generate_experiment_01(folder: Path, stats: dict[tuple[str, str], dict[str, float]]) -> None:
     data = stats_by_algorithm(stats, "baseline")
-    algorithms = ["Classic CPU ROAM", "Data-Oriented CPU ROAM", "GPU ROAM-like"]
+    algorithms = ["Classic CPU ROAM", "Data-Oriented CPU ROAM"]
     percentile_fields = [("平均值", "avgLodMs"), ("P50", "p50LodMs"), ("P90", "p90LodMs"), ("P95", "p95LodMs")]
     bar_chart(
         folder / "chart_exp01_lod_percentiles.svg",
@@ -693,19 +560,6 @@ def generate_experiment_01(folder: Path, stats: dict[tuple[str, str], dict[str, 
     components = [
         ("CPU update", [data[a]["cpuUpdateMs"] for a in algorithms], COLORS["CPU update"]),
         ("CPU upload", [data[a]["cpuUploadMs"] for a in algorithms], COLORS["CPU upload"]),
-        ("GPU snapshot", [data[a]["gpuSnapshotMs"] for a in algorithms], COLORS["GPU snapshot"]),
-        ("GPU dispatch", [data[a]["gpuDispatchMs"] for a in algorithms], COLORS["GPU dispatch"]),
-        ("GPU initial compact", [data[a]["gpuInitialCompactMs"] for a in algorithms], COLORS["GPU initial compact"]),
-        ("GPU error evaluation", [data[a]["gpuErrorEvaluationMs"] for a in algorithms], COLORS["GPU error evaluation"]),
-        ("GPU split candidate", [data[a]["gpuSplitCandidateMarkingMs"] for a in algorithms], COLORS["GPU split candidate"]),
-        ("GPU merge candidate", [data[a]["gpuMergeCandidateMarkingMs"] for a in algorithms], COLORS["GPU merge candidate"]),
-        ("GPU candidate unsplit", [data[a]["gpuCandidateUnsplitMs"] for a in algorithms], COLORS["GPU candidate unsplit"]),
-        ("GPU split topology", [data[a]["gpuSplitTopologyMs"] for a in algorithms], COLORS["GPU split topology"]),
-        ("GPU leaf reset", [data[a]["gpuLeafResetMs"] for a in algorithms], COLORS["GPU leaf reset"]),
-        ("GPU final compact", [data[a]["gpuFinalCompactMs"] for a in algorithms], COLORS["GPU final compact"]),
-        ("GPU mesh emit", [data[a]["gpuMeshEmitMs"] for a in algorithms], COLORS["GPU mesh emit"]),
-        ("GPU pass unattributed", [data[a]["gpuPassUnattributedMs"] for a in algorithms], COLORS["GPU pass unattributed"]),
-        ("GPU readback", [data[a]["gpuReadbackMs"] for a in algorithms], COLORS["GPU readback"]),
         ("Other LOD", [data[a]["otherLodMs"] for a in algorithms], COLORS["Other LOD"]),
     ]
     stacked_bar_chart(folder / "chart_exp01_lod_composition.svg", "实验1：LOD 时间组成", algorithms, components, "毫秒")
@@ -719,7 +573,7 @@ def generate_experiment_01(folder: Path, stats: dict[tuple[str, str], dict[str, 
 
 
 def generate_experiment_02(folder: Path, stats: dict[tuple[str, str], dict[str, float]]) -> None:
-    algorithms = ["Classic CPU ROAM", "Data-Oriented CPU ROAM", "GPU ROAM-like"]
+    algorithms = ["Classic CPU ROAM", "Data-Oriented CPU ROAM"]
     cases = [f"depth {depth}" for depth in [12, 14, 16, 18, 20]]
     x_labels = ["12", "14", "16", "18", "20"]
     line_chart(
@@ -754,7 +608,7 @@ def generate_experiment_02(folder: Path, stats: dict[tuple[str, str], dict[str, 
 
 
 def generate_experiment_03(folder: Path, stats: dict[tuple[str, str], dict[str, float]]) -> None:
-    algorithms = ["Classic CPU ROAM", "Data-Oriented CPU ROAM", "GPU ROAM-like"]
+    algorithms = ["Classic CPU ROAM", "Data-Oriented CPU ROAM"]
     cases = [f"distance {distance}" for distance in [20, 40, 60, 80]]
     x_labels = ["20", "40", "60", "80"]
     line_chart(
@@ -789,7 +643,7 @@ def generate_experiment_03(folder: Path, stats: dict[tuple[str, str], dict[str, 
 
 
 def generate_experiment_04(folder: Path, stats: dict[tuple[str, str], dict[str, float]]) -> None:
-    algorithms = ["Classic CPU ROAM", "Data-Oriented CPU ROAM", "GPU ROAM-like"]
+    algorithms = ["Classic CPU ROAM", "Data-Oriented CPU ROAM"]
     cases = ["Test129", "Peking513"]
     bar_chart(
         folder / "chart_exp04_heightmap_lod_percentiles.svg",
@@ -824,7 +678,7 @@ def generate_experiment_04(folder: Path, stats: dict[tuple[str, str], dict[str, 
 
 def generate_experiment_05(folder: Path, stats: dict[tuple[str, str], dict[str, float]], rows: list[dict[str, object]]) -> None:
     data = stats_by_algorithm(stats, "baseline")
-    algorithms = ["Classic CPU ROAM", "Data-Oriented CPU ROAM", "GPU ROAM-like"]
+    algorithms = ["Classic CPU ROAM", "Data-Oriented CPU ROAM"]
     percentile_fields = [("平均值", "avgLodMs"), ("P50", "p50LodMs"), ("P90", "p90LodMs"), ("P95", "p95LodMs")]
     bar_chart(
         folder / "chart_exp05_lod_percentiles.svg",
@@ -833,61 +687,34 @@ def generate_experiment_05(folder: Path, stats: dict[tuple[str, str], dict[str, 
         [(algorithm, [data[algorithm][field] for _, field in percentile_fields], COLORS[algorithm]) for algorithm in algorithms],
         "毫秒",
     )
-    gpu = data["GPU ROAM-like"]
+    focus = data["Data-Oriented CPU ROAM"]
     donut_values = [
-        ("CPU update", gpu["cpuUpdateMs"], COLORS["CPU update"]),
-        ("CPU upload", gpu["cpuUploadMs"], COLORS["CPU upload"]),
-        ("GPU snapshot", gpu["gpuSnapshotMs"], COLORS["GPU snapshot"]),
-        ("GPU dispatch", gpu["gpuDispatchMs"], COLORS["GPU dispatch"]),
-        ("GPU initial compact", gpu["gpuInitialCompactMs"], COLORS["GPU initial compact"]),
-        ("GPU error evaluation", gpu["gpuErrorEvaluationMs"], COLORS["GPU error evaluation"]),
-        ("GPU split candidate", gpu["gpuSplitCandidateMarkingMs"], COLORS["GPU split candidate"]),
-        ("GPU merge candidate", gpu["gpuMergeCandidateMarkingMs"], COLORS["GPU merge candidate"]),
-        ("GPU candidate unsplit", gpu["gpuCandidateUnsplitMs"], COLORS["GPU candidate unsplit"]),
-        ("GPU split topology", gpu["gpuSplitTopologyMs"], COLORS["GPU split topology"]),
-        ("GPU leaf reset", gpu["gpuLeafResetMs"], COLORS["GPU leaf reset"]),
-        ("GPU final compact", gpu["gpuFinalCompactMs"], COLORS["GPU final compact"]),
-        ("GPU mesh emit", gpu["gpuMeshEmitMs"], COLORS["GPU mesh emit"]),
-        ("GPU pass unattributed", gpu["gpuPassUnattributedMs"], COLORS["GPU pass unattributed"]),
-        ("GPU readback", gpu["gpuReadbackMs"], COLORS["GPU readback"]),
-        ("Other LOD", gpu["otherLodMs"], COLORS["Other LOD"]),
+        ("CPU update", focus["cpuUpdateMs"], COLORS["CPU update"]),
+        ("CPU upload", focus["cpuUploadMs"], COLORS["CPU upload"]),
+        ("Split", focus["splitMs"], COLORS["Split"]),
+        ("Merge", focus["mergeMs"], COLORS["Merge"]),
+        ("Emit", focus["emitMs"], COLORS["Emit"]),
+        ("Validate", focus["validateMs"], COLORS["Validate"]),
+        ("Other LOD", focus["otherLodMs"], COLORS["Other LOD"]),
     ]
-    donut_chart(folder / "chart_exp05_gpu_pipeline_share.svg", "实验5：GPU 类 ROAM 的 LOD 时间占比", donut_values)
-    stage_values = [
-        ("Split", gpu["splitMs"], COLORS["Split"]),
-        ("Merge", gpu["mergeMs"], COLORS["Merge"]),
-        ("Emit", gpu["emitMs"], COLORS["Emit"]),
-        ("Validate", gpu["validateMs"], COLORS["Validate"]),
-        ("Other stage", gpu["otherStageMs"], COLORS["Other stage"]),
-    ]
-    donut_chart(folder / "chart_exp05_roam_stage_share.svg", "实验5：GPU 类 ROAM 的 ROAM 阶段占比", stage_values)
+    donut_chart(folder / "chart_exp05_cpu_pipeline_share.svg", "实验5：DOD CPU 的 LOD 时间占比", donut_values)
 
-    gpu_rows = [row for row in rows if row["algorithm"] == "GPU ROAM-like"]
-    step = max(1, len(gpu_rows) // 260)
-    sampled = gpu_rows[::step]
+    focus_rows = [row for row in rows if row["algorithm"] == "Data-Oriented CPU ROAM"]
+    step = max(1, len(focus_rows) // 260)
+    sampled = focus_rows[::step]
     xy_line_chart(
-        folder / "chart_exp05_gpu_timing_over_time.svg",
-        "实验5：GPU 类 ROAM 沿相机路径的耗时变化",
+        folder / "chart_exp05_cpu_timing_over_time.svg",
+        "实验5：DOD CPU 沿相机路径的耗时变化",
         [
             ("LOD total", [(float(row["timeSeconds"]), float(row["lodTotalMilliseconds"])) for row in sampled], "#333333"),
             ("CPU update", [(float(row["timeSeconds"]), float(row["cpuUpdateMilliseconds"])) for row in sampled], COLORS["CPU update"]),
-            ("GPU snapshot", [(float(row["timeSeconds"]), float(row["gpuSnapshotBuildMilliseconds"])) for row in sampled], COLORS["GPU snapshot"]),
-            ("GPU initial compact", [(float(row["timeSeconds"]), row_metric(row, "gpuInitialLeafCompactionMilliseconds")) for row in sampled], COLORS["GPU initial compact"]),
-            ("GPU error evaluation", [(float(row["timeSeconds"]), row_metric(row, "gpuErrorEvaluationMilliseconds")) for row in sampled], COLORS["GPU error evaluation"]),
-            ("GPU split candidate", [(float(row["timeSeconds"]), row_metric(row, "gpuSplitCandidateMarkingMilliseconds")) for row in sampled], COLORS["GPU split candidate"]),
-            ("GPU merge candidate", [(float(row["timeSeconds"]), row_metric(row, "gpuMergeCandidateMarkingMilliseconds")) for row in sampled], COLORS["GPU merge candidate"]),
-            ("GPU candidate unsplit", [(float(row["timeSeconds"]), row_metric(row, "gpuCandidateMarkingMilliseconds")) for row in sampled], COLORS["GPU candidate unsplit"]),
-            ("GPU split topology", [(float(row["timeSeconds"]), row_metric(row, "gpuSplitTopologyMilliseconds")) for row in sampled], COLORS["GPU split topology"]),
-            ("GPU leaf reset", [(float(row["timeSeconds"]), row_metric(row, "gpuActiveLeafResetMilliseconds")) for row in sampled], COLORS["GPU leaf reset"]),
-            ("GPU final compact", [(float(row["timeSeconds"]), row_metric(row, "gpuFinalLeafCompactionMilliseconds")) for row in sampled], COLORS["GPU final compact"]),
-            ("GPU mesh emit", [(float(row["timeSeconds"]), row_metric(row, "gpuMeshEmitMilliseconds")) for row in sampled], COLORS["GPU mesh emit"]),
-            ("GPU readback", [(float(row["timeSeconds"]), float(row["gpuReadbackWaitMilliseconds"])) for row in sampled], COLORS["GPU readback"]),
+            ("CPU upload", [(float(row["timeSeconds"]), float(row["cpuUploadMilliseconds"])) for row in sampled], COLORS["CPU upload"]),
         ],
         "毫秒",
     )
     xy_line_chart(
         folder / "chart_exp05_roam_stage_timing_over_time.svg",
-        "实验5：GPU 类 ROAM 阶段耗时变化",
+        "实验5：DOD CPU ROAM 阶段耗时变化",
         [
             ("Split", [(float(row["timeSeconds"]), float(row["splitMilliseconds"])) for row in sampled], COLORS["Split"]),
             ("Merge", [(float(row["timeSeconds"]), float(row["mergeMilliseconds"])) for row in sampled], COLORS["Merge"]),

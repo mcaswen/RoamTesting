@@ -245,7 +245,7 @@ bool D3D12ProceduralTerrainPipeline::IsReady() const
 }
 
 // 根签名专门描述无 IA 顶点输入的 terrain 绘制协议
-// 与普通 terrain root signature 分离可避免破坏现有 GPU ROAM-like 路径
+// 与普通 terrain root signature 分离，避免程序化 CBT 绘制污染 CPU mesh 管线。
 bool D3D12ProceduralTerrainPipeline::CreateRootSignature(std::string* errorMessage)
 {
     // t0 仅供像素着色器采样地形纹理，t1 和 t2 仅供程序化顶点着色器读取

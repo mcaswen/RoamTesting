@@ -21,7 +21,6 @@ enum class TerrainLodAlgorithmId
 {
     ClassicCpuRoam,
     DataOrientedCpuRoam,
-    GpuRoamLike,
     Cbt2024,
     Count,
 };
@@ -71,10 +70,10 @@ struct TerrainLodSettings
     float TerrainSize{30.0F};
     float HeightScale{4.0F};
     int MaxDepth{14};
-    // Classic、DOD 和 GPU ROAM-like 共享像素单位的迟滞阈值。
+    // Classic 和 DOD 共享像素单位的迟滞阈值。
     float ScreenSpaceSplitThresholdPixels{4.0F};
     float ScreenSpaceMergeThresholdPixels{2.0F};
-    // 三种 ROAM 路径共享活动 leaf triangle 硬上限。
+    // 两种 CPU ROAM 路径共享活动 leaf triangle 硬上限。
     std::size_t TriangleBudget{20000U};
     // 仅供 DOD 选择是否执行 chunk 并行 Split 预提交；评分并行不受影响。
     bool EnableParallelSplit{true};
@@ -122,13 +121,11 @@ struct TerrainLodBuildInput
 };
 
 /// <summary>
-/// 算法渲染输出模式，区分 CPU mesh、GPU buffer 和 GPU driven 路径
+/// 算法渲染输出模式，区分 CPU mesh 和 CBT 的 GPU driven 路径
 /// </summary>
 enum class TerrainLodRenderMode
 {
     CpuMesh,
-    GpuBuffers,
-    GpuIndirect,
     GpuProceduralIndirect,
     DebugOnly,
 };
@@ -182,18 +179,10 @@ struct TerrainLodRenderPacket
     bool CpuMeshRequiresFullUpload{true};
     std::uint64_t CpuMeshGeneration{0};
     std::string StatusMessage;
-    std::uint32_t GpuNodeBufferId{0};
-    std::uint32_t GpuHeightMapTextureId{0};
-    std::uint32_t GpuVertexBufferId{0};
-    std::uint32_t GpuIndexBufferId{0};
-    std::uint32_t ActiveLeafBufferId{0};
-    std::uint32_t IndirectDrawBufferId{0};
     // 原生 API 与下列 uintptr_t 字段共同解释资源类型
     TerrainLodNativeResourceApi NativeResourceApi{TerrainLodNativeResourceApi::None};
     // D3D12 路径借用的顶点资源地址
     std::uintptr_t NativeVertexBuffer{0};
-    // D3D12 路径借用的索引资源地址
-    std::uintptr_t NativeIndexBuffer{0};
     // 程序化路径借用的活动二分器索引资源地址
     std::uintptr_t NativeActiveLeafBuffer{0};
     // D3D12 间接路径借用的命令参数资源地址
@@ -202,8 +191,6 @@ struct TerrainLodRenderPacket
     std::size_t GpuVertexBufferCapacityBytes{0};
     // 程序化顶点 SRV 的结构化元素跨度
     std::size_t GpuVertexStrideBytes{0};
-    // 原生索引视图允许访问的总字节数
-    std::size_t GpuIndexBufferCapacityBytes{0};
     // 活动二分器 SRV 允许访问的总字节数和结构化元素跨度
     std::size_t GpuActiveLeafBufferCapacityBytes{0};
     std::size_t GpuActiveLeafStrideBytes{0};
@@ -225,17 +212,8 @@ struct TerrainLodRenderPacket
     /// </summary>
     [[nodiscard]] bool HasConsistentResourceContract() const
     {
-        // OpenGL 对象编号和 D3D12 原生资源不能混合解释
-        const bool hasGpuResourceIds =
-            GpuNodeBufferId != 0U ||
-            GpuHeightMapTextureId != 0U ||
-            GpuVertexBufferId != 0U ||
-            GpuIndexBufferId != 0U ||
-            ActiveLeafBufferId != 0U ||
-            IndirectDrawBufferId != 0U;
         const bool hasNativeGpuResources =
             NativeVertexBuffer != 0U ||
-            NativeIndexBuffer != 0U ||
             NativeActiveLeafBuffer != 0U ||
             NativeIndirectDrawBuffer != 0U;
 
@@ -271,8 +249,8 @@ struct TerrainLodRenderPacket
                         CpuMeshUpdateRanges.empty();
                 }
             }
-            // 非 GPU 模式禁止携带任何需要生命周期管理的资源
-            return hasValidCpuMeshContract && !hasGpuResourceIds && !hasNativeGpuResources &&
+            // CPU mesh 模式禁止携带任何需要生命周期管理的资源
+            return hasValidCpuMeshContract && !hasNativeGpuResources &&
                    NativeResourceApi == TerrainLodNativeResourceApi::None &&
                    GpuResourceLifetime == TerrainLodGpuResourceLifetime::None &&
                    GpuResourceGeneration == 0U;
@@ -294,12 +272,10 @@ struct TerrainLodRenderPacket
                 ActiveLeafCount <= activeLeafCapacity;
 
             return NativeResourceApi == TerrainLodNativeResourceApi::Direct3D12 &&
-                   NativeVertexBuffer != 0U &&
-                   NativeIndexBuffer == 0U &&
-                   NativeActiveLeafBuffer != 0U &&
-                   NativeIndirectDrawBuffer != 0U &&
-                   !hasGpuResourceIds &&
-                   hasValidStrides &&
+                    NativeVertexBuffer != 0U &&
+                    NativeActiveLeafBuffer != 0U &&
+                    NativeIndirectDrawBuffer != 0U &&
+                    hasValidStrides &&
                    hasRequiredCapacity &&
                    ActiveLeafCount > 0U &&
                    ActiveTriangleCount > 0U &&
@@ -308,43 +284,12 @@ struct TerrainLodRenderPacket
                    GpuResourceGeneration > 0U;
         }
 
-        // OpenGL 路径通过非零对象编号表达资源有效性
-        const bool hasOpenGlDrawResources =
-            NativeResourceApi == TerrainLodNativeResourceApi::None &&
-            !hasNativeGpuResources &&
-            GpuVertexBufferId != 0U && GpuIndexBufferId != 0U;
-        // D3D12 视图除资源指针外还必须提供非零容量
-        const bool hasD3D12DrawResources =
-            NativeResourceApi == TerrainLodNativeResourceApi::Direct3D12 &&
-            !hasGpuResourceIds &&
-            NativeVertexBuffer != 0U && NativeIndexBuffer != 0U &&
-            GpuVertexBufferCapacityBytes > 0U && GpuIndexBufferCapacityBytes > 0U;
-        const bool hasNoProceduralMetadata =
-            NativeActiveLeafBuffer == 0U &&
-            GpuVertexStrideBytes == 0U &&
-            GpuActiveLeafBufferCapacityBytes == 0U &&
-            GpuActiveLeafStrideBytes == 0U;
-        const bool hasRequiredDrawResources =
-            (hasOpenGlDrawResources || hasD3D12DrawResources) &&
-            IndexCount > 0U &&
-            ActiveTriangleCount > 0U;
-        // 只有间接模式强制要求额外命令参数缓冲
-        const bool hasRequiredIndirectResource =
-            Mode != TerrainLodRenderMode::GpuIndirect ||
-            (NativeResourceApi == TerrainLodNativeResourceApi::Direct3D12
-                ? NativeIndirectDrawBuffer != 0U
-                : IndirectDrawBufferId != 0U);
-
-        return hasRequiredDrawResources &&
-               hasRequiredIndirectResource &&
-               hasNoProceduralMetadata &&
-               GpuResourceLifetime == TerrainLodGpuResourceLifetime::UntilNextBuildOrReset &&
-               GpuResourceGeneration > 0U;
+        return false;
     }
 };
 
 /// <summary>
-/// 跨 Classic / Data-Oriented / GPU / CBT 版本共享的统计字段，用于 UI 展示、回归测试和 CSV 输出
+/// 跨 Classic / Data-Oriented / CBT 版本共享的统计字段，用于 UI 展示、回归测试和 CSV 输出
 /// </summary>
 struct TerrainLodStats
 {
@@ -365,7 +310,7 @@ struct TerrainLodStats
     std::size_t PersistentMergeQueueSize{0};
     std::size_t QueueCrossoverCount{0};
     std::size_t QueueMembershipUpdateCount{0};
-    // Classic incremental emit 统计；其他算法保持为零。
+    // Classic 和 DOD incremental emit 统计；其他算法保持为零。
     std::size_t CpuMeshFullRebuildCount{0};
     std::size_t CpuMeshUpdatedTriangleCount{0};
     std::size_t CpuMeshReusedTriangleCount{0};
@@ -420,22 +365,6 @@ struct TerrainLodStats
     float CpuMeshEmitMilliseconds{0.0F};
     float CpuFinalizeMilliseconds{0.0F};
     float CpuUploadMilliseconds{0.0F};
-    // GPU pass timings 是延迟 query 结果，每个字段都表示两个同步边界之间执行的算法工作
-    // 这里不把整条 pass 链压缩成一个 compute 耗时
-    float GpuInitialLeafCompactionMilliseconds{0.0F};
-    float GpuErrorEvaluationMilliseconds{0.0F};
-    float GpuSplitCandidateMarkingMilliseconds{0.0F};
-    float GpuMergeCandidateMarkingMilliseconds{0.0F};
-    float GpuSplitTopologyMilliseconds{0.0F};
-    float GpuActiveLeafResetMilliseconds{0.0F};
-    float GpuFinalLeafCompactionMilliseconds{0.0F};
-    float GpuMeshEmitMilliseconds{0.0F};
-    float GpuPassSumMilliseconds{0.0F};
-    float GpuSnapshotBuildMilliseconds{0.0F};
-    float GpuBufferAllocationMilliseconds{0.0F};
-    float GpuDispatchWallMilliseconds{0.0F};
-    float GpuQueryWaitMilliseconds{0.0F};
-    float GpuReadbackWaitMilliseconds{0.0F};
     float RenderMilliseconds{0.0F};
     float SplitMilliseconds{0.0F};
     float MergeMilliseconds{0.0F};

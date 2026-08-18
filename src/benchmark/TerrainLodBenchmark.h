@@ -12,7 +12,6 @@ enum class BenchmarkAlgorithmSelection
 {
     Classic,
     DataOriented,
-    Gpu,
     All,
 };
 
@@ -39,7 +38,7 @@ struct BenchmarkOptions
 };
 
 /// <summary>
-/// 运行三版本共享的无窗口地形 LOD benchmark
+/// 运行 Classic 和 Data-Oriented 共享的无窗口地形 LOD benchmark
 /// </summary>
 [[nodiscard]] int RunTerrainLodBenchmark(const BenchmarkOptions& options);
 

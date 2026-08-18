@@ -55,7 +55,6 @@ public:
     Application(const Application&) = delete;
     Application& operator=(const Application&) = delete;
 
-    void EnableGpuSmokeTest();
     void EnableCbtProceduralSmokeTest();
     void EnableCbtOccupancyTreeSmokeTest();
     void EnableCbtBaseTopologySmokeTest();
@@ -114,7 +113,7 @@ private:
         // 算法顺序固定，输出表格才能横向对齐
         std::vector<Algorithms::TerrainLodAlgorithmId> AlgorithmSequence;
 
-        // Notes 记录 GPU 设备信息或 capability skip 原因
+        // Notes 记录构建、后端和可选算法 capability 信息
         std::vector<std::string> Notes;
 
         // Results 在整轮结束后一次性写成 Markdown 和 CSV

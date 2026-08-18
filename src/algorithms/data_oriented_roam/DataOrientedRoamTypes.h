@@ -55,7 +55,7 @@ struct DataOrientedRoamSettings
     std::size_t ErrorEvaluationWorkerCount{0};
     // 关闭时跳过 Split 候选快照、分桶和 chunk 提交，直接消费实时 Q_s
     bool EnableParallelSplit{true};
-    // GPU ROAM-like 快照仍从节点池读取 score；纯 CPU DOD 不承担这次随机镜像写入
+    // score 由持久 split queue 按节点索引保存，节点池不承担随机镜像写入。
     bool MirrorSplitScoresToNodePool{false};
     bool EnableLocalConstraints{true};
     bool EnableTopologyValidation{false};

@@ -8,10 +8,6 @@
 #include "render/D3D12GraphicsBackend.h"
 #endif
 
-#if defined(PARALLEL_ROAM_GRAPHICS_API_OPENGL)
-#include "platform/OpenGlCapabilities.h"
-#endif
-
 #include <glm/ext/matrix_clip_space.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -126,13 +122,6 @@ Render::TerrainRenderSettings ToRenderSettings(const Gui::TerrainPanelState& sta
 Application::~Application()
 {
     Shutdown();
-}
-
-void Application::EnableGpuSmokeTest()
-{
-    _terrainLodSmokeTestEnabled = true;
-    _terrainPanelState.UseTerrainLod = true;
-    _terrainPanelState.TerrainLodAlgorithm = Algorithms::TerrainLodAlgorithmId::GpuRoamLike;
 }
 
 void Application::EnableCbtProceduralSmokeTest()
@@ -443,21 +432,6 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
     }
 
     const Render::TerrainRenderStats terrainStats = _terrainRenderer.Stats();
-    if (_terrainLodSmokeTestEnabled &&
-        terrainStats.TerrainLodAlgorithm == Algorithms::TerrainLodAlgorithmId::GpuRoamLike)
-    {
-        // GPU smoke 同时验证共享 hard budget 和 CPU DOD baseline 的拓扑契约。
-        const std::size_t topologyIssueCount =
-            terrainStats.RoamTjunctionCount +
-            terrainStats.RoamInvalidNeighborCount +
-            terrainStats.RoamInvalidTopologyCount;
-        if (terrainStats.TriangleCount == 0U ||
-            terrainStats.TriangleCount > _terrainSettings.RoamTriangleBudget ||
-            topologyIssueCount != 0U)
-        {
-            _terrainLodSmokeTestFailed = true;
-        }
-    }
     Gui::DebugOverlayData debugData{};
     debugData.FramesPerSecond = _framesPerSecond;
     debugData.FrameTimeMilliseconds = _frameTimeMilliseconds;
@@ -477,13 +451,6 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
     debugData.UseTerrainLod = terrainStats.UseTerrainLod;
     debugData.TerrainLodAlgorithm = terrainStats.TerrainLodAlgorithm;
     debugData.TerrainLodStatusMessage = terrainStats.TerrainLodStatusMessage;
-    if (!_graphicsBackend->SupportsGpuRoamLike())
-    {
-        auto& availability = debugData.TerrainLodAvailability[
-            static_cast<std::size_t>(Algorithms::TerrainLodAlgorithmId::GpuRoamLike)];
-        availability.Available = false;
-        availability.UnavailableReason = "GPU ROAM-like 当前图形后端不可用";
-    }
     const Algorithms::Cbt2024::Cbt2024Availability cbtAvailability =
         Algorithms::Cbt2024::QueryCbt2024Availability(*_graphicsBackend);
     auto& cbtOverlayAvailability = debugData.TerrainLodAvailability[
@@ -558,24 +525,6 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
     debugData.RoamMergeMilliseconds = terrainStats.RoamMergeMilliseconds;
     debugData.RoamEmitMilliseconds = terrainStats.RoamEmitMilliseconds;
     debugData.RoamValidateMilliseconds = terrainStats.RoamValidateMilliseconds;
-    debugData.RoamGpuInitialLeafCompactionMilliseconds =
-        terrainStats.RoamGpuInitialLeafCompactionMilliseconds;
-    debugData.RoamGpuErrorEvaluationMilliseconds = terrainStats.RoamGpuErrorEvaluationMilliseconds;
-    debugData.RoamGpuSplitCandidateMarkingMilliseconds =
-        terrainStats.RoamGpuSplitCandidateMarkingMilliseconds;
-    debugData.RoamGpuMergeCandidateMarkingMilliseconds =
-        terrainStats.RoamGpuMergeCandidateMarkingMilliseconds;
-    debugData.RoamGpuSplitTopologyMilliseconds = terrainStats.RoamGpuSplitTopologyMilliseconds;
-    debugData.RoamGpuActiveLeafResetMilliseconds = terrainStats.RoamGpuActiveLeafResetMilliseconds;
-    debugData.RoamGpuFinalLeafCompactionMilliseconds =
-        terrainStats.RoamGpuFinalLeafCompactionMilliseconds;
-    debugData.RoamGpuMeshEmitMilliseconds = terrainStats.RoamGpuMeshEmitMilliseconds;
-    debugData.RoamGpuPassSumMilliseconds = terrainStats.RoamGpuPassSumMilliseconds;
-    debugData.RoamGpuSnapshotBuildMilliseconds = terrainStats.RoamGpuSnapshotBuildMilliseconds;
-    debugData.RoamGpuBufferAllocationMilliseconds = terrainStats.RoamGpuBufferAllocationMilliseconds;
-    debugData.RoamGpuDispatchWallMilliseconds = terrainStats.RoamGpuDispatchWallMilliseconds;
-    debugData.RoamGpuQueryWaitMilliseconds = terrainStats.RoamGpuQueryWaitMilliseconds;
-    debugData.RoamGpuReadbackWaitMilliseconds = terrainStats.RoamGpuReadbackWaitMilliseconds;
     debugData.RoamFrameFenceWaitMilliseconds = terrainStats.RoamFrameFenceWaitMilliseconds;
     debugData.RoamRenderMilliseconds = terrainStats.RoamRenderMilliseconds;
     debugData.RoamCpuGpuUploadBytes = terrainStats.RoamCpuGpuUploadBytes;
@@ -758,38 +707,7 @@ void Application::StartRuntimeBenchmark()
         Algorithms::TerrainLodAlgorithmId::ClassicCpuRoam,
         Algorithms::TerrainLodAlgorithmId::DataOrientedCpuRoam,
     };
-#if defined(PARALLEL_ROAM_GRAPHICS_API_OPENGL)
-    const Platform::OpenGlGpuCapabilities gpuCapabilities = Platform::QueryOpenGlGpuCapabilities();
-    if (_graphicsBackend->SupportsGpuRoamLike() && gpuCapabilities.SupportsGpuRoamCompute())
-    {
-        _runtimeBenchmark.AlgorithmSequence.push_back(Algorithms::TerrainLodAlgorithmId::GpuRoamLike);
-        _runtimeBenchmark.Notes.push_back(
-            "GPU 设备：" + gpuCapabilities.RendererString + " (" + gpuCapabilities.VersionString + ")");
-        _runtimeBenchmark.Notes.push_back(
-            "GPU 计时模型：先运行 CPU DOD 拓扑基线，再按顺序执行 shader 阶段：split 前 leaf 收集、"
-            "leaf error 评估、split 候选标记、诊断性 merge 候选评分、split/direct-diamond 拓扑提交、"
-            "细分后 leaf 收集和 mesh emit；GPU merge 拓扑尚未实现；" +
-            std::string{gpuCapabilities.SupportsIndirectDraw ? "indirect draw" : "buffer draw"} +
-            " 单独统计");
-    }
-    else
-    {
-        _runtimeBenchmark.Notes.push_back(
-            "跳过 GPU ROAM-like：" + gpuCapabilities.GpuRoamComputeUnavailableReason());
-    }
-#else
-    if (_graphicsBackend->SupportsGpuRoamLike())
-    {
-        _runtimeBenchmark.AlgorithmSequence.push_back(Algorithms::TerrainLodAlgorithmId::GpuRoamLike);
-        _runtimeBenchmark.Notes.push_back(
-            "GPU 计时模型：先运行 CPU DOD 拓扑基线，再按顺序执行 DX12 shader 阶段：split 前 leaf 收集、"
-            "leaf error 评估、split 候选标记、诊断性 merge 候选评分、split/direct-diamond 拓扑提交、"
-            "细分后 leaf 收集和 mesh emit；GPU merge 拓扑尚未实现；ExecuteIndirect 单独统计");
-    }
-    else
-    {
-        _runtimeBenchmark.Notes.push_back("跳过 GPU ROAM-like：当前 DX12 设备不可用");
-    }
+#if defined(PARALLEL_ROAM_GRAPHICS_API_D3D12)
     const Algorithms::Cbt2024::Cbt2024Availability cbtAvailability =
         Algorithms::Cbt2024::QueryCbt2024Availability(*_graphicsBackend);
     if (cbtAvailability.Available)

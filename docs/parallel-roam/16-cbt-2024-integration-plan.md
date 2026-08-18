@@ -6,6 +6,8 @@
 > 上游参考：`third_party/large_cbt`，提交 `7351e6fc603b9b2c2ab4da399b13a9ab0f327398`
 > 本机兼容基线：提交 `7ae736d179528a0996449c0cc2db7f3279edc8ee`，仅替换 NVIDIA 64 位 `firstbithigh` 实现
 
+> 主分支已移除 GPU ROAM-like 过渡实现；本文中相关对照和迁移记录作为历史背景保留，当前代码只接入 CBT 路径。
+
 ## 1. 目标
 
 本阶段的目标是在 RoamTesting 现有 DX12 管线中接入 CBT 2024 的完整 GPU 常驻拓扑，实现与官方源码语义一致的：

@@ -1,5 +1,7 @@
 # Dependency Setup
 
+> 主分支不再配置或构建 GPU ROAM-like compute 路径；该实验保留在 `archive/gpu-roam-like` 分支。当前 OpenGL terrain 路径使用 4.1 core，D3D12 GPU 资源仅由 CBT 程序化绘制使用。
+
 本文档记录 Parallel ROAM 的第三方依赖策略。当前目标是：源码仓库签出后，在目标机已经具备 C++20 编译器、系统 SDK 和显卡驱动的前提下，不依赖联网下载第三方库即可配置和编译。
 
 项目已经内置：

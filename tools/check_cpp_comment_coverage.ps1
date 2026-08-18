@@ -62,7 +62,6 @@ function Measure-CommentCoverage([string]$relativePath)
 
 $coverageRequirements = @(
     [pscustomobject]@{ Path = "src"; MinimumPercent = 15.0 },
-    [pscustomobject]@{ Path = "src/algorithms/gpu_roam"; MinimumPercent = 18.0 },
     [pscustomobject]@{ Path = "src/render"; MinimumPercent = 12.0 },
     [pscustomobject]@{ Path = "src/algorithms/data_oriented_roam"; MinimumPercent = 20.0 },
     [pscustomobject]@{ Path = "src/algorithms/classic_roam"; MinimumPercent = 20.0 },

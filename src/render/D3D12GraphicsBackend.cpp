@@ -545,11 +545,6 @@ const std::string& D3D12GraphicsBackend::VersionString() const
     return _versionString;
 }
 
-bool D3D12GraphicsBackend::SupportsGpuRoamLike() const
-{
-    return true;
-}
-
 const GraphicsDeviceCapabilities& D3D12GraphicsBackend::GraphicsCapabilities() const
 {
     return _deviceCapabilities;

@@ -2,29 +2,27 @@
 
 > 项目类型：实时地形 LOD 与现代并行拓扑实验
 >
-> 技术栈：C++20、CMake、SDL2、OpenGL 4.3、Direct3D 12、GLM、Dear ImGui、GLSL/HLSL
+> 技术栈：C++20、CMake、SDL2、OpenGL 4.1、Direct3D 12、GLM、Dear ImGui、GLSL/HLSL
 >
 > 当前主线：D3D12 CBT 2024 忠实基线接入
 
-Parallel ROAM 已完成 Classic CPU、Data-Oriented CPU 和 GPU ROAM-like 三条实验路线，以及 OpenGL/D3D12 双后端迁移。当前工作集中在 CBT 2024 的 GPU 常驻拓扑复现：OCBT、基础半边拓扑和程序化间接绘制已经落地，下一阶段是完整 split 路径。
+Parallel ROAM 已完成 Classic CPU、Data-Oriented CPU 两条 ROAM 实验路线，以及 OpenGL/D3D12 双后端迁移。旧 GPU ROAM-like 实验已归档到 `archive/gpu-roam-like` 分支；当前工作集中在 CBT 2024 的 GPU 常驻拓扑复现：OCBT、基础半边拓扑和程序化间接绘制已经落地，下一阶段是完整 split 路径。
 
 ## 当前状态
 
 - Classic CPU ROAM：已完成论文公式 (1) nested wedgie tree、像素 SSE、活动三角形预算、视锥感知、单 Build 级联合并、邻接约束和拓扑验证；
 - Data-Oriented CPU ROAM：已完成索引节点池、SoA、多线程扫描、候选标记和保守并发拓扑提交，并与 Classic 共用公式 (1) nested thickness、像素 SSE、视锥感知、20,000 活动 leaf 硬预算和单 Build 级联合并；
-- GPU ROAM-like：OpenGL/D3D12 原生 compute 评分已复用 DOD 快照中的 nested wedgie thickness，按相同像素 SSE 与六平面视锥规则标记候选，并在最终活动 leaf 硬预算内执行 split-only、压缩、mesh emit 和间接绘制；动态级联合并仍由同一 Build 的 DOD baseline 完成；
-- GPU ROAM-like：OpenGL 与 D3D12 均已有计算、GPU 网格生成和间接绘制验证路径；
 - D3D12 渲染迁移：阶段 0 至阶段 6 已关闭；
 - CBT 2024：阶段 B、C、D 已完成，阶段 E split 待实施；
-- 自动验证：包含注释覆盖率、OCBT、CBT 基础拓扑、视锥输入、三种 ROAM 的预算/视锥/级联 benchmark 断言和 OpenGL/D3D12 GPU smoke test；
-- 性能基线：正式 runtime benchmark 当前仍比较 Classic、DOD 和 GPU ROAM-like，CBT 在完整拓扑迁移前不进入性能排名。
+- 自动验证：包含注释覆盖率、OCBT、CBT 基础拓扑、视锥输入、Classic/DOD 的预算/视锥/级联 benchmark 断言和 CBT smoke test；
+- 性能基线：正式 runtime benchmark 当前比较 Classic 和 DOD，CBT 在完整拓扑迁移前不进入性能排名。
 
 ## 当前文档
 
 | 文档 | 作用 |
 |---|---|
-| [04-milestones.md](docs/parallel-roam/04-milestones.md) | Classic、DOD、GPU ROAM-like 和实验阶段的完成记录 |
-| [05-experiments-and-benchmarks.md](docs/parallel-roam/05-experiments-and-benchmarks.md) | 三算法性能实验口径与统计字段 |
+| [04-milestones.md](docs/parallel-roam/04-milestones.md) | Classic、DOD、CBT 和实验阶段的完成记录 |
+| [05-experiments-and-benchmarks.md](docs/parallel-roam/05-experiments-and-benchmarks.md) | Classic/DOD 性能实验口径与统计字段 |
 | [07-reference-projects.md](docs/parallel-roam/07-reference-projects.md) | 早期 ROAM 与引擎参考项目索引 |
 | [09-development-guidelines.md](docs/parallel-roam/09-development-guidelines.md) | 当前目录、命名、注释、Git 和开发流程规范 |
 | [10-dependency-setup.md](docs/parallel-roam/10-dependency-setup.md) | OpenGL/D3D12 依赖、构建入口和验证命令 |
@@ -42,8 +40,8 @@ Parallel ROAM 已完成 Classic CPU、Data-Oriented CPU 和 GPU ROAM-like 三条
 
 ### 已完成
 
-- [x] OpenGL 三算法实现、自动 benchmark 和技术报告；
-- [x] OpenGL/D3D12 双后端与 D3D12 GPU ROAM-like；
+- [x] OpenGL Classic/DOD 实现、自动 benchmark 和技术报告；
+- [x] OpenGL/D3D12 双后端与 D3D12 CBT 程序化绘制；
 - [x] CBT 2024 设备能力检测和程序化间接绘制；
 - [x] 128K、256K、512K、1M OCBT CPU/GPU 对照；
 - [x] 规则地形基础二分器、完整 GPU 资源集和容量切换验证。
@@ -65,5 +63,5 @@ Parallel ROAM 已完成 Classic CPU、Data-Oriented CPU 和 GPU ROAM-like 三条
 
 1. CBT 官方基线和后续预算调度变体必须使用独立算法标识、shader 和 benchmark 标签；
 2. 普通渲染帧不允许为了统计进行未说明的同步 GPU 读回；
-3. OpenGL 三算法实验与 D3D12 CBT 实验分别保留可复现构建和数据口径；
+3. OpenGL Classic/DOD 实验与 D3D12 CBT 实验分别保留可复现构建和数据口径；
 4. 所有阶段声明以代码能力、自动测试和 `16-cbt-2024-integration-plan.md` 的状态为准。

@@ -4,9 +4,6 @@
 #include "algorithms/TerrainLodView.h"
 #include "algorithms/classic_roam/ClassicRoamTerrainLodAlgorithm.h"
 #include "algorithms/data_oriented_roam/DataOrientedRoamTerrainLodAlgorithm.h"
-#if defined(PARALLEL_ROAM_GRAPHICS_API_OPENGL)
-#include "algorithms/gpu_roam/GpuRoamTerrainLodAlgorithm.h"
-#endif
 #include "terrain/HeightMap.h"
 #include "tools/PerformanceTimer.h"
 
@@ -32,7 +29,7 @@ namespace ParallelRoam::Benchmark
 {
 namespace
 {
-// benchmark 的核心约束是三算法共享同一组输入
+// benchmark 的核心约束是两种 CPU ROAM 共享同一组输入
 // 算法只通过 ITerrainLodAlgorithm 边界接入
 struct BenchmarkCameraKeyframe
 {
@@ -43,7 +40,7 @@ struct BenchmarkCameraKeyframe
 };
 
 // HeightMap、terrain size、LOD 阈值和相机路径都由这里固定
-// 这样 Classic、DOD 和 GPU 输出统计才能横向比较
+// 这样 Classic 和 DOD 输出统计才能横向比较
 struct BenchmarkScenario
 {
     std::string Name;
@@ -119,8 +116,6 @@ std::string ToString(BenchmarkAlgorithmSelection selection)
         return "classic";
     case BenchmarkAlgorithmSelection::DataOriented:
         return "dod";
-    case BenchmarkAlgorithmSelection::Gpu:
-        return "gpu";
     case BenchmarkAlgorithmSelection::All:
         return "all";
     }
@@ -368,15 +363,6 @@ std::unique_ptr<Algorithms::ITerrainLodAlgorithm> CreateAlgorithm(BenchmarkAlgor
         return std::make_unique<Algorithms::DataOrientedRoam::DataOrientedRoamTerrainLodAlgorithm>();
     }
 
-    if (selection == BenchmarkAlgorithmSelection::Gpu)
-    {
-#if defined(PARALLEL_ROAM_GRAPHICS_API_OPENGL)
-        return std::make_unique<Algorithms::GpuRoam::GpuRoamTerrainLodAlgorithm>();
-#else
-        return nullptr;
-#endif
-    }
-
     return nullptr;
 }
 
@@ -387,12 +373,11 @@ std::vector<BenchmarkAlgorithmSelection> ExpandAlgorithmSelection(BenchmarkAlgor
         return {selection};
     }
 
-    // all 的顺序固定为 Classic、DOD、GPU
+    // all 的顺序固定为 Classic、DOD
     // 输出和 CSV 都能保持稳定列对比
     return {
         BenchmarkAlgorithmSelection::Classic,
         BenchmarkAlgorithmSelection::DataOriented,
-        BenchmarkAlgorithmSelection::Gpu,
     };
 }
 
@@ -427,23 +412,6 @@ bool ValidateFrame(
         (cpuMesh == nullptr || cpuMesh->Vertices.empty() || cpuMesh->Indices.empty()))
     {
         // 当前 Classic 和 DOD 都必须输出 CPU mesh
-        return false;
-    }
-
-    if (renderPacket.Mode == Algorithms::TerrainLodRenderMode::GpuBuffers &&
-        (renderPacket.GpuVertexBufferId == 0U ||
-         renderPacket.GpuIndexBufferId == 0U ||
-         renderPacket.IndexCount == 0U))
-    {
-        return false;
-    }
-
-    if (renderPacket.Mode == Algorithms::TerrainLodRenderMode::GpuIndirect &&
-        (renderPacket.GpuVertexBufferId == 0U ||
-         renderPacket.GpuIndexBufferId == 0U ||
-         renderPacket.IndirectDrawBufferId == 0U ||
-         renderPacket.IndexCount == 0U))
-    {
         return false;
     }
 
@@ -503,9 +471,7 @@ bool ValidateRunShape(const BenchmarkScenario& scenario, std::vector<BenchmarkFr
         const std::size_t farTriangles = frames[0].TriangleCount;
         const bool frustumAwareRoam =
             frames[0].AlgorithmName == "classic_cpu_roam" ||
-            frames[0].AlgorithmName == "data_oriented_cpu_roam" ||
-            frames[0].AlgorithmName == "gpu_roam_like" ||
-            frames[0].AlgorithmName == "d3d12_gpu_roam_like";
+            frames[0].AlgorithmName == "data_oriented_cpu_roam";
         // 视锥感知后，近景只覆盖小块地形，总三角形数可以低于能看到全图的远景
         const bool centerHasMoreDetail = frustumAwareRoam
             ? frames[1].Stats.MaxActiveDepth == scenario.Settings.MaxDepth
@@ -584,20 +550,6 @@ BenchmarkAlgorithmRun RunAlgorithm(
     BenchmarkAlgorithmRun run{};
     run.AlgorithmName = ToString(selection);
 
-    if (selection == BenchmarkAlgorithmSelection::Gpu)
-    {
-#if defined(PARALLEL_ROAM_GRAPHICS_API_OPENGL)
-        run.UnavailableReason = Algorithms::GpuRoam::GpuRoamLikeUnavailableReason();
-#else
-        run.UnavailableReason =
-            "DX12 GPU ROAM-like requires an initialized graphics backend; use --runtime-benchmark or --gpu-smoke-test";
-#endif
-        if (!run.UnavailableReason.empty())
-        {
-            return run;
-        }
-    }
-
     std::unique_ptr<Algorithms::ITerrainLodAlgorithm> algorithm = CreateAlgorithm(selection);
     if (algorithm == nullptr)
     {
@@ -657,8 +609,7 @@ BenchmarkAlgorithmRun RunAlgorithm(
         frame.BuildWallMilliseconds = buildWallMilliseconds;
         const bool usesRoamBudget =
             selection == BenchmarkAlgorithmSelection::Classic ||
-            selection == BenchmarkAlgorithmSelection::DataOriented ||
-            selection == BenchmarkAlgorithmSelection::Gpu;
+            selection == BenchmarkAlgorithmSelection::DataOriented;
         frame.Passed = ValidateFrame(scenario, renderPacket, stats, buildSucceeded) &&
             (!usesRoamBudget ||
              stats.ActiveTriangleCount <= scenario.Settings.TriangleBudget);
@@ -813,11 +764,7 @@ bool WriteCsv(
            "cpuMergeTopologyChunkBuildMs,cpuMergeTopologyQueueInvalidationMs,"
            "cpuMergeTopologyParallelCommitMs,cpuMergeTopologyResultMergeMs,"
            "cpuMergeTopologyIndexQueueRefreshMs,cpuMergeTopologySerialConvergenceMs,"
-           "cpuFinalLeafCollectMs,cpuMeshEmitMs,cpuFinalizeMs,cpuUploadMs,"
-           "gpuInitialLeafCompactionMs,gpuErrorEvaluationMs,gpuSplitCandidateMarkingMs,"
-           "gpuMergeCandidateMarkingMs,"
-           "gpuSplitTopologyMs,gpuActiveLeafResetMs,gpuFinalLeafCompactionMs,gpuMeshEmitMs,"
-           "gpuPassSumMs,renderMs,"
+           "cpuFinalLeafCollectMs,cpuMeshEmitMs,cpuFinalizeMs,cpuUploadMs,renderMs,"
            "cpuGpuUploadBytes,cpuGpuReadbackBytes,buildWallMs,passed\n";
 
     for (const BenchmarkAlgorithmRun& run : runs)
@@ -905,15 +852,6 @@ bool WriteCsv(
                 << frame.Stats.CpuMeshEmitMilliseconds << ','
                 << frame.Stats.CpuFinalizeMilliseconds << ','
                 << frame.Stats.CpuUploadMilliseconds << ','
-                << frame.Stats.GpuInitialLeafCompactionMilliseconds << ','
-                << frame.Stats.GpuErrorEvaluationMilliseconds << ','
-                << frame.Stats.GpuSplitCandidateMarkingMilliseconds << ','
-                << frame.Stats.GpuMergeCandidateMarkingMilliseconds << ','
-                << frame.Stats.GpuSplitTopologyMilliseconds << ','
-                << frame.Stats.GpuActiveLeafResetMilliseconds << ','
-                << frame.Stats.GpuFinalLeafCompactionMilliseconds << ','
-                << frame.Stats.GpuMeshEmitMilliseconds << ','
-                << frame.Stats.GpuPassSumMilliseconds << ','
                 << frame.Stats.RenderMilliseconds << ','
                 << frame.Stats.CpuGpuUploadBytes << ','
                 << frame.Stats.CpuGpuReadbackBytes << ','
@@ -941,12 +879,6 @@ bool ParseAlgorithm(std::string_view value, BenchmarkAlgorithmSelection& outSele
     if (value == "dod" || value == "data-oriented" || value == "data_oriented")
     {
         outSelection = BenchmarkAlgorithmSelection::DataOriented;
-        return true;
-    }
-
-    if (value == "gpu" || value == "gpu_roam")
-    {
-        outSelection = BenchmarkAlgorithmSelection::Gpu;
         return true;
     }
 
@@ -1029,7 +961,6 @@ int RunTerrainLodBenchmark(const BenchmarkOptions& options)
     for (BenchmarkAlgorithmSelection selection : selections)
     {
         // allAvailablePassed 只统计实际运行的算法
-        // GPU 尚未实现时 all 仍可用于 Classic 和 DOD 回归
         BenchmarkAlgorithmRun run = RunAlgorithm(selection, scenario, heightMap);
         PrintRunSummary(run);
         anyAvailable = anyAvailable || run.Available;
@@ -1039,8 +970,7 @@ int RunTerrainLodBenchmark(const BenchmarkOptions& options)
 
     const bool csvWritten = WriteCsv(options.CsvPath, scenario, runs);
 
-    // all 模式允许 GPU 尚未实现时 skip
-    // 但不能允许三种选择全都没有实际运行
+    // 不能把没有实际运行任何算法的请求误判为成功。
     if (!anyAvailable)
     {
         // 显式选择未实现算法时需要失败
@@ -1151,7 +1081,7 @@ int RunTerrainLodBenchmarkFromCommandLine(int argc, char** argv)
 
 std::string BenchmarkUsage()
 {
-    return "Usage: ParallelROAM --benchmark [--algorithm classic|dod|gpu|all] "
+    return "Usage: ParallelROAM --benchmark [--algorithm classic|dod|all] "
            "[--profile smoke|budget-reentry|budget-saturation|incremental-emit|standard] [--csv path]\n";
 }
 } // 命名空间 ParallelRoam::Benchmark

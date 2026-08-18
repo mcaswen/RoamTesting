@@ -1,5 +1,7 @@
 # 实验与基准测试
 
+> 当前主分支的运行时对照为 Classic CPU ROAM 与 Data-Oriented CPU ROAM。文中 GPU ROAM-like 章节和旧字段是历史实验记录，源码已移至 `archive/gpu-roam-like` 分支，不再由主分支 benchmark 生成。
+
 ## 可验证假设
 
 项目不应预设“GPU 一定全面最好”，而应测试以下假设。

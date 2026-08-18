@@ -19,12 +19,8 @@ GLADapiproc LoadOpenGlProc(const char* name)
 
 const char* ImGuiGlslVersion()
 {
-    // macOS 桌面 OpenGL 上限为 4.1，其余平台使用计算路径所需的 4.3
-#if defined(__APPLE__)
+    // 主分支 CPU terrain 路径统一使用 OpenGL 4.1 core。
     return "#version 410";
-#else
-    return "#version 430";
-#endif
 }
 
 bool SetOpenGlAttribute(SDL_GLattr attribute, int value, const char* name, std::string* errorMessage)
@@ -79,9 +75,9 @@ bool OpenGlGraphicsBackend::ConfigureWindow(std::string* errorMessage)
                "context flags",
                errorMessage);
 #else
-    // 4.3 是现有 OpenGL GPU ROAM-like 计算路径的最低版本
+    // CPU terrain 路径与内置 shader 只要求 OpenGL 4.1 core。
     return SetOpenGlAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4, "major version", errorMessage) &&
-           SetOpenGlAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3, "minor version", errorMessage) &&
+           SetOpenGlAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1, "minor version", errorMessage) &&
            SetOpenGlAttribute(SDL_GL_CONTEXT_FLAGS, 0, "context flags", errorMessage);
 #endif
 }
@@ -291,11 +287,6 @@ const std::string& OpenGlGraphicsBackend::AdapterName() const
 const std::string& OpenGlGraphicsBackend::VersionString() const
 {
     return _versionString;
-}
-
-bool OpenGlGraphicsBackend::SupportsGpuRoamLike() const
-{
-    return GLAD_GL_VERSION_4_3 != 0;
 }
 
 const GraphicsDeviceCapabilities& OpenGlGraphicsBackend::GraphicsCapabilities() const

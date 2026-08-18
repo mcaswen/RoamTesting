@@ -544,7 +544,7 @@ frame slot 延迟消费 ranges 时不会漏更新
 - forced split、diamond merge 和裂缝约束；
 - 持久 `Q_s/Q_m` 的全局优先级口径；
 - triangle budget 和持续资源交换语义；
-- GPU ROAM-like shader 算法；
+- 已归档的 GPU ROAM-like shader 算法（保留在 `archive/gpu-roam-like` 分支）；
 - CBT 2024 路径；
 - ROAM 1997 完整最优性证明、triangle strip 或延期优先级复现。
 

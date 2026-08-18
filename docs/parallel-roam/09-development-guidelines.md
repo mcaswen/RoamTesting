@@ -2,6 +2,8 @@
 
 本文档约定 Parallel ROAM 的目录、命名、注释、Git、个人开发流程和 AI 辅助开发规范。所有新增代码、资源、文档和实验数据都应遵守本规范。
 
+> 主分支只维护 Classic、Data-Oriented 和 CBT 路径；GPU ROAM-like 的实现与专用资源已归档到 `archive/gpu-roam-like` 分支，本文较早目录示例中的该名称仅作历史记录。
+
 ## 1. 重点关注
 
 ### 本项目重点

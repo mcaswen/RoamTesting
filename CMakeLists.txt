@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.24)
 project(
     ParallelROAM
     VERSION 0.1.0
-    DESCRIPTION "Real-time adaptive terrain subdivision experiments across CPU, data-oriented CPU, and GPU pipelines"
+    DESCRIPTION "Real-time adaptive terrain subdivision experiments across Classic, data-oriented CPU, and CBT pipelines"
     LANGUAGES C CXX
 )
 
@@ -89,21 +89,9 @@ if(PARALLEL_ROAM_BUILD_APP)
                 src/algorithms/data_oriented_roam/DataOrientedRoamThreadPool.cpp
                 src/algorithms/data_oriented_roam/DataOrientedRoamTopology.cpp
                 src/algorithms/data_oriented_roam/DataOrientedRoamValidation.cpp
-                src/algorithms/gpu_roam/GpuRoamActiveLeafCompaction.cpp
-                src/algorithms/gpu_roam/GpuRoamActiveLeafReset.cpp
-                src/algorithms/gpu_roam/GpuRoamBufferSchema.cpp
-                src/algorithms/gpu_roam/GpuRoamCandidateMarking.cpp
-                src/algorithms/gpu_roam/GpuRoamComputeSupport.cpp
-                src/algorithms/gpu_roam/GpuRoamErrorEvaluation.cpp
-                src/algorithms/gpu_roam/GpuRoamMeshBuilder.cpp
-                src/algorithms/gpu_roam/GpuRoamMeshEmit.cpp
-                src/algorithms/gpu_roam/GpuRoamSplitOnlyTopology.cpp
-                src/algorithms/gpu_roam/GpuRoamState.cpp
-                src/algorithms/gpu_roam/GpuRoamTerrainLodAlgorithm.cpp
                 src/benchmark/TerrainLodBenchmark.cpp
                 src/benchmark/RoamProbe.cpp
                 src/gui/ImGuiLayer.cpp
-                src/platform/OpenGlCapabilities.cpp
                 src/platform/Window.cpp
                 src/render/Shader.cpp
                 src/render/GraphicsBackend.cpp
@@ -152,8 +140,6 @@ if(PARALLEL_ROAM_BUILD_APP)
                 src/algorithms/data_oriented_roam/DataOrientedRoamThreadPool.cpp
                 src/algorithms/data_oriented_roam/DataOrientedRoamTopology.cpp
                 src/algorithms/data_oriented_roam/DataOrientedRoamValidation.cpp
-                src/algorithms/gpu_roam/GpuRoamBufferSchema.cpp
-                src/algorithms/gpu_roam/d3d12/D3D12GpuRoamTerrainLodAlgorithm.cpp
                 src/benchmark/TerrainLodBenchmark.cpp
                 src/benchmark/RoamProbe.cpp
                 src/gui/ImGuiLayer.cpp
@@ -210,15 +196,6 @@ if(PARALLEL_ROAM_BUILD_APP)
         set(
             PARALLEL_ROAM_DX12_CBT_PROCEDURAL_VERTEX_SHADER
             "${PARALLEL_ROAM_DX12_SHADER_DIR}/CbtProceduralTerrainVS.cso")
-        set(PARALLEL_ROAM_DX12_GPU_ROAM_SHADERS
-            "${PARALLEL_ROAM_DX12_SHADER_DIR}/GpuRoamCompact.cso"
-            "${PARALLEL_ROAM_DX12_SHADER_DIR}/GpuRoamError.cso"
-            "${PARALLEL_ROAM_DX12_SHADER_DIR}/GpuRoamSplitCandidates.cso"
-            "${PARALLEL_ROAM_DX12_SHADER_DIR}/GpuRoamMergeCandidates.cso"
-            "${PARALLEL_ROAM_DX12_SHADER_DIR}/GpuRoamSplit.cso"
-            "${PARALLEL_ROAM_DX12_SHADER_DIR}/GpuRoamResetLeaves.cso"
-            "${PARALLEL_ROAM_DX12_SHADER_DIR}/GpuRoamEmit.cso"
-        )
         target_compile_definitions(
             parallel_roam
             PRIVATE PARALLEL_ROAM_DX12_SHADER_DIR="${PARALLEL_ROAM_DX12_SHADER_DIR}")
@@ -227,7 +204,6 @@ if(PARALLEL_ROAM_BUILD_APP)
                 ${PARALLEL_ROAM_DX12_VERTEX_SHADER}
                 ${PARALLEL_ROAM_DX12_PIXEL_SHADER}
                 ${PARALLEL_ROAM_DX12_CBT_PROCEDURAL_VERTEX_SHADER}
-                ${PARALLEL_ROAM_DX12_GPU_ROAM_SHADERS}
             COMMAND ${CMAKE_COMMAND} -E make_directory "${PARALLEL_ROAM_DX12_SHADER_DIR}"
             COMMAND ${PARALLEL_ROAM_DXC_EXECUTABLE}
                 -T vs_6_0 -E VSMain -Fo ${PARALLEL_ROAM_DX12_VERTEX_SHADER}
@@ -238,39 +214,16 @@ if(PARALLEL_ROAM_BUILD_APP)
             COMMAND ${PARALLEL_ROAM_DXC_EXECUTABLE}
                 -T vs_6_6 -E VSCbtProcedural -Fo ${PARALLEL_ROAM_DX12_CBT_PROCEDURAL_VERTEX_SHADER}
                 "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/dx12/CbtProceduralTerrain.hlsl"
-            COMMAND ${PARALLEL_ROAM_DXC_EXECUTABLE}
-                -T cs_6_0 -E CSCompact -Fo "${PARALLEL_ROAM_DX12_SHADER_DIR}/GpuRoamCompact.cso"
-                "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/dx12/GpuRoamLike.hlsl"
-            COMMAND ${PARALLEL_ROAM_DXC_EXECUTABLE}
-                -T cs_6_0 -E CSErrorEvaluation -Fo "${PARALLEL_ROAM_DX12_SHADER_DIR}/GpuRoamError.cso"
-                "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/dx12/GpuRoamLike.hlsl"
-            COMMAND ${PARALLEL_ROAM_DXC_EXECUTABLE}
-                -T cs_6_0 -E CSSplitCandidateMarking -Fo "${PARALLEL_ROAM_DX12_SHADER_DIR}/GpuRoamSplitCandidates.cso"
-                "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/dx12/GpuRoamLike.hlsl"
-            COMMAND ${PARALLEL_ROAM_DXC_EXECUTABLE}
-                -T cs_6_0 -E CSMergeCandidateMarking -Fo "${PARALLEL_ROAM_DX12_SHADER_DIR}/GpuRoamMergeCandidates.cso"
-                "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/dx12/GpuRoamLike.hlsl"
-            COMMAND ${PARALLEL_ROAM_DXC_EXECUTABLE}
-                -T cs_6_0 -E CSSplitOnlyTopology -Fo "${PARALLEL_ROAM_DX12_SHADER_DIR}/GpuRoamSplit.cso"
-                "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/dx12/GpuRoamLike.hlsl"
-            COMMAND ${PARALLEL_ROAM_DXC_EXECUTABLE}
-                -T cs_6_0 -E CSResetActiveLeafCount -Fo "${PARALLEL_ROAM_DX12_SHADER_DIR}/GpuRoamResetLeaves.cso"
-                "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/dx12/GpuRoamLike.hlsl"
-            COMMAND ${PARALLEL_ROAM_DXC_EXECUTABLE}
-                -T cs_6_0 -E CSMeshEmit -Fo "${PARALLEL_ROAM_DX12_SHADER_DIR}/GpuRoamEmit.cso"
-                "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/dx12/GpuRoamLike.hlsl"
             DEPENDS
                 "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/dx12/Terrain.hlsl"
                 "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/dx12/CbtProceduralTerrain.hlsl"
-                "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/dx12/GpuRoamLike.hlsl"
             VERBATIM
         )
         add_custom_target(parallel_roam_dx12_shaders
             DEPENDS
                 ${PARALLEL_ROAM_DX12_VERTEX_SHADER}
                 ${PARALLEL_ROAM_DX12_PIXEL_SHADER}
-                ${PARALLEL_ROAM_DX12_CBT_PROCEDURAL_VERTEX_SHADER}
-                ${PARALLEL_ROAM_DX12_GPU_ROAM_SHADERS})
+                ${PARALLEL_ROAM_DX12_CBT_PROCEDURAL_VERTEX_SHADER})
 
         set(PARALLEL_ROAM_CBT_OCBT_CAPACITY_NAMES 128K 256K 512K 1M)
         set(PARALLEL_ROAM_CBT_OCBT_CAPACITY_VALUES 131072 262144 524288 1048576)

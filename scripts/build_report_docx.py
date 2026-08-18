@@ -701,11 +701,11 @@ def document_xml(body_xml: Iterable[str]) -> str:
   <w:body>
     <w:p>
       <w:pPr><w:pStyle w:val="Title"/><w:jc w:val="center"/></w:pPr>
-      {w_run('基于现代 CPU / GPU 的 ROAM 地形 LOD 算法实现与性能分析报告')}
+      {w_run('Classic 与 Data-Oriented ROAM 地形 LOD 实现与性能分析报告')}
     </w:p>
     <w:p>
       <w:pPr><w:pStyle w:val="Subtitle"/><w:jc w:val="center"/></w:pPr>
-      {w_run('Classic ROAM、Data-Oriented ROAM 与 GPU ROAM-like 的实现和 Benchmark 对比')}
+      {w_run('Classic ROAM 与 Data-Oriented ROAM 的实现和 Benchmark 对比')}
     </w:p>
     <w:p>
       <w:pPr><w:jc w:val="center"/><w:spacing w:before="720"/></w:pPr>
@@ -799,7 +799,7 @@ def header_xml() -> str:
 <w:hdr xmlns:w="{NS_W}" xmlns:r="{NS_R}">
   <w:p>
     <w:pPr><w:jc w:val="center"/><w:pBdr><w:bottom w:val="single" w:sz="4" w:space="1" w:color="999999"/></w:pBdr></w:pPr>
-    {w_run('基于现代 CPU / GPU 的 ROAM 地形 LOD 算法实现与性能分析报告')}
+    {w_run('Classic 与 Data-Oriented ROAM 地形 LOD 实现与性能分析报告')}
   </w:p>
 </w:hdr>"""
 
@@ -879,7 +879,7 @@ def core_xml() -> str:
     generated_timestamp = f"{GENERATED_DATE.isoformat()}T00:00:00Z"
     return f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:dcmitype="http://purl.org/dc/dcmitype/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
-  <dc:title>基于现代 CPU / GPU 的 ROAM 地形 LOD 算法实现与性能分析报告</dc:title>
+  <dc:title>Classic 与 Data-Oriented ROAM 地形 LOD 实现与性能分析报告</dc:title>
   <dc:creator>Codex</dc:creator>
   <cp:lastModifiedBy>Codex</cp:lastModifiedBy>
   <dcterms:created xsi:type="dcterms:W3CDTF">{generated_timestamp}</dcterms:created>

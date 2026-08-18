@@ -59,7 +59,7 @@ struct TerrainRenderSettings
     Algorithms::TerrainLodAlgorithmId TerrainLodAlgorithm{Algorithms::TerrainLodAlgorithmId::ClassicCpuRoam};
     int RoamMaxDepth{14};
 
-    // Classic、DOD 和 GPU ROAM-like 共享像素误差阈值与活动 leaf 预算。
+    // Classic 和 DOD 共享像素误差阈值与活动 leaf 预算。
     float RoamScreenSpaceSplitThresholdPixels{4.0F};
     float RoamScreenSpaceMergeThresholdPixels{2.0F};
     std::size_t RoamTriangleBudget{20000U};
@@ -171,20 +171,6 @@ struct TerrainRenderStats
     float RoamMergeMilliseconds{0.0F};
     float RoamEmitMilliseconds{0.0F};
     float RoamValidateMilliseconds{0.0F};
-    float RoamGpuInitialLeafCompactionMilliseconds{0.0F};
-    float RoamGpuErrorEvaluationMilliseconds{0.0F};
-    float RoamGpuSplitCandidateMarkingMilliseconds{0.0F};
-    float RoamGpuMergeCandidateMarkingMilliseconds{0.0F};
-    float RoamGpuSplitTopologyMilliseconds{0.0F};
-    float RoamGpuActiveLeafResetMilliseconds{0.0F};
-    float RoamGpuFinalLeafCompactionMilliseconds{0.0F};
-    float RoamGpuMeshEmitMilliseconds{0.0F};
-    float RoamGpuPassSumMilliseconds{0.0F};
-    float RoamGpuSnapshotBuildMilliseconds{0.0F};
-    float RoamGpuBufferAllocationMilliseconds{0.0F};
-    float RoamGpuDispatchWallMilliseconds{0.0F};
-    float RoamGpuQueryWaitMilliseconds{0.0F};
-    float RoamGpuReadbackWaitMilliseconds{0.0F};
     float RoamFrameFenceWaitMilliseconds{0.0F};
     float RoamRenderMilliseconds{0.0F};
     std::size_t RoamCpuGpuUploadBytes{0};
@@ -247,9 +233,6 @@ private:
         unsigned int vertexBufferId,
         unsigned int indexBufferId,
         std::string* errorMessage);
-    bool BindGpuTerrainBuffers(
-        const Algorithms::TerrainLodRenderPacket& renderPacket,
-        std::string* errorMessage);
 #endif
     bool LoadTexture(const std::filesystem::path& texturePath, std::string* errorMessage);
     [[nodiscard]] bool HasDrawableTerrain() const;
@@ -263,7 +246,7 @@ private:
     IGraphicsBackend* _graphicsBackend{nullptr};
     Terrain::HeightMap _heightMap;
     Terrain::TerrainMeshData _meshData;
-    // Classic incremental emit 的 mesh 由算法持有，生命周期到下一次 Build/Reset。
+    // Classic/DOD incremental emit 的 mesh 由算法持有，生命周期到下一次 Build/Reset。
     const Terrain::TerrainMeshData* _borrowedCpuMeshData{nullptr};
     std::unique_ptr<Algorithms::ITerrainLodAlgorithm> _terrainLodAlgorithm;
     Algorithms::TerrainLodStats _terrainLodStats;
@@ -276,16 +259,13 @@ private:
     RenderContext _lastRenderContext{};
     RenderContext _lastRoamBuildContext{};
 #if defined(PARALLEL_ROAM_GRAPHICS_API_OPENGL)
-    // CPU mesh 缓冲由 renderer 拥有，GPU mesh 缓冲只借用算法输出
+    // CPU mesh 缓冲由 renderer 拥有。
     unsigned int _vertexArrayId{0};
     unsigned int _vertexBufferId{0};
     unsigned int _indexBufferId{0};
     std::size_t _vertexBufferCapacityBytes{0};
     std::size_t _indexBufferCapacityBytes{0};
     unsigned int _textureId{0};
-    unsigned int _gpuVertexBufferId{0};
-    unsigned int _gpuIndexBufferId{0};
-    unsigned int _gpuIndirectDrawBufferId{0};
 #endif
     Algorithms::TerrainLodRenderMode _renderMode{Algorithms::TerrainLodRenderMode::CpuMesh};
     std::size_t _drawVertexCount{0};

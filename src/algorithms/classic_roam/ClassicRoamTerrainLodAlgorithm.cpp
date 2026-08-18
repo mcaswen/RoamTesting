@@ -49,7 +49,7 @@ bool ClassicRoamTerrainLodAlgorithm::BuildRenderData(
     }
 
     // 当前 Classic 路径输出 CPU mesh
-    // GPU buffer 和 indirect draw 字段留给后续 GPU ROAM-like
+    // Classic 只发布借用的 CPU mesh；GPU 资源字段保持为空。
     outPacket.Mode = TerrainLodRenderMode::CpuMesh;
     const TerrainLodCpuSample cpuSampleStart = CaptureTerrainLodCpuSample();
     const Terrain::TerrainMeshData& meshData = _builder.Build(

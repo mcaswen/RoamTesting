@@ -5,7 +5,6 @@
 #include "algorithms/cbt_2024/d3d12/D3D12CbtTerrainLodAlgorithm.h"
 #include "algorithms/classic_roam/ClassicRoamTerrainLodAlgorithm.h"
 #include "algorithms/data_oriented_roam/DataOrientedRoamTerrainLodAlgorithm.h"
-#include "algorithms/gpu_roam/d3d12/D3D12GpuRoamTerrainLodAlgorithm.h"
 #include "render/D3D12GraphicsBackend.h"
 #include "render/D3D12ProceduralTerrainPipeline.h"
 #include "tools/PerformanceTimer.h"
@@ -245,10 +244,6 @@ std::unique_ptr<Algorithms::ITerrainLodAlgorithm> CreateTerrainLodAlgorithm(
     {
         return std::make_unique<Algorithms::DataOrientedRoam::DataOrientedRoamTerrainLodAlgorithm>();
     }
-    if (algorithmId == Algorithms::TerrainLodAlgorithmId::GpuRoamLike)
-    {
-        return std::make_unique<Algorithms::GpuRoam::D3D12::D3D12GpuRoamTerrainLodAlgorithm>(backend);
-    }
     if (algorithmId == Algorithms::TerrainLodAlgorithmId::Cbt2024)
     {
         return std::make_unique<Algorithms::Cbt2024::D3D12::D3D12CbtTerrainLodAlgorithm>(backend);
@@ -258,8 +253,7 @@ std::unique_ptr<Algorithms::ITerrainLodAlgorithm> CreateTerrainLodAlgorithm(
 
 bool UsesNativeGpuResources(Algorithms::TerrainLodAlgorithmId algorithmId)
 {
-    return algorithmId == Algorithms::TerrainLodAlgorithmId::GpuRoamLike ||
-           algorithmId == Algorithms::TerrainLodAlgorithmId::Cbt2024;
+    return algorithmId == Algorithms::TerrainLodAlgorithmId::Cbt2024;
 }
 
 std::vector<std::uint8_t> ReadBinaryFile(const std::filesystem::path& path, std::string* errorMessage)
@@ -369,7 +363,6 @@ struct D3D12TerrainRendererState
     Microsoft::WRL::ComPtr<ID3D12RootSignature> RootSignature;
     Microsoft::WRL::ComPtr<ID3D12PipelineState> FillPipelineState;
     Microsoft::WRL::ComPtr<ID3D12PipelineState> WireframePipelineState;
-    Microsoft::WRL::ComPtr<ID3D12CommandSignature> DrawIndexedCommandSignature;
     D3D12ProceduralTerrainPipeline ProceduralPipeline;
 
     // CPU 网格和常量缓冲按交换链帧隔离
@@ -381,11 +374,9 @@ struct D3D12TerrainRendererState
 
     // GPU LOD 缓冲由算法持有，renderer 只保存当前绘制需要的借用指针
     ID3D12Resource* GpuVertexBuffer{nullptr};
-    ID3D12Resource* GpuIndexBuffer{nullptr};
     ID3D12Resource* GpuActiveLeafBuffer{nullptr};
     ID3D12Resource* GpuIndirectBuffer{nullptr};
     D3D12_VERTEX_BUFFER_VIEW GpuVertexView{};
-    D3D12_INDEX_BUFFER_VIEW GpuIndexView{};
     std::size_t GpuVertexCapacityBytes{0};
     std::size_t GpuVertexStrideBytes{0};
     std::size_t GpuActiveLeafCapacityBytes{0};
@@ -399,11 +390,9 @@ namespace
 void ClearBorrowedGpuResources(D3D12TerrainRendererState& state)
 {
     state.GpuVertexBuffer = nullptr;
-    state.GpuIndexBuffer = nullptr;
     state.GpuActiveLeafBuffer = nullptr;
     state.GpuIndirectBuffer = nullptr;
     state.GpuVertexView = {};
-    state.GpuIndexView = {};
     state.GpuVertexCapacityBytes = 0U;
     state.GpuVertexStrideBytes = 0U;
     state.GpuActiveLeafCapacityBytes = 0U;
@@ -570,22 +559,6 @@ bool InitializeState(D3D12TerrainRendererState& state, std::string* errorMessage
         {
             return false;
         }
-    }
-
-    D3D12_INDIRECT_ARGUMENT_DESC argument{};
-    argument.Type = D3D12_INDIRECT_ARGUMENT_TYPE_DRAW_INDEXED;
-    // 命令跨度必须与 HLSL 写入的五个 uint 字段完全一致
-    D3D12_COMMAND_SIGNATURE_DESC signature{};
-    signature.ByteStride = sizeof(D3D12_DRAW_INDEXED_ARGUMENTS);
-    signature.NumArgumentDescs = 1;
-    signature.pArgumentDescs = &argument;
-    if (FAILED(state.Backend->Device()->CreateCommandSignature(
-            &signature,
-            nullptr,
-            IID_PPV_ARGS(&state.DrawIndexedCommandSignature))))
-    {
-        SetError(errorMessage, "D3D12 terrain indirect command signature creation failed");
-        return false;
     }
 
     return true;
@@ -833,8 +806,7 @@ bool TerrainRenderer::UpdateForView(const RenderContext& context, std::string* e
             glm::dot(buildDelta, buildDelta) >= rebuildDistance * rebuildDistance;
         const bool usesRoamView =
             _settings.TerrainLodAlgorithm == Algorithms::TerrainLodAlgorithmId::ClassicCpuRoam ||
-            _settings.TerrainLodAlgorithm == Algorithms::TerrainLodAlgorithmId::DataOrientedCpuRoam ||
-            _settings.TerrainLodAlgorithm == Algorithms::TerrainLodAlgorithmId::GpuRoamLike;
+            _settings.TerrainLodAlgorithm == Algorithms::TerrainLodAlgorithmId::DataOrientedCpuRoam;
         const bool roamViewChanged = usesRoamView &&
             (!_hasRoamBuildView || RoamViewInputsChanged(_lastRoamBuildContext, context));
         if (!_meshDirty && !cameraMovedEnough && !roamViewChanged)
@@ -997,27 +969,11 @@ void TerrainRenderer::Render(const RenderContext& context)
         _d3d12State->ConstantBuffers[frameIndex]->GetGPUVirtualAddress());
     commandList->SetGraphicsRootDescriptorTable(1, _d3d12State->TextureSrv.Gpu);
     commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-    if (_renderMode == Algorithms::TerrainLodRenderMode::GpuIndirect)
-    {
-        // 算法已经在同一命令列表中生成资源和 DrawIndexed 参数
-        commandList->IASetVertexBuffers(0, 1, &_d3d12State->GpuVertexView);
-        commandList->IASetIndexBuffer(&_d3d12State->GpuIndexView);
-        commandList->ExecuteIndirect(
-            _d3d12State->DrawIndexedCommandSignature.Get(),
-            1,
-            _d3d12State->GpuIndirectBuffer,
-            0,
-            nullptr,
-            0);
-    }
-    else
-    {
-        // CPU 算法走本帧上传缓冲并直接提交固定参数绘制
-        D3D12MeshFrameResources& frame = _d3d12State->MeshFrames[frameIndex];
-        commandList->IASetVertexBuffers(0, 1, &frame.VertexView);
-        commandList->IASetIndexBuffer(&frame.IndexView);
-        commandList->DrawIndexedInstanced(static_cast<UINT>(_drawIndexCount), 1, 0, 0, 0);
-    }
+    // CPU 算法走本帧上传缓冲并直接提交固定参数绘制
+    D3D12MeshFrameResources& frame = _d3d12State->MeshFrames[frameIndex];
+    commandList->IASetVertexBuffers(0, 1, &frame.VertexView);
+    commandList->IASetIndexBuffer(&frame.IndexView);
+    commandList->DrawIndexedInstanced(static_cast<UINT>(_drawIndexCount), 1, 0, 0, 0);
 }
 
 TerrainRenderStats TerrainRenderer::Stats() const
@@ -1107,24 +1063,6 @@ TerrainRenderStats TerrainRenderer::Stats() const
     stats.RoamMergeMilliseconds = _terrainLodStats.MergeMilliseconds;
     stats.RoamEmitMilliseconds = _terrainLodStats.EmitMilliseconds;
     stats.RoamValidateMilliseconds = _terrainLodStats.ValidateMilliseconds;
-    stats.RoamGpuInitialLeafCompactionMilliseconds =
-        _terrainLodStats.GpuInitialLeafCompactionMilliseconds;
-    stats.RoamGpuErrorEvaluationMilliseconds = _terrainLodStats.GpuErrorEvaluationMilliseconds;
-    stats.RoamGpuSplitCandidateMarkingMilliseconds =
-        _terrainLodStats.GpuSplitCandidateMarkingMilliseconds;
-    stats.RoamGpuMergeCandidateMarkingMilliseconds =
-        _terrainLodStats.GpuMergeCandidateMarkingMilliseconds;
-    stats.RoamGpuSplitTopologyMilliseconds = _terrainLodStats.GpuSplitTopologyMilliseconds;
-    stats.RoamGpuActiveLeafResetMilliseconds = _terrainLodStats.GpuActiveLeafResetMilliseconds;
-    stats.RoamGpuFinalLeafCompactionMilliseconds =
-        _terrainLodStats.GpuFinalLeafCompactionMilliseconds;
-    stats.RoamGpuMeshEmitMilliseconds = _terrainLodStats.GpuMeshEmitMilliseconds;
-    stats.RoamGpuPassSumMilliseconds = _terrainLodStats.GpuPassSumMilliseconds;
-    stats.RoamGpuSnapshotBuildMilliseconds = _terrainLodStats.GpuSnapshotBuildMilliseconds;
-    stats.RoamGpuBufferAllocationMilliseconds = _terrainLodStats.GpuBufferAllocationMilliseconds;
-    stats.RoamGpuDispatchWallMilliseconds = _terrainLodStats.GpuDispatchWallMilliseconds;
-    stats.RoamGpuQueryWaitMilliseconds = _terrainLodStats.GpuQueryWaitMilliseconds;
-    stats.RoamGpuReadbackWaitMilliseconds = _terrainLodStats.GpuReadbackWaitMilliseconds;
     stats.RoamFrameFenceWaitMilliseconds =
         _d3d12State != nullptr ? _d3d12State->Backend->LastGpuWaitMilliseconds() : 0.0F;
     stats.RoamRenderMilliseconds = _d3d12State != nullptr ? _d3d12State->Backend->LastGpuFrameMilliseconds() : 0.0F;
@@ -1243,7 +1181,7 @@ bool TerrainRenderer::RebuildTerrainLod(const RenderContext& context, std::strin
         _terrainLodStatusMessage = buildError->empty() ? "Terrain LOD build failed" : *buildError;
         return false;
     }
-    // 渲染器只消费完整的 CPU 网格或完整的 GPU 原生资源三元组
+    // 渲染器只消费完整的 CPU 网格或 CBT 的程序化资源包
     if (!renderPacket.HasConsistentResourceContract())
     {
         _terrainLodStatusMessage = "D3D12 terrain LOD returned an inconsistent render packet";
@@ -1255,33 +1193,6 @@ bool TerrainRenderer::RebuildTerrainLod(const RenderContext& context, std::strin
     _terrainLodStatusMessage = renderPacket.StatusMessage;
     _lastRoamBuildContext = context;
     _hasRoamBuildView = true;
-    if (renderPacket.Mode == Algorithms::TerrainLodRenderMode::GpuIndirect &&
-        renderPacket.NativeResourceApi == Algorithms::TerrainLodNativeResourceApi::Direct3D12)
-    {
-        // 原生指针只借用到算法对象下一次重建或销毁之前
-        _meshData = {};
-        _borrowedCpuMeshData = nullptr;
-        _renderMode = Algorithms::TerrainLodRenderMode::GpuIndirect;
-        _d3d12State->GpuVertexBuffer = reinterpret_cast<ID3D12Resource*>(renderPacket.NativeVertexBuffer);
-        _d3d12State->GpuIndexBuffer = reinterpret_cast<ID3D12Resource*>(renderPacket.NativeIndexBuffer);
-        _d3d12State->GpuActiveLeafBuffer = nullptr;
-        _d3d12State->GpuIndirectBuffer = reinterpret_cast<ID3D12Resource*>(renderPacket.NativeIndirectDrawBuffer);
-        _drawVertexCount = renderPacket.ActiveTriangleCount * 3U;
-        _drawIndexCount = renderPacket.IndexCount;
-        _drawTriangleCount = renderPacket.ActiveTriangleCount;
-        // 视图容量取分配容量，实际绘制范围由间接参数中的索引数量控制
-        _d3d12State->GpuVertexView.BufferLocation = _d3d12State->GpuVertexBuffer->GetGPUVirtualAddress();
-        _d3d12State->GpuVertexView.SizeInBytes = static_cast<UINT>(renderPacket.GpuVertexBufferCapacityBytes);
-        _d3d12State->GpuVertexView.StrideInBytes = sizeof(Terrain::TerrainMeshVertex);
-        _d3d12State->GpuIndexView.BufferLocation = _d3d12State->GpuIndexBuffer->GetGPUVirtualAddress();
-        _d3d12State->GpuIndexView.SizeInBytes = static_cast<UINT>(renderPacket.GpuIndexBufferCapacityBytes);
-        _d3d12State->GpuIndexView.Format = DXGI_FORMAT_R32_UINT;
-        _d3d12State->GpuResourceGeneration = renderPacket.GpuResourceGeneration;
-        _meshDirty = false;
-        _terrainLodTotalMilliseconds = rebuildTimer.Stop();
-        return true;
-    }
-
     if (renderPacket.Mode == Algorithms::TerrainLodRenderMode::GpuProceduralIndirect &&
         renderPacket.NativeResourceApi == Algorithms::TerrainLodNativeResourceApi::Direct3D12)
     {
@@ -1297,12 +1208,10 @@ bool TerrainRenderer::RebuildTerrainLod(const RenderContext& context, std::strin
         _borrowedCpuMeshData = nullptr;
         _renderMode = Algorithms::TerrainLodRenderMode::GpuProceduralIndirect;
         _d3d12State->GpuVertexBuffer = reinterpret_cast<ID3D12Resource*>(renderPacket.NativeVertexBuffer);
-        _d3d12State->GpuIndexBuffer = nullptr;
         _d3d12State->GpuActiveLeafBuffer =
             reinterpret_cast<ID3D12Resource*>(renderPacket.NativeActiveLeafBuffer);
         _d3d12State->GpuIndirectBuffer = reinterpret_cast<ID3D12Resource*>(renderPacket.NativeIndirectDrawBuffer);
         _d3d12State->GpuVertexView = {};
-        _d3d12State->GpuIndexView = {};
         _d3d12State->GpuVertexCapacityBytes = renderPacket.GpuVertexBufferCapacityBytes;
         _d3d12State->GpuVertexStrideBytes = renderPacket.GpuVertexStrideBytes;
         _d3d12State->GpuActiveLeafCapacityBytes = renderPacket.GpuActiveLeafBufferCapacityBytes;
@@ -1545,14 +1454,6 @@ bool TerrainRenderer::HasDrawableTerrain() const
                _d3d12State->GpuActiveLeafBuffer != nullptr &&
                _d3d12State->GpuIndirectBuffer != nullptr &&
                _d3d12State->GpuResourceGeneration > 0U;
-    }
-    if (_renderMode == Algorithms::TerrainLodRenderMode::GpuIndirect)
-    {
-        // GPU 路径缺少任一借用资源都不能提交 ExecuteIndirect
-        return _drawIndexCount > 0U &&
-               _d3d12State->GpuVertexBuffer != nullptr &&
-               _d3d12State->GpuIndexBuffer != nullptr &&
-               _d3d12State->GpuIndirectBuffer != nullptr;
     }
     return _renderMode == Algorithms::TerrainLodRenderMode::CpuMesh && _drawIndexCount > 0U;
 }

@@ -5,12 +5,11 @@
 namespace ParallelRoam::Algorithms::DataOrientedRoam
 {
 /// <summary>
-/// 开始一个持久 Mesh generation；GPU topology-only Build 会关闭 edit tracking。
+/// 开始一个持久 Mesh generation。
 /// </summary>
 void BeginIncrementalMeshUpdate(
     DataOrientedRoamState& state,
-    bool resetTopology,
-    bool emitCpuMesh);
+    bool resetTopology);
 
 /// <summary>
 /// 丢弃持久 Mesh 数据；下一次 CPU Build 从当前 active leaf cut 做完整初始化。

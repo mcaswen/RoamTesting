@@ -65,7 +65,6 @@ public:
     [[nodiscard]] virtual bool UsesZeroToOneDepth() const = 0;
     [[nodiscard]] virtual const std::string& AdapterName() const = 0;
     [[nodiscard]] virtual const std::string& VersionString() const = 0;
-    [[nodiscard]] virtual bool SupportsGpuRoamLike() const = 0;
     [[nodiscard]] virtual const GraphicsDeviceCapabilities& GraphicsCapabilities() const = 0;
     [[nodiscard]] virtual float LastGpuFrameMilliseconds() const = 0;
     [[nodiscard]] virtual float LastGpuWaitMilliseconds() const = 0;
