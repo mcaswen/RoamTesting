@@ -99,6 +99,7 @@ struct TerrainRenderStats
     bool UseTerrainLod{false};
     Algorithms::TerrainLodAlgorithmId TerrainLodAlgorithm{Algorithms::TerrainLodAlgorithmId::ClassicCpuRoam};
     std::string TerrainLodStatusMessage;
+    std::uint64_t GpuTopologyFrameGeneration{0U};
 
     // setting 字段来自 UI 快照，不与算法实际达到的状态混用
     int RoamMaxDepthSetting{0};

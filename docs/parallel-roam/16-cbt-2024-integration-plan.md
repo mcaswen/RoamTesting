@@ -1,554 +1,948 @@
 # CBT 2024 接入与复现计划
 
-> 日期：2026-07-16  
-> 状态：实施计划 v0.3；阶段 B、C、D 已完成，当前进入阶段 E
-> 前置条件：DX12 迁移阶段已完成  
-> 上游参考：`third_party/large_cbt`，提交 `7351e6fc603b9b2c2ab4da399b13a9ab0f327398`
+> 初稿日期：2026-07-16
+> 源码复核：2026-08-22
+> 状态：实施计划 v0.5；阶段 E0 已完成，当前进入阶段 E1
+> 前置条件：D3D12 迁移阶段已完成
+> 上游参考：`third_party/large_cbt`，提交 `7ae736d179528a0996449c0cc2db7f3279edc8ee`
 > 本机兼容基线：提交 `7ae736d179528a0996449c0cc2db7f3279edc8ee`，仅替换 NVIDIA 64 位 `firstbithigh` 实现
 
-> 主分支已移除 GPU ROAM-like 过渡实现；本文中相关对照和迁移记录作为历史背景保留，当前代码只接入 CBT 路径。
+> 主分支已移除 GPU ROAM-like 过渡实现。它只作为历史实验保留在 `archive/gpu-roam-like` 分支，不再属于当前接入架构或完成后的主线比较集合。
 
-## 1. 目标
+## 1. 目标与完成边界
 
-本阶段的目标是在 RoamTesting 现有 DX12 管线中接入 CBT 2024 的完整 GPU 常驻拓扑，实现与官方源码语义一致的：
+本计划的目标是在 RoamTesting 现有 D3D12 管线中接入 CBT 2024 的完整 GPU 常驻拓扑，并在不改变上游算法语义的前提下适配高度图地形。忠实基线必须覆盖：
 
-- OCBT 位域和压缩求和树；
+- OCBT 位域、压缩求和树和四档容量特化；
 - 动态二分器物理槽位池；
-- 逻辑 `heapID` 与半边邻接；
-- 屏幕空间分类；
-- split 兼容链、容量预留、槽位分配、二分提交和邻接传播；
-- merge 合法性检查、拓扑合并和邻接传播；
-- OCBT 归约、活动节点索引和 GPU 间接命令；
-- 高度图地形几何求值；
-- 可重复的官方基线、项目 benchmark 和统计输出。
+- 物理槽位与逻辑 `heapID` 的分离；
+- 三邻接双缓冲；
+- 屏幕面积分类、背面剔除和视锥剔除；
+- split 兼容链、保守容量预留、空闲 rank-select、四种二分模板和邻接传播；
+- simplify 合法性检查、merge、槽位释放和邻接传播；
+- 三段 OCBT 归约、活动索引和 GPU 间接命令；
+- 最小平面几何验证和最终高度图地形几何求值；
+- 无普通帧同步读回的统计、验证和 benchmark 路径。
 
-完成后，项目应同时具备四套可比较路径：
+完成后，当前主分支应具备三套可运行路径：
 
 ```text
 Classic CPU ROAM
-数据导向 CPU ROAM
-GPU ROAM-like
-CBT 2024 官方语义基线
+Data-Oriented CPU ROAM
+CBT 2024 官方语义 GPU 基线
 ```
 
-预算感知调度器不在本阶段修改官方基线。只有 CBT 2024 原版路径稳定、可测量并冻结之后，才新建研究变体。
+兼容闭包感知预算调度器不属于本计划的忠实基线。只有阶段 I 冻结官方语义基线后，才允许建立新的算法标识、shader 和 benchmark 标签实现研究变体。
 
-## 2. 前置成果
+## 2. 本次源码复核得到的不可变事实
 
-以下工作已经完成，不在本计划中重复：
+本节不是建议架构，而是 `large_cbt` 当前固定提交的实际行为。接入实现如果有意偏离，必须在代码、统计和实验标签中明确记录。
 
-- DX12 设备、交换链、帧资源、围栏和描述符；
-- HLSL/DXC 构建流程；
-- Compute Shader、SRV/UAV 和跨阶段屏障；
-- GPU 顶点/索引缓冲和 `ExecuteIndirect`；
-- ImGui、算法切换、自动烟雾测试和运行时 benchmark；
-- GPU 时间戳和延迟统计读回；
-- CBT 2024 官方源码克隆和总体架构分析。
+### 2.1 上游真实帧事务
 
-前置文档：
+上游 [`MeshUpdater::update`](../../third_party/large_cbt/demo/src/mesh/mesh_updater.cpp) 的一轮更新顺序是：
 
-- [DX12 渲染与计算管线迁移总结](13-dx12-render-pipeline-migration-plan.md)；
-- [large_cbt 总体架构与关键算法路径参考](15-large-cbt-architecture-reference.md)；
-- [研究假设与验证计划](12-research-hypothesis-validation-plan.md)。
+```text
+Reset
+  ↓
+Classify
+  ↓
+PrepareIndirect(split) → Split
+  ↓
+PrepareIndirect(allocate) → Allocate
+  ↓
+Copy currentNeighbors → nextNeighbors
+  ↓
+Bisect → PrepareIndirect(propagate split) → PropagateBisect
+  ↓
+PrepareSimplify → PrepareIndirect(simplify) → Simplify
+  ↓
+PrepareIndirect(propagate simplify) → PropagateSimplify
+  ↓
+ReducePre → ReduceFirst → ReduceSecond
+  ↓
+交换 currentNeighborsBufferIdx
+  ↓
+BisectorIndexation → PrepareBisectorIndirect
+```
 
-## 3. 实施原则
+split 和 simplify/merge 最终属于同一个邻接代次和同一次 Reduce。阶段 E 可以用 split-only 作为开发检查点，但正式忠实基线不能把 split 与 merge 组织成两条彼此独立、顺序不同的永久管线。
 
-### 3.1 先复现，后改进
+### 2.2 分类消费上一轮活动索引和完整几何
 
-官方算法路径必须作为独立模式冻结。以下内容在官方基线阶段不得改变：
+上游 `Classify` 不是扫描全部容量，而是通过上一轮生成的：
 
-- 面积阈值分类语义；
-- 候选原子追加方式；
-- split 保守容量预留；
-- OCBT 空闲槽位 rank-select；
-- 四种细分模板；
-- merge 局部合法性检查；
-- 邻接传播和归约顺序。
+- `indexedBisectorBuffer`；
+- `indirectDispatchBuffer[0..2]`；
+- `indirectDrawBuffer[9]` 的显式活动二分器数；
 
-预算排序、收益评分、兼容闭包去重和 split/merge 交换必须进入新的研究模式，不能直接覆盖官方基线。
+间接调度当前活动二分器。每个槽位读取三个当前顶点和一个父级辅助位置：
 
-### 3.2 迁移算法，不迁移演示引擎
+```text
+currentVertexBuffer[3 * slot + 0..2]
+currentVertexBuffer[3 * totalNumElements + slot]
+```
 
-不整体搬运 `large_cbt` 的自研 DX12 backend、窗口、天空、水体、月球材质或可见性缓冲。复用当前项目已经验证的：
+因此，动态 split 接入前必须先有可供分类读取的最小几何 bootstrap。不能等到所有拓扑阶段完成后才第一次实现几何求值。
+
+### 2.3 分类语义是像素面积，不是 CPU ROAM 的像素厚度
+
+上游分类顺序为：
+
+1. 背面剔除；
+2. 三角形 AABB 视锥剔除；
+3. 投影三个顶点；
+4. 计算像素面积；
+5. 按观察角度放大掠射角面积；
+6. 与 `_TriangleSize`、`0.5 * _TriangleSize` 和 `_MaxSubdivisionDepth` 比较。
+
+它与 Classic/DOD 使用的 nested wedgie 像素误差不是同一指标。CBT 必须增加独立的 `TriangleAreaPixels` 参数，不得把现有 `ScreenSpaceSplitThresholdPixels` 直接解释成同一含义。
+
+### 2.4 split 规划、分配和提交是三个不同事务
+
+上游 `SplitElement` 只做兼容链规划和容量预留：
+
+- 最大保守需求为 `2 * (currentDepth - baseDepth) - 1`；
+- 边界节点特化为 1；
+- 互为 facing twin 的直接二分特化为 2；
+- 先原子扣减剩余容量，失败时恢复；
+- 用原子 `OR subdivisionPattern` 认领兼容链节点；
+- 重叠链通过分布在各节点上的 pattern 去重；
+- 把实际需要分配的节点写入 `allocateBuffer`；
+- 归还保守预留中未使用的部分。
+
+`Allocate` 再通过唯一的空闲 rank 区间调用 `decode_bit_complement`，只写 `BisectorData.indices`。此时不能提前设置 OCBT 位，因为同一批线程必须基于同一份旧树执行空闲 rank-select。
+
+`Bisect` 最后才提交 `heapID`、下一代邻接、修改标记、传播任务和新槽位 OCBT 位。
+
+### 2.5 四种 split 模板必须保持原始语义
+
+上游有效模板是：
+
+| pattern | 新增槽位数 | 提交后活动节点数 |
+|---|---:|---:|
+| `CENTER_SPLIT` | 1 | 2 |
+| `RIGHT_DOUBLE_SPLIT` | 2 | 3 |
+| `LEFT_DOUBLE_SPLIT` | 2 | 3 |
+| `TRIPLE_SPLIT` | 3 | 4 |
+
+模板决定保留槽位的新 `heapID`、新槽位 `heapID`、三个邻接、`problematicNeighbor` 和传播任务。它们必须先逐模板通过 CPU 参考和 GPU 读回测试，再允许组合运行。
+
+### 2.6 邻接代次的真实规则
+
+上游在 `Bisect` 前把完整 `currentNeighbors` 复制到 `nextNeighbors`：
+
+- split 模板读取当前代，写下一代；
+- `PropagateBisect` 修改下一代；
+- `PrepareSimplify`、`Simplify` 和 `PropagateSimplify` 继续读取/修改下一代；
+- Reduce 后才将 `nextNeighbors` 发布为新的 current。
+
+这不是“每个 pass 轮换一次邻接缓冲”，而是“一帧完整拓扑事务只发布一个新邻接代次”。
+
+### 2.7 上游间接命令布局是 10 个 `uint`
+
+上游 `indirectDrawBuffer` 不是三个连续 `D3D12_DRAW_ARGUMENTS`，其精确布局是：
+
+| `uint` 偏移 | 含义 |
+|---:|---|
+| 0..3 | 活动二分器 `D3D12_DRAW_ARGUMENTS` |
+| 4..7 | 可见二分器 `D3D12_DRAW_ARGUMENTS` |
+| 8 | 修改几何顶点数，按每个二分器 4 个位置计数 |
+| 9 | 显式活动二分器数 |
+
+`indirectDispatchBuffer` 是三组 `D3D12_DISPATCH_ARGUMENTS`，分别服务活动二分器、活动几何位置和修改几何位置。
+
+上游当前渲染代码实际绑定活动索引和第一组 draw 参数。可见索引虽然生成，但没有替代活动列表成为默认绘制输入。忠实基线先保留这个行为；如果以后改为只绘制可见列表，必须作为独立适配差异记录。
+
+### 2.8 上游验证能力有限
+
+上游 `Validate` 主要检查活动节点邻接是否能双向找到引用。它不验证 OCBT 位、`heapID`、索引唯一性、间接命令计数或容量守恒。RoamTesting 可以增加更严格的验证，但不能把扩展验证误写成上游已有能力。
+
+### 2.9 不迁移上游每帧 queue flush
+
+上游演示程序在帧尾 flush 队列，方便立即读取验证和占用量，但会串行化 CPU/GPU。RoamTesting 只迁移 GPU pass 之间的依赖、UAV barrier 和资源状态转换；普通帧继续使用现有双帧围栏和延迟读回。
+
+## 3. 当前仓库实现审计
+
+### 3.1 已完成且可复用
+
+- `TerrainLodAlgorithmId::Cbt2024`、可用性和 capability gate；
+- 与 renderer 同源的 View、Projection、ViewProjection、视锥和平面尺寸输入；
+- `GpuProceduralIndirect`、活动索引 SRV 和 `D3D12_DRAW_ARGUMENTS`；
+- SM 6.6、shader int64 和 64 位 UAV 原子能力检查；
+- CPU OCBT 参考结构；
+- 128K、256K、512K、1M GPU OCBT 测试 shader 和 CPU/GPU 对照；
+- 六个方形基础半边、`heapID=8..13`、`prev/next/twin` 和 18 个基础控制点；
+- OCBT、拓扑、任务、索引和基础命令资源的初始创建与容量切换 smoke；
+- 六个基础二分器的程序化间接绘制。
+
+### 3.2 E0 前审计项与完成结果
+
+| 位置 | E0 前行为 | E0 完成结果 |
+|---|---|---|
+| `TerrainRenderer::UpdateForView` | CBT 只在平移超过阈值或 mesh dirty 时 Build；纯旋转可能不更新 | 已增加 `EveryFrame` policy；300 帧 smoke 逐帧校验 topology generation，覆盖 150 帧静止和 150 帧纯旋转 |
+| `TerrainLodRenderPacket` | GPU 模式要求 CPU 提供大于零的实时活动数，并用它判断 drawable | 已由 GPU 间接命令拥有真实 draw count；CPU 活动数为零时资源契约仍可绘制 |
+| `CbtTopologyBufferLayout` | draw buffer 被建模为三个 draw command | 已改为上游精确 10 `uint` draw state，并增加独立 9 `uint` geometry dispatch |
+| `D3D12CbtBaseTopologyState` | 没有 `memoryBuffer`、`validationBuffer` 和内部 topology indirect scratch | 已补齐 memory、validation、topology dispatch、geometry dispatch 和精确初始化数据 |
+| OCBT HLSL | rank-select 已验证，Reduce 实现仍位于测试 shader | 测试与生产入口已共用 `CbtReducePre/First/Second` |
+| CBT terrain adapter | CPU 只写六个基础三角形，顶点容量为每槽 3 个 | 已由 GPU Bootstrap 生成四位置分类布局和 52-byte render vertex |
+| 资源同步 | 基础 adapter 使用持久 upload heap；没有计算/绘制状态机 | topology 和几何已迁至 default heap 常驻，并集中维护 UAV、SRV 和 `INDIRECT_ARGUMENT` 状态 |
+| 统计 | 只有统一 CPU ROAM 字段 | 已增加 topology frame generation 和零普通帧算法读回口径；专用计数、分阶段 GPU 时间和延迟样本仍属于阶段 H |
+| 测试 | GPU smoke 是四档容量穷举长测试，D3D12 CTest 未形成快测闭环 | 已增加 `gpu-quick` 128K/300 帧 CTest 与 90 秒超时；四档 exhaustive CLI 保留 |
+
+### 3.3 基础阶段 D 的完成边界
+
+阶段 D 的“已完成”只表示基础拓扑、资源生命周期和固定绘制已经验证，不表示当前资源二进制布局已经满足完整 `MeshUpdater`。`memoryBuffer`、验证资源、精确 draw 状态和两类 dispatch buffer 在阶段 E0 补齐，不回写阶段 D 的历史完成记录。
+
+## 4. 实施原则
+
+### 4.1 先复现，后改进
+
+忠实基线阶段不得改变：
+
+- 像素面积分类和 0.5 倍 simplify 阈值；
+- 原子追加候选顺序；
+- split 保守容量预留公式；
+- `subdivisionPattern` 的认领与共享链去重；
+- 旧 OCBT 上执行空闲 rank-select、Bisect 后置位；
+- 四种 split 模板；
+- simplify 局部合法性检查；
+- 邻接传播、Reduce 和 Indexation 顺序。
+
+全局排序、收益评分、闭包共享成本去重和 split/merge 预算交换必须进入独立研究算法，不能直接覆盖基线 shader。
+
+### 4.2 迁移算法，不迁移演示引擎
+
+继续复用：
 
 - `Application`；
 - `D3D12GraphicsBackend`；
 - `TerrainRenderer`；
 - `ImGuiLayer`；
-- benchmark 和统计框架。
+- 现有纹理、benchmark、统计和双帧围栏框架。
 
-只迁移 CBT 拓扑闭环和完成忠实复现所需的最小几何/绘制路径。
+不迁移上游窗口、天空、水体、月球材质、自研 DX12 backend 或每帧 flush。
 
-### 3.3 保持 GPU 常驻状态
+### 4.3 普通帧保持 GPU 常驻和异步
 
-CBT 算法实例必须跨帧持有位域、求和树、`heapID`、邻接和任务缓冲。普通帧不允许：
+普通帧不允许：
 
-- 从 CPU 数据导向拓扑重建完整节点快照；
-- 把活动拓扑整体读回 CPU；
-- 每帧销毁并重建 CBT 资源；
-- 为获得计数器而同步等待 GPU。
+- 从 Classic/DOD 或 CPU 快照重建 CBT 拓扑；
+- 将活动拓扑整体读回 CPU；
+- 每帧创建/销毁拓扑资源或 PSO；
+- 为获得活动数或计时结果同步等待 GPU；
+- 用 `ExecuteImmediate` 提交普通拓扑更新。
 
-### 3.4 基线与地形适配分离
+首次初始化、容量切换、高度图替换和设备重建允许显式 GPU idle，但必须作为控制事件单独统计，不能混入稳定帧 benchmark。
 
-官方源码面向一般半边网格和行星几何，而本项目面向高度图地形。实施顺序必须先验证 CBT 拓扑本身，再替换几何求值，避免同时调试拓扑和地形坐标问题。
+### 4.4 拓扑、逻辑几何和最终地形顶点分层
 
-## 4. 目标架构
+正式路径保持三个可独立计时和验证的阶段：
+
+```text
+CBT topology
+  → heapID 对应的平面二分参数位置
+  → 高度图采样、法线和 TerrainMeshVertex
+  → procedural indirect draw
+```
+
+阶段 E0 先实现最小平面几何 bootstrap，阶段 G 再接完整高度图求值。不能将高度图采样塞进 split/merge shader。
+
+### 4.5 扩展验证可以更强，候选策略不能偷偷变化
+
+RoamTesting 可以补充上游缺少的 OCBT、`heapID`、索引和容量不变量。验证 pass 只观察结果，不参与候选获批、槽位分配或邻接提交。
+
+## 5. 修正后的目标架构
 
 ```text
 Application
 └── TerrainRenderer
     ├── Classic CPU ROAM
-    ├── 数据导向 CPU ROAM
-    ├── GPU ROAM-like
-    └── CbtTerrainLodAlgorithm
+    ├── Data-Oriented CPU ROAM
+    └── D3D12CbtTerrainLodAlgorithm
         ├── CbtGpuState
-        │   ├── OCBT 压缩树与占用位域
-        │   ├── heapID 和邻接双缓冲
-        │   ├── 分类、分配、传播和简化任务缓冲
-        │   ├── 活动、可见和修改节点列表
-        │   ├── 间接调度与程序化绘制参数
-        │   └── 几何顶点和高度图资源
+        │   ├── OCBT tree + bitfield
+        │   ├── heapID + neighbors[2] + current neighbor generation
+        │   ├── bisector data + classification/allocate/simplify/propagate
+        │   ├── memory counters + validation counters
+        │   ├── active/visible/modified indices
+        │   ├── topology indirect scratch
+        │   ├── draw state + geometry dispatch arguments
+        │   ├── base control points + parametric positions
+        │   ├── height-map resource + final TerrainMeshVertex buffer
+        │   └── timestamp/readback ring
         ├── CbtTopologyPipeline
-        │   └── Classify → Split → Allocate → Bisect
-        │       → Propagate → Simplify → Reduce → Indexation
-        ├── CbtTerrainGeometry
-        │   └── heapID → 平面二分坐标 → 高度图采样 → 最终顶点
+        │   └── Reset → Classify → Split → Allocate → Bisect
+        │       → PropagateBisect → PrepareSimplify → Simplify
+        │       → PropagateSimplify → Reduce → Indexation
+        ├── CbtTerrainGeometryPipeline
+        │   └── heapID → planar LEB coordinates → height sample
+        │       → normal/UV/debug attributes
         └── TerrainLodRenderPacket
-            └── 借用程序化间接绘制所需资源
+            └── final vertex SRV + active index SRV + GPU draw arguments
 ```
 
-以上名称是建议边界，不要求提前创建过多公开类。实现时可将内部状态和辅助函数保留在 CBT 算法模块中，只有确实需要跨文件共享时再拆分。
+类名是职责建议，不要求一次拆出所有公开类型。以下边界必须存在：
 
-## 5. 目标接口与当前完成状态
+- GPU 资源所有权只在 CBT 算法状态内；
+- renderer 只借用最终绘制所需的三个资源；
+- topology pipeline 可以访问后端当前帧命令列表，但不能 Present 或等待；
+- smoke/validation 可以调用专用阻塞读回路径，普通 `BuildRenderData` 不可以。
 
-### 5.1 算法标识和能力
+## 6. 接口、生命周期和调度契约
 
-`TerrainLodAlgorithmId::Cbt2024` 已增加。完整忠实基线的目标能力是：
+### 6.1 每帧更新策略
 
-- 支持 GPU 驱动渲染；
-- 支持 split；
-- 支持 merge；
-- 支持兼容关系修复；
-- 支持拓扑验证；
-- 不输出 CPU 网格作为普通运行路径。
-
-当前基础拓扑 adapter 已支持 GPU driven 和程序化间接绘制，但尚未执行动态 split、merge、兼容修复或完整拓扑验证，因此这些 capability 当前保持 `false`，将在对应阶段完成后逐项启用。
-
-### 5.2 视图输入
-
-该接口改动已完成。`TerrainLodBuildInput` 已包含以下只读视图输入：
+当前统一 capability 需要增加明确的更新策略，例如：
 
 ```text
-TerrainLodViewInput
-├── View
-├── Projection
-├── ViewProjection
-├── CameraPosition
-├── CameraForward
-├── FrustumPlanes[6]
-├── DrawableWidth
-└── DrawableHeight
+TerrainLodUpdatePolicy::OnDemand       Classic/DOD
+TerrainLodUpdatePolicy::EveryFrame     动态 CBT
 ```
 
-矩阵必须与 renderer 使用同一份零到一深度投影，避免算法和渲染采用不同视锥。
+动态 CBT 必须在每个 `BeginFrame` 与 `Present` 之间调用一次 `BuildRenderData`，原因包括：
 
-### 5.3 程序化间接绘制
+- 纯相机旋转会改变分类；
+- 同一视图下拓扑可能需要多帧收敛；
+- 上一轮活动索引和下一轮间接调度需要连续发布；
+- 延迟统计和资源状态机按帧推进。
 
-官方 CBT 不生成传统索引网格，而是：
+固定基础 adapter 在阶段 E0 完成前可继续按需更新。
+
+### 6.2 GPU 拥有 draw count
+
+`GpuProceduralIndirect` 的正确性不得依赖 CPU 实时活动数。渲染包应区分：
+
+- GPU 资源容量；
+- GPU 间接命令位置和格式；
+- 最近一个已完成延迟样本中的活动数；
+- 资源代次。
+
+`HasConsistentResourceContract` 应根据资源、stride、容量、间接命令和生命周期判断是否可绘制。`ActiveTriangleCount` 可以保留为延迟统计，但不能要求其大于零，也不能用于决定是否执行间接绘制。
+
+### 6.3 资源 generation 与 topology generation 分离
+
+- `GpuResourceGeneration`：仅在资源对象、容量或描述符需要重建时递增；
+- `TopologyFrameGeneration`：每次成功记录并发布拓扑事务递增，仅供诊断；
+- 普通 split/merge 不应使 renderer 重写 SRV 描述符；
+- 容量切换必须等待旧资源最后一个 fence 完成后再释放。
+
+### 6.4 命令记录位置
+
+普通更新直接记录到 `D3D12GraphicsBackend::CommandList()`：
 
 ```text
-SV_VertexID
-  → 活动三角形序号
-  → indexedBisectorBuffer
-  → 物理槽位
-  → currentVertexBuffer[slot * 3 + localVertex]
+Application::RenderFrame
+  → BeginFrame
+  → TerrainRenderer::UpdateForView
+  → CBT RecordUpdate / RecordGeometry
+  → TerrainRenderer::Render
+  → Present
 ```
 
-该接口改动已完成。renderer 保留 GPU ROAM-like 的 `D3D12_DRAW_INDEXED_ARGUMENTS`，并为 CBT 增加：
+`ExecuteImmediate` 只用于初始化、容量切换和专用阻塞测试。生产资源初始化如果发生在已打开帧中，必须在文档和统计中标记为一次性控制事件；不能在之后的稳定帧重复发生。
 
-- `TerrainLodRenderMode::GpuProceduralIndirect`；
-- `TerrainLodRenderPacket` 中的活动二分器索引资源；
-- `D3D12_DRAW_ARGUMENTS` 命令资源；
-- 顶点着色器所需的 SRV 资源描述；
-- 对应的命令签名和根参数。
+### 6.5 参数必须按算法分义
 
-当前 CBT 基础拓扑不生成传统索引缓冲，直接使用 `D3D12_DRAW_ARGUMENTS` 和活动二分器索引资源。
+CBT 至少需要：
 
-### 5.4 设备能力
+- `CbtCapacity`：128K、256K、512K、1M；
+- `CbtTriangleAreaPixels`：官方 `_TriangleSize`；
+- `MaxDepth`：限制到 64 位 `heapID` 可表示范围并且不低于 `BaseDepth`；
+- `CbtValidationMode`：Off、Delayed、BlockingSmoke；
+- `CbtGeometryUpdateMode`：ModifiedOnly、FullDebug。
 
-能力检查已接入 `QueryCbt2024Availability`。在启用 CBT 前检查：
+CPU ROAM 的厚度阈值和 triangle budget 继续保留原义，不伪装成 CBT 官方参数。
 
-- Direct3D 12 基础功能；
-- Shader Model 6.6；
-- 64 位整数着色器操作；
-- 64 位 UAV 原子操作；
-- 所需结构化缓冲和间接执行能力；
-- DXC 编译目标和运行时驱动支持。
+## 7. GPU 常驻资源与精确二进制协议
 
-能力不足时应在算法列表、日志和 benchmark 说明中给出明确原因，不允许静默退回另一算法。
+设动态容量为 `N`，方形基础半边数为 `B=6`，总物理槽位 `T=N+B`。
 
-## 6. 当前代码布局与后续扩展
+### 7.1 拓扑和任务资源
 
-当前已经落地：
+| 资源 | 元素/大小 | 初值与作用 |
+|---|---:|---|
+| OCBT tree | 容量特化 | 根计数和压缩子树计数 |
+| OCBT bitfield | `N / 64` 个 `uint64` | 只管理动态槽位 `[0,N)` |
+| `heapID` | `T × uint64` | 动态前缀为 0；基础尾部为 8..13 |
+| `neighbors[2]` | `2 × T × uint3` | 初始两份相同；每帧发布一个新代次 |
+| `bisectorData` | `T × 32 B` | 与上游 `BisectorData` 二进制一致 |
+| classification | `(2 + 2T) × uint` | split/simplify 两个计数和两段候选 |
+| allocation | `(1 + T) × int` | 计数加待分配节点 |
+| simplification | `(1 + T) × uint` | 合法 merge 发起节点 |
+| propagation | `(2 + T) × int` | split/merge 两个计数共享任务区 |
+| memory | `2 × int` | 实际分配 rank 游标、可预留剩余槽位 |
+| validation | 至少 `2 × uint` | 错误计数和首错诊断索引 |
+
+`CbtBisectorData` 的默认无效字段必须初始化为 `InvalidCbtBisectorIndex`，不能依赖清零等价于无效指针。
+
+### 7.2 索引和命令资源
+
+| 资源 | 大小 | 作用 |
+|---|---:|---|
+| active indices | `T × uint` | 下一帧 Classify 和官方默认绘制输入 |
+| visible indices | `T × uint` | 忠实生成；基线暂不替代 active draw |
+| modified indices | `T × uint` | 增量几何求值 |
+| topology indirect scratch | `9 × uint` | split、simplify、allocate、propagate 内部间接调度 |
+| geometry dispatch arguments | `9 × uint` | 活动二分器、活动位置、修改位置三组 dispatch |
+| draw state | `10 × uint` | 两组 draw args、修改位置数、显式活动数 |
+
+当前 `DrawCommands[3]` 必须在动态管线接入前替换为显式的 10 `uint` 结构，避免 C++、HLSL 和 `ExecuteIndirect` 对偏移产生不同理解。
+
+### 7.3 几何资源
+
+阶段 E0 使用：
+
+- `baseControlPoints`：18 个方形基础半边控制点；
+- `classificationPositions`：每槽四个 `float3`，布局与上游三个子位置加父位置一致；
+- `renderVertices`：每槽三个 `TerrainMeshVertex`，只供当前 renderer 的程序化顶点 shader；
+- 平面几何 compute：从 `heapID` 和基础控制点生成 UV/平面位置，并写入上述两个缓冲。
+
+阶段 G 再增加：
+
+- GPU 高度图纹理和 SRV；
+- 高度采样、法线、UV、调试颜色；
+- modified-only 和 full-debug 两种几何更新模式。
+
+分类只依赖 `classificationPositions`，renderer 只借用 `renderVertices`，避免让 52 字节渲染顶点结构污染上游拓扑协议。
+
+### 7.4 常量、描述符和 PSO
+
+- 每个交换链帧资源拥有独立 CBT 常量上传区，不能覆盖仍在执行的上一帧常量；
+- topology root signature 必须覆盖 `b0..b2`、`t0..t1` 和 `u0..u16`；
+- 当前共享 CBV/SRV/UAV heap 只有单槽分配接口，阶段 E0 必须增加连续 descriptor range，或明确采用满足 64 DWORD 限制的 root descriptor 方案；
+- 第一版按四档容量编译完整拓扑 entry point，先保证语义一致，再考虑减少重复 PSO；
+- 生产 OCBT 与测试 OCBT 必须共用同一份 rank-select 和 Reduce 实现，不能维护两套算法副本。
+
+## 8. 修正后的单帧资源依赖
+
+### 8.1 Bootstrap
+
+每次新资源代创建后，在第一次动态分类前完成：
 
 ```text
-src/algorithms/cbt_2024/
-├── Cbt2024Support.h/.cpp              D3D12 与设备能力 gate
-├── CbtOccupancyTree.h/.cpp            CPU OCBT 参考结构
-├── CbtBisectorTopology.h/.cpp         基础二分器和 buffer layout
-└── d3d12/
-    ├── D3D12CbtOccupancyTree.h/.cpp   GPU OCBT 验证
-    ├── D3D12CbtBaseTopology.h/.cpp    GPU 常驻基础资源
-    └── D3D12CbtTerrainLodAlgorithm.h/.cpp
-
-assets/shaders/dx12/
-├── CbtProceduralTerrain.hlsl          当前基础拓扑程序化绘制
-└── cbt/
-    ├── CbtOccupancyTree.hlsli         OCBT 位域、归约和 rank-select
-    └── CbtOccupancyTreeTests.hlsl     四档容量验证入口
+上传基础 heapID / neighbors / control points
+  → 初始化 bisectorData 无效字段和基础 flags
+  → BisectorIndexation
+  → PrepareBisectorIndirect
+  → 全量平面 LEB 几何求值
+  → 生成基础 renderVertices
 ```
 
-阶段 E-G 将在 `assets/shaders/dx12/cbt/` 下继续增加分类、split、merge、传播和高度图几何求值入口。必须保持“官方基线”和后续“预算感知变体”的着色器文件分离。
+没有这一步，第一帧 `Classify` 会读取未初始化几何或空活动调度参数。
 
-## 7. GPU 常驻资源规划
+### 8.2 正式帧顺序
 
-### 7.1 OCBT 资源
+```text
+上传本帧视图和 CBT 参数
+  → Reset counters
+  → Classify(previous active indices + positions)
+  → PrepareIndirect(split/simplify)
+  → Split plan
+  → PrepareIndirect(allocate)
+  → Allocate from old OCBT
+  → Copy neighbors current → next
+  → Bisect + set new bits
+  → Prepare/PropagateBisect
+  → PrepareSimplify
+  → Prepare/Simplify + clear released bits
+  → Prepare/PropagateSimplify
+  → ReducePre/First/Second
+  → publish next neighbor generation
+  → Indexation
+  → Prepare geometry dispatch/draw
+  → evaluate modified planar geometry
+  → height-map/render-vertex evaluation
+  → optional validation and delayed stats copy
+  → transition SRV/INDIRECT resources
+  → ExecuteIndirect draw
+```
 
-| 资源 | 格式 | 作用 |
-|---|---|---|
-| 压缩树缓冲 | `uint` | 保存上层子树活动计数 |
-| 占用位域 | `uint64_t` | 表示动态槽位是否已占用 |
-| 容量配置 | 常量/编译宏 | 128K、256K、512K 或 1M |
+### 8.3 D3D12 状态和屏障门槛
 
-第一版应保留官方容量特化，避免在复现阶段同时研究完全动态的树布局。
+实现必须维护集中式资源访问表，至少覆盖：
 
-### 7.2 拓扑资源
+- compute 写入使用 `UNORDERED_ACCESS`；
+- 邻接整表复制使用 `COPY_SOURCE`/`COPY_DEST`，复制后恢复 UAV；
+- active indices、classification positions 和 render vertices 在消费时进入 SRV 状态；
+- draw/dispatch 参数在执行时进入 `INDIRECT_ARGUMENT`，修改前恢复 UAV；
+- 每个 producer/consumer 边界对真正写入的资源建立 UAV barrier，不能只给同一 pass 中另一个资源加 barrier；
+- `Bisect` 和 `Simplify` 修改位域后，Reduce 前建立位域 UAV 依赖；
+- Reduce 三段之间建立 tree UAV 依赖；
+- Indexation 完成后，draw state、indices 和 geometry dispatch 在消费者前建立依赖。
 
-| 资源 | 内容 |
-|---|---|
-| `heapIDBuffer` | 物理槽位对应的逻辑二分路径；零表示未分配 |
-| `neighbors[2]` | 三邻接双缓冲 |
-| `bisectorData` | 细分模式、分配槽位、状态、标记和传播信息 |
+## 9. 分阶段实施计划
 
-### 7.3 任务资源
+### 阶段 A：官方程序构建与基线准备
 
-| 资源 | 内容 |
-|---|---|
-| 分类缓冲 | split/simplify 计数和候选列表 |
-| 分配缓冲 | 需要取得新槽位的节点列表 |
-| 简化缓冲 | 已通过局部合法性检查的 merge 发起节点 |
-| 传播缓冲 | split 和 merge 的外部邻接修复任务 |
-| 内存计数 | 本轮分配游标和剩余容量 |
+状态：官方程序和本机兼容版本已运行；完整动态实验冻结留到阶段 I。
 
-### 7.4 索引和命令资源
+已完成：
 
-| 资源 | 内容 |
-|---|---|
-| 活动二分器列表 | 所有 `heapID != 0` 的槽位 |
-| 可见二分器列表 | 通过剔除且参与绘制的槽位 |
-| 修改二分器列表 | 本轮需要重新计算几何的槽位 |
-| 间接调度缓冲 | 分类、几何生成和形变工作组数量 |
-| 间接绘制缓冲 | `D3D12_DRAW_ARGUMENTS` 和活动计数 |
+- 固定上游提交和本机兼容补丁；
+- 验证 RTX 设备、SM 6.6 和 64 位原子能力；
+- 构建运行 `outer_space`；
+- 确认核心 CBT shader 自初始公开提交后没有算法性变化。
 
-## 8. 分阶段实施计划
-
-### 阶段 A：官方程序构建与基线冻结
-
-状态：官方程序与本机兼容基线已运行，完整实验冻结留待阶段 I。
-
-任务：
-
-- 在 `third_party/large_cbt` 独立生成 Visual Studio 工程；
-- 构建并运行 `outer_space`；
-- 固定提交、编译配置、适配器、驱动和 Agility SDK；
-- 记录默认 `OCBT_128K` 的截图、占用量和阶段计时；
-- 运行 256K、512K 和 1M 容量；
-- 固定官方相机路径和屏幕分辨率；
-- 确认 Shader Model 6.6 和 64 位原子操作实际可用。
-
-完成条件：官方程序能够稳定运行，参数、硬件和输出可重复，形成未经修改的参考基线。
+阶段 I 仍需固定官方相机、分辨率、容量、截图、占用量和阶段时间。
 
 ### 阶段 B：公共接口与程序化绘制
 
 状态：已完成，2026-07-19。
 
-任务：
+完成内容：
 
-- 增加 CBT 算法标识和能力描述；
-- 扩展算法输入，提供视图投影、视锥和屏幕尺寸；
-- 增加程序化 GPU 间接渲染模式；
-- 在 `TerrainRenderer` 创建 `DRAW` 命令签名；
-- 验证活动索引 SRV 和最终顶点 SRV 的资源生命周期；
-- 增加 Shader Model 6.6 和 64 位原子能力检查。
+- CBT 算法标识和 capability；
+- 完整视图输入；
+- `GpuProceduralIndirect`；
+- `D3D12_DRAW_ARGUMENTS` 命令签名；
+- 活动索引和最终顶点 SRV；
+- 设备能力 gate；
+- 六基础二分器固定绘制 smoke。
 
-完成条件：使用人工构造的活动列表和顶点缓冲，可以通过程序化间接命令稳定绘制三角形，不依赖 CBT 拓扑。
+动态阶段补充项已移动到 E0：每帧更新策略和 GPU-owned draw count 契约。
 
 ### 阶段 C：OCBT 数据结构
 
-状态：已完成，2026-07-19。
+状态：测试范围已完成，2026-07-19；生产接口提升属于 E0。
+
+已经验证：
+
+- 四档 CPU 压缩布局；
+- 原子置位/清位；
+- occupied/free rank-select；
+- 三段 GPU Reduce；
+- 空、满、边界、交替和随机变更；
+- CPU/GPU 结果一致。
+
+E0 需要把测试 shader 中的 Reduce 提升为生产共用函数，并增加根计数读取和可选组共享缓存，不重新发明第二套 OCBT。
+
+### 阶段 D：方形基础半边和 GPU 基础资源
+
+状态：基础范围已完成，2026-07-20。
+
+已经验证：
+
+- 两个逆时针根三角形展开为六个半边二分器；
+- `prev`、`next`、`twin` 和四条边界；
+- 基础物理槽位位于动态容量尾部；
+- `heapID=8..13`、`BaseDepth=4`；
+- 18 个基础控制点；
+- 四档容量创建、读回和切回 128K；
+- 固定程序化绘制。
+
+动态生产资源的协议差异由 E0 扩展，不改变上述基础拓扑结论。
+
+### 阶段 E0：动态管线前置契约
+
+状态：已完成，2026-08-22。
+
+完成内容：
+
+1. 增加 `EveryFrame` 更新策略，修复纯旋转和静止多帧收敛；
+2. 修改 GPU render packet，使间接 draw count 由 GPU 拥有；
+3. 将 draw state 改为精确 10 `uint` 布局；
+4. 区分 topology indirect scratch 与 geometry dispatch arguments；
+5. 增加 memory、validation 和 per-frame constants；复用后端按帧 timestamp/readback，算法普通帧不新增同步读回；
+6. 将 OCBT Reduce 提升到生产 HLSL；
+7. 建立 topology root signature、四档容量 PSO 和 descriptor range；
+8. 建立集中式 D3D12 资源状态/屏障辅助；
+9. 实现 Bootstrap Indexation 和最小平面 LEB 几何；
+10. 将初始化/容量切换与稳定帧统计分离。
+
+完成条件：
+
+- 六个基础二分器可以连续运行 300 帧，每帧记录空拓扑事务并正常间接绘制；
+- 纯相机旋转会触发 CBT Build；
+- renderer 不依赖 CPU 实时活动数；
+- 普通帧 fence wait 和 readback bytes 为 0；
+- Debug Layer、GPU validation 和资源状态检查无错误；
+- 128K quick smoke 在 CI 限时内退出。
+
+验收记录：
+
+- Debug D3D12 完整构建成功，三套 Bootstrap shader 与四档容量的 Reset/Reduce PSO 全部由 DXC 编译；
+- `unit;cbt` 三项测试通过：OCBT、基础二分拓扑和 GPU render packet 资源契约；
+- `cbt_procedural_e0_quick` 在 128K 容量下完成 300 帧，逐帧 generation 连续；
+- `--cbt-base-topology-smoke-test` 通过 128K、256K、512K、1M 以及切回 128K；
+- `--cbt-ocbt-smoke-test` 的四档 empty、full、boundary、alternating 和 random-mutation CPU/GPU 对照全部通过；
+- 全仓库 14 项 CTest 通过，包括 CPU ROAM、视图投影、增量 mesh 和注释覆盖门禁。
+
+E0 只建立稳定的空拓扑帧事务和基础平面 Bootstrap；`SupportsSplit`、`SupportsMerge`、`SupportsCrackFix` 与 `SupportsTopologyValidation` 继续保持 `false`。
+
+### 阶段 E1：Reset、Classify 和间接工作量
+
+状态：当前下一批工作。
 
 任务：
 
-- 迁移 128K OCBT 的压缩树和位域布局；
-- 实现 `set_bit`、`decode_bit` 和 `decode_bit_complement`；
-- 实现三段 GPU 归约；
-- 增加清空、置位、清位、活动 rank-select 和空闲 rank-select 测试；
-- 使用 GPU 结果延迟读回，与 CPU 参考位集比较；
-- 128K 正确后再加入 256K、512K 和 1M 特化。
+- 迁移官方面积分类、背面剔除、AABB 视锥剔除和掠射角放大；
+- 使用上一轮 active indices 间接调度；
+- 生成 split/simplify 两段候选；
+- 生成内部 split/simplify dispatch args；
+- 只读回小型计数头进行延迟诊断。
 
-完成条件：随机位图和边界位图下，GPU 活动计数、已占用选择和空闲选择与 CPU 参考完全一致。
+完成条件：
 
-实现结果：
+- 固定平面几何下 CPU 参考与 GPU 分类结果一致；
+- 分辨率变化按像素面积缩放；
+- 纯旋转和视锥外场景候选变化正确；
+- 候选数组不溢出，原子计数与有效条目一致。
 
-- CPU 参考结构按官方压缩规则保存 32 位、16 位和 8 位计数层，并使用独立 64 位占用位域；
-- HLSL 核心提供原子置位、清位、活动 rank-select 和空闲 rank-select；
-- GPU 归约拆为 128 位块预归约、16K 位独立子树归约和根部归约；
-- 128K、256K、512K 和 1M 使用同一份 HLSL，通过编译期容量常量生成独立 PSO；
-- `cbt_occupancy_tree` CPU 单测验证布局、边界位和随机更新；
-- `--cbt-ocbt-smoke-test` 在完整 GPU pass 链和 fence 完成后统一读回，穷举对照活动与空闲序列；
-- 测试覆盖空树、满树、首末位、64 位边界、交替位图和多批随机置位/清位。
-
-### 阶段 D：规则地形基础二分器和 GPU 状态
-
-状态：已完成，2026-07-20。
+### 阶段 E2：split 规划与槽位分配
 
 任务：
 
-- 为方形高度图构建最小合法半边基础网格；
-- 明确两根三角形的 `prev`、`next`、`twin` 和边界语义；
-- 为基础二分器分配不占 CBT 动态预算的物理槽位；
-- 上传初始 `heapID`、邻接和基础控制点；
-- 创建所有拓扑、任务、索引和命令缓冲；
-- 实现重置和容量切换时的完整资源重建。
+- 迁移前置兼容路径检查；
+- 迁移保守容量公式和边界/twin 特化；
+- 原子认领 `subdivisionPattern`；
+- 记录共享兼容链和重复认领；
+- 建立 allocation 列表；
+- 用旧 OCBT 空闲 rank-select 分配 `indices[3]`；
+- 验证预留、实际使用和返还守恒。
 
-完成条件：不进行 split/merge 时，基础网格活动列表、邻接和间接绘制正确，容量切换没有资源泄漏。
+完成条件：
 
-实现结果：
+- 单边界、直接 twin、长兼容链和共享兼容链的 pattern 与 CPU 参考一致；
+- 容量恰好足够时成功，差一个槽位时完整拒绝；
+- 分配槽位唯一且全部位于 `[0,N)`；
+- Allocate 结束前 OCBT 位域保持不变。
 
-- 方形高度图使用两个逆时针根三角形和六个基础半边，明确保存 `prev`、`next`、`twin` 和四条边界；
-- 基础二分器使用动态容量尾部的六个物理槽位，逻辑 `heapID` 为 8 至 13，不进入 OCBT 动态预算；
-- CPU 参考拓扑统一生成邻接、基础控制点、活动与可见索引以及初始绘制和调度命令；
-- D3D12 状态一次创建 OCBT、拓扑、任务、索引、命令和基础控制点缓冲，并在帧外执行同步重建；
-- 初始上传先清空全部动态状态，再覆盖基础槽位和命令，邻接双缓冲从同一合法根状态开始；
-- CBT terrain adapter 使用容量尾部活动槽位生成六个基础三角形，并通过 18 顶点 `DRAW` 间接命令实际绘制；
-- `cbt_bisector_topology` 单测覆盖四档容量、半边闭环、共享对角线、控制点和 heap 路径；
-- `--cbt-base-topology-smoke-test` 选择性读回协议关键片段，验证 128K、256K、512K、1M 和切回 128K 的完整资源代重建。
-
-### 阶段 E：split 完整路径
-
-状态：待实施。
+### 阶段 E3：Bisect、传播、Reduce 和 Indexation
 
 任务：
 
-- 迁移面积分类、背面剔除和视锥剔除；
-- 生成 split 候选列表；
-- 迁移兼容链遍历和四种 `subdivisionPattern`；
-- 实现保守容量预留、失败回滚和未使用容量返还；
-- 使用 OCBT 空闲 rank-select 分配子槽位；
-- 提交 `heapID` 和邻接双缓冲；
-- 设置新占用位并传播外部邻接；
-- 归约并重建活动索引。
+- 分别实现四种 split 模板；
+- 复制并写入下一代邻接；
+- 设置新 `heapID` 和 OCBT 位；
+- 生成并执行 split 传播；
+- 执行三段 Reduce；
+- 发布邻接代次；
+- 重建 active/visible/modified indices 和间接命令；
+- 为修改节点执行平面几何更新。
 
-完成条件：连续移动相机时可稳定细分，容量永不越界，活动位、`heapID` 和邻接验证一致。
+完成条件：
 
-### 阶段 F：merge 与完整拓扑闭环
+- 四种模板分别通过 GPU 读回；
+- 连续相机移动可以稳定细分；
+- 活动位、非零 `heapID`、active indices 和 draw args 一致；
+- 邻接对称，所有索引在范围内；
+- 容量永不越界；
+- 此阶段明确标记为 split-only 开发基线，不进入正式性能排名。
 
-状态：待实施。
+### 阶段 F：simplify/merge 与正式帧闭环
 
 任务：
 
-- 迁移父级面积判断和 simplify 候选；
-- 检查配对节点和 facing twin 组成的合法菱形；
-- 提交 merge、清空删除节点 `heapID` 和 CBT 位；
-- 传播被删除节点的外部邻接引用；
-- 处理 split 与 merge 同帧并发；
-- 增加边界、最大深度变化和相机快速移动测试。
+- 在 E1 产生的 simplify 候选上实现 `PrepareSimplify`；
+- 检查 pair、facing twin 和四节点同深度条件；
+- 由最小逻辑 `heapID` 唯一提交；
+- 上移保留槽位 `heapID`，清零删除槽位；
+- 清除释放槽位 OCBT 位；
+- 生成并执行 merge 传播；
+- 将 split 和 merge 固定在同一邻接代次、同一次 Reduce 中；
+- 增加最大深度降低和快速相机往返测试。
 
-完成条件：相机往返时拓扑能够细化和简化，池占用可回收，无裂缝、无非法邻接、无持续增长。
+完成条件：
+
+- 相机往返时拓扑可细化和简化；
+- 释放槽位可被后续 split 重新分配；
+- 无裂缝、悬空引用或持续占用增长；
+- 同帧相邻 split/merge 与上游顺序一致；
+- `SupportsSplit`、`SupportsMerge` 和 `SupportsCrackFix` 只有在此阶段验收后才全部启用。
 
 ### 阶段 G：高度图几何求值
 
-状态：待实施。
+任务：
+
+- 根据 `heapID` 和基础控制点解码平面 LEB 坐标；
+- 生成三个子位置和一个父级分类位置；
+- 将高度图上传为算法持有的 GPU 纹理；
+- 采样高度、计算法线、UV 和调试颜色；
+- 写入最终 `TerrainMeshVertex`；
+- 默认只更新 modified indices，保留 full-debug；
+- 验证高度图重载、尺度变化、边界、绕序和纹理方向。
+
+完成条件：
+
+- 固定 `heapID` 集合下 GPU 平面坐标与 CPU 参考一致；
+- 高度采样与 `HeightMap::Sample` 在容差内一致；
+- 分类读取的三个子位置和父位置全部已初始化；
+- 动态更新中无 NaN、未初始化顶点或视觉裂缝；
+- 普通帧不再由 CPU 填充整容量顶点上传缓冲。
+
+### 阶段 H：应用、统计和 benchmark
+
+状态：部分完成。
+
+已有：
+
+- 算法选择；
+- 可用性提示；
+- OCBT、基础拓扑和程序化绘制入口。
+- 128K 300 帧 quick smoke、四档 exhaustive CLI 和 topology frame generation。
+
+待完成：
+
+- 独立 CBT 面积阈值、容量、验证模式和几何模式；
+- 专用计数和 GPU 阶段时间；
+- 延迟读回样本年龄和 dropped sample 标记；
+- 高度图重载、容量切换和算法重置；
+- 固定离散相机路径；
+- CBT runtime benchmark；
+
+完成条件：CBT 可通过 UI 和命令行稳定运行，自动流程可以无人值守退出，并输出足以复现的参数、硬件、资源代次、计数和时间。
+
+### 阶段 I：官方语义基线冻结
 
 任务：
 
-- 根据逻辑 `heapID` 解码平面最长边二分坐标；
-- 生成三个子顶点和必要的父级辅助位置；
-- 采样现有高度图并生成最终地形顶点；
-- 只更新本轮修改二分器，保留完整重建调试模式；
-- 接入法线、纹理、线框和调试颜色；
-- 检查边界、绕序、纹理方向和零到一深度。
+- 固定 shader、PSO、参数和算法标识；
+- 固定 RoamTesting 高度图、分辨率和离散相机路径；
+- 记录四档容量结果；
+- 与上游程序比较 pass 顺序、占用量趋势和验证结果；
+- 记录基础网格、地形几何、帧围栏和额外验证带来的明确差异；
+- 建立不可变 Git 提交和 benchmark 标签；
+- 在发布或复制上游衍生实现前完成许可证确认。
 
-完成条件：固定拓扑下，CBT 生成的地形位置与 CPU 参考一致；动态更新中不出现未初始化顶点或视觉裂缝。
+完成条件：后续研究变体可以与一个不可变、可复现、统计完整、没有隐式 CPU 同步的 CBT 2024 基线比较。
 
-### 阶段 H：应用、界面与 benchmark 接入
+## 10. 统计与实验口径
 
-状态：部分完成。算法选择、可用性提示和专用 smoke test 已接入；完整参数、统计和 runtime benchmark 待动态拓扑完成后补齐。
+### 10.1 必须记录的计数
 
-任务：
-
-- [x] 将 CBT 2024 加入算法选择；
-- 增加面积阈值、最大深度和 CBT 容量设置；
-- 增加占用量、剩余容量、候选、拒绝和传播统计；
-- 增加各计算阶段 GPU 时间；
-- [x] 接入 OCBT、基础拓扑和程序化绘制专用烟雾测试；
-- 接入固定相机路径和运行时 benchmark；
-- 支持高度图重载、算法重置和 UI 容量切换；
-- [x] 在设备能力不足时自动跳过并记录原因。
-
-完成条件：CBT 可以通过界面和命令行稳定运行，自动测试可无人值守完成并输出完整统计。
-
-### 阶段 I：官方基线冻结
-
-状态：待实施。
-
-任务：
-
-- 固定官方语义着色器和参数；
-- 固定 RoamTesting 高度图场景和相机路径；
-- 记录 128K、256K、512K 和 1M 容量结果；
-- 对比官方程序与项目接入版的阶段行为；
-- 记录无法完全一致的场景差异和原因；
-- 为官方基线建立独立算法名称、输出标签和 Git 提交。
-
-完成条件：后续预算调度实验可以与一个不可变、可复现、统计完整的 CBT 2024 基线比较。
-
-## 9. 统计与实验参数
-
-### 9.1 必须记录的计数
-
-- CBT 总容量、活动动态槽位、基础二分器和剩余槽位；
-- 活动、可见和本轮修改二分器数量；
-- split、simplify 和最终 merge 候选数；
-- split 成功预留、容量拒绝和重复认领数；
-- 保守预留量、实际使用量和返还量；
-- 新分配槽位和释放槽位数量；
-- 兼容链总遍历步数、平均长度和最大长度；
+- 容量 `N`、基础槽位 `B`、总槽位 `T`；
+- OCBT 根计数和剩余动态槽位；
+- active、visible、modified 数量；
+- split 和 simplify 分类候选数；
+- split 规划获批、容量拒绝和重复认领数；
+- 保守预留、实际使用和返还量；
+- allocation 列表长度和实际新槽位数；
+- 四种 subdivision pattern 数量；
+- 兼容链总步数、平均长度和最大长度；
 - split/merge 传播任务数；
-- 邻接、位域、`heapID` 和间接命令错误数。
+- merge 提交和释放槽位数；
+- 邻接、位域、`heapID`、索引和间接命令错误数；
+- 当前资源代次、拓扑帧代次和统计样本年龄。
 
-### 9.2 必须记录的时间
+### 10.2 必须记录的 GPU 时间
 
-- `Reset`；
-- `Classify`；
-- `Split`；
-- `Allocate`；
-- `Bisect`；
-- `PropagateBisect`；
-- `PrepareSimplify`；
-- `Simplify`；
-- `PropagateSimplify`；
-- `Reduce`；
-- `Indexation`；
-- 几何求值；
-- 渲染；
-- 围栏等待和统计读回。
+- Reset；
+- Classify；
+- Split；
+- Allocate；
+- neighbor copy；
+- Bisect；
+- PropagateBisect；
+- PrepareSimplify；
+- Simplify；
+- PropagateSimplify；
+- ReducePre、ReduceFirst、ReduceSecond；
+- Indexation；
+- planar geometry；
+- height/render vertex evaluation；
+- validation；
+- terrain render。
 
-### 9.3 第一轮参数矩阵
+另行记录 CPU frame-fence wait、控制事件 GPU idle 和统计读回字节，不能把它们混入 shader 阶段时间。
+
+### 10.3 延迟读回规则
+
+- 普通帧只复制固定大小的 counter/timestamp snapshot 到 readback ring；
+- 只读取已经由对应 frame fence 完成的槽位；
+- 未完成时保留上一份样本并增加 sample age，不等待；
+- blocking readback 只允许 smoke/exhaustive validation；
+- benchmark 必须标记统计模式，不能把 blocking validation 与正常性能样本混合。
+
+### 10.4 第一轮参数矩阵
 
 | 参数 | 建议取值 |
 |---|---|
 | CBT 容量 | 128K、256K、512K、1M |
-| 面积阈值 | 25、50、100、150 像素面积 |
-| 最大深度 | 12、16、20、24 |
+| 三角形面积阈值 | 25、50、100、150 像素面积 |
+| 最大深度 | 12、16、20、24，且不低于 BaseDepth |
 | 高度图 | `Hm_Terrain_Test_129.pgm`、`Hm_Terrain_Peking_513.png` |
-| 分辨率 | 1280x720、1920x1080、2560x1440 |
-| 相机 | 固定近地路径、远近往返路径、快速横移路径 |
-| 验证 | 关闭、延迟验证、阻塞验证 |
+| 分辨率 | 1280×720、1920×1080、2560×1440 |
+| 相机 | 固定近地、远近往返、纯旋转、快速横移 |
+| 验证 | Off、Delayed、BlockingSmoke |
+| 几何 | ModifiedOnly、FullDebug |
 
-参数名称和高度图路径应以项目实际资源为准，写入 benchmark 输出，不能依赖界面默认值。
+所有参数写入 benchmark 文件，不依赖 UI 默认值。
 
-## 10. 测试矩阵
+## 11. 测试矩阵与分层
 
-### 10.1 数据结构测试
+### 11.1 快速 CI
 
-- 空 CBT、满 CBT、单个位和交替位；
-- 首位、末位和 64 位块边界；
-- 随机置位/清位序列；
-- 所有活动 rank 和空闲 rank 的 CPU/GPU 对照；
-- 四种容量特化。
+目标：单项秒级、整组有限时、失败可定位。
 
-### 10.2 拓扑测试
-
-- 单个边界 split；
+- CPU OCBT 四档边界和随机小批次；
+- GPU OCBT 128K 边界样本和有限 rank；
+- 六基础半边和精确命令布局；
+- Bootstrap 300 帧；
+- 单边界 split；
 - 直接 twin split；
-- 长兼容链 split；
-- 多候选共享兼容链；
-- 容量恰好足够和差一个槽位；
-- 合法双三角形 merge；
-- 四三角形菱形 merge；
+- 四种 split 模板独立测试；
+- 单个合法 merge；
+- 容量差一个槽位拒绝；
+- 纯旋转触发更新；
+- 三帧延迟统计无等待。
+
+CTest 应使用 `unit`、`gpu-quick`、`integration` 标签并设置明确超时。D3D12 测试构建不能默认关闭后又在文档中声称已由 CTest 覆盖。
+
+### 11.2 Exhaustive 验证
+
+目标：手动或夜间运行，不伪装成快速 smoke。
+
+- 四档容量空/满/交替/随机 OCBT；
+- 所有 occupied/free rank 对照；
+- 四档基础资源创建、读回和 128K 回切；
+- 长兼容链和多候选共享链；
 - 同帧相邻 split/merge；
-- 最大深度降低引发的批量简化。
-
-### 10.3 运行测试
-
-- Debug 层和 GPU 验证；
-- 固定帧烟雾测试；
-- 窗口缩放、最小化和恢复；
-- 高度图重载；
-- 算法切换和重置；
-- CBT 容量切换；
+- 最大深度批量降低；
 - 长时间相机往返；
-- 设备能力不足路径。
+- 高度图和容量反复切换；
+- GPU validation 和阻塞全不变量读回。
 
-### 10.4 正确性不变量
+现有 `--cbt-ocbt-smoke-test` 和 `--cbt-base-topology-smoke-test` 应重命名或增加 `--exhaustive` 变体，避免自动化系统误判运行时长。
 
-每轮更新后应满足：
+### 11.3 每轮正确性不变量
 
-1. 每个活动物理槽位的 `heapID` 非零；
-2. 每个未活动动态槽位的 CBT 位为零；
-3. CBT 根计数等于动态活动位数量；
-4. 活动列表没有重复槽位；
-5. 邻接关系双向对称；
-6. 活动列表数量与间接绘制三角形数一致；
-7. 分配总量不超过容量；
-8. merge 释放的槽位能在后续 split 中重新使用；
-9. 普通帧没有同步 CPU 读回。
+1. 动态槽位 `bit=1` 当且仅当对应 `heapID != 0`；
+2. 基础槽位 `heapID != 0` 且永不进入 OCBT 位域；
+3. OCBT 根计数等于动态非零 `heapID` 数；
+4. active indices 恰好包含全部非零 `heapID`，无重复；
+5. active draw 顶点数等于 active count × 3；
+6. visible 和 modified 列表都是 active 的子集；
+7. 所有有效邻接位于 `[0,T)` 且双向可达；
+8. `subdivisionPattern` 只包含四种合法组合；
+9. 分配槽位互异且不覆盖基础尾部；
+10. 预留量守恒：获批预留 = 实际使用 + 返还；
+11. merge 释放位可被后续 split 重新选择；
+12. 所有活动节点的三个子位置和父位置已初始化且有限；
+13. 间接 dispatch/draw 不越过对应缓冲容量；
+14. 普通帧不发生同步 CPU 读回或全队列 flush。
 
-## 11. 主要风险与控制措施
+## 12. 当前实施批次
+
+### 批次 1：E0 接口和协议
+
+状态：已完成，2026-08-22。
+
+1. 更新策略与 GPU count authority；
+2. 精确 draw/dispatch 结构和缺失资源；
+3. 生产 OCBT Reduce；
+4. root signature、descriptor range、PSO 和资源状态表；
+5. Bootstrap Indexation、平面几何和 300 帧空事务测试。
+
+### 批次 2：E1 分类
+
+状态：当前下一批工作。
+
+1. 常量缓冲和视图输入；
+2. Reset；
+3. Classify；
+4. PrepareIndirect split/simplify；
+5. CPU/GPU 分类对照和纯旋转测试。
+
+### 批次 3：E2 规划与分配
+
+1. 单边界和直接 twin；
+2. 长兼容链；
+3. pattern 原子认领与共享链；
+4. 保守预留和返还；
+5. 空闲 rank-select 分配；
+6. 容量边界与唯一性测试。
+
+### 批次 4：E3 split 提交
+
+1. 邻接复制；
+2. 四模板 Bisect；
+3. PropagateBisect；
+4. Reduce；
+5. Indexation、几何更新和 split-only smoke。
+
+### 批次 5：F merge 闭环
+
+1. PrepareSimplify；
+2. 两节点和四节点合法性；
+3. Simplify；
+4. PropagateSimplify；
+5. split/merge 同帧顺序和槽位回收。
+
+### 批次 6：G-H 高度图和实验接入
+
+1. GPU 高度图；
+2. modified/full 几何；
+3. 法线、UV 和调试色；
+4. 延迟统计；
+5. UI、CLI、runtime benchmark 和完整测试矩阵。
+
+每个批次必须先通过自身正确性门槛，再进入下一批。阶段 E3 的 split-only 结果不能代替阶段 F 的正式 CBT 基线。
+
+## 13. 主要风险与控制措施
 
 | 风险 | 影响 | 控制措施 |
 |---|---|---|
-| 官方仓库缺少许可证 | 无法确定可发布的代码复用范围 | 先做独立复现和结构参考；发布前确认授权 |
-| 同时适配地形和拓扑 | 错误定位困难 | 先固定基础网格验证拓扑，再接高度图 |
-| 程序化绘制接口缺失 | 迫使算法偏离官方路径 | 在阶段 B 先补齐 `DRAW` 间接模式 |
-| 64 位原子能力不足 | 着色器编译或运行失败 | 初始化时显式检查并提供跳过原因 |
-| OCBT 容量特化复杂 | 多份 HLSL 易产生差异 | 128K 正确后机械扩展并建立统一测试 |
-| 邻接并发更新错误 | 裂缝、悬空引用或设备错误 | 保留双缓冲、传播阶段和阻塞验证模式 |
-| 官方每帧 `flush` 污染性能 | CPU/GPU 串行化 | 只迁移屏障语义，沿用现有帧围栏 |
-| 候选顺序非确定 | 饱和状态结果波动 | 重复运行并记录分布；不把它误判为实现错误 |
-| 当前 GPU ROAM-like 结构干扰 | 误复用不兼容拓扑 | CBT 使用独立目录、状态和着色器 |
-| 基线与研究变体混淆 | 论文比较不可解释 | 独立算法标识、文件、输出标签和提交 |
+| 上游仓库缺少许可证 | 无法确定衍生代码发布范围 | 发布或复制实现前确认授权；提交记录区分结构参考和直接迁移 |
+| 当前 renderer 不是每帧调用 CBT | 纯旋转失效、拓扑不收敛 | E0 增加明确 update policy |
+| CPU live count 与 GPU indirect 冲突 | 普通帧被迫读回或 renderer 错判无内容 | GPU count authority，CPU 只读延迟统计 |
+| 当前 draw buffer 布局与上游不同 | shader、C++ 和 ExecuteIndirect 偏移错位 | E0 冻结 10 `uint` 二进制协议和静态断言 |
+| 动态 split 先于几何 | Classify 读取未初始化位置 | E0 先建立 Bootstrap 和平面几何 |
+| 邻接双缓冲使用错误 | 裂缝、悬空引用 | 一帧只发布一个代次，模板测试加阻塞读回 |
+| 对错误资源加 UAV barrier | 间歇性数据竞争 | 集中式资源访问表和 Debug Layer/GPU validation |
+| descriptor heap 只支持单槽分配 | 无法稳定绑定大 root table | E0 增加连续 range 或冻结 root descriptor 方案 |
+| 四容量 × 多入口导致 shader 数量膨胀 | 构建慢、PSO 管理复杂 | 第一版机械特化并统一命名；语义冻结后再优化构建 |
+| 候选原子顺序非确定 | 容量饱和结果波动 | 重复运行并报告分布，不误判为实现错误 |
+| exhaustive 测试冒充 smoke | CI 卡住 | quick/exhaustive 分层、标签和硬超时 |
+| 高度图与拓扑同时调试 | 错误难定位 | 先平面 E0-F，再在 G 替换几何 |
+| 扩展验证影响性能 | 基线计时失真 | Off/Delayed/Blocking 三种明确模式 |
 
-## 12. 不在本计划中的工作
+## 14. 不在忠实基线中的工作
 
 - 全局候选排序；
-- 收益/成本优先级；
+- 连续收益/成本优先级；
 - 兼容闭包共享成本去重；
 - 固定预算 Top-K 或分桶调度；
 - 低收益 merge 与高收益 split 的预算交换；
 - 严格确定性的全局资源分配；
-- 论文级新误差模型。
+- 新的屏幕误差模型；
+- 用 visible list 替代上游 active draw 的渲染优化；
+- 扫描 OCBT occupied rank 取代上游全容量 Indexation 的性能改写。
 
-这些内容属于 CBT 官方基线冻结后的研究实现，对应 [研究假设与验证计划](12-research-hypothesis-validation-plan.md)。
+这些内容必须在阶段 I 之后进入独立研究变体。
 
-## 13. 实施批次
+## 15. 忠实基线完成定义
 
-第一批工程接入已经完成：
+只有同时满足以下条件，才能将 `Cbt2024` 从基础 adapter 标记为完整基线：
 
-1. [x] 构建并运行 `third_party/large_cbt` 官方程序；
-2. [x] 记录设备能力并建立官方程序的本机兼容基线；
-3. [x] 扩展 RoamTesting 的视图输入和 Shader Model 6.6 检查；
-4. [x] 增加不依赖动态 CBT 拓扑的程序化间接绘制烟雾测试；
-5. [x] 迁移并验证 128K、256K、512K、1M OCBT；
-6. [x] 建立规则地形基础二分器和完整 GPU 常驻资源初值。
+1. Reset 到 Indexation 的正式帧顺序与固定上游提交一致；
+2. split、merge、传播、Reduce 和槽位回收形成闭环；
+3. 三条 GPU 常驻身份关系一致：OCBT 位、物理槽位、逻辑 `heapID`；
+4. 动态几何来自 GPU `heapID` 求值和高度图采样；
+5. renderer 完全由 GPU 间接命令决定 draw count；
+6. 普通帧不 flush、不等待统计读回、不重建整套资源；
+7. quick CI、exhaustive validation 和长时间运行均通过；
+8. 四档容量、参数、硬件和 benchmark 标签可复现；
+9. 所有与上游不同的基础网格、几何、验证和同步策略均有记录；
+10. `SupportsSplit`、`SupportsMerge`、`SupportsCrackFix` 和 `SupportsTopologyValidation` 与实际代码能力一致。
 
-当前第二批工作对应阶段 E，按以下顺序执行：
+## 16. 关键源码索引
 
-1. 面积分类、背面剔除和视锥剔除；
-2. split 候选与兼容链规划；
-3. 保守容量预留、空闲 rank-select 和子槽位分配；
-4. `heapID`、邻接、占用位和传播任务提交；
-5. OCBT 归约、活动索引重建和 CPU/GPU 不变量验证。
+| 主题 | 上游源码 | 当前项目对应位置 |
+|---|---|---|
+| 帧拓扑编排 | [`mesh_updater.cpp`](../../third_party/large_cbt/demo/src/mesh/mesh_updater.cpp) | [`D3D12CbtE0Pipeline.cpp`](../../src/algorithms/cbt_2024/d3d12/D3D12CbtE0Pipeline.cpp)，E1 起继续扩展正式 pass |
+| shader 入口和面积分类 | [`UpdateMesh.compute`](../../third_party/large_cbt/shaders/UpdateMesh.compute) | [`CbtTopologyE0.hlsl`](../../assets/shaders/dx12/cbt/CbtTopologyE0.hlsl)，面积分类待 E1 |
+| split/merge/传播 | [`update_utilities.hlsl`](../../third_party/large_cbt/shaders/shader_lib/update_utilities.hlsl) | 待迁移的官方语义基线 shader |
+| OCBT | [`ocbt_generic.hlsl`](../../third_party/large_cbt/shaders/shader_lib/ocbt_generic.hlsl) | [`CbtOccupancyTree.hlsli`](../../assets/shaders/dx12/cbt/CbtOccupancyTree.hlsli) |
+| 基础半边展开 | [`cpu_mesh.cpp`](../../third_party/large_cbt/demo/src/mesh/cpu_mesh.cpp) | [`CbtBisectorTopology.cpp`](../../src/algorithms/cbt_2024/CbtBisectorTopology.cpp) |
+| GPU 资源布局 | [`mesh.cpp`](../../third_party/large_cbt/demo/src/mesh/mesh.cpp) | [`D3D12CbtBaseTopology.cpp`](../../src/algorithms/cbt_2024/d3d12/D3D12CbtBaseTopology.cpp) |
+| 逻辑几何 | [`PlanetGeometry.compute`](../../third_party/large_cbt/shaders/PlanetGeometry.compute) | [`CbtBootstrap.hlsl`](../../assets/shaders/dx12/cbt/CbtBootstrap.hlsl) 已提供平面 Bootstrap，高度图求值待 G |
+| 算法接口 | — | [`ITerrainLodAlgorithm.h`](../../src/algorithms/ITerrainLodAlgorithm.h) |
+| 调度与绘制 | — | [`D3D12TerrainRenderer.cpp`](../../src/render/D3D12TerrainRenderer.cpp) |
+| 当前 E0 adapter | — | [`D3D12CbtTerrainLodAlgorithm.cpp`](../../src/algorithms/cbt_2024/d3d12/D3D12CbtTerrainLodAlgorithm.cpp) |
 
-在忠实 split/merge、高度图几何和官方基线冻结完成之前，不修改官方候选分配策略。
+## 17. 结论
+
+当前仓库已经完成 OCBT、方形基础半边、程序化间接绘制和阶段 E0 的动态管线前置契约。每帧调度、GPU draw count、精确命令布局、缺失工作缓冲、生产 OCBT Reduce、资源状态和最小几何 bootstrap 已形成可连续运行 300 帧的闭环。
+
+下一步从阶段 E1 的官方面积分类和间接工作量开始；阶段 E2-E3 再在同一 GPU 事务协议上实现 split，阶段 F 把 simplify/merge 放回上游同一帧顺序形成忠实闭环；阶段 G 只替换几何求值，不改变拓扑语义。这样冻结出的阶段 I 基线才足以支撑后续兼容闭包感知预算调度研究。

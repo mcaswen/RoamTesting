@@ -381,6 +381,8 @@ struct D3D12TerrainRendererState
     std::size_t GpuVertexStrideBytes{0};
     std::size_t GpuActiveLeafCapacityBytes{0};
     std::size_t GpuActiveLeafStrideBytes{0};
+    std::size_t GpuIndirectCapacityBytes{0};
+    std::size_t GpuIndirectArgumentOffsetBytes{0};
     std::uint64_t GpuResourceGeneration{0};
     std::uint64_t MeshGeneration{0};
 };
@@ -397,6 +399,8 @@ void ClearBorrowedGpuResources(D3D12TerrainRendererState& state)
     state.GpuVertexStrideBytes = 0U;
     state.GpuActiveLeafCapacityBytes = 0U;
     state.GpuActiveLeafStrideBytes = 0U;
+    state.GpuIndirectCapacityBytes = 0U;
+    state.GpuIndirectArgumentOffsetBytes = 0U;
     state.GpuResourceGeneration = 0U;
     state.ProceduralPipeline.InvalidateResourceDescriptors();
 }
@@ -809,7 +813,11 @@ bool TerrainRenderer::UpdateForView(const RenderContext& context, std::string* e
             _settings.TerrainLodAlgorithm == Algorithms::TerrainLodAlgorithmId::DataOrientedCpuRoam;
         const bool roamViewChanged = usesRoamView &&
             (!_hasRoamBuildView || RoamViewInputsChanged(_lastRoamBuildContext, context));
-        if (!_meshDirty && !cameraMovedEnough && !roamViewChanged)
+        const bool updateEveryFrame =
+            _terrainLodAlgorithm != nullptr &&
+            _terrainLodAlgorithm->Info().Id == _settings.TerrainLodAlgorithm &&
+            _terrainLodAlgorithm->Capabilities().UpdatePolicy == Algorithms::TerrainLodUpdatePolicy::EveryFrame;
+        if (!_meshDirty && !updateEveryFrame && !cameraMovedEnough && !roamViewChanged)
         {
             return true;
         }
@@ -957,6 +965,7 @@ void TerrainRenderer::Render(const RenderContext& context)
             _d3d12State->ConstantBuffers[frameIndex]->GetGPUVirtualAddress(),
             _d3d12State->TextureSrv.Gpu,
             _d3d12State->GpuIndirectBuffer,
+            _d3d12State->GpuIndirectArgumentOffsetBytes,
             _settings.Wireframe);
         return;
     }
@@ -990,6 +999,7 @@ TerrainRenderStats TerrainRenderer::Stats() const
     stats.UseTerrainLod = _settings.UseTerrainLod;
     stats.TerrainLodAlgorithm = _settings.TerrainLodAlgorithm;
     stats.TerrainLodStatusMessage = _terrainLodStatusMessage;
+    stats.GpuTopologyFrameGeneration = _terrainLodStats.GpuTopologyFrameGeneration;
     stats.RoamMaxDepthSetting = _settings.RoamMaxDepth;
     stats.RoamScreenSpaceSplitThresholdPixels = _settings.RoamScreenSpaceSplitThresholdPixels;
     stats.RoamScreenSpaceMergeThresholdPixels = _settings.RoamScreenSpaceMergeThresholdPixels;
@@ -1216,6 +1226,8 @@ bool TerrainRenderer::RebuildTerrainLod(const RenderContext& context, std::strin
         _d3d12State->GpuVertexStrideBytes = renderPacket.GpuVertexStrideBytes;
         _d3d12State->GpuActiveLeafCapacityBytes = renderPacket.GpuActiveLeafBufferCapacityBytes;
         _d3d12State->GpuActiveLeafStrideBytes = renderPacket.GpuActiveLeafStrideBytes;
+        _d3d12State->GpuIndirectCapacityBytes = renderPacket.GpuIndirectDrawBufferCapacityBytes;
+        _d3d12State->GpuIndirectArgumentOffsetBytes = renderPacket.GpuIndirectDrawArgumentOffsetBytes;
         _d3d12State->GpuResourceGeneration = renderPacket.GpuResourceGeneration;
         _drawVertexCount = renderPacket.ActiveTriangleCount * 3U;
         _drawIndexCount = 0U;
@@ -1448,11 +1460,13 @@ bool TerrainRenderer::HasDrawableTerrain() const
     }
     if (_renderMode == Algorithms::TerrainLodRenderMode::GpuProceduralIndirect)
     {
-        return _drawVertexCount > 0U &&
-               _d3d12State->ProceduralPipeline.IsReady() &&
+        return _d3d12State->ProceduralPipeline.IsReady() &&
                _d3d12State->GpuVertexBuffer != nullptr &&
                _d3d12State->GpuActiveLeafBuffer != nullptr &&
                _d3d12State->GpuIndirectBuffer != nullptr &&
+               _d3d12State->GpuIndirectArgumentOffsetBytes <= _d3d12State->GpuIndirectCapacityBytes &&
+               sizeof(D3D12_DRAW_ARGUMENTS) <=
+                   _d3d12State->GpuIndirectCapacityBytes - _d3d12State->GpuIndirectArgumentOffsetBytes &&
                _d3d12State->GpuResourceGeneration > 0U;
     }
     return _renderMode == Algorithms::TerrainLodRenderMode::CpuMesh && _drawIndexCount > 0U;

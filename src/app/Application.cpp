@@ -127,6 +127,7 @@ Application::~Application()
 void Application::EnableCbtProceduralSmokeTest()
 {
     _terrainLodSmokeTestEnabled = true;
+    _cbtProceduralSmokeTestEnabled = true;
     _terrainPanelState.UseTerrainLod = true;
     _terrainPanelState.TerrainLodAlgorithm = Algorithms::TerrainLodAlgorithmId::Cbt2024;
 }
@@ -394,6 +395,15 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
 
     _graphicsBackend->BeginImGuiFrame(_guiLayer);
 
+    // E0 快速烟测前半段保持静止，后半段只旋转，以覆盖两类 EveryFrame 调度输入。
+    if (_cbtProceduralSmokeTestEnabled && _cbtProceduralSmokeFrameCount >= 150U)
+    {
+        _camera.SetPose(
+            _camera.Position(),
+            _camera.YawDegrees() + 0.25F,
+            _camera.PitchDegrees());
+    }
+
     const glm::vec3 cameraPosition = _camera.Position();
     Render::RenderContext renderContext{};
     renderContext.View = _camera.GetViewMatrix();
@@ -405,7 +415,7 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
     renderContext.DrawableWidth = drawableWidth;
     renderContext.DrawableHeight = drawableHeight;
     renderContext.UsesZeroToOneDepth = _graphicsBackend->UsesZeroToOneDepth();
-    if (_terrainLodSmokeTestEnabled)
+    if (_terrainLodSmokeTestEnabled && !_cbtProceduralSmokeTestEnabled)
     {
         _terrainRenderer.RequestMeshRebuild();
     }
@@ -432,6 +442,19 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
     }
 
     const Render::TerrainRenderStats terrainStats = _terrainRenderer.Stats();
+    if (_cbtProceduralSmokeTestEnabled)
+    {
+        const std::uint64_t generation = terrainStats.GpuTopologyFrameGeneration;
+        if (generation == 0U ||
+            (_lastCbtTopologyFrameGeneration != 0U && generation != _lastCbtTopologyFrameGeneration + 1U))
+        {
+            std::cerr << "CBT E0 topology frame generation did not advance exactly once per frame: previous="
+                      << _lastCbtTopologyFrameGeneration << ", current=" << generation << '\n';
+            _terrainLodSmokeTestFailed = true;
+        }
+        _lastCbtTopologyFrameGeneration = generation;
+        ++_cbtProceduralSmokeFrameCount;
+    }
     Gui::DebugOverlayData debugData{};
     debugData.FramesPerSecond = _framesPerSecond;
     debugData.FrameTimeMilliseconds = _frameTimeMilliseconds;

@@ -30,11 +30,14 @@ struct D3D12CbtTopologyResourceView
     ID3D12Resource* Simplification{nullptr};
     ID3D12Resource* Allocation{nullptr};
     ID3D12Resource* Propagation{nullptr};
+    ID3D12Resource* Memory{nullptr};
+    ID3D12Resource* Validation{nullptr};
     ID3D12Resource* ActiveIndices{nullptr};
     ID3D12Resource* VisibleIndices{nullptr};
     ID3D12Resource* ModifiedIndices{nullptr};
-    ID3D12Resource* DrawCommands{nullptr};
-    ID3D12Resource* DispatchCommands{nullptr};
+    ID3D12Resource* TopologyDispatchCommands{nullptr};
+    ID3D12Resource* IndirectDrawState{nullptr};
+    ID3D12Resource* GeometryDispatchCommands{nullptr};
     ID3D12Resource* BaseControlPoints{nullptr};
 };
 

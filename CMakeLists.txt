@@ -120,6 +120,7 @@ if(PARALLEL_ROAM_BUILD_APP)
                 src/algorithms/cbt_2024/CbtBisectorTopology.cpp
                 src/algorithms/cbt_2024/CbtOccupancyTree.cpp
                 src/algorithms/cbt_2024/d3d12/D3D12CbtBaseTopology.cpp
+                src/algorithms/cbt_2024/d3d12/D3D12CbtE0Pipeline.cpp
                 src/algorithms/cbt_2024/d3d12/D3D12CbtOccupancyTree.cpp
                 src/algorithms/cbt_2024/d3d12/D3D12CbtTerrainLodAlgorithm.cpp
                 src/algorithms/classic_roam/ClassicRoamTerrainLodAlgorithm.cpp
@@ -196,6 +197,9 @@ if(PARALLEL_ROAM_BUILD_APP)
         set(
             PARALLEL_ROAM_DX12_CBT_PROCEDURAL_VERTEX_SHADER
             "${PARALLEL_ROAM_DX12_SHADER_DIR}/CbtProceduralTerrainVS.cso")
+        set(PARALLEL_ROAM_DX12_CBT_BOOTSTRAP_INDEXATION_SHADER "${PARALLEL_ROAM_DX12_SHADER_DIR}/CbtBootstrapIndexation.cso")
+        set(PARALLEL_ROAM_DX12_CBT_BOOTSTRAP_PREPARE_SHADER "${PARALLEL_ROAM_DX12_SHADER_DIR}/CbtBootstrapPrepareIndirect.cso")
+        set(PARALLEL_ROAM_DX12_CBT_BOOTSTRAP_GEOMETRY_SHADER "${PARALLEL_ROAM_DX12_SHADER_DIR}/CbtBootstrapBuildBaseGeometry.cso")
         target_compile_definitions(
             parallel_roam
             PRIVATE PARALLEL_ROAM_DX12_SHADER_DIR="${PARALLEL_ROAM_DX12_SHADER_DIR}")
@@ -204,6 +208,9 @@ if(PARALLEL_ROAM_BUILD_APP)
                 ${PARALLEL_ROAM_DX12_VERTEX_SHADER}
                 ${PARALLEL_ROAM_DX12_PIXEL_SHADER}
                 ${PARALLEL_ROAM_DX12_CBT_PROCEDURAL_VERTEX_SHADER}
+                ${PARALLEL_ROAM_DX12_CBT_BOOTSTRAP_INDEXATION_SHADER}
+                ${PARALLEL_ROAM_DX12_CBT_BOOTSTRAP_PREPARE_SHADER}
+                ${PARALLEL_ROAM_DX12_CBT_BOOTSTRAP_GEOMETRY_SHADER}
             COMMAND ${CMAKE_COMMAND} -E make_directory "${PARALLEL_ROAM_DX12_SHADER_DIR}"
             COMMAND ${PARALLEL_ROAM_DXC_EXECUTABLE}
                 -T vs_6_0 -E VSMain -Fo ${PARALLEL_ROAM_DX12_VERTEX_SHADER}
@@ -214,16 +221,29 @@ if(PARALLEL_ROAM_BUILD_APP)
             COMMAND ${PARALLEL_ROAM_DXC_EXECUTABLE}
                 -T vs_6_6 -E VSCbtProcedural -Fo ${PARALLEL_ROAM_DX12_CBT_PROCEDURAL_VERTEX_SHADER}
                 "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/dx12/CbtProceduralTerrain.hlsl"
+            COMMAND ${PARALLEL_ROAM_DXC_EXECUTABLE}
+                -T cs_6_6 -E CSIndexation -Fo ${PARALLEL_ROAM_DX12_CBT_BOOTSTRAP_INDEXATION_SHADER}
+                "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/dx12/cbt/CbtBootstrap.hlsl"
+            COMMAND ${PARALLEL_ROAM_DXC_EXECUTABLE}
+                -T cs_6_6 -E CSPrepareIndirect -Fo ${PARALLEL_ROAM_DX12_CBT_BOOTSTRAP_PREPARE_SHADER}
+                "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/dx12/cbt/CbtBootstrap.hlsl"
+            COMMAND ${PARALLEL_ROAM_DXC_EXECUTABLE}
+                -T cs_6_6 -E CSBuildBaseGeometry -Fo ${PARALLEL_ROAM_DX12_CBT_BOOTSTRAP_GEOMETRY_SHADER}
+                "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/dx12/cbt/CbtBootstrap.hlsl"
             DEPENDS
                 "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/dx12/Terrain.hlsl"
                 "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/dx12/CbtProceduralTerrain.hlsl"
+                "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/dx12/cbt/CbtBootstrap.hlsl"
             VERBATIM
         )
         add_custom_target(parallel_roam_dx12_shaders
             DEPENDS
                 ${PARALLEL_ROAM_DX12_VERTEX_SHADER}
                 ${PARALLEL_ROAM_DX12_PIXEL_SHADER}
-                ${PARALLEL_ROAM_DX12_CBT_PROCEDURAL_VERTEX_SHADER})
+                ${PARALLEL_ROAM_DX12_CBT_PROCEDURAL_VERTEX_SHADER}
+                ${PARALLEL_ROAM_DX12_CBT_BOOTSTRAP_INDEXATION_SHADER}
+                ${PARALLEL_ROAM_DX12_CBT_BOOTSTRAP_PREPARE_SHADER}
+                ${PARALLEL_ROAM_DX12_CBT_BOOTSTRAP_GEOMETRY_SHADER})
 
         set(PARALLEL_ROAM_CBT_OCBT_CAPACITY_NAMES 128K 256K 512K 1M)
         set(PARALLEL_ROAM_CBT_OCBT_CAPACITY_VALUES 131072 262144 524288 1048576)
@@ -290,10 +310,42 @@ if(PARALLEL_ROAM_BUILD_APP)
         add_custom_target(
             parallel_roam_dx12_cbt_ocbt_shaders
             DEPENDS ${PARALLEL_ROAM_DX12_CBT_OCBT_SHADERS})
+
+        set(PARALLEL_ROAM_CBT_TOPOLOGY_ENTRIES CSResetE0 CSReducePre CSReduceFirst CSReduceSecond)
+        set(PARALLEL_ROAM_CBT_TOPOLOGY_SUFFIXES ResetE0 ReducePre ReduceFirst ReduceSecond)
+        set(PARALLEL_ROAM_DX12_CBT_TOPOLOGY_SHADERS)
+        foreach(PARALLEL_ROAM_CBT_CAPACITY_INDEX RANGE 0 3)
+            list(GET PARALLEL_ROAM_CBT_OCBT_CAPACITY_NAMES ${PARALLEL_ROAM_CBT_CAPACITY_INDEX} PARALLEL_ROAM_CBT_CAPACITY_NAME)
+            list(GET PARALLEL_ROAM_CBT_OCBT_CAPACITY_VALUES ${PARALLEL_ROAM_CBT_CAPACITY_INDEX} PARALLEL_ROAM_CBT_CAPACITY_VALUE)
+            foreach(PARALLEL_ROAM_CBT_ENTRY_INDEX RANGE 0 3)
+                list(GET PARALLEL_ROAM_CBT_TOPOLOGY_ENTRIES ${PARALLEL_ROAM_CBT_ENTRY_INDEX} PARALLEL_ROAM_CBT_ENTRY)
+                list(GET PARALLEL_ROAM_CBT_TOPOLOGY_SUFFIXES ${PARALLEL_ROAM_CBT_ENTRY_INDEX} PARALLEL_ROAM_CBT_SUFFIX)
+                set(PARALLEL_ROAM_CBT_TOPOLOGY_SHADER
+                    "${PARALLEL_ROAM_DX12_SHADER_DIR}/CbtTopology${PARALLEL_ROAM_CBT_CAPACITY_NAME}${PARALLEL_ROAM_CBT_SUFFIX}.cso")
+                list(APPEND PARALLEL_ROAM_DX12_CBT_TOPOLOGY_SHADERS ${PARALLEL_ROAM_CBT_TOPOLOGY_SHADER})
+                add_custom_command(
+                    OUTPUT ${PARALLEL_ROAM_CBT_TOPOLOGY_SHADER}
+                    COMMAND ${PARALLEL_ROAM_DXC_EXECUTABLE}
+                        -T cs_6_6
+                        -E ${PARALLEL_ROAM_CBT_ENTRY}
+                        -D CBT_CAPACITY=${PARALLEL_ROAM_CBT_CAPACITY_VALUE}
+                        -I "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/dx12/cbt"
+                        -Fo ${PARALLEL_ROAM_CBT_TOPOLOGY_SHADER}
+                        "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/dx12/cbt/CbtTopologyE0.hlsl"
+                    DEPENDS
+                        "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/dx12/cbt/CbtOccupancyTree.hlsli"
+                        "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/dx12/cbt/CbtTopologyE0.hlsl"
+                    VERBATIM)
+            endforeach()
+        endforeach()
+        add_custom_target(
+            parallel_roam_dx12_cbt_topology_shaders
+            DEPENDS ${PARALLEL_ROAM_DX12_CBT_TOPOLOGY_SHADERS})
         add_dependencies(
             parallel_roam
             parallel_roam_dx12_shaders
-            parallel_roam_dx12_cbt_ocbt_shaders)
+            parallel_roam_dx12_cbt_ocbt_shaders
+            parallel_roam_dx12_cbt_topology_shaders)
         add_custom_command(
             TARGET parallel_roam
             POST_BUILD

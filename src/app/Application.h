@@ -10,6 +10,7 @@
 #include "tools/PerformanceTimer.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -204,6 +205,9 @@ private:
     bool _initialized{false};
     bool _terrainLodSmokeTestEnabled{false};
     bool _terrainLodSmokeTestFailed{false};
+    bool _cbtProceduralSmokeTestEnabled{false};
+    std::uint64_t _cbtProceduralSmokeFrameCount{0U};
+    std::uint64_t _lastCbtTopologyFrameGeneration{0U};
     bool _cbtOccupancyTreeSmokeTestEnabled{false};
     bool _cbtBaseTopologySmokeTestEnabled{false};
     bool _automaticRuntimeBenchmarkEnabled{false};

@@ -54,6 +54,7 @@ public:
         D3D12_GPU_VIRTUAL_ADDRESS constantBufferAddress,
         D3D12_GPU_DESCRIPTOR_HANDLE textureSrv,
         ID3D12Resource* indirectBuffer,
+        std::size_t indirectArgumentOffsetBytes,
         bool wireframe) const;
 
     [[nodiscard]] bool IsReady() const;

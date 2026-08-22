@@ -220,6 +220,7 @@ void D3D12ProceduralTerrainPipeline::RecordDraw(
     D3D12_GPU_VIRTUAL_ADDRESS constantBufferAddress,
     D3D12_GPU_DESCRIPTOR_HANDLE textureSrv,
     ID3D12Resource* indirectBuffer,
+    std::size_t indirectArgumentOffsetBytes,
     bool wireframe) const
 {
     // 根参数顺序固定为 b0、t0、t1、t2，与独立 root signature 完全一致
@@ -231,7 +232,13 @@ void D3D12ProceduralTerrainPipeline::RecordDraw(
     commandList->SetGraphicsRootDescriptorTable(3, _vertexSrvs[frameIndex].Gpu);
     commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     // 当前命令缓冲只含一条 DRAW，不使用额外 count buffer
-    commandList->ExecuteIndirect(_drawCommandSignature.Get(), 1, indirectBuffer, 0, nullptr, 0);
+    commandList->ExecuteIndirect(
+        _drawCommandSignature.Get(),
+        1,
+        indirectBuffer,
+        static_cast<UINT64>(indirectArgumentOffsetBytes),
+        nullptr,
+        0);
 }
 
 // Ready 只表示持久管线对象完整，不代表某一帧算法资源已经绑定

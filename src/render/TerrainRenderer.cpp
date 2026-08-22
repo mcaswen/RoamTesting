@@ -303,8 +303,13 @@ bool TerrainRenderer::UpdateForView(const RenderContext& context, std::string* e
         const bool roamViewChanged = usesRoamView &&
             (!_hasRoamBuildView || RoamViewInputsChanged(_lastRoamBuildContext, context));
 
+        const bool updateEveryFrame =
+            _terrainLodAlgorithm != nullptr &&
+            _terrainLodAlgorithm->Info().Id == _settings.TerrainLodAlgorithm &&
+            _terrainLodAlgorithm->Capabilities().UpdatePolicy == Algorithms::TerrainLodUpdatePolicy::EveryFrame;
+
         // 拓扑维护较重，静止或微小移动时复用上一帧 mesh
-        if (!_meshDirty && !cameraMovedEnough && !roamViewChanged)
+        if (!_meshDirty && !updateEveryFrame && !cameraMovedEnough && !roamViewChanged)
         {
             return true;
         }
@@ -453,6 +458,7 @@ TerrainRenderStats TerrainRenderer::Stats() const
     stats.UseTerrainLod = _settings.UseTerrainLod;
     stats.TerrainLodAlgorithm = _settings.TerrainLodAlgorithm;
     stats.TerrainLodStatusMessage = _terrainLodStatusMessage;
+    stats.GpuTopologyFrameGeneration = _terrainLodStats.GpuTopologyFrameGeneration;
     stats.RoamMaxDepthSetting = _settings.RoamMaxDepth;
     stats.RoamScreenSpaceSplitThresholdPixels = _settings.RoamScreenSpaceSplitThresholdPixels;
     stats.RoamScreenSpaceMergeThresholdPixels = _settings.RoamScreenSpaceMergeThresholdPixels;

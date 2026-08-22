@@ -12,6 +12,8 @@ namespace ParallelRoam::Algorithms::Cbt2024
 inline constexpr std::uint32_t InvalidCbtBisectorIndex = std::numeric_limits<std::uint32_t>::max();
 inline constexpr std::uint32_t CbtBaseBisectorCount = 6U;
 inline constexpr std::uint32_t CbtBaseControlPointCount = CbtBaseBisectorCount * 3U;
+inline constexpr std::uint32_t CbtDrawStateWordCount = 10U;
+inline constexpr std::uint32_t CbtIndirectDispatchWordCount = 9U;
 
 /// <summary>
 /// CBT 二分器按 prev、next、twin 顺序保存的物理槽位邻接
@@ -58,6 +60,17 @@ struct CbtDrawArguments
 };
 
 /// <summary>
+/// 与上游 indirectDrawBuffer 的 10 个 uint 完全一致
+/// </summary>
+struct CbtDrawState
+{
+    CbtDrawArguments Active;
+    CbtDrawArguments Visible;
+    std::uint32_t ModifiedPositionCount{0U};
+    std::uint32_t ActiveBisectorCount{0U};
+};
+
+/// <summary>
 /// 与 D3D12_DISPATCH_ARGUMENTS 二进制兼容的跨平台调度参数
 /// </summary>
 struct CbtDispatchArguments
@@ -81,8 +94,11 @@ struct CbtTopologyBufferLayout
     std::uint32_t AllocationElementCount{0U};
     std::uint32_t PropagationElementCount{0U};
     std::uint32_t IndexElementCount{0U};
-    std::uint32_t DrawCommandCount{0U};
-    std::uint32_t DispatchCommandCount{0U};
+    std::uint32_t MemoryElementCount{0U};
+    std::uint32_t ValidationElementCount{0U};
+    std::uint32_t DrawStateElementCount{0U};
+    std::uint32_t TopologyDispatchElementCount{0U};
+    std::uint32_t GeometryDispatchElementCount{0U};
 };
 
 /// <summary>
@@ -94,11 +110,12 @@ struct CbtBaseTopology
     std::uint32_t BaseDepth{0U};
     std::array<std::uint64_t, CbtBaseBisectorCount> HeapIds{};
     std::array<CbtBisectorNeighbors, CbtBaseBisectorCount> Neighbors{};
+    std::array<CbtBisectorData, CbtBaseBisectorCount> BisectorData{};
     std::array<CbtBaseControlPoint, CbtBaseControlPointCount> ControlPoints{};
     std::array<std::uint32_t, CbtBaseBisectorCount> ActiveIndices{};
     std::array<std::uint32_t, CbtBaseBisectorCount> VisibleIndices{};
-    std::array<CbtDrawArguments, 3> DrawCommands{};
-    std::array<CbtDispatchArguments, 3> DispatchCommands{};
+    CbtDrawState IndirectDrawState{};
+    std::array<CbtDispatchArguments, 3> GeometryDispatchCommands{};
 };
 
 [[nodiscard]] CbtTopologyBufferLayout BuildCbtTopologyBufferLayout(CbtOccupancyCapacity capacity);

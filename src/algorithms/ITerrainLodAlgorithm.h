@@ -37,6 +37,15 @@ struct TerrainLodAlgorithmInfo
 };
 
 /// <summary>
+/// renderer 调用 BuildRenderData 的调度策略
+/// </summary>
+enum class TerrainLodUpdatePolicy
+{
+    OnDemand,
+    EveryFrame,
+};
+
+/// <summary>
 /// 描述某个 terrain LOD 算法当前可输出的渲染路径和拓扑能力
 /// </summary>
 struct TerrainLodAlgorithmCapabilities
@@ -51,6 +60,7 @@ struct TerrainLodAlgorithmCapabilities
     bool RequiresShaderModel66{false};
     bool RequiresInt64ShaderOps{false};
     bool RequiresInt64Atomics{false};
+    TerrainLodUpdatePolicy UpdatePolicy{TerrainLodUpdatePolicy::OnDemand};
 };
 
 /// <summary>
@@ -73,6 +83,8 @@ struct TerrainLodSettings
     // Classic 和 DOD 共享像素单位的迟滞阈值。
     float ScreenSpaceSplitThresholdPixels{4.0F};
     float ScreenSpaceMergeThresholdPixels{2.0F};
+    // CBT 官方分类使用投影三角形面积，不能与 CPU ROAM 厚度阈值混用。
+    float CbtTriangleAreaPixels{50.0F};
     // 两种 CPU ROAM 路径共享活动 leaf triangle 硬上限。
     std::size_t TriangleBudget{20000U};
     // 仅供 DOD 选择是否执行 chunk 并行 Split 预提交；评分并行不受影响。
@@ -194,6 +206,9 @@ struct TerrainLodRenderPacket
     // 活动二分器 SRV 允许访问的总字节数和结构化元素跨度
     std::size_t GpuActiveLeafBufferCapacityBytes{0};
     std::size_t GpuActiveLeafStrideBytes{0};
+    // 间接参数容量和字节偏移由 GPU 协议拥有，renderer 不依赖 CPU 活动数推导命令位置
+    std::size_t GpuIndirectDrawBufferCapacityBytes{0};
+    std::size_t GpuIndirectDrawArgumentOffsetBytes{0};
     // 渲染器必须遵守的借用生命周期
     TerrainLodGpuResourceLifetime GpuResourceLifetime{TerrainLodGpuResourceLifetime::None};
     // 每次算法重建递增，用于识别失效资源
@@ -267,9 +282,15 @@ struct TerrainLodRenderPacket
             const std::size_t activeLeafCapacity = hasValidStrides
                 ? GpuActiveLeafBufferCapacityBytes / GpuActiveLeafStrideBytes
                 : 0U;
+            constexpr std::size_t DrawArgumentBytes = sizeof(std::uint32_t) * 4U;
             const bool hasRequiredCapacity =
-                ActiveTriangleCount <= vertexCapacity / 3U &&
-                ActiveLeafCount <= activeLeafCapacity;
+                activeLeafCapacity > 0U &&
+                vertexCapacity / 3U >= activeLeafCapacity;
+            const bool hasValidIndirectArgument =
+                GpuIndirectDrawArgumentOffsetBytes % sizeof(std::uint32_t) == 0U &&
+                GpuIndirectDrawArgumentOffsetBytes <= GpuIndirectDrawBufferCapacityBytes &&
+                DrawArgumentBytes <=
+                    GpuIndirectDrawBufferCapacityBytes - GpuIndirectDrawArgumentOffsetBytes;
 
             return NativeResourceApi == TerrainLodNativeResourceApi::Direct3D12 &&
                     NativeVertexBuffer != 0U &&
@@ -277,8 +298,7 @@ struct TerrainLodRenderPacket
                     NativeIndirectDrawBuffer != 0U &&
                     hasValidStrides &&
                    hasRequiredCapacity &&
-                   ActiveLeafCount > 0U &&
-                   ActiveTriangleCount > 0U &&
+                   hasValidIndirectArgument &&
                    IndexCount == 0U &&
                    GpuResourceLifetime == TerrainLodGpuResourceLifetime::UntilNextBuildOrReset &&
                    GpuResourceGeneration > 0U;
@@ -293,6 +313,8 @@ struct TerrainLodRenderPacket
 /// </summary>
 struct TerrainLodStats
 {
+    // GPU 驱动算法每完成一次帧内拓扑事务就递增；CPU 算法保持为零。
+    std::uint64_t GpuTopologyFrameGeneration{0U};
     std::size_t ActiveTriangleCount{0};
     std::size_t ActiveNodeCount{0};
     std::size_t OriginalTriangleCount{0};

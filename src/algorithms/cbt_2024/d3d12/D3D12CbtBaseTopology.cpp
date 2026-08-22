@@ -36,12 +36,17 @@ struct CbtTopologyResources
     ComPtr<ID3D12Resource> Simplification;
     ComPtr<ID3D12Resource> Allocation;
     ComPtr<ID3D12Resource> Propagation;
+    ComPtr<ID3D12Resource> Memory;
+    ComPtr<ID3D12Resource> Validation;
     ComPtr<ID3D12Resource> ActiveIndices;
     ComPtr<ID3D12Resource> VisibleIndices;
     ComPtr<ID3D12Resource> ModifiedIndices;
-    ComPtr<ID3D12Resource> DrawCommands;
-    ComPtr<ID3D12Resource> DispatchCommands;
+    ComPtr<ID3D12Resource> TopologyDispatchCommands;
+    ComPtr<ID3D12Resource> IndirectDrawState;
+    ComPtr<ID3D12Resource> GeometryDispatchCommands;
     ComPtr<ID3D12Resource> BaseControlPoints;
+    // 帧内首次初始化时上传资源必须活到该资源代完成；帧外初始化完成后可立即释放
+    ComPtr<ID3D12Resource> InitializationUpload;
 };
 
 /// <summary>
@@ -187,11 +192,14 @@ D3D12CbtTopologyResourceView BuildResourceView(const CbtTopologyResources& resou
         resources.Simplification.Get(),
         resources.Allocation.Get(),
         resources.Propagation.Get(),
+        resources.Memory.Get(),
+        resources.Validation.Get(),
         resources.ActiveIndices.Get(),
         resources.VisibleIndices.Get(),
         resources.ModifiedIndices.Get(),
-        resources.DrawCommands.Get(),
-        resources.DispatchCommands.Get(),
+        resources.TopologyDispatchCommands.Get(),
+        resources.IndirectDrawState.Get(),
+        resources.GeometryDispatchCommands.Get(),
         resources.BaseControlPoints.Get(),
     };
 }
@@ -214,11 +222,14 @@ std::vector<ResourceRecord> BuildResourceRecords(
         {"simplification", resources.Simplification, BufferBytes(layout.SimplificationElementCount, sizeof(std::uint32_t))},
         {"allocation", resources.Allocation, BufferBytes(layout.AllocationElementCount, sizeof(std::uint32_t))},
         {"propagation", resources.Propagation, BufferBytes(layout.PropagationElementCount, sizeof(std::uint32_t))},
+        {"memory", resources.Memory, BufferBytes(layout.MemoryElementCount, sizeof(std::int32_t))},
+        {"validation", resources.Validation, BufferBytes(layout.ValidationElementCount, sizeof(std::uint32_t))},
         {"active indices", resources.ActiveIndices, BufferBytes(layout.IndexElementCount, sizeof(std::uint32_t))},
         {"visible indices", resources.VisibleIndices, BufferBytes(layout.IndexElementCount, sizeof(std::uint32_t))},
         {"modified indices", resources.ModifiedIndices, BufferBytes(layout.IndexElementCount, sizeof(std::uint32_t))},
-        {"draw commands", resources.DrawCommands, BufferBytes(layout.DrawCommandCount, sizeof(CbtDrawArguments))},
-        {"dispatch commands", resources.DispatchCommands, BufferBytes(layout.DispatchCommandCount, sizeof(CbtDispatchArguments))},
+        {"topology dispatch commands", resources.TopologyDispatchCommands, BufferBytes(layout.TopologyDispatchElementCount, sizeof(std::uint32_t))},
+        {"draw state", resources.IndirectDrawState, BufferBytes(layout.DrawStateElementCount, sizeof(std::uint32_t))},
+        {"geometry dispatch commands", resources.GeometryDispatchCommands, BufferBytes(layout.GeometryDispatchElementCount, sizeof(std::uint32_t))},
         {"base control points", resources.BaseControlPoints, BufferBytes(CbtBaseControlPointCount, sizeof(CbtBaseControlPoint))},
     };
 }
@@ -242,11 +253,14 @@ bool CreateTopologyResources(
            CreateDefaultBuffer(device, "simplification", BufferBytes(layout.SimplificationElementCount, sizeof(std::uint32_t)), resources.Simplification, errorMessage) &&
            CreateDefaultBuffer(device, "allocation", BufferBytes(layout.AllocationElementCount, sizeof(std::uint32_t)), resources.Allocation, errorMessage) &&
            CreateDefaultBuffer(device, "propagation", BufferBytes(layout.PropagationElementCount, sizeof(std::uint32_t)), resources.Propagation, errorMessage) &&
+           CreateDefaultBuffer(device, "memory", BufferBytes(layout.MemoryElementCount, sizeof(std::int32_t)), resources.Memory, errorMessage) &&
+           CreateDefaultBuffer(device, "validation", BufferBytes(layout.ValidationElementCount, sizeof(std::uint32_t)), resources.Validation, errorMessage) &&
            CreateDefaultBuffer(device, "active indices", BufferBytes(layout.IndexElementCount, sizeof(std::uint32_t)), resources.ActiveIndices, errorMessage) &&
            CreateDefaultBuffer(device, "visible indices", BufferBytes(layout.IndexElementCount, sizeof(std::uint32_t)), resources.VisibleIndices, errorMessage) &&
            CreateDefaultBuffer(device, "modified indices", BufferBytes(layout.IndexElementCount, sizeof(std::uint32_t)), resources.ModifiedIndices, errorMessage) &&
-           CreateDefaultBuffer(device, "draw commands", BufferBytes(layout.DrawCommandCount, sizeof(CbtDrawArguments)), resources.DrawCommands, errorMessage) &&
-           CreateDefaultBuffer(device, "dispatch commands", BufferBytes(layout.DispatchCommandCount, sizeof(CbtDispatchArguments)), resources.DispatchCommands, errorMessage) &&
+           CreateDefaultBuffer(device, "topology dispatch commands", BufferBytes(layout.TopologyDispatchElementCount, sizeof(std::uint32_t)), resources.TopologyDispatchCommands, errorMessage) &&
+           CreateDefaultBuffer(device, "draw state", BufferBytes(layout.DrawStateElementCount, sizeof(std::uint32_t)), resources.IndirectDrawState, errorMessage) &&
+           CreateDefaultBuffer(device, "geometry dispatch commands", BufferBytes(layout.GeometryDispatchElementCount, sizeof(std::uint32_t)), resources.GeometryDispatchCommands, errorMessage) &&
            CreateDefaultBuffer(device, "base control points", BufferBytes(CbtBaseControlPointCount, sizeof(CbtBaseControlPoint)), resources.BaseControlPoints, errorMessage);
 }
 
@@ -257,6 +271,15 @@ std::size_t AppendPayload(std::vector<std::uint8_t>& payload, const std::array<T
     const std::size_t offset = AlignUp(payload.size(), alignof(T));
     payload.resize(offset + sizeof(values));
     std::memcpy(payload.data() + offset, values.data(), sizeof(values));
+    return offset;
+}
+
+template<typename T>
+std::size_t AppendPayloadValue(std::vector<std::uint8_t>& payload, const T& value)
+{
+    const std::size_t offset = AlignUp(payload.size(), alignof(T));
+    payload.resize(offset + sizeof(T));
+    std::memcpy(payload.data() + offset, &value, sizeof(T));
     return offset;
 }
 
@@ -295,11 +318,19 @@ bool UploadInitialState(
     std::vector<std::uint8_t> payload;
     const std::size_t heapOffset = AppendPayload(payload, topology.HeapIds);
     const std::size_t neighborOffset = AppendPayload(payload, topology.Neighbors);
+    const std::size_t bisectorDataOffset = AppendPayload(payload, topology.BisectorData);
     const std::size_t activeOffset = AppendPayload(payload, topology.ActiveIndices);
     const std::size_t visibleOffset = AppendPayload(payload, topology.VisibleIndices);
-    const std::size_t drawOffset = AppendPayload(payload, topology.DrawCommands);
-    const std::size_t dispatchOffset = AppendPayload(payload, topology.DispatchCommands);
+    const std::size_t drawOffset = AppendPayloadValue(payload, topology.IndirectDrawState);
+    const std::size_t dispatchOffset = AppendPayload(payload, topology.GeometryDispatchCommands);
     const std::size_t controlPointOffset = AppendPayload(payload, topology.ControlPoints);
+    const std::array<std::int32_t, 2> memoryState{
+        0,
+        static_cast<std::int32_t>(topology.Layout.DynamicElementCount),
+    };
+    const std::array<std::uint32_t, 2> validationState{0U, InvalidCbtBisectorIndex};
+    const std::size_t memoryOffset = AppendPayload(payload, memoryState);
+    const std::size_t validationOffset = AppendPayload(payload, validationState);
 
     ComPtr<ID3D12Resource> upload;
     if (!CreateUploadBuffer(backend.Device(), zeroRegionBytes + payload.size(), upload, errorMessage))
@@ -321,8 +352,7 @@ bool UploadInitialState(
     // 动态槽位范围是 [0, baseOffset)，基础半边固定写入容量尾部
     // OCBT 位域只覆盖动态范围，因此基础网格始终存在且不占分裂预算
     const std::size_t baseOffset = topology.Layout.BaseElementOffset;
-    if (!backend.ExecuteImmediate(
-            [&](ID3D12GraphicsCommandList* commandList, std::string*) {
+    const auto recordInitialization = [&](ID3D12GraphicsCommandList* commandList, std::string*) {
                 // 先完整清零，保证容量切换不会继承上一代任务计数或动态槽位
                 // 邻接缓冲的动态前缀按官方实现保持零值，只有已分配槽位才解释其内容
                 for (const ResourceRecord& record : records)
@@ -346,11 +376,20 @@ bool UploadInitialState(
                         zeroRegionBytes + neighborOffset,
                         sizeof(topology.Neighbors));
                 }
+                commandList->CopyBufferRegion(
+                    resources.BisectorData.Get(),
+                    baseOffset * sizeof(CbtBisectorData),
+                    upload.Get(),
+                    zeroRegionBytes + bisectorDataOffset,
+                    sizeof(topology.BisectorData));
                 commandList->CopyBufferRegion(resources.ActiveIndices.Get(), 0U, upload.Get(), zeroRegionBytes + activeOffset, sizeof(topology.ActiveIndices));
                 commandList->CopyBufferRegion(resources.VisibleIndices.Get(), 0U, upload.Get(), zeroRegionBytes + visibleOffset, sizeof(topology.VisibleIndices));
-                commandList->CopyBufferRegion(resources.DrawCommands.Get(), 0U, upload.Get(), zeroRegionBytes + drawOffset, sizeof(topology.DrawCommands));
-                commandList->CopyBufferRegion(resources.DispatchCommands.Get(), 0U, upload.Get(), zeroRegionBytes + dispatchOffset, sizeof(topology.DispatchCommands));
+                commandList->CopyBufferRegion(resources.ModifiedIndices.Get(), 0U, upload.Get(), zeroRegionBytes + activeOffset, sizeof(topology.ActiveIndices));
+                commandList->CopyBufferRegion(resources.IndirectDrawState.Get(), 0U, upload.Get(), zeroRegionBytes + drawOffset, sizeof(topology.IndirectDrawState));
+                commandList->CopyBufferRegion(resources.GeometryDispatchCommands.Get(), 0U, upload.Get(), zeroRegionBytes + dispatchOffset, sizeof(topology.GeometryDispatchCommands));
                 commandList->CopyBufferRegion(resources.BaseControlPoints.Get(), 0U, upload.Get(), zeroRegionBytes + controlPointOffset, sizeof(topology.ControlPoints));
+                commandList->CopyBufferRegion(resources.Memory.Get(), 0U, upload.Get(), zeroRegionBytes + memoryOffset, sizeof(memoryState));
+                commandList->CopyBufferRegion(resources.Validation.Get(), 0U, upload.Get(), zeroRegionBytes + validationOffset, sizeof(validationState));
 
                 // 初始上传完成后所有缓冲保持 UAV 状态
                 // 间接命令真正消费前由对应 pass 转为 INDIRECT_ARGUMENT
@@ -363,8 +402,21 @@ bool UploadInitialState(
                         D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
                 }
                 return true;
-            },
-            errorMessage))
+            };
+
+    if (backend.FrameOpen())
+    {
+        // 首次选择 CBT 时资源会在已打开帧中创建；上传 COM 引用随资源代保留到销毁
+        if (backend.CommandList() == nullptr || !recordInitialization(backend.CommandList(), errorMessage))
+        {
+            SetError(errorMessage, "CBT base topology frame command list is unavailable");
+            return false;
+        }
+        resources.InitializationUpload = std::move(upload);
+        return true;
+    }
+
+    if (!backend.ExecuteImmediate(recordInitialization, errorMessage))
     {
         return false;
     }
@@ -449,7 +501,8 @@ bool ValidateGpuInitialState(
     AddExpectedSlice(slices, "base neighbors 0", resources.Neighbors[0], BufferBytes(layout.BaseElementOffset, sizeof(CbtBisectorNeighbors)), topology.Neighbors.data(), topology.Neighbors.size());
     AddZeroSlice(slices, "dynamic neighbors 1", resources.Neighbors[1], 0U, sizeof(CbtBisectorNeighbors) * 2U);
     AddExpectedSlice(slices, "base neighbors 1", resources.Neighbors[1], BufferBytes(layout.BaseElementOffset, sizeof(CbtBisectorNeighbors)), topology.Neighbors.data(), topology.Neighbors.size());
-    AddZeroSlice(slices, "bisector data", resources.BisectorData, 0U, sizeof(CbtBisectorData));
+    AddZeroSlice(slices, "dynamic bisector data", resources.BisectorData, 0U, sizeof(CbtBisectorData));
+    AddExpectedSlice(slices, "base bisector data", resources.BisectorData, BufferBytes(layout.BaseElementOffset, sizeof(CbtBisectorData)), topology.BisectorData.data(), topology.BisectorData.size());
 
     // 任务缓冲头部是后续 append 游标和分类计数，重建后必须全部归零
     // 验证头部比抽查列表主体更能发现旧资源代残留
@@ -457,14 +510,19 @@ bool ValidateGpuInitialState(
     AddZeroSlice(slices, "simplification header", resources.Simplification, 0U, sizeof(std::uint32_t));
     AddZeroSlice(slices, "allocation header", resources.Allocation, 0U, sizeof(std::uint32_t));
     AddZeroSlice(slices, "propagation headers", resources.Propagation, 0U, sizeof(std::uint32_t) * 2U);
+    const std::array<std::int32_t, 2> memoryState{0, static_cast<std::int32_t>(layout.DynamicElementCount)};
+    const std::array<std::uint32_t, 2> validationState{0U, InvalidCbtBisectorIndex};
+    AddExpectedSlice(slices, "memory", resources.Memory, 0U, memoryState.data(), memoryState.size());
+    AddExpectedSlice(slices, "validation", resources.Validation, 0U, validationState.data(), validationState.size());
 
     // 活动和可见列表初始都包含六个基础槽位，修改列表为空
     // 绘制参数因此输出十八个顶点，几何调度只需要一个工作组
     AddExpectedSlice(slices, "active indices", resources.ActiveIndices, 0U, topology.ActiveIndices.data(), topology.ActiveIndices.size());
     AddExpectedSlice(slices, "visible indices", resources.VisibleIndices, 0U, topology.VisibleIndices.data(), topology.VisibleIndices.size());
-    AddZeroSlice(slices, "modified indices", resources.ModifiedIndices, 0U, sizeof(std::uint32_t) * CbtBaseBisectorCount);
-    AddExpectedSlice(slices, "draw commands", resources.DrawCommands, 0U, topology.DrawCommands.data(), topology.DrawCommands.size());
-    AddExpectedSlice(slices, "dispatch commands", resources.DispatchCommands, 0U, topology.DispatchCommands.data(), topology.DispatchCommands.size());
+    AddExpectedSlice(slices, "modified indices", resources.ModifiedIndices, 0U, topology.ActiveIndices.data(), topology.ActiveIndices.size());
+    AddZeroSlice(slices, "topology dispatch commands", resources.TopologyDispatchCommands, 0U, sizeof(std::uint32_t) * CbtIndirectDispatchWordCount);
+    AddExpectedSlice(slices, "draw state", resources.IndirectDrawState, 0U, &topology.IndirectDrawState, 1U);
+    AddExpectedSlice(slices, "geometry dispatch commands", resources.GeometryDispatchCommands, 0U, topology.GeometryDispatchCommands.data(), topology.GeometryDispatchCommands.size());
     AddExpectedSlice(slices, "base control points", resources.BaseControlPoints, 0U, topology.ControlPoints.data(), topology.ControlPoints.size());
 
     std::size_t readbackBytes = 0U;
@@ -559,10 +617,10 @@ bool D3D12CbtBaseTopologyState::Rebuild(
     CbtOccupancyCapacity capacity,
     std::string* errorMessage)
 {
-    // 帧内重建会使已记录命令中的 GPU 地址失效，因此在入口直接拒绝
-    if (backend.FrameOpen())
+    // 已发布资源代不能在帧内替换；首次资源代允许直接记录到当前帧命令列表
+    if (backend.FrameOpen() && _impl->Initialized)
     {
-        SetError(errorMessage, "CBT base topology resources can only be rebuilt outside a D3D12 frame");
+        SetError(errorMessage, "Initialized CBT topology resources can only be rebuilt outside a D3D12 frame");
         return false;
     }
 
@@ -574,7 +632,10 @@ bool D3D12CbtBaseTopologyState::Rebuild(
 
     // 旧资源可能仍被上一帧引用，完成围栏后再构建并替换资源代
     // 新资源全部成功前不修改当前状态，使分配失败仍可保留上一代配置
-    backend.WaitForGpuIdle();
+    if (!backend.FrameOpen())
+    {
+        backend.WaitForGpuIdle();
+    }
     CbtTopologyResources resources{};
     if (!CreateTopologyResources(backend.Device(), topology, resources, errorMessage) ||
         !UploadInitialState(backend, topology, resources, errorMessage))

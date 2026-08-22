@@ -31,6 +31,10 @@ static const uint CbtLastTreeNodeCount = CbtElementCount / 128;
 static const uint CbtSubtreeRootDepth = CbtLeafDepth - 14;
 static const uint CbtSubtreeCount = CbtElementCount / 16384;
 
+// 测试和生产拓扑管线共享同一份三级归约实现
+groupshared uint CbtReduceSubtree[255];
+groupshared uint CbtReduceTopTree[127];
+
 RWStructuredBuffer<uint> CbtTree : register(u0);
 RWStructuredBuffer<uint64_t> CbtBitfield : register(u1);
 
@@ -168,6 +172,89 @@ uint CbtDecodeBitComplement(uint rank)
         return blockIndex * 128 + CbtSelectOne(firstWord, rank);
     }
     return blockIndex * 128 + 64 + CbtSelectOne(~CbtBitfield[bitfieldIndex + 1], rank - firstWordCount);
+}
+
+void CbtReducePre(uint dispatchThreadId)
+{
+    if (dispatchThreadId >= CbtLastTreeNodeCount)
+    {
+        return;
+    }
+
+    const uint bitfieldIndex = dispatchThreadId * 2;
+    const uint count = countbits(CbtBitfield[bitfieldIndex]) + countbits(CbtBitfield[bitfieldIndex + 1]);
+    CbtWriteTreeCountAtomic((1u << CbtLastTreeDepth) + dispatchThreadId, count);
+}
+
+void CbtReduceFirst(uint3 groupId, uint groupIndex)
+{
+    const uint subtreeIndex = groupId.x;
+    if (subtreeIndex >= CbtSubtreeCount)
+    {
+        return;
+    }
+
+    const uint blockBase = subtreeIndex * 128;
+    for (uint element = 0; element < 2; ++element)
+    {
+        const uint localLeaf = groupIndex + element * 64;
+        CbtReduceSubtree[127 + localLeaf] =
+            CbtReadTreeCount((1u << CbtLastTreeDepth) + blockBase + localLeaf);
+    }
+    GroupMemoryBarrierWithGroupSync();
+
+    for (uint width = 64; width > 0; width >>= 1)
+    {
+        if (groupIndex < width)
+        {
+            const uint parentStart = width - 1;
+            const uint childStart = width * 2 - 1;
+            CbtReduceSubtree[parentStart + groupIndex] =
+                CbtReduceSubtree[childStart + groupIndex * 2] +
+                CbtReduceSubtree[childStart + groupIndex * 2 + 1];
+        }
+        GroupMemoryBarrierWithGroupSync();
+    }
+
+    for (uint localIndex = groupIndex; localIndex < 127; localIndex += 64)
+    {
+        const uint localHeapId = localIndex + 1;
+        const uint localDepth = uint(firstbithigh(localHeapId));
+        const uint localElement = localHeapId - (1u << localDepth);
+        const uint globalDepth = CbtSubtreeRootDepth + localDepth;
+        const uint globalElement = subtreeIndex * (1u << localDepth) + localElement;
+        CbtWriteTreeCountAtomic((1u << globalDepth) + globalElement, CbtReduceSubtree[localIndex]);
+    }
+}
+
+void CbtReduceSecond(uint groupIndex)
+{
+    const uint leafStart = CbtSubtreeCount - 1;
+    if (groupIndex < CbtSubtreeCount)
+    {
+        CbtReduceTopTree[leafStart + groupIndex] =
+            CbtReadTreeCount((1u << CbtSubtreeRootDepth) + groupIndex);
+    }
+    GroupMemoryBarrierWithGroupSync();
+
+    for (uint width = CbtSubtreeCount / 2; width > 0; width >>= 1)
+    {
+        if (groupIndex < width)
+        {
+            const uint parentStart = width - 1;
+            const uint childStart = width * 2 - 1;
+            CbtReduceTopTree[parentStart + groupIndex] =
+                CbtReduceTopTree[childStart + groupIndex * 2] +
+                CbtReduceTopTree[childStart + groupIndex * 2 + 1];
+        }
+        GroupMemoryBarrierWithGroupSync();
+    }
+
+    for (uint localIndex = groupIndex; localIndex < leafStart; localIndex += 64)
+    {
+        CbtWriteTreeCountAtomic(localIndex + 1, CbtReduceTopTree[localIndex]);
+    }
+    DeviceMemoryBarrierWithGroupSync();
 }
 
 #endif

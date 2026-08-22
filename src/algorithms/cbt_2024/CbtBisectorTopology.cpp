@@ -10,8 +10,9 @@ namespace
 {
 constexpr std::uint32_t BaseDepth = 4U;
 constexpr std::uint64_t FirstBaseHeapId = std::uint64_t{1U} << (BaseDepth - 1U);
-constexpr std::uint32_t CommandCount = 3U;
 constexpr std::uint32_t GeometryThreadGroupSize = 64U;
+constexpr std::uint32_t VisibleBisectorFlag = 0x1U;
+constexpr std::uint32_t ModifiedBisectorFlag = 0x2U;
 
 // 六个基础半边需要三位层内索引，官方 minimalDepth 因此为四
 // 逻辑 heap ID 从 8 开始，与物理槽位位于动态容量尾部是两套独立寻址
@@ -46,7 +47,14 @@ std::uint32_t DispatchGroupCount(std::uint32_t elementCount)
 static_assert(sizeof(CbtBisectorNeighbors) == 12U);
 static_assert(sizeof(CbtBaseControlPoint) == 12U);
 static_assert(sizeof(CbtBisectorData) == 32U);
+// draw state 的前四个 uint 会被 ExecuteIndirect 直接解释为 D3D12_DRAW_ARGUMENTS。
+// 后六个 uint 继续保持上游 visible draw、modified count 和 explicit active count 偏移。
 static_assert(sizeof(CbtDrawArguments) == 16U);
+static_assert(sizeof(CbtDrawState) == CbtDrawStateWordCount * sizeof(std::uint32_t));
+static_assert(offsetof(CbtDrawState, Active) == 0U);
+static_assert(offsetof(CbtDrawState, Visible) == 4U * sizeof(std::uint32_t));
+static_assert(offsetof(CbtDrawState, ModifiedPositionCount) == 8U * sizeof(std::uint32_t));
+static_assert(offsetof(CbtDrawState, ActiveBisectorCount) == 9U * sizeof(std::uint32_t));
 static_assert(sizeof(CbtDispatchArguments) == 12U);
 
 CbtTopologyBufferLayout BuildCbtTopologyBufferLayout(CbtOccupancyCapacity capacity)
@@ -65,8 +73,11 @@ CbtTopologyBufferLayout BuildCbtTopologyBufferLayout(CbtOccupancyCapacity capaci
     layout.AllocationElementCount = 1U + layout.TotalElementCount;
     layout.PropagationElementCount = 2U + layout.TotalElementCount;
     layout.IndexElementCount = layout.TotalElementCount;
-    layout.DrawCommandCount = CommandCount;
-    layout.DispatchCommandCount = CommandCount;
+    layout.MemoryElementCount = 2U;
+    layout.ValidationElementCount = 2U;
+    layout.DrawStateElementCount = CbtDrawStateWordCount;
+    layout.TopologyDispatchElementCount = CbtIndirectDispatchWordCount;
+    layout.GeometryDispatchElementCount = CbtIndirectDispatchWordCount;
     return layout;
 }
 
@@ -82,6 +93,10 @@ CbtBaseTopology BuildSquareCbtBaseTopology(CbtOccupancyCapacity capacity)
         topology.HeapIds[index] = FirstBaseHeapId + index;
         topology.ActiveIndices[index] = baseOffset + index;
         topology.VisibleIndices[index] = baseOffset + index;
+        topology.BisectorData[index].Indices.fill(InvalidCbtBisectorIndex);
+        topology.BisectorData[index].ProblematicNeighbor = InvalidCbtBisectorIndex;
+        topology.BisectorData[index].Flags = VisibleBisectorFlag | ModifiedBisectorFlag;
+        topology.BisectorData[index].PropagationId = InvalidCbtBisectorIndex;
     }
 
     // 每个根三角形的三条有向边各对应一个基础二分器
@@ -115,13 +130,14 @@ CbtBaseTopology BuildSquareCbtBaseTopology(CbtOccupancyCapacity capacity)
 
     const std::uint32_t baseVertexCount = CbtBaseBisectorCount * 3U;
     // active 和 visible 初始指向同一六项列表，modified 尚无待重算几何
-    // 三组命令保留独立槽位，后续 pass 可以只更新对应工作集
-    topology.DrawCommands[0] = {baseVertexCount, 1U, 0U, 0U};
-    topology.DrawCommands[1] = {baseVertexCount, 1U, 0U, 0U};
-    topology.DrawCommands[2] = {0U, 1U, 0U, 0U};
-    topology.DispatchCommands[0] = {DispatchGroupCount(CbtBaseBisectorCount), 1U, 1U};
-    topology.DispatchCommands[1] = {DispatchGroupCount(CbtBaseBisectorCount), 1U, 1U};
-    topology.DispatchCommands[2] = {0U, 1U, 1U};
+    // draw state 精确保持两个 DRAW、修改位置数和显式活动数的上游布局
+    topology.IndirectDrawState.Active = {baseVertexCount, 1U, 0U, 0U};
+    topology.IndirectDrawState.Visible = {baseVertexCount, 1U, 0U, 0U};
+    topology.IndirectDrawState.ModifiedPositionCount = CbtBaseBisectorCount * 4U;
+    topology.IndirectDrawState.ActiveBisectorCount = CbtBaseBisectorCount;
+    topology.GeometryDispatchCommands[0] = {DispatchGroupCount(CbtBaseBisectorCount), 1U, 1U};
+    topology.GeometryDispatchCommands[1] = {DispatchGroupCount(CbtBaseBisectorCount * 4U), 1U, 1U};
+    topology.GeometryDispatchCommands[2] = {DispatchGroupCount(CbtBaseBisectorCount * 4U), 1U, 1U};
     return topology;
 }
 
@@ -190,9 +206,10 @@ bool ValidateCbtBaseTopology(const CbtBaseTopology& topology, std::string* error
         }
     }
 
-    if (topology.DrawCommands[0].VertexCountPerInstance != CbtBaseControlPointCount ||
-        topology.DrawCommands[1].VertexCountPerInstance != CbtBaseControlPointCount ||
-        topology.DrawCommands[2].VertexCountPerInstance != 0U)
+    if (topology.IndirectDrawState.Active.VertexCountPerInstance != CbtBaseControlPointCount ||
+        topology.IndirectDrawState.Visible.VertexCountPerInstance != CbtBaseControlPointCount ||
+        topology.IndirectDrawState.ModifiedPositionCount != CbtBaseBisectorCount * 4U ||
+        topology.IndirectDrawState.ActiveBisectorCount != CbtBaseBisectorCount)
     {
         return SetValidationError(errorMessage, "initial indirect draw counts are invalid");
     }

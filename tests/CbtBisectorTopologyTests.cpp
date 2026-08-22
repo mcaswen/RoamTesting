@@ -39,12 +39,19 @@ bool ValidateCapacity(CbtOccupancyCapacity capacity)
     valid &= Expect(layout.SimplificationElementCount == 1U + layout.TotalElementCount, "simplification size mismatch");
     valid &= Expect(layout.AllocationElementCount == 1U + layout.TotalElementCount, "allocation size mismatch");
     valid &= Expect(layout.PropagationElementCount == 2U + layout.TotalElementCount, "propagation size mismatch");
+    valid &= Expect(layout.MemoryElementCount == 2U, "memory header size mismatch");
+    valid &= Expect(layout.ValidationElementCount == 2U, "validation header size mismatch");
+    valid &= Expect(layout.DrawStateElementCount == 10U, "draw state must contain ten uints");
+    valid &= Expect(layout.TopologyDispatchElementCount == 9U, "topology indirect scratch size mismatch");
+    valid &= Expect(layout.GeometryDispatchElementCount == 9U, "geometry dispatch size mismatch");
 
     for (std::uint32_t index = 0U; index < CbtBaseBisectorCount; ++index)
     {
         valid &= Expect(topology.HeapIds[index] == 8U + index, "base heap ID mismatch");
         valid &= Expect(CbtHeapIdDepth(topology.HeapIds[index]) == 3U, "base heap depth mismatch");
         valid &= Expect(topology.ActiveIndices[index] >= layout.DynamicElementCount, "base slot consumes dynamic budget");
+        valid &= Expect(topology.BisectorData[index].ProblematicNeighbor == InvalidCbtBisectorIndex, "base problematic neighbor should be invalid");
+        valid &= Expect(topology.BisectorData[index].PropagationId == InvalidCbtBisectorIndex, "base propagation ID should be invalid");
     }
 
     valid &= Expect(topology.Neighbors[1].Twin == layout.BaseElementOffset + 3U, "shared diagonal twin mismatch");
@@ -62,11 +69,12 @@ bool ValidateCapacity(CbtOccupancyCapacity capacity)
         valid &= Expect(controlPoint.V >= 0.0F && controlPoint.V <= 1.0F, "base control point V is out of range");
     }
 
-    valid &= Expect(topology.DrawCommands[0].VertexCountPerInstance == 18U, "active draw count mismatch");
-    valid &= Expect(topology.DrawCommands[1].VertexCountPerInstance == 18U, "visible draw count mismatch");
-    valid &= Expect(topology.DrawCommands[2].VertexCountPerInstance == 0U, "modified draw should be empty");
-    valid &= Expect(topology.DispatchCommands[0].ThreadGroupCountX == 1U, "active dispatch count mismatch");
-    valid &= Expect(topology.DispatchCommands[2].ThreadGroupCountX == 0U, "modified dispatch should be empty");
+    valid &= Expect(topology.IndirectDrawState.Active.VertexCountPerInstance == 18U, "active draw count mismatch");
+    valid &= Expect(topology.IndirectDrawState.Visible.VertexCountPerInstance == 18U, "visible draw count mismatch");
+    valid &= Expect(topology.IndirectDrawState.ModifiedPositionCount == 24U, "modified position count mismatch");
+    valid &= Expect(topology.IndirectDrawState.ActiveBisectorCount == 6U, "active bisector count mismatch");
+    valid &= Expect(topology.GeometryDispatchCommands[0].ThreadGroupCountX == 1U, "active dispatch count mismatch");
+    valid &= Expect(topology.GeometryDispatchCommands[2].ThreadGroupCountX == 1U, "modified dispatch count mismatch");
     return valid;
 }
 
