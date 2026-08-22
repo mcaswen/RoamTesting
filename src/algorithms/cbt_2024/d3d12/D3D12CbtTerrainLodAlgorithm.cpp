@@ -43,8 +43,15 @@ void FillRenderPacket(
     const D3D12CbtTopologyResourceView resources = state.Topology.Resources();
     outPacket.Mode = TerrainLodRenderMode::GpuProceduralIndirect;
     outPacket.StatusMessage =
-        "CBT 2024 E1 classify: split=" + std::to_string(state.Pipeline.LastSplitCandidateCount()) +
+        "CBT 2024 E2 plan: split=" + std::to_string(state.Pipeline.LastSplitCandidateCount()) +
         " simplify=" + std::to_string(state.Pipeline.LastSimplifyCandidateCount()) +
+        " nodes=" + std::to_string(state.Pipeline.LastPlannedSplitNodeCount()) +
+        " slots=" + std::to_string(state.Pipeline.LastAllocatedSplitSlotCount()) +
+        " remaining=" + std::to_string(state.Pipeline.LastRemainingDynamicSlotCount()) +
+        " duplicate/shared=" + std::to_string(state.Pipeline.LastDuplicateSplitClaimCount()) + "/" +
+        std::to_string(state.Pipeline.LastSharedCompatibilityCount()) +
+        " chain=" + std::to_string(state.Pipeline.LastCompatibilityStepCount()) + "/" +
+        std::to_string(state.Pipeline.LastMaximumCompatibilityLength()) +
         " sample=" + std::to_string(state.Pipeline.ClassificationSampleGeneration());
     outPacket.NativeResourceApi = TerrainLodNativeResourceApi::Direct3D12;
     outPacket.NativeVertexBuffer = reinterpret_cast<std::uintptr_t>(state.Pipeline.RenderVertices());
@@ -77,9 +84,9 @@ TerrainLodAlgorithmInfo D3D12CbtTerrainLodAlgorithm::Info() const
 {
     return TerrainLodAlgorithmInfo{
         TerrainLodAlgorithmId::Cbt2024,
-        "cbt-2024-e1",
-        "CBT 2024（E1）",
-        "GPU 常驻基础拓扑、官方面积分类、候选间接工作量和每帧 Bootstrap",
+        "cbt-2024-e2",
+        "CBT 2024（E2）",
+        "GPU 常驻基础拓扑、官方分类、兼容链规划、保守预留和旧 OCBT 空闲分配",
     };
 }
 
@@ -116,7 +123,7 @@ bool D3D12CbtTerrainLodAlgorithm::BuildRenderData(
     }
     if (!_backend->FrameOpen() || _backend->CommandList() == nullptr)
     {
-        SetError(errorMessage, "CBT 2024 E1 must record between BeginFrame and Present");
+        SetError(errorMessage, "CBT 2024 E2 must record between BeginFrame and Present");
         return false;
     }
     const Cbt2024Availability availability = QueryCbt2024Availability(*_backend);
@@ -127,7 +134,7 @@ bool D3D12CbtTerrainLodAlgorithm::BuildRenderData(
     }
     if (input.HeightMap == nullptr || !input.HeightMap->IsValid())
     {
-        SetError(errorMessage, "CBT 2024 E1 requires a valid terrain input");
+        SetError(errorMessage, "CBT 2024 E2 requires a valid terrain input");
         return false;
     }
 
@@ -178,13 +185,13 @@ bool D3D12CbtTerrainLodAlgorithm::BuildRenderData(
     _stats.SplitTopologyCandidateCount = _state->Pipeline.LastSplitCandidateCount();
     _stats.MergeTopologyCandidateCount = _state->Pipeline.LastSimplifyCandidateCount();
     _stats.MaxActiveDepth = static_cast<int>(_state->Topology.Topology().BaseDepth);
-    _stats.CpuGpuReadbackBytes = sizeof(std::uint32_t) * 2U;
+    _stats.CpuGpuReadbackBytes = input.Settings.EnableTopologyValidation ? 240U : 44U;
     _stats.CpuUpdateMilliseconds = buildTimer.Stop();
 
     FillRenderPacket(*_state, outPacket);
     if (!outPacket.HasConsistentResourceContract())
     {
-        SetError(errorMessage, "CBT 2024 E1 produced an inconsistent GPU render packet");
+        SetError(errorMessage, "CBT 2024 E2 produced an inconsistent GPU render packet");
         return false;
     }
     if (errorMessage != nullptr)

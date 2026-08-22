@@ -5,6 +5,11 @@ static const uint CbtVisibleFlag = 0x1u;
 static const uint CbtUnchangedElement = 0u;
 static const uint CbtBisectElement = 1u;
 static const uint CbtSimplifyElement = 2u;
+static const uint CbtCenterSplitPattern = 0x01u;
+static const uint CbtRightSplitPattern = 0x02u;
+static const uint CbtLeftSplitPattern = 0x04u;
+static const uint CbtRightDoubleSplitPattern = CbtCenterSplitPattern | CbtRightSplitPattern;
+static const uint CbtLeftDoubleSplitPattern = CbtCenterSplitPattern | CbtLeftSplitPattern;
 
 // 分类返回值的数值和上游 ClassifyBisector ABI 完全一致。
 // 负值同时承载不可见原因，正值只表示本帧请求 split。
@@ -93,6 +98,11 @@ void CSResetE0(uint dispatchThreadId : SV_DispatchThreadID)
     CbtPropagation[1] = 0;
     CbtValidation[0] = 0;
     CbtValidation[1] = 0xffffffffu;
+    // E2 诊断尾部依次保存 duplicate、shared、total steps 和 maximum chain length。
+    CbtValidation[2] = 0u;
+    CbtValidation[3] = 0u;
+    CbtValidation[4] = 0u;
+    CbtValidation[5] = 0u;
 
     // 两个 draw command 保留 InstanceCount=1 其余计数由本帧 Indexation 重建
     CbtDrawState[0] = 0;
@@ -289,6 +299,252 @@ void CSPrepareClassificationIndirect(uint dispatchThreadId : SV_DispatchThreadID
     CbtTopologyIndirect[6] = 0u;
     CbtTopologyIndirect[7] = 1u;
     CbtTopologyIndirect[8] = 1u;
+}
+
+bool CbtValidatePlanningNeighbor(uint physicalSlot)
+{
+    // 无效哨兵表示合法边界；其他值必须同时落在总槽位内且拥有非零 heapID。
+    if (physicalSlot == CbtInvalidIndex)
+    {
+        return true;
+    }
+    if (physicalSlot < CbtTotalElementCount && CbtHeapIds[physicalSlot] != 0u)
+    {
+        return true;
+    }
+    CbtValidation[0] = 4u;
+    InterlockedMin(CbtValidation[1], physicalSlot);
+    return false;
+}
+
+void CbtAppendAllocationNode(uint physicalSlot)
+{
+    // allocation[0] 是节点计数，正文从 1 开始保存首次认领 pattern 的物理槽位。
+    int targetLocation;
+    InterlockedAdd(CbtAllocation[0], 1, targetLocation);
+    if (targetLocation >= 0 && uint(targetLocation) < CbtTotalElementCount)
+    {
+        CbtAllocation[1u + uint(targetLocation)] = int(physicalSlot);
+        return;
+    }
+    CbtValidation[0] = 5u;
+    InterlockedMin(CbtValidation[1], physicalSlot);
+}
+
+void CbtPlanSplit(uint currentId)
+{
+    // SplitElement 的所有写入都限制在 pattern、allocation 和 memory 三类暂存资源。
+    uint3 currentNeighbors = CbtCurrentNeighbors[currentId];
+    if (!CbtValidatePlanningNeighbor(currentNeighbors.x) ||
+        !CbtValidatePlanningNeighbor(currentNeighbors.y) ||
+        !CbtValidatePlanningNeighbor(currentNeighbors.z))
+    {
+        return;
+    }
+
+    // prev/next 邻居若以当前节点为兼容路径 twin，就由该邻居的候选线程拥有本段路径。
+    if (currentNeighbors.x != CbtInvalidIndex)
+    {
+        const uint3 previousNeighbors = CbtCurrentNeighbors[currentNeighbors.x];
+        if (previousNeighbors.z == currentId &&
+            CbtBisectorDataBuffer[currentNeighbors.x].BisectorState != CbtUnchangedElement)
+        {
+            InterlockedAdd(CbtValidation[2], 1u);
+            return;
+        }
+    }
+    if (currentNeighbors.y != CbtInvalidIndex)
+    {
+        const uint3 nextNeighbors = CbtCurrentNeighbors[currentNeighbors.y];
+        if (nextNeighbors.z == currentId &&
+            CbtBisectorDataBuffer[currentNeighbors.y].BisectorState != CbtUnchangedElement)
+        {
+            InterlockedAdd(CbtValidation[2], 1u);
+            return;
+        }
+    }
+
+    uint currentDepth = CbtHeapDepth(CbtHeapIds[currentId]);
+    int maximumRequiredMemory = 2 * int(currentDepth - CbtBaseDepth) - 1;
+    uint twinId = currentNeighbors.z;
+    // 边界和直接 facing twin 的真实上界远小于通用兼容链公式。
+    if (twinId == CbtInvalidIndex)
+    {
+        maximumRequiredMemory = 1;
+    }
+    else if (CbtCurrentNeighbors[twinId].z == currentId)
+    {
+        maximumRequiredMemory = 2;
+    }
+    if (maximumRequiredMemory <= 0)
+    {
+        CbtValidation[0] = 6u;
+        InterlockedMin(CbtValidation[1], currentId);
+        return;
+    }
+
+    int previousRemainingMemory;
+    // InterlockedAdd 返回扣减前的值，因此小于请求量时必须把整份请求加回。
+    InterlockedAdd(CbtMemory[1], -maximumRequiredMemory, previousRemainingMemory);
+    if (previousRemainingMemory < maximumRequiredMemory)
+    {
+        // 预留失败不允许留下 pattern 或 allocation 节点。
+        InterlockedAdd(CbtMemory[1], maximumRequiredMemory, previousRemainingMemory);
+        return;
+    }
+
+    uint usedMemory = 1u;
+    uint previousPattern;
+    InterlockedOr(
+        CbtBisectorDataBuffer[currentId].SubdivisionPattern,
+        CbtCenterSplitPattern,
+        previousPattern);
+    if (previousPattern != 0u)
+    {
+        // 另一候选已认领共享路径，当前候选归还完整保守预留。
+        InterlockedAdd(CbtValidation[2], 1u);
+        InterlockedAdd(CbtMemory[1], maximumRequiredMemory, previousRemainingMemory);
+        return;
+    }
+    CbtAppendAllocationNode(currentId);
+
+    // 正常拓扑每次沿 twin 向兼容节点靠近；步数守卫只在损坏邻接形成环时触发。
+    [loop]
+    for (uint traversalStep = 0u;
+         twinId != CbtInvalidIndex && traversalStep < CbtTotalElementCount;
+         ++traversalStep)
+    {
+        InterlockedAdd(CbtValidation[4], 1u);
+        // 最大链长用原子 max 聚合，候选执行顺序不会影响统计值。
+        InterlockedMax(CbtValidation[5], traversalStep + 1u);
+        if (!CbtValidatePlanningNeighbor(twinId))
+        {
+            break;
+        }
+        const uint64_t neighborHeapId = CbtHeapIds[twinId];
+        const uint neighborDepth = CbtHeapDepth(neighborHeapId);
+        const uint3 neighborNeighbors = CbtCurrentNeighbors[twinId];
+        if (!CbtValidatePlanningNeighbor(neighborNeighbors.x) ||
+            !CbtValidatePlanningNeighbor(neighborNeighbors.y) ||
+            !CbtValidatePlanningNeighbor(neighborNeighbors.z))
+        {
+            break;
+        }
+
+        if (neighborDepth == currentDepth)
+        {
+            // 同深节点只增加一个中心子槽，并在首次认领时登记 allocation。
+            InterlockedOr(
+                CbtBisectorDataBuffer[twinId].SubdivisionPattern,
+                CbtCenterSplitPattern,
+                previousPattern);
+            if (previousPattern == 0u)
+            {
+                CbtAppendAllocationNode(twinId);
+                ++usedMemory;
+            }
+            else
+            {
+                InterlockedAdd(CbtValidation[3], 1u);
+            }
+            twinId = CbtInvalidIndex;
+        }
+        else
+        {
+            // prev 指向来路时使用 right double，否则沿用上游 left double 分支。
+            const uint doublePattern = neighborNeighbors.x == currentId
+                ? CbtRightDoubleSplitPattern
+                : CbtLeftDoubleSplitPattern;
+            InterlockedOr(
+                CbtBisectorDataBuffer[twinId].SubdivisionPattern,
+                doublePattern,
+                previousPattern);
+            if (previousPattern != 0u)
+            {
+                InterlockedAdd(CbtValidation[3], 1u);
+                ++usedMemory;
+                twinId = CbtInvalidIndex;
+            }
+            else
+            {
+                CbtAppendAllocationNode(twinId);
+                usedMemory += 2u;
+                currentId = twinId;
+                currentDepth = neighborDepth;
+                twinId = neighborNeighbors.z;
+            }
+        }
+    }
+
+    const int unusedReservation = max(maximumRequiredMemory - int(usedMemory), 0);
+    InterlockedAdd(CbtMemory[1], unusedReservation, previousRemainingMemory);
+}
+
+[numthreads(64, 1, 1)]
+void CSSplitE2(uint dispatchId : SV_DispatchThreadID)
+{
+    // 第一组间接参数来自 E1 split candidate counter。
+    if (dispatchId >= CbtClassification[0])
+    {
+        return;
+    }
+    const uint currentId = CbtClassification[2u + dispatchId];
+    if (currentId >= CbtTotalElementCount || CbtHeapIds[currentId] == 0u)
+    {
+        CbtValidation[0] = 7u;
+        InterlockedMin(CbtValidation[1], currentId);
+        return;
+    }
+    CbtPlanSplit(currentId);
+}
+
+[numthreads(1, 1, 1)]
+void CSPrepareAllocationIndirect(uint dispatchThreadId : SV_DispatchThreadID)
+{
+    // 第三组 D3D12_DISPATCH_ARGUMENTS 由 allocation list 头派生。
+    // 即使计数为零，Y/Z 仍保持合法的 1，X=0 会令 ExecuteIndirect 不启动线程组。
+    CbtTopologyIndirect[6] = (uint(CbtAllocation[0]) + 63u) / 64u;
+    CbtTopologyIndirect[7] = 1u;
+    CbtTopologyIndirect[8] = 1u;
+}
+
+[numthreads(64, 1, 1)]
+void CSAllocateE2(uint dispatchId : SV_DispatchThreadID)
+{
+    // 第三组间接参数只覆盖非零 pattern 节点，而不是所有 split 候选。
+    if (dispatchId >= uint(CbtAllocation[0]))
+    {
+        return;
+    }
+    const int allocationNode = CbtAllocation[1u + dispatchId];
+    if (allocationNode < 0 || uint(allocationNode) >= CbtTotalElementCount)
+    {
+        CbtValidation[0] = 8u;
+        InterlockedMin(CbtValidation[1], uint(allocationNode));
+        return;
+    }
+
+    const uint currentId = uint(allocationNode);
+    CbtBisectorData data = CbtBisectorDataBuffer[currentId];
+    const int slotCount = int(countbits(data.SubdivisionPattern));
+    int firstFreeRank;
+    // 每个节点通过原子 add 取得互不重叠的旧 OCBT free-rank 区间。
+    InterlockedAdd(CbtMemory[0], slotCount, firstFreeRank);
+    [loop]
+    for (int slot = 0; slot < slotCount; ++slot)
+    {
+        const uint freeRank = uint(firstFreeRank + slot);
+        const uint physicalSlot = CbtDecodeBitComplement(freeRank);
+        if (physicalSlot >= CbtDynamicElementCount)
+        {
+            CbtValidation[0] = 9u;
+            InterlockedMin(CbtValidation[1], currentId);
+            return;
+        }
+        data.Indices[slot] = physicalSlot;
+    }
+    // E2 只写预分配索引；OCBT 位要到 E3 Bisect 真正提交后才能置一。
+    CbtBisectorDataBuffer[currentId] = data;
 }
 
 [numthreads(64, 1, 1)]

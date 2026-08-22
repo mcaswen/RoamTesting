@@ -328,7 +328,7 @@ int Application::Run(int maxFrameCount)
     if (_cbtProceduralSmokeTestEnabled &&
         (!_cbtObservedClassificationSample || !_cbtObservedSplitCandidate))
     {
-        std::cerr << "CBT E1 smoke test did not observe a completed classification sample with split candidates\n";
+        std::cerr << "CBT E2 smoke test did not observe a completed planning sample with split candidates\n";
         _terrainLodSmokeTestFailed = true;
     }
     const int exitCode =
@@ -403,7 +403,7 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
 
     _graphicsBackend->BeginImGuiFrame(_guiLayer);
 
-    // E1 快速烟测前半段保持静止，后半段只旋转，以覆盖分类的两类 EveryFrame 输入。
+    // E2 快速烟测前半段保持静止，后半段只旋转，以覆盖规划链的两类 EveryFrame 输入。
     if (_cbtProceduralSmokeTestEnabled && _cbtProceduralSmokeFrameCount >= 150U)
     {
         _camera.SetPose(
@@ -456,7 +456,7 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
         if (generation == 0U ||
             (_lastCbtTopologyFrameGeneration != 0U && generation != _lastCbtTopologyFrameGeneration + 1U))
         {
-            std::cerr << "CBT E1 topology frame generation did not advance exactly once per frame: previous="
+            std::cerr << "CBT E2 topology frame generation did not advance exactly once per frame: previous="
                       << _lastCbtTopologyFrameGeneration << ", current=" << generation << '\n';
             _terrainLodSmokeTestFailed = true;
         }
@@ -467,7 +467,7 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
             (_lastCbtClassificationSampleGeneration != 0U &&
              sampleGeneration != _lastCbtClassificationSampleGeneration + 1U))
         {
-            std::cerr << "CBT E1 classification sample generation is invalid: previous="
+            std::cerr << "CBT E2 planning sample generation is invalid: previous="
                       << _lastCbtClassificationSampleGeneration << ", current=" << sampleGeneration
                       << ", topology=" << generation << '\n';
             _terrainLodSmokeTestFailed = true;
@@ -480,7 +480,7 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
         if (terrainStats.CbtSplitCandidateCount > Algorithms::Cbt2024::CbtBaseBisectorCount ||
             terrainStats.CbtSimplifyCandidateCount > Algorithms::Cbt2024::CbtBaseBisectorCount)
         {
-            std::cerr << "CBT E1 classification counters exceed the active base list: split="
+            std::cerr << "CBT E2 classification counters exceed the active base list: split="
                       << terrainStats.CbtSplitCandidateCount << ", simplify="
                       << terrainStats.CbtSimplifyCandidateCount << '\n';
             _terrainLodSmokeTestFailed = true;

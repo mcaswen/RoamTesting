@@ -2,7 +2,7 @@
 
 > 初稿日期：2026-07-16
 > 源码复核：2026-08-22
-> 状态：实施计划 v0.6；阶段 E1 已完成，当前进入阶段 E2
+> 状态：实施计划 v0.7；阶段 E2 已完成，当前进入阶段 E3
 > 前置条件：D3D12 迁移阶段已完成
 > 上游参考：`third_party/large_cbt`，提交 `7ae736d179528a0996449c0cc2db7f3279edc8ee`
 > 本机兼容基线：提交 `7ae736d179528a0996449c0cc2db7f3279edc8ee`，仅替换 NVIDIA 64 位 `firstbithigh` 实现
@@ -603,7 +603,9 @@ E1 只产出分类和内部间接工作量，不提交 split；因此 `SupportsS
 
 ### 阶段 E2：split 规划与槽位分配
 
-任务：
+状态：已完成，2026-08-22。
+
+完成内容：
 
 - 迁移前置兼容路径检查；
 - 迁移保守容量公式和边界/twin 特化；
@@ -620,7 +622,21 @@ E1 只产出分类和内部间接工作量，不提交 split；因此 `SupportsS
 - 分配槽位唯一且全部位于 `[0,N)`；
 - Allocate 结束前 OCBT 位域保持不变。
 
+验收记录：
+
+- `CbtSplitPlanner` CPU 参考逐句对应上游 `SplitElement` 的路径拥有权、保守预留、pattern 原子认领、共享链去重和返还公式；
+- CPU 单测覆盖单边界、直接 facing twin、两次降深的长兼容链、共享终点，以及保守容量恰好满足和少一个槽位；
+- CPU allocation 参考在带占用洞的旧 OCBT 上验证 free rank-select，所有槽位唯一、未占用，且 packed tree/bitfield 逐字不变；
+- 四档容量的 `SplitE2`、`PrepareAllocationIndirect` 和 `AllocateE2` 均由 DXC 编译并进入正式 PSO；
+- `cbt_procedural_e2_quick` 连续运行 300 帧，逐样本对照 CPU base pattern、allocation 节点数、slot 数和返还后预算；
+- 验证模式确认 GPU 分配槽位为旧空树的唯一 free rank，shader 错误头为零，Reduce 后 OCBT 根仍为零；
+- validation 资源记录重复候选、共享兼容节点、总遍历步数和最大链长；常规延迟诊断复制 44 bytes，验证模式复制 240 bytes，均复用 swap-chain frame fence 而不新增等待。
+
+E2 只写 `subdivisionPattern` 和预分配 `indices`，不写新 `heapID`、邻接或 OCBT 位；因此仍不宣称实际 split，四项 topology capability 保持 `false`。
+
 ### 阶段 E3：Bisect、传播、Reduce 和 Indexation
+
+状态：当前下一批工作。
 
 任务：
 
@@ -858,7 +874,7 @@ CTest 应使用 `unit`、`gpu-quick`、`integration` 标签并设置明确超时
 
 ### 批次 3：E2 规划与分配
 
-状态：当前下一批工作。
+状态：已完成，2026-08-22。
 
 1. 单边界和直接 twin；
 2. 长兼容链；
@@ -868,6 +884,8 @@ CTest 应使用 `unit`、`gpu-quick`、`integration` 标签并设置明确超时
 6. 容量边界与唯一性测试。
 
 ### 批次 4：E3 split 提交
+
+状态：当前下一批工作。
 
 1. 邻接复制；
 2. 四模板 Bisect；
@@ -944,19 +962,20 @@ CTest 应使用 `unit`、`gpu-quick`、`integration` 标签并设置明确超时
 
 | 主题 | 上游源码 | 当前项目对应位置 |
 |---|---|---|
-| 帧拓扑编排 | [`mesh_updater.cpp`](../../third_party/large_cbt/demo/src/mesh/mesh_updater.cpp) | [`D3D12CbtE0Pipeline.cpp`](../../src/algorithms/cbt_2024/d3d12/D3D12CbtE0Pipeline.cpp)，已接入 E1 分类与间接工作量 |
+| 帧拓扑编排 | [`mesh_updater.cpp`](../../third_party/large_cbt/demo/src/mesh/mesh_updater.cpp) | [`D3D12CbtE0Pipeline.cpp`](../../src/algorithms/cbt_2024/d3d12/D3D12CbtE0Pipeline.cpp)，已接入 E2 分类、规划与分配 |
 | shader 入口和面积分类 | [`UpdateMesh.compute`](../../third_party/large_cbt/shaders/UpdateMesh.compute) | [`CbtTopologyE0.hlsl`](../../assets/shaders/dx12/cbt/CbtTopologyE0.hlsl) 与 [`CbtClassification.cpp`](../../src/algorithms/cbt_2024/CbtClassification.cpp) CPU 参考 |
-| split/merge/传播 | [`update_utilities.hlsl`](../../third_party/large_cbt/shaders/shader_lib/update_utilities.hlsl) | 待迁移的官方语义基线 shader |
+| split 规划与分配 | [`update_utilities.hlsl`](../../third_party/large_cbt/shaders/shader_lib/update_utilities.hlsl) | [`CbtTopologyE0.hlsl`](../../assets/shaders/dx12/cbt/CbtTopologyE0.hlsl) 与 [`CbtSplitPlanner.cpp`](../../src/algorithms/cbt_2024/CbtSplitPlanner.cpp) CPU 参考 |
+| split 提交、merge、传播 | [`update_utilities.hlsl`](../../third_party/large_cbt/shaders/shader_lib/update_utilities.hlsl) | 待 E3/F 迁移的官方语义基线 shader |
 | OCBT | [`ocbt_generic.hlsl`](../../third_party/large_cbt/shaders/shader_lib/ocbt_generic.hlsl) | [`CbtOccupancyTree.hlsli`](../../assets/shaders/dx12/cbt/CbtOccupancyTree.hlsli) |
 | 基础半边展开 | [`cpu_mesh.cpp`](../../third_party/large_cbt/demo/src/mesh/cpu_mesh.cpp) | [`CbtBisectorTopology.cpp`](../../src/algorithms/cbt_2024/CbtBisectorTopology.cpp) |
 | GPU 资源布局 | [`mesh.cpp`](../../third_party/large_cbt/demo/src/mesh/mesh.cpp) | [`D3D12CbtBaseTopology.cpp`](../../src/algorithms/cbt_2024/d3d12/D3D12CbtBaseTopology.cpp) |
 | 逻辑几何 | [`PlanetGeometry.compute`](../../third_party/large_cbt/shaders/PlanetGeometry.compute) | [`CbtBootstrap.hlsl`](../../assets/shaders/dx12/cbt/CbtBootstrap.hlsl) 已提供平面 Bootstrap，高度图求值待 G |
 | 算法接口 | — | [`ITerrainLodAlgorithm.h`](../../src/algorithms/ITerrainLodAlgorithm.h) |
 | 调度与绘制 | — | [`D3D12TerrainRenderer.cpp`](../../src/render/D3D12TerrainRenderer.cpp) |
-| 当前 E1 adapter | — | [`D3D12CbtTerrainLodAlgorithm.cpp`](../../src/algorithms/cbt_2024/d3d12/D3D12CbtTerrainLodAlgorithm.cpp) |
+| 当前 E2 adapter | — | [`D3D12CbtTerrainLodAlgorithm.cpp`](../../src/algorithms/cbt_2024/d3d12/D3D12CbtTerrainLodAlgorithm.cpp) |
 
 ## 17. 结论
 
-当前仓库已经完成 OCBT、方形基础半边、程序化间接绘制、阶段 E0 的动态管线前置契约和阶段 E1 的官方面积分类。上一帧活动列表、平面分类位置、split/simplify 候选、内部间接工作量及延迟计数对照已经形成可连续运行 300 帧的闭环。
+当前仓库已经完成 OCBT、方形基础半边、程序化间接绘制、阶段 E0 的动态管线前置契约、阶段 E1 的官方面积分类，以及阶段 E2 的兼容链规划和旧 OCBT 空闲槽位分配。上一帧活动列表、候选、保守预留、共享 pattern、allocation list、free rank-select 和延迟 CPU/GPU 对照已经形成可连续运行 300 帧的闭环。
 
-下一步从阶段 E2 的兼容链规划、容量预留和空闲槽位分配开始；阶段 E3 再在同一 GPU 事务协议上提交 split，阶段 F 把 simplify/merge 放回上游同一帧顺序形成忠实闭环；阶段 G 只替换几何求值，不改变拓扑语义。这样冻结出的阶段 I 基线才足以支撑后续兼容闭包感知预算调度研究。
+下一步进入阶段 E3，在已分配槽位上实现四种 Bisect 模板、邻接双缓冲、传播、OCBT 置位、Reduce、Indexation 和平面几何更新；阶段 F 再把 simplify/merge 放回上游同一帧顺序形成忠实闭环。这样冻结出的阶段 I 基线才足以支撑后续兼容闭包感知预算调度研究。

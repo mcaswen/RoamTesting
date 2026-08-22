@@ -74,7 +74,8 @@ CbtTopologyBufferLayout BuildCbtTopologyBufferLayout(CbtOccupancyCapacity capaci
     layout.PropagationElementCount = 2U + layout.TotalElementCount;
     layout.IndexElementCount = layout.TotalElementCount;
     layout.MemoryElementCount = 2U;
-    layout.ValidationElementCount = 2U;
+    // 错误码/槽位后接 E2 的重复认领、共享链、总步数和最大步数诊断。
+    layout.ValidationElementCount = 6U;
     layout.DrawStateElementCount = CbtDrawStateWordCount;
     layout.TopologyDispatchElementCount = CbtIndirectDispatchWordCount;
     layout.GeometryDispatchElementCount = CbtIndirectDispatchWordCount;
