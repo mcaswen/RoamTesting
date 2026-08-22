@@ -2,6 +2,7 @@ static const uint InvalidIndex = 0xffffffffu;
 static const uint VisibleFlag = 0x1u;
 static const uint ModifiedFlag = 0x2u;
 
+// 四个 root constants 定位基础物理槽位并控制平面世界尺寸
 cbuffer CbtBootstrapConstants : register(b0)
 {
     uint TotalElementCount;
@@ -12,6 +13,7 @@ cbuffer CbtBootstrapConstants : register(b0)
 
 struct CbtBisectorData
 {
+    // 字段顺序与 C++ 的 32 字节 CbtBisectorData 保持二进制一致
     uint SubdivisionPattern;
     uint3 Indices;
     uint ProblematicNeighbor;
@@ -22,6 +24,7 @@ struct CbtBisectorData
 
 struct TerrainVertex
 {
+    // 52 字节布局由 structured buffer stride 和程序化 VS 共同解释
     float3 Position;
     float3 Normal;
     float2 TexCoord;
@@ -32,6 +35,7 @@ struct TerrainVertex
 
 StructuredBuffer<uint64_t> HeapIds : register(t0);
 StructuredBuffer<CbtBisectorData> BisectorData : register(t1);
+// 基础控制点仅用于首次或 terrain size 变化时重建平面几何
 StructuredBuffer<float3> BaseControlPoints : register(t2);
 RWStructuredBuffer<uint> ActiveIndices : register(u0);
 RWStructuredBuffer<uint> VisibleIndices : register(u1);
@@ -44,15 +48,18 @@ RWStructuredBuffer<TerrainVertex> RenderVertices : register(u6);
 [numthreads(64, 1, 1)]
 void CSIndexation(uint physicalSlot : SV_DispatchThreadID)
 {
+    // heap id 为零表示未分配物理槽位 因此无需扫描 OCBT rank
     if (physicalSlot >= TotalElementCount || HeapIds[physicalSlot] == 0)
     {
         return;
     }
 
     uint vertexOffset;
+    // draw 顶点数同时充当 active list 的三倍 append 游标
     InterlockedAdd(DrawState[0], 3u, vertexOffset);
     ActiveIndices[vertexOffset / 3u] = physicalSlot;
 
+    // visible 和 modified 是 active 的逐级子集 只有对应标志存在才继续追加
     const uint flags = BisectorData[physicalSlot].Flags;
     if ((flags & VisibleFlag) == 0)
     {
@@ -74,7 +81,9 @@ void CSIndexation(uint physicalSlot : SV_DispatchThreadID)
 [numthreads(1, 1, 1)]
 void CSPrepareIndirect(uint dispatchThreadId : SV_DispatchThreadID)
 {
+    // draw state 已由所有 Indexation 线程完成写入 UAV barrier 保证这里读取稳定
     const uint activeCount = DrawState[0] / 3u;
+    // 三组 dispatch 分别覆盖活动槽位 活动四位置和本帧修改位置
     GeometryDispatch[0] = (activeCount + 63u) / 64u;
     GeometryDispatch[1] = 1u;
     GeometryDispatch[2] = 1u;
@@ -84,11 +93,13 @@ void CSPrepareIndirect(uint dispatchThreadId : SV_DispatchThreadID)
     GeometryDispatch[6] = (DrawState[8] + 63u) / 64u;
     GeometryDispatch[7] = 1u;
     GeometryDispatch[8] = 1u;
+    // 显式活动数供下一帧分类协议使用 不参与当前 ExecuteIndirect
     DrawState[9] = activeCount;
 }
 
 float3 DebugColor(uint localBase)
 {
+    // 六个基础半边使用稳定颜色 便于观察 winding 和共享边
     static const float3 Colors[6] = {
         float3(0.08, 0.72, 0.62),
         float3(0.10, 0.52, 0.88),
@@ -103,6 +114,7 @@ float3 DebugColor(uint localBase)
 [numthreads(64, 1, 1)]
 void CSBuildBaseGeometry(uint localBase : SV_DispatchThreadID)
 {
+    // 基础半边数量很小 仍保留标准 64 线程入口以复用 dispatch helper
     if (localBase >= BaseElementCount)
     {
         return;
@@ -119,6 +131,7 @@ void CSBuildBaseGeometry(uint localBase : SV_DispatchThreadID)
             (control.x - 0.5) * TerrainSize,
             0.0,
             (control.z - 0.5) * TerrainSize);
+        // 子位置位于前三个容量平面 父位置单独位于第四个平面
         ClassificationPositions[physicalSlot * 3u + localVertex] = positions[localVertex];
 
         TerrainVertex vertex;
@@ -132,6 +145,7 @@ void CSBuildBaseGeometry(uint localBase : SV_DispatchThreadID)
     }
 
     // 基础深度不会访问父位置；仍写入有限值，避免首帧分类读取未初始化数据
+    // 基础深度不消费父位置 仍写入有限值以保证分类缓冲完全初始化
     ClassificationPositions[TotalElementCount * 3u + physicalSlot] =
         (positions[0] + positions[1] + positions[2]) / 3.0;
     [unroll]

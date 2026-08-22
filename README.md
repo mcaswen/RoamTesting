@@ -189,7 +189,7 @@ powershell -ExecutionPolicy Bypass -File scripts/setup_cbt_dx12_dependencies.ps1
 .\build\relwithdebinfo-d3d12-fetch\bin\ParallelROAM.exe --cbt-procedural-smoke-test
 ```
 
-当前单元与结构测试覆盖嵌套楔形误差、保守屏幕投影、D3D/OpenGL 视锥约定、CBT 占用树、基础二分器拓扑、Classic/DOD 预算重入、Classic 增量 Mesh 输出及 C++ 注释覆盖率。
+当前单元与结构测试覆盖嵌套楔形误差、保守屏幕投影、D3D/OpenGL 视锥约定、CBT 占用树、基础二分器拓扑、Classic/DOD 预算重入、Classic 增量 Mesh 输出及 C++/HLSL 注释覆盖率。
 
 ## Benchmark
 

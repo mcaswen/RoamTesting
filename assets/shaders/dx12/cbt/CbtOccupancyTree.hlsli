@@ -5,6 +5,7 @@
 #error CBT_CAPACITY must select an OCBT capacity specialization
 #endif
 
+// 容量决定压缩树深度和槽位数量 因此四档必须分别编译 PSO
 #if CBT_CAPACITY == 131072
 static const uint CbtLeafDepth = 17;
 static const uint CbtLastTreeDepth = 10;
@@ -32,6 +33,7 @@ static const uint CbtSubtreeRootDepth = CbtLeafDepth - 14;
 static const uint CbtSubtreeCount = CbtElementCount / 16384;
 
 // 测试和生产拓扑管线共享同一份三级归约实现
+// 两块 groupshared 数组分别容纳 128 叶 subtree 和最多 64 个 subtree 根
 groupshared uint CbtReduceSubtree[255];
 groupshared uint CbtReduceTopTree[127];
 
@@ -40,6 +42,7 @@ RWStructuredBuffer<uint64_t> CbtBitfield : register(u1);
 
 uint CbtTreeElementWidth(uint depth)
 {
+    // 靠近根部的计数范围更大 深层节点用窄字段减少常驻显存
     if (depth < 7)
     {
         return 32;
@@ -49,6 +52,7 @@ uint CbtTreeElementWidth(uint depth)
 
 uint CbtTreeDepthOffsetBits(uint depth)
 {
+    // 各深度连续打包到同一 uint 流 偏移必须以位而不是槽位计算
     if (depth <= 7)
     {
         return 32 * ((1u << depth) - 1u);
@@ -176,6 +180,7 @@ uint CbtDecodeBitComplement(uint rank)
 
 void CbtReducePre(uint dispatchThreadId)
 {
+    // 每个线程把相邻两个 64 位 word 汇总为一个 128 位叶块计数
     if (dispatchThreadId >= CbtLastTreeNodeCount)
     {
         return;
@@ -188,6 +193,7 @@ void CbtReducePre(uint dispatchThreadId)
 
 void CbtReduceFirst(uint3 groupId, uint groupIndex)
 {
+    // 一个 group 在共享内存中构造 255 节点完整二叉树
     const uint subtreeIndex = groupId.x;
     if (subtreeIndex >= CbtSubtreeCount)
     {
@@ -216,6 +222,7 @@ void CbtReduceFirst(uint3 groupId, uint groupIndex)
         GroupMemoryBarrierWithGroupSync();
     }
 
+    // 只回写非叶节点 叶计数已经由 ReducePre 发布
     for (uint localIndex = groupIndex; localIndex < 127; localIndex += 64)
     {
         const uint localHeapId = localIndex + 1;
@@ -229,6 +236,7 @@ void CbtReduceFirst(uint3 groupId, uint groupIndex)
 
 void CbtReduceSecond(uint groupIndex)
 {
+    // 顶层树最大为 127 节点 单个 group 即可完成最终归约
     const uint leafStart = CbtSubtreeCount - 1;
     if (groupIndex < CbtSubtreeCount)
     {
@@ -254,6 +262,7 @@ void CbtReduceSecond(uint groupIndex)
     {
         CbtWriteTreeCountAtomic(localIndex + 1, CbtReduceTopTree[localIndex]);
     }
+    // 测试入口会立即读取根计数 因此在函数返回前发布 device 可见性
     DeviceMemoryBarrierWithGroupSync();
 }
 
