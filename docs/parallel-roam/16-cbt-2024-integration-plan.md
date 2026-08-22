@@ -2,7 +2,7 @@
 
 > 初稿日期：2026-07-16
 > 源码复核：2026-08-22
-> 状态：实施计划 v0.5；阶段 E0 已完成，当前进入阶段 E1
+> 状态：实施计划 v0.6；阶段 E1 已完成，当前进入阶段 E2
 > 前置条件：D3D12 迁移阶段已完成
 > 上游参考：`third_party/large_cbt`，提交 `7ae736d179528a0996449c0cc2db7f3279edc8ee`
 > 本机兼容基线：提交 `7ae736d179528a0996449c0cc2db7f3279edc8ee`，仅替换 NVIDIA 64 位 `firstbithigh` 实现
@@ -572,9 +572,9 @@ E0 只建立稳定的空拓扑帧事务和基础平面 Bootstrap；`SupportsSpli
 
 ### 阶段 E1：Reset、Classify 和间接工作量
 
-状态：当前下一批工作。
+状态：已完成，2026-08-22。
 
-任务：
+完成内容：
 
 - 迁移官方面积分类、背面剔除、AABB 视锥剔除和掠射角放大；
 - 使用上一轮 active indices 间接调度；
@@ -588,6 +588,18 @@ E0 只建立稳定的空拓扑帧事务和基础平面 Bootstrap；`SupportsSpli
 - 分辨率变化按像素面积缩放；
 - 纯旋转和视锥外场景候选变化正确；
 - 候选数组不溢出，原子计数与有效条目一致。
+
+验收记录：
+
+- `CbtClassification` CPU 参考覆盖面积公式、分辨率缩放、背面、视锥和最大深度迟滞；
+- 四档容量的 `Classify` 与 `PrepareClassificationIndirect` 均由 DXC 编译并进入正式 PSO；
+- `cbt_procedural_e1_quick` 在 128K 容量下连续运行 300 帧，静止和纯旋转阶段都保持拓扑 generation 连续；
+- 验证模式按 swap-chain 槽延迟读取 8-byte split/simplify 计数，不增加帧内 GPU wait；
+- 每个已完成 GPU 样本都与同帧 CPU 参考计数一致，默认视角观察到非零 split 候选；
+- 候选计数未超过活动 base list，shader 溢出与无效物理槽位守卫未触发；
+- `source_comment_coverage` 同时统计 `.h/.cpp/.hlsl/.hlsli`，shader 注释率为 16.0%。
+
+E1 只产出分类和内部间接工作量，不提交 split；因此 `SupportsSplit`、`SupportsMerge`、`SupportsCrackFix` 与 `SupportsTopologyValidation` 仍保持 `false`。
 
 ### 阶段 E2：split 规划与槽位分配
 
@@ -836,7 +848,7 @@ CTest 应使用 `unit`、`gpu-quick`、`integration` 标签并设置明确超时
 
 ### 批次 2：E1 分类
 
-状态：当前下一批工作。
+状态：已完成，2026-08-22。
 
 1. 常量缓冲和视图输入；
 2. Reset；
@@ -845,6 +857,8 @@ CTest 应使用 `unit`、`gpu-quick`、`integration` 标签并设置明确超时
 5. CPU/GPU 分类对照和纯旋转测试。
 
 ### 批次 3：E2 规划与分配
+
+状态：当前下一批工作。
 
 1. 单边界和直接 twin；
 2. 长兼容链；
@@ -930,8 +944,8 @@ CTest 应使用 `unit`、`gpu-quick`、`integration` 标签并设置明确超时
 
 | 主题 | 上游源码 | 当前项目对应位置 |
 |---|---|---|
-| 帧拓扑编排 | [`mesh_updater.cpp`](../../third_party/large_cbt/demo/src/mesh/mesh_updater.cpp) | [`D3D12CbtE0Pipeline.cpp`](../../src/algorithms/cbt_2024/d3d12/D3D12CbtE0Pipeline.cpp)，E1 起继续扩展正式 pass |
-| shader 入口和面积分类 | [`UpdateMesh.compute`](../../third_party/large_cbt/shaders/UpdateMesh.compute) | [`CbtTopologyE0.hlsl`](../../assets/shaders/dx12/cbt/CbtTopologyE0.hlsl)，面积分类待 E1 |
+| 帧拓扑编排 | [`mesh_updater.cpp`](../../third_party/large_cbt/demo/src/mesh/mesh_updater.cpp) | [`D3D12CbtE0Pipeline.cpp`](../../src/algorithms/cbt_2024/d3d12/D3D12CbtE0Pipeline.cpp)，已接入 E1 分类与间接工作量 |
+| shader 入口和面积分类 | [`UpdateMesh.compute`](../../third_party/large_cbt/shaders/UpdateMesh.compute) | [`CbtTopologyE0.hlsl`](../../assets/shaders/dx12/cbt/CbtTopologyE0.hlsl) 与 [`CbtClassification.cpp`](../../src/algorithms/cbt_2024/CbtClassification.cpp) CPU 参考 |
 | split/merge/传播 | [`update_utilities.hlsl`](../../third_party/large_cbt/shaders/shader_lib/update_utilities.hlsl) | 待迁移的官方语义基线 shader |
 | OCBT | [`ocbt_generic.hlsl`](../../third_party/large_cbt/shaders/shader_lib/ocbt_generic.hlsl) | [`CbtOccupancyTree.hlsli`](../../assets/shaders/dx12/cbt/CbtOccupancyTree.hlsli) |
 | 基础半边展开 | [`cpu_mesh.cpp`](../../third_party/large_cbt/demo/src/mesh/cpu_mesh.cpp) | [`CbtBisectorTopology.cpp`](../../src/algorithms/cbt_2024/CbtBisectorTopology.cpp) |
@@ -939,10 +953,10 @@ CTest 应使用 `unit`、`gpu-quick`、`integration` 标签并设置明确超时
 | 逻辑几何 | [`PlanetGeometry.compute`](../../third_party/large_cbt/shaders/PlanetGeometry.compute) | [`CbtBootstrap.hlsl`](../../assets/shaders/dx12/cbt/CbtBootstrap.hlsl) 已提供平面 Bootstrap，高度图求值待 G |
 | 算法接口 | — | [`ITerrainLodAlgorithm.h`](../../src/algorithms/ITerrainLodAlgorithm.h) |
 | 调度与绘制 | — | [`D3D12TerrainRenderer.cpp`](../../src/render/D3D12TerrainRenderer.cpp) |
-| 当前 E0 adapter | — | [`D3D12CbtTerrainLodAlgorithm.cpp`](../../src/algorithms/cbt_2024/d3d12/D3D12CbtTerrainLodAlgorithm.cpp) |
+| 当前 E1 adapter | — | [`D3D12CbtTerrainLodAlgorithm.cpp`](../../src/algorithms/cbt_2024/d3d12/D3D12CbtTerrainLodAlgorithm.cpp) |
 
 ## 17. 结论
 
-当前仓库已经完成 OCBT、方形基础半边、程序化间接绘制和阶段 E0 的动态管线前置契约。每帧调度、GPU draw count、精确命令布局、缺失工作缓冲、生产 OCBT Reduce、资源状态和最小几何 bootstrap 已形成可连续运行 300 帧的闭环。
+当前仓库已经完成 OCBT、方形基础半边、程序化间接绘制、阶段 E0 的动态管线前置契约和阶段 E1 的官方面积分类。上一帧活动列表、平面分类位置、split/simplify 候选、内部间接工作量及延迟计数对照已经形成可连续运行 300 帧的闭环。
 
-下一步从阶段 E1 的官方面积分类和间接工作量开始；阶段 E2-E3 再在同一 GPU 事务协议上实现 split，阶段 F 把 simplify/merge 放回上游同一帧顺序形成忠实闭环；阶段 G 只替换几何求值，不改变拓扑语义。这样冻结出的阶段 I 基线才足以支撑后续兼容闭包感知预算调度研究。
+下一步从阶段 E2 的兼容链规划、容量预留和空闲槽位分配开始；阶段 E3 再在同一 GPU 事务协议上提交 split，阶段 F 把 simplify/merge 放回上游同一帧顺序形成忠实闭环；阶段 G 只替换几何求值，不改变拓扑语义。这样冻结出的阶段 I 基线才足以支撑后续兼容闭包感知预算调度研究。

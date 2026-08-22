@@ -208,6 +208,9 @@ private:
     bool _cbtProceduralSmokeTestEnabled{false};
     std::uint64_t _cbtProceduralSmokeFrameCount{0U};
     std::uint64_t _lastCbtTopologyFrameGeneration{0U};
+    std::uint64_t _lastCbtClassificationSampleGeneration{0U};
+    bool _cbtObservedClassificationSample{false};
+    bool _cbtObservedSplitCandidate{false};
     bool _cbtOccupancyTreeSmokeTestEnabled{false};
     bool _cbtBaseTopologySmokeTestEnabled{false};
     bool _automaticRuntimeBenchmarkEnabled{false};

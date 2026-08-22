@@ -1,5 +1,6 @@
 #include "algorithms/cbt_2024/d3d12/D3D12CbtE0Pipeline.h"
 
+#include "algorithms/cbt_2024/CbtClassification.h"
 #include "terrain/TerrainMeshBuilder.h"
 
 #include <algorithm>
@@ -24,6 +25,7 @@ using Microsoft::WRL::ComPtr;
 // 每个 swap-chain frame 拥有独立映射区，CPU 不会覆盖尚未消费的数据。
 constexpr std::size_t ConstantBufferSlotBytes = 256U;
 constexpr std::size_t ConstantBufferBytes = ConstantBufferSlotBytes * 3U;
+constexpr std::size_t ClassificationReadbackBytes = sizeof(std::uint32_t) * 2U;
 constexpr std::uint32_t WorkGroupSize = 64U;
 constexpr std::uint32_t TopologyUavCount = 17U;
 
@@ -62,20 +64,20 @@ std::vector<std::uint8_t> ReadBinaryFile(const std::filesystem::path& path, std:
     std::ifstream stream{path, std::ios::binary | std::ios::ate};
     if (!stream)
     {
-        SetError(errorMessage, "Failed to open CBT E0 shader: " + path.string());
+        SetError(errorMessage, "Failed to open CBT topology shader: " + path.string());
         return {};
     }
     const std::streamsize size = stream.tellg();
     if (size <= 0)
     {
-        SetError(errorMessage, "CBT E0 shader is empty: " + path.string());
+        SetError(errorMessage, "CBT topology shader is empty: " + path.string());
         return {};
     }
     std::vector<std::uint8_t> bytes(static_cast<std::size_t>(size));
     stream.seekg(0, std::ios::beg);
     if (!stream.read(reinterpret_cast<char*>(bytes.data()), size))
     {
-        SetError(errorMessage, "Failed to read CBT E0 shader: " + path.string());
+        SetError(errorMessage, "Failed to read CBT topology shader: " + path.string());
         return {};
     }
     return bytes;
@@ -127,7 +129,7 @@ bool CreateBuffer(
             nullptr,
             IID_PPV_ARGS(&resource))))
     {
-        SetError(errorMessage, "Failed to allocate CBT E0 buffer");
+        SetError(errorMessage, "Failed to allocate CBT topology buffer");
         return false;
     }
     return true;
@@ -151,7 +153,7 @@ bool CreateComputePipeline(
     description.CS = {shader.data(), shader.size()};
     if (FAILED(device->CreateComputePipelineState(&description, IID_PPV_ARGS(&pipeline))))
     {
-        SetError(errorMessage, "Failed to create CBT E0 compute pipeline: " + shaderPath.string());
+        SetError(errorMessage, "Failed to create CBT topology compute pipeline: " + shaderPath.string());
         return false;
     }
     return true;
@@ -177,7 +179,7 @@ bool CreateRootSignature(
         const char* detail = errors != nullptr
             ? static_cast<const char*>(errors->GetBufferPointer())
             : "unknown error";
-        SetError(errorMessage, std::string{"Failed to serialize CBT E0 root signature: "} + detail);
+        SetError(errorMessage, std::string{"Failed to serialize CBT topology root signature: "} + detail);
         return false;
     }
     result = device->CreateRootSignature(
@@ -187,7 +189,7 @@ bool CreateRootSignature(
         IID_PPV_ARGS(&rootSignature));
     if (FAILED(result))
     {
-        SetError(errorMessage, "Failed to create CBT E0 root signature");
+        SetError(errorMessage, "Failed to create CBT topology root signature");
         return false;
     }
     return true;
@@ -235,7 +237,16 @@ struct BootstrapConstants
     float TerrainSize{0.0F};
 };
 
+struct TopologyUpdateConstants
+{
+    std::array<float, 4> AreaAndScreen{};
+    std::array<float, 4> CameraPosition{};
+    std::array<float, 4> CameraForward{};
+    std::array<std::array<float, 4>, 6> FrustumPlanes{};
+};
+
 static_assert(sizeof(BootstrapConstants) == 16U);
+static_assert(sizeof(TopologyUpdateConstants) == 144U);
 static_assert(sizeof(Terrain::TerrainMeshVertex) == 52U);
 } // namespace
 
@@ -257,8 +268,10 @@ bool D3D12CbtE0Pipeline::Initialize(
     _capacity = topology.Layout.Occupancy.Capacity;
     if (!CreateTopologyRootSignature(errorMessage) ||
         !CreateBootstrapRootSignature(errorMessage) ||
+        !CreateDispatchCommandSignature(errorMessage) ||
         !CreatePipelines(errorMessage) ||
         !CreateConstantBuffers(errorMessage) ||
+        !CreateClassificationReadbacks(errorMessage) ||
         !CreateGeometryBuffers(topology, errorMessage) ||
         !ConfigureTopologyDescriptors(topology, resources, errorMessage))
     {
@@ -288,8 +301,15 @@ void D3D12CbtE0Pipeline::Shutdown()
     if (_backend != nullptr)
     {
         // 十七个 UAV 是一个连续分配，必须按原始 range 一次归还。
+        _backend->ReleaseSrvDescriptor(_topologySrvRange);
         _backend->ReleaseSrvDescriptor(_topologyUavRange);
     }
+    _classificationReadbacks = {};
+    _classificationReadbackPending = {};
+    _classificationReadbackGenerations = {};
+    _classificationValidationPending = {};
+    _expectedSplitCandidateCounts = {};
+    _expectedSimplifyCandidateCounts = {};
     _renderVertices.Reset();
     _classificationPositions.Reset();
     _renderVertexCapacityBytes = 0U;
@@ -298,9 +318,25 @@ void D3D12CbtE0Pipeline::Shutdown()
     _prepareIndirectPipeline.Reset();
     _indexationPipeline.Reset();
     _capacityPipelines = {};
+    _dispatchCommandSignature.Reset();
     _bootstrapRootSignature.Reset();
     _topologyRootSignature.Reset();
     _topologyFrameGeneration = 0U;
+    _classificationSampleGeneration = 0U;
+    _lastSplitCandidateCount = 0U;
+    _lastSimplifyCandidateCount = 0U;
+    _heapIdState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+    _bisectorDataState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+    _baseControlPointState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+    _activeIndexState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+    _visibleIndexState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+    _modifiedIndexState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+    _classificationState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+    _topologyDispatchState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+    _drawState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+    _geometryDispatchState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+    _classificationPositionState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+    _renderVertexState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
     // 不缓存外部 backend 指针，销毁后对象可安全地重新初始化。
     _initialized = false;
     _backend = nullptr;
@@ -312,9 +348,9 @@ bool D3D12CbtE0Pipeline::CreateTopologyRootSignature(std::string* errorMessage)
     // root[0] = b0，全局/视图常量。
     // root[1] = b1，几何和容量常量。
     // root[2] = b2，逐帧更新常量。
-    // root[3] = t0..t1，保留给官方地形纹理输入。
+    // root[3] = t0..t1，分类位置和上一帧活动索引。
     // root[4] = u0..u16，完整 CBT 可写资源表。
-    // SRV 表暂未绑定到 E0 kernel；签名先锁定后续阶段需要的 ABI。
+    // root[3] 只由 Classify 消费，Reset/Reduce 不访问该表。
     D3D12_DESCRIPTOR_RANGE srvRange{};
     srvRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
     srvRange.NumDescriptors = 2U;
@@ -375,6 +411,25 @@ bool D3D12CbtE0Pipeline::CreateBootstrapRootSignature(std::string* errorMessage)
     return CreateRootSignature(_backend->Device(), description, _bootstrapRootSignature, errorMessage);
 }
 
+bool D3D12CbtE0Pipeline::CreateDispatchCommandSignature(std::string* errorMessage)
+{
+    D3D12_INDIRECT_ARGUMENT_DESC argument{};
+    argument.Type = D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH;
+    D3D12_COMMAND_SIGNATURE_DESC description{};
+    description.ByteStride = sizeof(D3D12_DISPATCH_ARGUMENTS);
+    description.NumArgumentDescs = 1U;
+    description.pArgumentDescs = &argument;
+    if (FAILED(_backend->Device()->CreateCommandSignature(
+            &description,
+            nullptr,
+            IID_PPV_ARGS(&_dispatchCommandSignature))))
+    {
+        SetError(errorMessage, "Failed to create CBT E1 dispatch command signature");
+        return false;
+    }
+    return true;
+}
+
 bool D3D12CbtE0Pipeline::CreatePipelines(std::string* errorMessage)
 {
 #if defined(PARALLEL_ROAM_DX12_SHADER_DIR)
@@ -384,12 +439,14 @@ bool D3D12CbtE0Pipeline::CreatePipelines(std::string* errorMessage)
 #endif
     const std::array<const char*, 4> capacityNames{"128K", "256K", "512K", "1M"};
     // OCBT reduction 的数组长度由编译期宏决定，不能用一个动态 PSO 混用容量。
-    // 每档包含 Reset、ReducePre、ReduceFirst、ReduceSecond 四条生产管线。
+    // 每档包含 Reset、Classify、间接准备和三段 Reduce 六条生产管线。
     for (std::size_t index = 0U; index < capacityNames.size(); ++index)
     {
         const std::string prefix = std::string{"CbtTopology"} + capacityNames[index];
         CapacityPipelines& pipelines = _capacityPipelines[index];
         if (!CreateComputePipeline(_backend->Device(), _topologyRootSignature.Get(), shaderDirectory / (prefix + "ResetE0.cso"), pipelines.Reset, errorMessage) ||
+            !CreateComputePipeline(_backend->Device(), _topologyRootSignature.Get(), shaderDirectory / (prefix + "Classify.cso"), pipelines.Classify, errorMessage) ||
+            !CreateComputePipeline(_backend->Device(), _topologyRootSignature.Get(), shaderDirectory / (prefix + "PrepareClassificationIndirect.cso"), pipelines.PrepareClassificationIndirect, errorMessage) ||
             !CreateComputePipeline(_backend->Device(), _topologyRootSignature.Get(), shaderDirectory / (prefix + "ReducePre.cso"), pipelines.ReducePre, errorMessage) ||
             !CreateComputePipeline(_backend->Device(), _topologyRootSignature.Get(), shaderDirectory / (prefix + "ReduceFirst.cso"), pipelines.ReduceFirst, errorMessage) ||
             !CreateComputePipeline(_backend->Device(), _topologyRootSignature.Get(), shaderDirectory / (prefix + "ReduceSecond.cso"), pipelines.ReduceSecond, errorMessage))
@@ -425,10 +482,29 @@ bool D3D12CbtE0Pipeline::CreateConstantBuffers(std::string* errorMessage)
         void* mapped = nullptr;
         if (FAILED(_constantBuffers[frame]->Map(0U, &noRead, &mapped)))
         {
-            SetError(errorMessage, "Failed to map CBT E0 frame constants");
+            SetError(errorMessage, "Failed to map CBT topology frame constants");
             return false;
         }
         _mappedConstants[frame] = static_cast<std::uint8_t*>(mapped);
+    }
+    return true;
+}
+
+bool D3D12CbtE0Pipeline::CreateClassificationReadbacks(std::string* errorMessage)
+{
+    for (Microsoft::WRL::ComPtr<ID3D12Resource>& readback : _classificationReadbacks)
+    {
+        if (!CreateBuffer(
+                _backend->Device(),
+                D3D12_HEAP_TYPE_READBACK,
+                ClassificationReadbackBytes,
+                D3D12_RESOURCE_FLAG_NONE,
+                D3D12_RESOURCE_STATE_COPY_DEST,
+                readback,
+                errorMessage))
+        {
+            return false;
+        }
     }
     return true;
 }
@@ -467,7 +543,13 @@ bool D3D12CbtE0Pipeline::ConfigureTopologyDescriptors(
     const D3D12CbtTopologyResourceView& resources,
     std::string* errorMessage)
 {
-    // 描述符表必须连续，因为 root table 只保存 u0 的起始 GPU handle。
+    // 两个 SRV 和十七个 UAV 分别连续 因为各 root table 只保存首个 GPU handle
+    _topologySrvRange = _backend->AllocateSrvDescriptorRange(2U);
+    if (!_topologySrvRange.IsValid())
+    {
+        SetError(errorMessage, "D3D12 descriptor heap has no contiguous 2-SRV range for CBT");
+        return false;
+    }
     _topologyUavRange = _backend->AllocateSrvDescriptorRange(TopologyUavCount);
     if (!_topologyUavRange.IsValid())
     {
@@ -527,7 +609,7 @@ bool D3D12CbtE0Pipeline::ConfigureTopologyDescriptors(
         // 任一空资源都会使 descriptor table 部分有效，必须在创建视图前拒绝。
         if (bindings[index].Resource == nullptr)
         {
-            SetError(errorMessage, "CBT E0 topology resource view is incomplete");
+            SetError(errorMessage, "CBT E1 topology resource view is incomplete");
             return false;
         }
         D3D12_UNORDERED_ACCESS_VIEW_DESC description{};
@@ -544,6 +626,68 @@ bool D3D12CbtE0Pipeline::ConfigureTopologyDescriptors(
             &description,
             handle);
     }
+
+    const std::array<UavBinding, 2> srvBindings{{
+        {_classificationPositions.Get(), layout.TotalElementCount * 4U, sizeof(float) * 3U},
+        {resources.ActiveIndices, layout.IndexElementCount, sizeof(std::uint32_t)},
+    }};
+    for (std::uint32_t index = 0U; index < srvBindings.size(); ++index)
+    {
+        D3D12_SHADER_RESOURCE_VIEW_DESC description{};
+        description.Format = DXGI_FORMAT_UNKNOWN;
+        description.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+        description.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        description.Buffer.NumElements = srvBindings[index].ElementCount;
+        description.Buffer.StructureByteStride = srvBindings[index].Stride;
+        D3D12_CPU_DESCRIPTOR_HANDLE handle = _topologySrvRange.Cpu;
+        handle.ptr += static_cast<SIZE_T>(index) * descriptorSize;
+        _backend->Device()->CreateShaderResourceView(srvBindings[index].Resource, &description, handle);
+    }
+    return true;
+}
+
+bool D3D12CbtE0Pipeline::ReadCompletedClassification(
+    std::uint32_t frameIndex,
+    std::string* errorMessage)
+{
+    if (!_classificationReadbackPending[frameIndex])
+    {
+        return true;
+    }
+
+    const D3D12_RANGE readRange{0U, ClassificationReadbackBytes};
+    void* mapped = nullptr;
+    if (FAILED(_classificationReadbacks[frameIndex]->Map(0U, &readRange, &mapped)))
+    {
+        SetError(errorMessage, "Failed to map completed CBT E1 classification counters");
+        return false;
+    }
+    const auto* counters = static_cast<const std::uint32_t*>(mapped);
+    _lastSplitCandidateCount = counters[0];
+    _lastSimplifyCandidateCount = counters[1];
+    const D3D12_RANGE noWrite{0U, 0U};
+    _classificationReadbacks[frameIndex]->Unmap(0U, &noWrite);
+    _classificationSampleGeneration = _classificationReadbackGenerations[frameIndex];
+    _classificationReadbackPending[frameIndex] = false;
+    if (_classificationValidationPending[frameIndex])
+    {
+        _classificationValidationPending[frameIndex] = false;
+        const std::uint32_t expectedSplit = _expectedSplitCandidateCounts[frameIndex];
+        const std::uint32_t expectedSimplify = _expectedSimplifyCandidateCounts[frameIndex];
+        if (_lastSplitCandidateCount != expectedSplit ||
+            _lastSimplifyCandidateCount != expectedSimplify)
+        {
+            SetError(
+                errorMessage,
+                "CBT E1 CPU/GPU classification mismatch at generation " +
+                    std::to_string(_classificationSampleGeneration) +
+                    ": expected split/simplify=" + std::to_string(expectedSplit) + "/" +
+                    std::to_string(expectedSimplify) + ", GPU=" +
+                    std::to_string(_lastSplitCandidateCount) + "/" +
+                    std::to_string(_lastSimplifyCandidateCount));
+            return false;
+        }
+    }
     return true;
 }
 
@@ -554,17 +698,40 @@ bool D3D12CbtE0Pipeline::RecordFrame(
     bool rebuildGeometry,
     std::string* errorMessage)
 {
-    // E0 是纯帧内事务：调用者必须已 BeginFrame，且所有 pass 进入同一命令列表。
     if (!_initialized || _backend == nullptr || !_backend->FrameOpen() || _backend->CommandList() == nullptr)
     {
-        SetError(errorMessage, "CBT E0 requires an initialized pipeline and an open D3D12 frame");
+        SetError(errorMessage, "CBT E1 requires an initialized pipeline and an open D3D12 frame");
         return false;
     }
     ID3D12GraphicsCommandList* commandList = _backend->CommandList();
     const std::uint32_t frameIndex = _backend->CurrentFrameIndex();
+    if (!ReadCompletedClassification(frameIndex, errorMessage))
+    {
+        return false;
+    }
 
-    // 三个 256 字节槽位对应 b0 global、b1 geometry 和 b2 update，按交换链帧隔离。
-    // 当前 E0 只消费 b1/b2 的一部分，但写入完整协议能避免 E1 再改 root ABI。
+    // 验证值与本帧 readback 槽绑定；等该 swap-chain 槽完成并再次复用时再比较，
+    // 因而不会为统计或验证额外等待 GPU。
+    std::uint32_t expectedSplitCandidateCount = 0U;
+    std::uint32_t expectedSimplifyCandidateCount = 0U;
+    if (input.Settings.EnableTopologyValidation)
+    {
+        const auto triangles = BuildCbtBaseClassificationTriangles(topology, input.Settings.TerrainSize);
+        const std::uint32_t maxDepth = static_cast<std::uint32_t>(std::max(input.Settings.MaxDepth, 0));
+        for (const CbtClassificationTriangle& triangle : triangles)
+        {
+            const CbtClassificationResult result = EvaluateCbtClassification(
+                triangle,
+                input.View,
+                input.Settings.CbtTriangleAreaPixels,
+                topology.BaseDepth,
+                maxDepth).Result;
+            expectedSplitCandidateCount += result == CbtClassificationResult::Bisect ? 1U : 0U;
+        }
+        // E1 只分类固定 base leaf；官方协议禁止 base depth 进入 simplify 候选表。
+        expectedSimplifyCandidateCount = 0U;
+    }
+
     std::memset(_mappedConstants[frameIndex], 0, ConstantBufferBytes);
     std::memcpy(_mappedConstants[frameIndex], &input.View.ViewProjection, sizeof(input.View.ViewProjection));
     const std::array<std::uint32_t, 6> geometryConstants{
@@ -575,63 +742,48 @@ bool D3D12CbtE0Pipeline::RecordFrame(
         topology.Layout.DynamicElementCount,
         static_cast<std::uint32_t>(std::max(input.Settings.MaxDepth, 0)),
     };
-    std::memcpy(_mappedConstants[frameIndex] + ConstantBufferSlotBytes, geometryConstants.data(), sizeof(geometryConstants));
-    const std::array<float, 4> updateConstants{
+    std::memcpy(
+        _mappedConstants[frameIndex] + ConstantBufferSlotBytes,
+        geometryConstants.data(),
+        sizeof(geometryConstants));
+
+    TopologyUpdateConstants updateConstants{};
+    updateConstants.AreaAndScreen = {
         input.Settings.CbtTriangleAreaPixels,
         static_cast<float>(input.View.DrawableWidth),
         static_cast<float>(input.View.DrawableHeight),
         0.0F,
     };
-    std::memcpy(_mappedConstants[frameIndex] + ConstantBufferSlotBytes * 2U, updateConstants.data(), sizeof(updateConstants));
-
-    // 上一帧绘制/读取完成后，把本帧需要重建的 GPU-owned 列表和命令恢复为 UAV。
-    // Heap/bisector/control point 仅由 bootstrap 读取，因此保持 non-pixel SRV。
-    // Draw state 从 INDIRECT_ARGUMENT 回到 UAV 后，Reset 才能安全写入四个 draw 字段。
-    Transition(commandList, resources.ActiveIndices, _activeIndexState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-    Transition(commandList, resources.VisibleIndices, _visibleIndexState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-    Transition(commandList, resources.ModifiedIndices, _modifiedIndexState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-    Transition(commandList, resources.IndirectDrawState, _drawState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-    Transition(commandList, resources.GeometryDispatchCommands, _geometryDispatchState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-    Transition(commandList, resources.HeapIds, _heapIdState, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-    Transition(commandList, resources.BisectorData, _bisectorDataState, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-    Transition(commandList, resources.BaseControlPoints, _baseControlPointState, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    updateConstants.CameraPosition = {
+        input.View.CameraPosition.x,
+        input.View.CameraPosition.y,
+        input.View.CameraPosition.z,
+        0.0F,
+    };
+    updateConstants.CameraForward = {
+        input.View.CameraForward.x,
+        input.View.CameraForward.y,
+        input.View.CameraForward.z,
+        0.0F,
+    };
+    for (std::size_t plane = 0U; plane < updateConstants.FrustumPlanes.size(); ++plane)
+    {
+        const glm::vec4& source = input.View.FrustumPlanes[plane];
+        updateConstants.FrustumPlanes[plane] = {source.x, source.y, source.z, source.w};
+    }
+    std::memcpy(
+        _mappedConstants[frameIndex] + ConstantBufferSlotBytes * 2U,
+        &updateConstants,
+        sizeof(updateConstants));
 
     ID3D12DescriptorHeap* descriptorHeaps[] = {_backend->ShaderVisibleSrvHeap()};
     commandList->SetDescriptorHeaps(1U, descriptorHeaps);
-    commandList->SetComputeRootSignature(_topologyRootSignature.Get());
-    const D3D12_GPU_VIRTUAL_ADDRESS constantsAddress = _constantBuffers[frameIndex]->GetGPUVirtualAddress();
-    commandList->SetComputeRootConstantBufferView(0U, constantsAddress);
-    commandList->SetComputeRootConstantBufferView(1U, constantsAddress + ConstantBufferSlotBytes);
-    commandList->SetComputeRootConstantBufferView(2U, constantsAddress + ConstantBufferSlotBytes * 2U);
-    commandList->SetComputeRootDescriptorTable(4U, _topologyUavRange.Gpu);
-
-    const CbtOccupancyLayout& occupancy = topology.Layout.Occupancy;
-    CapacityPipelines& pipelines = _capacityPipelines[CapacityIndex(occupancy.Capacity)];
-    // Pass 1: 清零逐帧任务、验证和 GPU-owned draw/dispatch 计数。
-    commandList->SetPipelineState(pipelines.Reset.Get());
-    commandList->Dispatch(1U, 1U, 1U);
-    UavBarrier(commandList);
-
-    // Pass 2: ReducePre 把 occupancy bitfield 转换为最后一层 tree 计数。
-    commandList->SetPipelineState(pipelines.ReducePre.Get());
-    commandList->Dispatch(DispatchCount(occupancy.LastTreeNodeCount), 1U, 1U);
-    UavBarrier(commandList, resources.OccupancyTree);
-    // Pass 3: ReduceFirst 在各 subtree 内向根方向归约。
-    commandList->SetPipelineState(pipelines.ReduceFirst.Get());
-    commandList->Dispatch(occupancy.SubtreeCount, 1U, 1U);
-    UavBarrier(commandList, resources.OccupancyTree);
-    // Pass 4: ReduceSecond 汇总 subtree 根，最终更新 OCBT 全局根计数。
-    commandList->SetPipelineState(pipelines.ReduceSecond.Get());
-    commandList->Dispatch(1U, 1U, 1U);
-    UavBarrier(commandList, resources.OccupancyTree);
-
     const BootstrapConstants bootstrapConstants{
         topology.Layout.TotalElementCount,
         topology.Layout.BaseElementOffset,
         CbtBaseBisectorCount,
         input.Settings.TerrainSize,
     };
-    // 从这里切换到仓库 bootstrap 签名；生产表仍保持分配并由下一帧复用。
     commandList->SetComputeRootSignature(_bootstrapRootSignature.Get());
     commandList->SetComputeRoot32BitConstants(0U, 4U, &bootstrapConstants, 0U);
     commandList->SetComputeRootShaderResourceView(1U, resources.HeapIds->GetGPUVirtualAddress());
@@ -645,20 +797,10 @@ bool D3D12CbtE0Pipeline::RecordFrame(
     commandList->SetComputeRootUnorderedAccessView(9U, _classificationPositions->GetGPUVirtualAddress());
     commandList->SetComputeRootUnorderedAccessView(10U, _renderVertices->GetGPUVirtualAddress());
 
-    // Pass 5: Indexation 扫描 heap ids，在 GPU 上重建 active/visible/modified 列表。
-    // append 计数直接写入 draw state，CPU 不读取活动三角形数量。
-    commandList->SetPipelineState(_indexationPipeline.Get());
-    commandList->Dispatch(DispatchCount(topology.Layout.TotalElementCount), 1U, 1U);
-    UavBarrier(commandList);
-    // Pass 6: PrepareIndirect 把活动数量转换为 draw 和三组 dispatch 参数。
-    commandList->SetPipelineState(_prepareIndirectPipeline.Get());
-    commandList->Dispatch(1U, 1U, 1U);
-    UavBarrier(commandList);
-
+    // Classify 必须看到已初始化的三子位置和父位置 因此平面 Bootstrap 位于首轮分类之前
     if (rebuildGeometry)
     {
-        // E0 拓扑固定为六个 base bisector，只有首次创建或 terrain size 改变才重建几何。
-        // 未来 E1 split/merge 会改为按 modified list 间接派发，而不是走此固定 dispatch。
+        Transition(commandList, resources.BaseControlPoints, _baseControlPointState, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
         Transition(commandList, _classificationPositions.Get(), _classificationPositionState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
         Transition(commandList, _renderVertices.Get(), _renderVertexState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
         commandList->SetPipelineState(_baseGeometryPipeline.Get());
@@ -666,9 +808,104 @@ bool D3D12CbtE0Pipeline::RecordFrame(
         UavBarrier(commandList, _classificationPositions.Get());
         UavBarrier(commandList, _renderVertices.Get());
     }
+    Transition(commandList, _classificationPositions.Get(), _classificationPositionState, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    Transition(commandList, _renderVertices.Get(), _renderVertexState, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
 
-    // 发布阶段把列表和顶点交给 vertex shader，把命令交给 ExecuteIndirect。
-    // 这些 transition 同时构成 compute 写入到 graphics/indirect 读取的可见性边界。
+    Transition(commandList, resources.ActiveIndices, _activeIndexState, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    Transition(commandList, resources.GeometryDispatchCommands, _geometryDispatchState, D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT);
+    Transition(commandList, resources.HeapIds, _heapIdState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    Transition(commandList, resources.BisectorData, _bisectorDataState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    Transition(commandList, resources.Classification, _classificationState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    Transition(commandList, resources.TopologyDispatchCommands, _topologyDispatchState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    Transition(commandList, resources.IndirectDrawState, _drawState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+
+    commandList->SetComputeRootSignature(_topologyRootSignature.Get());
+    const D3D12_GPU_VIRTUAL_ADDRESS constantsAddress = _constantBuffers[frameIndex]->GetGPUVirtualAddress();
+    commandList->SetComputeRootConstantBufferView(0U, constantsAddress);
+    commandList->SetComputeRootConstantBufferView(1U, constantsAddress + ConstantBufferSlotBytes);
+    commandList->SetComputeRootConstantBufferView(2U, constantsAddress + ConstantBufferSlotBytes * 2U);
+    commandList->SetComputeRootDescriptorTable(3U, _topologySrvRange.Gpu);
+    commandList->SetComputeRootDescriptorTable(4U, _topologyUavRange.Gpu);
+
+    const CbtOccupancyLayout& occupancy = topology.Layout.Occupancy;
+    CapacityPipelines& pipelines = _capacityPipelines[CapacityIndex(occupancy.Capacity)];
+    commandList->SetPipelineState(pipelines.Reset.Get());
+    commandList->Dispatch(1U, 1U, 1U);
+    UavBarrier(commandList);
+
+    // 上一帧 PrepareIndirect 的第一组 dispatch 与 drawState[9] 共同限定活动列表消费范围
+    commandList->SetPipelineState(pipelines.Classify.Get());
+    commandList->ExecuteIndirect(
+        _dispatchCommandSignature.Get(),
+        1U,
+        resources.GeometryDispatchCommands,
+        0U,
+        nullptr,
+        0U);
+    UavBarrier(commandList);
+
+    commandList->SetPipelineState(pipelines.PrepareClassificationIndirect.Get());
+    commandList->Dispatch(1U, 1U, 1U);
+    UavBarrier(commandList, resources.TopologyDispatchCommands);
+    Transition(
+        commandList,
+        resources.TopologyDispatchCommands,
+        _topologyDispatchState,
+        D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT);
+
+    // 只复制两个计数头到当前 frame readback 映射发生在该 frame index 下次完成复用时
+    Transition(commandList, resources.Classification, _classificationState, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    commandList->CopyBufferRegion(
+        _classificationReadbacks[frameIndex].Get(),
+        0U,
+        resources.Classification,
+        0U,
+        ClassificationReadbackBytes);
+    Transition(commandList, resources.Classification, _classificationState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    _classificationReadbackPending[frameIndex] = true;
+    _classificationReadbackGenerations[frameIndex] = _topologyFrameGeneration + 1U;
+    _classificationValidationPending[frameIndex] = input.Settings.EnableTopologyValidation;
+    _expectedSplitCandidateCounts[frameIndex] = expectedSplitCandidateCount;
+    _expectedSimplifyCandidateCounts[frameIndex] = expectedSimplifyCandidateCount;
+
+    commandList->SetPipelineState(pipelines.ReducePre.Get());
+    commandList->Dispatch(DispatchCount(occupancy.LastTreeNodeCount), 1U, 1U);
+    UavBarrier(commandList, resources.OccupancyTree);
+    commandList->SetPipelineState(pipelines.ReduceFirst.Get());
+    commandList->Dispatch(occupancy.SubtreeCount, 1U, 1U);
+    UavBarrier(commandList, resources.OccupancyTree);
+    commandList->SetPipelineState(pipelines.ReduceSecond.Get());
+    commandList->Dispatch(1U, 1U, 1U);
+    UavBarrier(commandList, resources.OccupancyTree);
+
+    Transition(commandList, resources.ActiveIndices, _activeIndexState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    Transition(commandList, resources.VisibleIndices, _visibleIndexState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    Transition(commandList, resources.ModifiedIndices, _modifiedIndexState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    Transition(commandList, resources.GeometryDispatchCommands, _geometryDispatchState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    Transition(commandList, resources.HeapIds, _heapIdState, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    Transition(commandList, resources.BisectorData, _bisectorDataState, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    Transition(commandList, resources.BaseControlPoints, _baseControlPointState, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+
+    commandList->SetComputeRootSignature(_bootstrapRootSignature.Get());
+    commandList->SetComputeRoot32BitConstants(0U, 4U, &bootstrapConstants, 0U);
+    commandList->SetComputeRootShaderResourceView(1U, resources.HeapIds->GetGPUVirtualAddress());
+    commandList->SetComputeRootShaderResourceView(2U, resources.BisectorData->GetGPUVirtualAddress());
+    commandList->SetComputeRootShaderResourceView(3U, resources.BaseControlPoints->GetGPUVirtualAddress());
+    commandList->SetComputeRootUnorderedAccessView(4U, resources.ActiveIndices->GetGPUVirtualAddress());
+    commandList->SetComputeRootUnorderedAccessView(5U, resources.VisibleIndices->GetGPUVirtualAddress());
+    commandList->SetComputeRootUnorderedAccessView(6U, resources.ModifiedIndices->GetGPUVirtualAddress());
+    commandList->SetComputeRootUnorderedAccessView(7U, resources.IndirectDrawState->GetGPUVirtualAddress());
+    commandList->SetComputeRootUnorderedAccessView(8U, resources.GeometryDispatchCommands->GetGPUVirtualAddress());
+    commandList->SetComputeRootUnorderedAccessView(9U, _classificationPositions->GetGPUVirtualAddress());
+    commandList->SetComputeRootUnorderedAccessView(10U, _renderVertices->GetGPUVirtualAddress());
+
+    commandList->SetPipelineState(_indexationPipeline.Get());
+    commandList->Dispatch(DispatchCount(topology.Layout.TotalElementCount), 1U, 1U);
+    UavBarrier(commandList);
+    commandList->SetPipelineState(_prepareIndirectPipeline.Get());
+    commandList->Dispatch(1U, 1U, 1U);
+    UavBarrier(commandList);
+
     Transition(commandList, resources.ActiveIndices, _activeIndexState, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     Transition(commandList, resources.VisibleIndices, _visibleIndexState, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     Transition(commandList, resources.ModifiedIndices, _modifiedIndexState, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
@@ -677,7 +914,6 @@ bool D3D12CbtE0Pipeline::RecordFrame(
     Transition(commandList, _classificationPositions.Get(), _classificationPositionState, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     Transition(commandList, _renderVertices.Get(), _renderVertexState, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
 
-    // 仅在整条事务成功记录后递增；快速烟测用它证明静止与纯旋转帧都被调度。
     ++_topologyFrameGeneration;
     if (errorMessage != nullptr)
     {
@@ -709,6 +945,21 @@ std::size_t D3D12CbtE0Pipeline::ClassificationPositionCapacityBytes() const
 std::uint64_t D3D12CbtE0Pipeline::TopologyFrameGeneration() const
 {
     return _topologyFrameGeneration;
+}
+
+std::uint32_t D3D12CbtE0Pipeline::LastSplitCandidateCount() const
+{
+    return _lastSplitCandidateCount;
+}
+
+std::uint32_t D3D12CbtE0Pipeline::LastSimplifyCandidateCount() const
+{
+    return _lastSimplifyCandidateCount;
+}
+
+std::uint64_t D3D12CbtE0Pipeline::ClassificationSampleGeneration() const
+{
+    return _classificationSampleGeneration;
 }
 
 bool D3D12CbtE0Pipeline::IsInitialized() const

@@ -70,6 +70,7 @@ if(PARALLEL_ROAM_BUILD_APP)
                 src/algorithms/TerrainLodView.cpp
                 src/algorithms/cbt_2024/Cbt2024Support.cpp
                 src/algorithms/cbt_2024/CbtBisectorTopology.cpp
+                src/algorithms/cbt_2024/CbtClassification.cpp
                 src/algorithms/cbt_2024/CbtOccupancyTree.cpp
                 src/algorithms/classic_roam/ClassicRoamTerrainLodAlgorithm.cpp
                 src/algorithms/classic_roam/ClassicRoamMeshBuilder.cpp
@@ -118,6 +119,7 @@ if(PARALLEL_ROAM_BUILD_APP)
                 src/algorithms/TerrainLodView.cpp
                 src/algorithms/cbt_2024/Cbt2024Support.cpp
                 src/algorithms/cbt_2024/CbtBisectorTopology.cpp
+                src/algorithms/cbt_2024/CbtClassification.cpp
                 src/algorithms/cbt_2024/CbtOccupancyTree.cpp
                 src/algorithms/cbt_2024/d3d12/D3D12CbtBaseTopology.cpp
                 src/algorithms/cbt_2024/d3d12/D3D12CbtE0Pipeline.cpp
@@ -311,13 +313,13 @@ if(PARALLEL_ROAM_BUILD_APP)
             parallel_roam_dx12_cbt_ocbt_shaders
             DEPENDS ${PARALLEL_ROAM_DX12_CBT_OCBT_SHADERS})
 
-        set(PARALLEL_ROAM_CBT_TOPOLOGY_ENTRIES CSResetE0 CSReducePre CSReduceFirst CSReduceSecond)
-        set(PARALLEL_ROAM_CBT_TOPOLOGY_SUFFIXES ResetE0 ReducePre ReduceFirst ReduceSecond)
+        set(PARALLEL_ROAM_CBT_TOPOLOGY_ENTRIES CSResetE0 CSClassify CSPrepareClassificationIndirect CSReducePre CSReduceFirst CSReduceSecond)
+        set(PARALLEL_ROAM_CBT_TOPOLOGY_SUFFIXES ResetE0 Classify PrepareClassificationIndirect ReducePre ReduceFirst ReduceSecond)
         set(PARALLEL_ROAM_DX12_CBT_TOPOLOGY_SHADERS)
         foreach(PARALLEL_ROAM_CBT_CAPACITY_INDEX RANGE 0 3)
             list(GET PARALLEL_ROAM_CBT_OCBT_CAPACITY_NAMES ${PARALLEL_ROAM_CBT_CAPACITY_INDEX} PARALLEL_ROAM_CBT_CAPACITY_NAME)
             list(GET PARALLEL_ROAM_CBT_OCBT_CAPACITY_VALUES ${PARALLEL_ROAM_CBT_CAPACITY_INDEX} PARALLEL_ROAM_CBT_CAPACITY_VALUE)
-            foreach(PARALLEL_ROAM_CBT_ENTRY_INDEX RANGE 0 3)
+            foreach(PARALLEL_ROAM_CBT_ENTRY_INDEX RANGE 0 5)
                 list(GET PARALLEL_ROAM_CBT_TOPOLOGY_ENTRIES ${PARALLEL_ROAM_CBT_ENTRY_INDEX} PARALLEL_ROAM_CBT_ENTRY)
                 list(GET PARALLEL_ROAM_CBT_TOPOLOGY_SUFFIXES ${PARALLEL_ROAM_CBT_ENTRY_INDEX} PARALLEL_ROAM_CBT_SUFFIX)
                 set(PARALLEL_ROAM_CBT_TOPOLOGY_SHADER

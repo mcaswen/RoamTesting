@@ -459,6 +459,9 @@ TerrainRenderStats TerrainRenderer::Stats() const
     stats.TerrainLodAlgorithm = _settings.TerrainLodAlgorithm;
     stats.TerrainLodStatusMessage = _terrainLodStatusMessage;
     stats.GpuTopologyFrameGeneration = _terrainLodStats.GpuTopologyFrameGeneration;
+    stats.GpuClassificationSampleGeneration = _terrainLodStats.GpuClassificationSampleGeneration;
+    stats.CbtSplitCandidateCount = _terrainLodStats.SplitTopologyCandidateCount;
+    stats.CbtSimplifyCandidateCount = _terrainLodStats.MergeTopologyCandidateCount;
     stats.RoamMaxDepthSetting = _settings.RoamMaxDepth;
     stats.RoamScreenSpaceSplitThresholdPixels = _settings.RoamScreenSpaceSplitThresholdPixels;
     stats.RoamScreenSpaceMergeThresholdPixels = _settings.RoamScreenSpaceMergeThresholdPixels;

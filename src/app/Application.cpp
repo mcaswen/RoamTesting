@@ -1,6 +1,7 @@
 #include "app/Application.h"
 
 #include "algorithms/cbt_2024/Cbt2024Support.h"
+#include "algorithms/cbt_2024/CbtBisectorTopology.h"
 
 #if defined(PARALLEL_ROAM_GRAPHICS_API_D3D12)
 #include "algorithms/cbt_2024/d3d12/D3D12CbtBaseTopology.h"
@@ -130,6 +131,7 @@ void Application::EnableCbtProceduralSmokeTest()
     _cbtProceduralSmokeTestEnabled = true;
     _terrainPanelState.UseTerrainLod = true;
     _terrainPanelState.TerrainLodAlgorithm = Algorithms::TerrainLodAlgorithmId::Cbt2024;
+    _terrainPanelState.RoamEnableTopologyValidation = true;
 }
 
 void Application::EnableCbtOccupancyTreeSmokeTest()
@@ -323,6 +325,12 @@ int Application::Run(int maxFrameCount)
 
     const bool automaticBenchmarkIncomplete =
         _automaticRuntimeBenchmarkEnabled && !_automaticRuntimeBenchmarkCompleted;
+    if (_cbtProceduralSmokeTestEnabled &&
+        (!_cbtObservedClassificationSample || !_cbtObservedSplitCandidate))
+    {
+        std::cerr << "CBT E1 smoke test did not observe a completed classification sample with split candidates\n";
+        _terrainLodSmokeTestFailed = true;
+    }
     const int exitCode =
         (_terrainLodSmokeTestFailed || _automaticRuntimeBenchmarkFailed || automaticBenchmarkIncomplete) ? 1 : 0;
     Shutdown();
@@ -395,7 +403,7 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
 
     _graphicsBackend->BeginImGuiFrame(_guiLayer);
 
-    // E0 快速烟测前半段保持静止，后半段只旋转，以覆盖两类 EveryFrame 调度输入。
+    // E1 快速烟测前半段保持静止，后半段只旋转，以覆盖分类的两类 EveryFrame 输入。
     if (_cbtProceduralSmokeTestEnabled && _cbtProceduralSmokeFrameCount >= 150U)
     {
         _camera.SetPose(
@@ -448,11 +456,37 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
         if (generation == 0U ||
             (_lastCbtTopologyFrameGeneration != 0U && generation != _lastCbtTopologyFrameGeneration + 1U))
         {
-            std::cerr << "CBT E0 topology frame generation did not advance exactly once per frame: previous="
+            std::cerr << "CBT E1 topology frame generation did not advance exactly once per frame: previous="
                       << _lastCbtTopologyFrameGeneration << ", current=" << generation << '\n';
             _terrainLodSmokeTestFailed = true;
         }
         _lastCbtTopologyFrameGeneration = generation;
+
+        const std::uint64_t sampleGeneration = terrainStats.GpuClassificationSampleGeneration;
+        if (sampleGeneration > generation ||
+            (_lastCbtClassificationSampleGeneration != 0U &&
+             sampleGeneration != _lastCbtClassificationSampleGeneration + 1U))
+        {
+            std::cerr << "CBT E1 classification sample generation is invalid: previous="
+                      << _lastCbtClassificationSampleGeneration << ", current=" << sampleGeneration
+                      << ", topology=" << generation << '\n';
+            _terrainLodSmokeTestFailed = true;
+        }
+        if (sampleGeneration != 0U)
+        {
+            _cbtObservedClassificationSample = true;
+            _lastCbtClassificationSampleGeneration = sampleGeneration;
+        }
+        if (terrainStats.CbtSplitCandidateCount > Algorithms::Cbt2024::CbtBaseBisectorCount ||
+            terrainStats.CbtSimplifyCandidateCount > Algorithms::Cbt2024::CbtBaseBisectorCount)
+        {
+            std::cerr << "CBT E1 classification counters exceed the active base list: split="
+                      << terrainStats.CbtSplitCandidateCount << ", simplify="
+                      << terrainStats.CbtSimplifyCandidateCount << '\n';
+            _terrainLodSmokeTestFailed = true;
+        }
+        _cbtObservedSplitCandidate =
+            _cbtObservedSplitCandidate || terrainStats.CbtSplitCandidateCount > 0U;
         ++_cbtProceduralSmokeFrameCount;
     }
     Gui::DebugOverlayData debugData{};

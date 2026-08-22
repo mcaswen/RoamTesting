@@ -165,14 +165,39 @@ target_link_libraries(
 add_test(NAME terrain_lod_contract COMMAND parallel_roam_terrain_lod_contract_tests)
 set_tests_properties(terrain_lod_contract PROPERTIES LABELS "unit;cbt" TIMEOUT 30)
 
+add_executable(
+    parallel_roam_cbt_classification_tests
+    CbtClassificationTests.cpp
+    ../src/algorithms/TerrainLodView.cpp
+    ../src/algorithms/cbt_2024/CbtClassification.cpp
+    ../src/algorithms/cbt_2024/CbtBisectorTopology.cpp
+    ../src/algorithms/cbt_2024/CbtOccupancyTree.cpp
+)
+
+target_include_directories(
+    parallel_roam_cbt_classification_tests
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+)
+
+target_link_libraries(
+    parallel_roam_cbt_classification_tests
+    PRIVATE
+        parallel_roam_project_options
+        parallel_roam_project_warnings
+        ParallelROAM::GLM
+)
+
+add_test(NAME cbt_classification COMMAND parallel_roam_cbt_classification_tests)
+set_tests_properties(cbt_classification PROPERTIES LABELS "unit;cbt" TIMEOUT 30)
+
 if(TARGET parallel_roam)
     if(WIN32 AND PARALLEL_ROAM_GRAPHICS_API_NORMALIZED STREQUAL "D3D12")
         add_test(
-            NAME cbt_procedural_e0_quick
+            NAME cbt_procedural_e1_quick
             COMMAND $<TARGET_FILE:parallel_roam> --cbt-procedural-smoke-test
         )
         set_tests_properties(
-            cbt_procedural_e0_quick
+            cbt_procedural_e1_quick
             PROPERTIES
                 WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."
                 LABELS "gpu-quick;cbt;integration"

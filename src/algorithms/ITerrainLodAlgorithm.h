@@ -315,6 +315,8 @@ struct TerrainLodStats
 {
     // GPU 驱动算法每完成一次帧内拓扑事务就递增；CPU 算法保持为零。
     std::uint64_t GpuTopologyFrameGeneration{0U};
+    // 延迟分类回读所对应的 GPU 帧代次；零表示尚无已完成样本。
+    std::uint64_t GpuClassificationSampleGeneration{0U};
     std::size_t ActiveTriangleCount{0};
     std::size_t ActiveNodeCount{0};
     std::size_t OriginalTriangleCount{0};

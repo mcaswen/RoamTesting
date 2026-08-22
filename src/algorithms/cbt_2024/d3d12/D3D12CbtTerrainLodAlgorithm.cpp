@@ -42,7 +42,10 @@ void FillRenderPacket(
     const CbtBaseTopology& topology = state.Topology.Topology();
     const D3D12CbtTopologyResourceView resources = state.Topology.Resources();
     outPacket.Mode = TerrainLodRenderMode::GpuProceduralIndirect;
-    outPacket.StatusMessage = "CBT 2024 E0 GPU bootstrap";
+    outPacket.StatusMessage =
+        "CBT 2024 E1 classify: split=" + std::to_string(state.Pipeline.LastSplitCandidateCount()) +
+        " simplify=" + std::to_string(state.Pipeline.LastSimplifyCandidateCount()) +
+        " sample=" + std::to_string(state.Pipeline.ClassificationSampleGeneration());
     outPacket.NativeResourceApi = TerrainLodNativeResourceApi::Direct3D12;
     outPacket.NativeVertexBuffer = reinterpret_cast<std::uintptr_t>(state.Pipeline.RenderVertices());
     outPacket.NativeActiveLeafBuffer = reinterpret_cast<std::uintptr_t>(resources.ActiveIndices);
@@ -74,9 +77,9 @@ TerrainLodAlgorithmInfo D3D12CbtTerrainLodAlgorithm::Info() const
 {
     return TerrainLodAlgorithmInfo{
         TerrainLodAlgorithmId::Cbt2024,
-        "cbt-2024-e0",
-        "CBT 2024（E0）",
-        "GPU 常驻基础拓扑、生产 OCBT Reduce 和每帧间接绘制 Bootstrap",
+        "cbt-2024-e1",
+        "CBT 2024（E1）",
+        "GPU 常驻基础拓扑、官方面积分类、候选间接工作量和每帧 Bootstrap",
     };
 }
 
@@ -113,7 +116,7 @@ bool D3D12CbtTerrainLodAlgorithm::BuildRenderData(
     }
     if (!_backend->FrameOpen() || _backend->CommandList() == nullptr)
     {
-        SetError(errorMessage, "CBT 2024 E0 must record between BeginFrame and Present");
+        SetError(errorMessage, "CBT 2024 E1 must record between BeginFrame and Present");
         return false;
     }
     const Cbt2024Availability availability = QueryCbt2024Availability(*_backend);
@@ -124,7 +127,7 @@ bool D3D12CbtTerrainLodAlgorithm::BuildRenderData(
     }
     if (input.HeightMap == nullptr || !input.HeightMap->IsValid())
     {
-        SetError(errorMessage, "CBT 2024 E0 requires a valid terrain input");
+        SetError(errorMessage, "CBT 2024 E1 requires a valid terrain input");
         return false;
     }
 
@@ -169,16 +172,19 @@ bool D3D12CbtTerrainLodAlgorithm::BuildRenderData(
 
     _stats.ActiveTriangleCount = CbtBaseBisectorCount;
     _stats.GpuTopologyFrameGeneration = _state->Pipeline.TopologyFrameGeneration();
+    _stats.GpuClassificationSampleGeneration = _state->Pipeline.ClassificationSampleGeneration();
     _stats.ActiveNodeCount = CbtBaseBisectorCount;
     _stats.OriginalTriangleCount = CbtBaseBisectorCount;
+    _stats.SplitTopologyCandidateCount = _state->Pipeline.LastSplitCandidateCount();
+    _stats.MergeTopologyCandidateCount = _state->Pipeline.LastSimplifyCandidateCount();
     _stats.MaxActiveDepth = static_cast<int>(_state->Topology.Topology().BaseDepth);
-    _stats.CpuGpuReadbackBytes = 0U;
+    _stats.CpuGpuReadbackBytes = sizeof(std::uint32_t) * 2U;
     _stats.CpuUpdateMilliseconds = buildTimer.Stop();
 
     FillRenderPacket(*_state, outPacket);
     if (!outPacket.HasConsistentResourceContract())
     {
-        SetError(errorMessage, "CBT 2024 E0 produced an inconsistent GPU render packet");
+        SetError(errorMessage, "CBT 2024 E1 produced an inconsistent GPU render packet");
         return false;
     }
     if (errorMessage != nullptr)
