@@ -42,8 +42,8 @@ D3D12_RESOURCE_DESC ReadbackDescription()
 }
 } // namespace
 
-static_assert(D3D12CbtDiagnostics::DiagnosticReadbackBytes == 112U);
-static_assert(D3D12CbtDiagnostics::ValidationReadbackBytes == 304U);
+static_assert(D3D12CbtDiagnostics::DiagnosticReadbackBytes == 136U);
+static_assert(D3D12CbtDiagnostics::ValidationReadbackBytes == 328U);
 
 bool D3D12CbtDiagnostics::Initialize(ID3D12Device* device, std::string* errorMessage)
 {
@@ -126,7 +126,7 @@ bool D3D12CbtDiagnostics::ConsumeCompleted(
     void* mapped = nullptr;
     if (FAILED(_readbacks[frameIndex]->Map(0U, &readRange, &mapped)))
     {
-        return LatchFault("Failed to map completed CBT E3 diagnostic counters", errorMessage);
+        return LatchFault("Failed to map completed CBT F diagnostic counters", errorMessage);
     }
     // 四段计数保持原始 UAV 字节布局，避免为诊断再增加 GPU packing pass。
     const auto* bytes = static_cast<const std::uint8_t*>(mapped);
@@ -140,7 +140,7 @@ bool D3D12CbtDiagnostics::ConsumeCompleted(
     const auto* memoryCounters = reinterpret_cast<const std::uint32_t*>(bytes + MemoryCounterOffset);
     _snapshot.AllocatedSplitSlotCount = memoryCounters[0];
     _snapshot.RemainingDynamicSlotCount = memoryCounters[1];
-    // validation[0..1] 是首错 code/slot，[2..11] 是无损诊断统计。
+    // validation[0..1] 是首错 code/slot，后续字保存 split、merge 和帧前活动数。
     std::array<std::uint32_t, CbtValidationWordCount> validation{};
     std::memcpy(validation.data(), bytes + ValidationCounterOffset, sizeof(validation));
     _snapshot.DuplicateSplitClaimCount = validation[2];
@@ -153,6 +153,16 @@ bool D3D12CbtDiagnostics::ConsumeCompleted(
         validation.begin() + 8,
         _snapshot.BisectTemplateCounts.size(),
         _snapshot.BisectTemplateCounts.begin());
+    _snapshot.PreparedSimplificationCount = validation[12];
+    _snapshot.ReleasedDynamicSlotCount = validation[13];
+    _snapshot.SimplifyPropagationCount = validation[14];
+    _snapshot.PairMergeCount = validation[15];
+    _snapshot.QuadMergeCount = validation[16];
+    // Merge groups partition the accepted simplify list rather than individual nodes.
+    // A pair group removes one sibling, while a facing-pair group removes two siblings.
+    // The frame-start root lets delayed readback verify the net split/merge occupancy delta.
+    // These relations detect duplicate submission even when every surviving heapID is valid.
+    // Neighbor reciprocity remains shader-side because copying the full topology would stall the frame.
     const D3D12_RANGE noWrite{0U, 0U};
     // 先发布样本代次并释放槽位；任何失败随后都会锁存并阻止继续录制。
     _snapshot.SampleGeneration = _generations[frameIndex];
@@ -160,7 +170,7 @@ bool D3D12CbtDiagnostics::ConsumeCompleted(
     if (validation[0] != 0U)
     {
         const std::string message =
-            "CBT E3 shader validation failed at generation " +
+            "CBT F shader validation failed at generation " +
             std::to_string(_snapshot.SampleGeneration) + ": code/slot=" +
             std::to_string(validation[0]) + "/" + std::to_string(validation[1]);
         _readbacks[frameIndex]->Unmap(0U, &noWrite);
@@ -173,14 +183,21 @@ bool D3D12CbtDiagnostics::ConsumeCompleted(
     std::memcpy(&drawState, bytes + DrawStateReadbackOffset, sizeof(drawState));
     _snapshot.ActiveDynamicSlotCount = occupancyRoot;
     _snapshot.IndexedActiveCount = drawState.ActiveBisectorCount;
+    const std::uint32_t expectedDynamic =
+        validation[17] + _snapshot.CommittedDynamicSlotCount - _snapshot.ReleasedDynamicSlotCount;
     if (_snapshot.CommittedDynamicSlotCount != _snapshot.AllocatedSplitSlotCount ||
+        _snapshot.PreparedSimplificationCount !=
+            _snapshot.PairMergeCount + _snapshot.QuadMergeCount ||
+        _snapshot.ReleasedDynamicSlotCount !=
+            _snapshot.PairMergeCount + 2U * _snapshot.QuadMergeCount ||
+        occupancyRoot != expectedDynamic ||
         drawState.Active.VertexCountPerInstance / 3U != drawState.ActiveBisectorCount ||
         drawState.ActiveBisectorCount != occupancyRoot + CbtBaseBisectorCount ||
         drawState.Visible.VertexCountPerInstance > drawState.Active.VertexCountPerInstance ||
         drawState.ModifiedPositionCount / 4U > drawState.ActiveBisectorCount)
     {
         const std::string message =
-            "CBT E3 occupancy/indexation mismatch at generation " +
+            "CBT F occupancy/indexation mismatch at generation " +
             std::to_string(_snapshot.SampleGeneration);
         _readbacks[frameIndex]->Unmap(0U, &noWrite);
         return LatchFault(message, errorMessage);
@@ -273,7 +290,7 @@ bool D3D12CbtDiagnostics::ConsumeCompleted(
             if (occupancyRoot != expected.AllocatedSplitSlotCount)
             {
                 const std::string message =
-                    "CBT E3 committed OCBT root mismatch: expected=" +
+                    "CBT F committed OCBT root mismatch: expected=" +
                     std::to_string(expected.AllocatedSplitSlotCount) + ", GPU=" +
                     std::to_string(occupancyRoot);
                 _readbacks[frameIndex]->Unmap(0U, &noWrite);

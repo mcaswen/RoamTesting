@@ -215,6 +215,14 @@ private:
     bool _cbtObservedClassificationSample{false};
     bool _cbtObservedSplitCandidate{false};
     std::array<bool, 4> _cbtObservedBisectTemplates{};
+    bool _cbtObservedMerge{false};
+    bool _cbtObservedSplitAfterMerge{false};
+    bool _cbtSmokeInitialPoseCaptured{false};
+    glm::vec3 _cbtSmokeInitialCameraPosition{0.0F};
+    glm::vec3 _cbtSmokeInitialCameraForward{0.0F, 0.0F, -1.0F};
+    float _cbtSmokeInitialYawDegrees{0.0F};
+    float _cbtSmokeInitialPitchDegrees{0.0F};
+    int _cbtSmokeInitialMaxDepth{14};
     bool _cbtOccupancyTreeSmokeTestEnabled{false};
     bool _cbtBaseTopologySmokeTestEnabled{false};
     bool _automaticRuntimeBenchmarkEnabled{false};

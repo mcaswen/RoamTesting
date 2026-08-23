@@ -18,7 +18,7 @@
 namespace ParallelRoam::Algorithms::Cbt2024::D3D12
 {
 /// <summary>
-/// E0-E3 的正式 GPU 事务：分类、规划、四模板提交、传播、Reduce、Indexation 和增量几何。
+/// E0-F 的正式 GPU 事务：分类、split/merge、传播、Reduce、Indexation 和增量几何。
 ///
 /// 生命周期约束：
 /// - Topology 由 D3D12CbtTerrainState 持有，并且必须比本对象更晚销毁；
@@ -31,7 +31,8 @@ namespace ParallelRoam::Algorithms::Cbt2024::D3D12
 /// - Reset 清空 transient task、validation、draw 和 dispatch 状态；
 /// - Classify 消费上一帧活动列表并生成 split/simplify 候选；
 /// - PrepareClassificationIndirect 生成后续拓扑 pass 的间接工作量；
-/// - 三段生产 Reduce 从 occupancy bitfield 重建 OCBT 计数；
+/// - PrepareSimplify、Simplify 和传播在同一邻接代次回收 sibling 槽位；
+/// - 三段生产 Reduce 从 split/merge 后的 occupancy bitfield 重建 OCBT 计数；
 /// - Indexation 在 GPU 上派生活动、可见和修改列表；
 /// - PrepareIndirect 生成 draw/dispatch 参数；
 /// - 可选 base geometry pass 生成与仓库渲染器兼容的 52-byte 顶点；
@@ -80,6 +81,16 @@ public:
     [[nodiscard]] std::uint32_t LastCommittedDynamicSlotCount() const;
     [[nodiscard]] std::uint32_t LastSplitPropagationCount() const;
     [[nodiscard]] const std::array<std::uint32_t, 4>& LastBisectTemplateCounts() const;
+    // Number of pair or facing-pair groups accepted after split commit.
+    [[nodiscard]] std::uint32_t LastPreparedSimplificationCount() const;
+    // Number of dynamic sibling slots cleared and returned to the free hierarchy.
+    [[nodiscard]] std::uint32_t LastReleasedDynamicSlotCount() const;
+    // Number of external neighbor references repaired after sibling deletion.
+    [[nodiscard]] std::uint32_t LastSimplifyPropagationCount() const;
+    // Accepted two-node groups; each group releases one dynamic slot.
+    [[nodiscard]] std::uint32_t LastPairMergeCount() const;
+    // Accepted four-node groups; each group releases two dynamic slots.
+    [[nodiscard]] std::uint32_t LastQuadMergeCount() const;
     [[nodiscard]] std::uint32_t LastActiveDynamicSlotCount() const;
     [[nodiscard]] std::uint32_t LastIndexedActiveCount() const;
     [[nodiscard]] std::uint64_t ClassificationSampleGeneration() const;
@@ -101,10 +112,15 @@ private:
         Microsoft::WRL::ComPtr<ID3D12PipelineState> Bisect; // 提交四模板、heapID 和 OCBT 位。
         Microsoft::WRL::ComPtr<ID3D12PipelineState> PreparePropagationIndirect; // 发布传播调度。
         Microsoft::WRL::ComPtr<ID3D12PipelineState> PropagateBisect; // 修复外部邻居引用。
+        Microsoft::WRL::ComPtr<ID3D12PipelineState> PrepareSimplify; // 筛选两/四节点合法 merge。
+        Microsoft::WRL::ComPtr<ID3D12PipelineState> PrepareSimplifyIndirect; // 发布合法 merge 调度。
+        Microsoft::WRL::ComPtr<ID3D12PipelineState> Simplify; // 上移保留 heapID 并释放 sibling。
+        Microsoft::WRL::ComPtr<ID3D12PipelineState> PrepareSimplifyPropagationIndirect; // 发布 merge 传播调度。
+        Microsoft::WRL::ComPtr<ID3D12PipelineState> PropagateSimplify; // 修复被删除 sibling 的外部引用。
         Microsoft::WRL::ComPtr<ID3D12PipelineState> ReducePre; // 将最后一层位域归约成小树根。
         Microsoft::WRL::ComPtr<ID3D12PipelineState> ReduceFirst; // 每组归约一个固定大小子树。
         Microsoft::WRL::ComPtr<ID3D12PipelineState> ReduceSecond; // 汇总子树根并发布全局占用数。
-        Microsoft::WRL::ComPtr<ID3D12PipelineState> Validate; // 检查身份关系和双向邻接。
+        Microsoft::WRL::ComPtr<ID3D12PipelineState> Validate; // 检查身份关系、回收计数和双向邻接。
     };
 
     [[nodiscard]] bool CreateTopologyRootSignature(std::string* errorMessage);
@@ -157,7 +173,7 @@ private:
     D3D12_RESOURCE_STATES _drawState{D3D12_RESOURCE_STATE_UNORDERED_ACCESS}; // GPU 写与 renderer draw indirect。
     D3D12_RESOURCE_STATES _geometryDispatchState{D3D12_RESOURCE_STATE_UNORDERED_ACCESS}; // 上帧 Classify indirect 参数。
 
-    // generation 只统计成功记录的完整 E0-E3 帧事务。
+    // generation 只统计成功记录的完整 E0-F 帧事务。
     // 它用于测试和诊断，不决定 GPU draw 数量或资源生命周期。
     CbtOccupancyCapacity _capacity{CbtOccupancyCapacity::Capacity128K}; // 当前选中的特化档位。
     std::uint64_t _topologyFrameGeneration{0U}; // 成功记录的最新 GPU 事务代次。

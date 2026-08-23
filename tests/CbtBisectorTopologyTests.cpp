@@ -13,6 +13,7 @@ using ParallelRoam::Algorithms::Cbt2024::CbtHeapIdChild;
 using ParallelRoam::Algorithms::Cbt2024::CbtHeapIdDepth;
 using ParallelRoam::Algorithms::Cbt2024::CbtHeapIdParent;
 using ParallelRoam::Algorithms::Cbt2024::CbtOccupancyCapacity;
+using ParallelRoam::Algorithms::Cbt2024::CbtValidationWordCount;
 using ParallelRoam::Algorithms::Cbt2024::InvalidCbtBisectorIndex;
 using ParallelRoam::Algorithms::Cbt2024::ValidateCbtBaseTopology;
 
@@ -40,7 +41,9 @@ bool ValidateCapacity(CbtOccupancyCapacity capacity)
     valid &= Expect(layout.AllocationElementCount == 1U + layout.TotalElementCount, "allocation size mismatch");
     valid &= Expect(layout.PropagationElementCount == 2U + layout.TotalElementCount, "propagation size mismatch");
     valid &= Expect(layout.MemoryElementCount == 2U, "memory header size mismatch");
-    valid &= Expect(layout.ValidationElementCount == 12U, "validation and E3 diagnostics size mismatch");
+    valid &= Expect(
+        layout.ValidationElementCount == CbtValidationWordCount,
+        "validation and F diagnostics size mismatch");
     valid &= Expect(layout.DrawStateElementCount == 10U, "draw state must contain ten uints");
     valid &= Expect(layout.TopologyDispatchElementCount == 9U, "topology indirect scratch size mismatch");
     valid &= Expect(layout.GeometryDispatchElementCount == 9U, "geometry dispatch size mismatch");

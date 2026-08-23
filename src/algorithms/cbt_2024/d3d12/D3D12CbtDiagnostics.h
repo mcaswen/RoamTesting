@@ -46,6 +46,16 @@ struct D3D12CbtDiagnosticSnapshot
     std::uint32_t SplitPropagationCount{0U};
     // 模板顺序固定为 center、right、left、triple。
     std::array<std::uint32_t, 4> BisectTemplateCounts{};
+    // F merge 统计分别记录合法任务、释放槽、传播和两/四节点提交。
+    // A prepared group owns exactly one retained logical parent.
+    std::uint32_t PreparedSimplificationCount{0U};
+    // Released slots must equal pair groups plus twice the quad groups.
+    std::uint32_t ReleasedDynamicSlotCount{0U};
+    // Propagation count measures deleted-sibling references that required repair.
+    std::uint32_t SimplifyPropagationCount{0U};
+    // Pair and quad counters partition every accepted simplification group.
+    std::uint32_t PairMergeCount{0U};
+    std::uint32_t QuadMergeCount{0U};
     // OCBT 根只含动态槽位；draw state 的活动数还包含六个基础二分器。
     std::uint32_t ActiveDynamicSlotCount{0U};
     std::uint32_t IndexedActiveCount{CbtBaseBisectorCount};
@@ -63,7 +73,7 @@ public:
     static constexpr std::size_t AllocationCounterOffset = sizeof(std::uint32_t) * 2U;
     // memory 保存已分配槽数和提交后剩余预算。
     static constexpr std::size_t MemoryCounterOffset = sizeof(std::uint32_t) * 3U;
-    // validation 固定保留十二个 uint，兼容各 E3 pass 的原子诊断。
+    // validation 保留 split、merge、传播和帧前活动数的原子诊断。
     static constexpr std::size_t ValidationCounterOffset = sizeof(std::uint32_t) * 5U;
     // OCBT 根只在完整验证路径复制。
     static constexpr std::size_t OccupancyRootOffset =

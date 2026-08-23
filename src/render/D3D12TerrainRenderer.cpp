@@ -1007,6 +1007,11 @@ TerrainRenderStats TerrainRenderer::Stats() const
     stats.CbtCommittedDynamicSlotCount = _terrainLodStats.CbtCommittedDynamicSlotCount;
     stats.CbtSplitPropagationCount = _terrainLodStats.CbtSplitPropagationCount;
     stats.CbtBisectTemplateCounts = _terrainLodStats.CbtBisectTemplateCounts;
+    stats.CbtPreparedSimplificationCount = _terrainLodStats.CbtPreparedSimplificationCount;
+    stats.CbtReleasedDynamicSlotCount = _terrainLodStats.CbtReleasedDynamicSlotCount;
+    stats.CbtSimplifyPropagationCount = _terrainLodStats.CbtSimplifyPropagationCount;
+    stats.CbtPairMergeCount = _terrainLodStats.CbtPairMergeCount;
+    stats.CbtQuadMergeCount = _terrainLodStats.CbtQuadMergeCount;
     stats.RoamMaxDepthSetting = _settings.RoamMaxDepth;
     stats.RoamScreenSpaceSplitThresholdPixels = _settings.RoamScreenSpaceSplitThresholdPixels;
     stats.RoamScreenSpaceMergeThresholdPixels = _settings.RoamScreenSpaceMergeThresholdPixels;

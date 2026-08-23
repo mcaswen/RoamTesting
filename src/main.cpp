@@ -124,7 +124,7 @@ int main(int argc, char** argv)
         {
 #if defined(PARALLEL_ROAM_GRAPHICS_API_D3D12)
             cbtProceduralSmokeTest = true;
-            maxFrameCount = 300;
+            maxFrameCount = 480;
 #else
             parseError = "--cbt-procedural-smoke-test requires PARALLEL_ROAM_GRAPHICS_API=D3D12";
             break;

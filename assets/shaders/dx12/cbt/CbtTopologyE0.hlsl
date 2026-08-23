@@ -164,12 +164,13 @@ void CSResetE0(uint dispatchThreadId : SV_DispatchThreadID)
     CbtPropagation[1] = 0;
     CbtValidation[0] = 0;
     CbtValidation[1] = 0xffffffffu;
-    // E2 链统计后接 E3 commit、propagation 和四模板计数。
+    // E2/E3 统计后接 F merge 计数和帧前动态活动数。
     [unroll]
     for (uint diagnostic = 2u; diagnostic < CbtValidationWordCount; ++diagnostic)
     {
         CbtValidation[diagnostic] = 0u;
     }
+    CbtValidation[17] = CbtReadTreeCount(1u);
 
     // 两个 draw command 保留 InstanceCount=1 其余计数由本帧 Indexation 重建
     CbtDrawState[CbtDrawActiveVertexCountWord] = 0;
@@ -953,8 +954,284 @@ void CSPropagateBisectE3(uint dispatchId : SV_DispatchThreadID)
     CbtBisectorDataBuffer[currentId] = currentData;
 }
 
+void CbtAppendSimplification(uint physicalSlot)
+{
+    // The append index is the unique merge-group index, never a per-node work item.
+    // PrepareSimplify has already elected the minimum logical heapID for facing pairs.
+    uint targetLocation;
+    InterlockedAdd(CbtSimplification[0], 1u, targetLocation);
+    if (targetLocation < CbtTotalElementCount)
+    {
+        CbtSimplification[1u + targetLocation] = physicalSlot;
+        InterlockedAdd(CbtValidation[12], 1u);
+    }
+    else
+    {
+        CbtSetValidationError(28u, physicalSlot);
+    }
+}
+
 [numthreads(64, 1, 1)]
-void CSValidateE3(uint physicalSlot : SV_DispatchThreadID)
+void CSPrepareSimplifyF(uint dispatchId : SV_DispatchThreadID)
+{
+    // 第二组 classification indirect 参数遍历偶 heapID 的 simplify 候选。
+    // 同帧 split 可能已改变候选状态，因此不再满足 simplify 时直接跳过。
+    if (dispatchId >= CbtClassification[1])
+    {
+        return;
+    }
+    const uint currentId = CbtClassification[2u + CbtTotalElementCount + dispatchId];
+    if (currentId >= CbtTotalElementCount || CbtHeapIds[currentId] == 0u)
+    {
+        CbtSetValidationError(26u, currentId);
+        return;
+    }
+
+    const uint64_t currentHeapId = CbtHeapIds[currentId];
+    const CbtBisectorData currentData = CbtBisectorDataBuffer[currentId];
+    if ((currentHeapId & 1u) != 0u || currentData.BisectorState != CbtSimplifyElement)
+    {
+        return;
+    }
+    const uint currentDepth = CbtHeapDepth(currentHeapId);
+    const uint3 currentNeighbors = CbtLoadNextNeighbors(currentId);
+    const uint pairId = currentNeighbors.x;
+    if (pairId >= CbtTotalElementCount || CbtHeapIds[pairId] == 0u)
+    {
+        CbtSetValidationError(26u, currentId);
+        return;
+    }
+
+    const CbtBisectorData pairData = CbtBisectorDataBuffer[pairId];
+    const uint3 pairNeighbors = CbtLoadNextNeighbors(pairId);
+    if (CbtHeapDepth(CbtHeapIds[pairId]) != currentDepth ||
+        pairData.BisectorState != CbtSimplifyElement)
+    {
+        return;
+    }
+
+    const uint twinLowId = pairNeighbors.x;
+    const uint twinHighId = currentNeighbors.y;
+    if (twinLowId != CbtInvalidIndex)
+    {
+        if (twinLowId >= CbtTotalElementCount || twinHighId >= CbtTotalElementCount ||
+            CbtHeapIds[twinLowId] == 0u || CbtHeapIds[twinHighId] == 0u)
+        {
+            CbtSetValidationError(27u, currentId);
+            return;
+        }
+        // facing neighborhood 只允许逻辑 heapID 最小的一侧登记四节点 merge。
+        if (currentHeapId > CbtHeapIds[twinLowId])
+        {
+            return;
+        }
+        if (CbtHeapDepth(CbtHeapIds[twinLowId]) != currentDepth ||
+            CbtHeapDepth(CbtHeapIds[twinHighId]) != currentDepth ||
+            CbtBisectorDataBuffer[twinLowId].BisectorState != CbtSimplifyElement ||
+            CbtBisectorDataBuffer[twinHighId].BisectorState != CbtSimplifyElement)
+        {
+            return;
+        }
+    }
+    CbtAppendSimplification(currentId);
+}
+
+[numthreads(1, 1, 1)]
+void CSPrepareSimplifyIndirectF(uint dispatchThreadId : SV_DispatchThreadID)
+{
+    // PrepareSimplify 消费完 classification 计数后，第二组命令改为合法 merge 数。
+    CbtTopologyIndirect[3] = (CbtSimplification[0] + 63u) / 64u;
+    CbtTopologyIndirect[4] = 1u;
+    CbtTopologyIndirect[5] = 1u;
+}
+
+void CbtAppendSimplifyPropagation(uint physicalSlot)
+{
+    int targetLocation;
+    InterlockedAdd(CbtPropagation[1], 1, targetLocation);
+    if (targetLocation >= 0 && uint(targetLocation) < CbtTotalElementCount)
+    {
+        // split propagation 已经消费完成，merge 阶段可以从正文起点复用任务区。
+        CbtPropagation[2u + uint(targetLocation)] = int(physicalSlot);
+        InterlockedAdd(CbtValidation[14], 1u);
+    }
+    else
+    {
+        CbtSetValidationError(32u, physicalSlot);
+    }
+}
+
+void CbtReleaseMergedSlot(uint physicalSlot)
+{
+    if (physicalSlot >= CbtDynamicElementCount)
+    {
+        CbtSetValidationError(31u, physicalSlot);
+        return;
+    }
+    CbtHeapIds[physicalSlot] = 0u;
+    CbtSetBitAtomic(physicalSlot, false);
+    int previousFreeCount;
+    InterlockedAdd(CbtMemory[1], 1, previousFreeCount);
+    InterlockedAdd(CbtValidation[13], 1u);
+}
+
+[numthreads(64, 1, 1)]
+void CSSimplifyF(uint dispatchId : SV_DispatchThreadID)
+{
+    if (dispatchId >= CbtSimplification[0])
+    {
+        return;
+    }
+    const uint currentId = CbtSimplification[1u + dispatchId];
+    if (currentId >= CbtTotalElementCount || CbtHeapIds[currentId] == 0u)
+    {
+        CbtSetValidationError(29u, currentId);
+        return;
+    }
+
+    const uint3 currentNeighbors = CbtLoadNextNeighbors(currentId);
+    const uint pairId = currentNeighbors.x;
+    if (pairId >= CbtTotalElementCount || CbtHeapIds[pairId] == 0u)
+    {
+        CbtSetValidationError(29u, currentId);
+        return;
+    }
+    const uint3 pairNeighbors = CbtLoadNextNeighbors(pairId);
+    const uint twinLowId = pairNeighbors.x;
+    const uint twinHighId = currentNeighbors.y;
+    if (pairId >= CbtDynamicElementCount ||
+        (twinLowId != CbtInvalidIndex &&
+         (twinLowId >= CbtTotalElementCount || twinHighId >= CbtDynamicElementCount ||
+          CbtHeapIds[twinLowId] == 0u || CbtHeapIds[twinHighId] == 0u)))
+    {
+        CbtSetValidationError(30u, currentId);
+        return;
+    }
+
+    CbtHeapIds[currentId] /= 2u;
+    CbtStoreNextNeighbors(currentId, uint3(currentNeighbors.z, pairNeighbors.z, twinLowId));
+    CbtBisectorData currentData = CbtBisectorDataBuffer[currentId];
+    currentData.PropagationId = pairId;
+    currentData.ProblematicNeighbor = pairNeighbors.z;
+    currentData.BisectorState = CbtMergedElement;
+    currentData.Flags = CbtVisibleFlag | CbtModifiedFlag;
+    CbtBisectorDataBuffer[currentId] = currentData;
+    if (currentData.ProblematicNeighbor != CbtInvalidIndex)
+    {
+        CbtAppendSimplifyPropagation(currentId);
+    }
+
+    CbtBisectorData pairData = CbtBisectorDataBuffer[pairId];
+    pairData.BisectorState = CbtMergedElement;
+    pairData.Flags = 0u;
+    CbtBisectorDataBuffer[pairId] = pairData;
+    CbtReleaseMergedSlot(pairId);
+
+    if (twinLowId == CbtInvalidIndex)
+    {
+        InterlockedAdd(CbtValidation[15], 1u);
+        return;
+    }
+
+    const uint3 lowNeighbors = CbtLoadNextNeighbors(twinLowId);
+    const uint3 highNeighbors = CbtLoadNextNeighbors(twinHighId);
+    CbtHeapIds[twinLowId] /= 2u;
+    CbtStoreNextNeighbors(twinLowId, uint3(lowNeighbors.z, highNeighbors.z, currentId));
+    CbtBisectorData lowData = CbtBisectorDataBuffer[twinLowId];
+    lowData.PropagationId = twinHighId;
+    lowData.ProblematicNeighbor = highNeighbors.z;
+    lowData.BisectorState = CbtMergedElement;
+    lowData.Flags = CbtVisibleFlag | CbtModifiedFlag;
+    CbtBisectorDataBuffer[twinLowId] = lowData;
+    if (lowData.ProblematicNeighbor != CbtInvalidIndex)
+    {
+        CbtAppendSimplifyPropagation(twinLowId);
+    }
+
+    CbtBisectorData highData = CbtBisectorDataBuffer[twinHighId];
+    highData.BisectorState = CbtMergedElement;
+    highData.Flags = 0u;
+    CbtBisectorDataBuffer[twinHighId] = highData;
+    CbtReleaseMergedSlot(twinHighId);
+    InterlockedAdd(CbtValidation[16], 1u);
+}
+
+[numthreads(1, 1, 1)]
+void CSPrepareSimplifyPropagationIndirectF(uint dispatchThreadId : SV_DispatchThreadID)
+{
+    CbtTopologyIndirect[3] = (uint(CbtPropagation[1]) + 63u) / 64u;
+    CbtTopologyIndirect[4] = 1u;
+    CbtTopologyIndirect[5] = 1u;
+}
+
+[numthreads(64, 1, 1)]
+void CSPropagateSimplifyF(uint dispatchId : SV_DispatchThreadID)
+{
+    if (dispatchId >= uint(CbtPropagation[1]))
+    {
+        return;
+    }
+    const int propagationNode = CbtPropagation[2u + dispatchId];
+    if (propagationNode < 0 || uint(propagationNode) >= CbtTotalElementCount ||
+        CbtHeapIds[uint(propagationNode)] == 0u)
+    {
+        CbtSetValidationError(33u, uint(propagationNode));
+        return;
+    }
+
+    const uint currentId = uint(propagationNode);
+    CbtBisectorData currentData = CbtBisectorDataBuffer[currentId];
+    const uint deletedPair = currentData.PropagationId;
+    const uint neighborId = currentData.ProblematicNeighbor;
+    if (deletedPair >= CbtTotalElementCount || neighborId >= CbtTotalElementCount)
+    {
+        CbtSetValidationError(34u, currentId);
+        return;
+    }
+
+    const CbtBisectorData neighborData = CbtBisectorDataBuffer[neighborId];
+    if (neighborData.BisectorState != CbtMergedElement || CbtHeapIds[neighborId] != 0u)
+    {
+        CbtReplaceNextNeighbor(neighborId, 0u, deletedPair, currentId);
+        CbtReplaceNextNeighbor(neighborId, 1u, deletedPair, currentId);
+        CbtReplaceNextNeighbor(neighborId, 2u, deletedPair, currentId);
+    }
+    else
+    {
+        // 相邻 merge 同帧删除目标时，通过目标的保留 pair 更新最终活动节点。
+        const uint neighborPair = CbtLoadNextNeighbors(neighborId).y;
+        if (neighborPair >= CbtTotalElementCount || CbtHeapIds[neighborPair] == 0u)
+        {
+            CbtSetValidationError(35u, currentId);
+            return;
+        }
+        CbtReplaceNextNeighbor(neighborPair, 0u, deletedPair, currentId);
+        CbtReplaceNextNeighbor(neighborPair, 1u, deletedPair, currentId);
+        CbtReplaceNextNeighbor(neighborPair, 2u, deletedPair, currentId);
+    }
+    currentData.ProblematicNeighbor = CbtInvalidIndex;
+    CbtBisectorDataBuffer[currentId] = currentData;
+}
+
+// F validation UAV words are intentionally append-only across integration stages:
+// [0] keeps the first error code and [1] its physical slot;
+// [2] counts rejected duplicate split claims;
+// [3] counts compatibility nodes shared by split chains;
+// [4] accumulates compatibility traversal steps;
+// [5] records the longest compatibility chain;
+// [6] counts dynamic slots committed by Bisect;
+// [7] counts split-side external neighbor repairs;
+// [8..11] partition commits into the four Bisect templates;
+// [12] counts legal pair or facing-pair merge groups;
+// [13] counts dynamic sibling slots returned to the OCBT;
+// [14] counts merge-side external neighbor repairs;
+// [15] counts two-node merge groups;
+// [16] counts four-node merge groups;
+// [17] captures the frame-start dynamic OCBT root;
+// validation compares group partitions and occupancy deltas without a readback stall.
+// The CPU mirror consumes the same word order through CbtGpuAbi.shared.h.
+[numthreads(64, 1, 1)]
+void CSValidateF(uint physicalSlot : SV_DispatchThreadID)
 {
     // 全槽扫描同时验证动态 OCBT 位与 heapID 活性，以及 next 邻接互反关系。
     // INVALID 邻接表示开放边界；其他邻接必须在范围内并指向活动槽。
@@ -1004,14 +1281,45 @@ void CSValidateE3(uint physicalSlot : SV_DispatchThreadID)
     {
         const uint dynamicActive = CbtReadTreeCount(1u);
         const uint indexedActive = CbtDrawState[CbtDrawActiveVertexCountWord] / 3u;
+        const uint expectedDynamic =
+            CbtValidation[17] + CbtValidation[6] - CbtValidation[13];
         if (indexedActive != dynamicActive + CbtBaseElementCount ||
-            CbtDrawState[CbtDrawActiveBisectorCountWord] != indexedActive ||
-            uint(CbtMemory[0]) != CbtValidation[6] ||
-            uint(CbtPropagation[0]) != CbtValidation[7] ||
-            uint(CbtAllocation[0]) !=
-                CbtValidation[8] + CbtValidation[9] + CbtValidation[10] + CbtValidation[11])
+            CbtDrawState[CbtDrawActiveBisectorCountWord] != indexedActive)
         {
-            CbtSetValidationError(25u, physicalSlot);
+            CbtSetValidationError(40u, physicalSlot);
+        }
+        else if (uint(CbtMemory[0]) != CbtValidation[6])
+        {
+            CbtSetValidationError(41u, physicalSlot);
+        }
+        else if (uint(CbtPropagation[0]) != CbtValidation[7])
+        {
+            CbtSetValidationError(42u, physicalSlot);
+        }
+        else if (CbtSimplification[0] != CbtValidation[12])
+        {
+            CbtSetValidationError(43u, physicalSlot);
+        }
+        else if (uint(CbtPropagation[1]) != CbtValidation[14])
+        {
+            CbtSetValidationError(44u, physicalSlot);
+        }
+        else if (CbtValidation[12] != CbtValidation[15] + CbtValidation[16])
+        {
+            CbtSetValidationError(45u, physicalSlot);
+        }
+        else if (CbtValidation[13] != CbtValidation[15] + 2u * CbtValidation[16])
+        {
+            CbtSetValidationError(46u, physicalSlot);
+        }
+        else if (dynamicActive != expectedDynamic)
+        {
+            CbtSetValidationError(47u, physicalSlot);
+        }
+        else if (uint(CbtAllocation[0]) !=
+                 CbtValidation[8] + CbtValidation[9] + CbtValidation[10] + CbtValidation[11])
+        {
+            CbtSetValidationError(49u, physicalSlot);
         }
     }
 }

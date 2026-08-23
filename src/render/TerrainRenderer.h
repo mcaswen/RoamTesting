@@ -110,6 +110,11 @@ struct TerrainRenderStats
     std::size_t CbtCommittedDynamicSlotCount{0U};
     std::size_t CbtSplitPropagationCount{0U};
     std::array<std::size_t, 4> CbtBisectTemplateCounts{};
+    std::size_t CbtPreparedSimplificationCount{0U};
+    std::size_t CbtReleasedDynamicSlotCount{0U};
+    std::size_t CbtSimplifyPropagationCount{0U};
+    std::size_t CbtPairMergeCount{0U};
+    std::size_t CbtQuadMergeCount{0U};
 
     // setting 字段来自 UI 快照，不与算法实际达到的状态混用
     int RoamMaxDepthSetting{0};

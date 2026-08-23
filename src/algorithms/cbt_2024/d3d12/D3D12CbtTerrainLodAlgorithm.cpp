@@ -56,13 +56,18 @@ void FillRenderPacket(
     const auto& templates = state.Pipeline.LastBisectTemplateCounts();
     outPacket.Mode = TerrainLodRenderMode::GpuProceduralIndirect;
     outPacket.StatusMessage =
-        "CBT 2024 E3 " + std::string{CbtOccupancyCapacityName(topology.Layout.Occupancy.Capacity)} +
+        "CBT 2024 F " + std::string{CbtOccupancyCapacityName(topology.Layout.Occupancy.Capacity)} +
         " commit: split=" + std::to_string(state.Pipeline.LastSplitCandidateCount()) +
         " simplify=" + std::to_string(state.Pipeline.LastSimplifyCandidateCount()) +
         " nodes=" + std::to_string(state.Pipeline.LastPlannedSplitNodeCount()) +
         " slots=" + std::to_string(state.Pipeline.LastAllocatedSplitSlotCount()) +
         " committed=" + std::to_string(state.Pipeline.LastCommittedDynamicSlotCount()) +
         " propagate=" + std::to_string(state.Pipeline.LastSplitPropagationCount()) +
+        " merge=" + std::to_string(state.Pipeline.LastPreparedSimplificationCount()) +
+        " released=" + std::to_string(state.Pipeline.LastReleasedDynamicSlotCount()) +
+        " merge-propagate=" + std::to_string(state.Pipeline.LastSimplifyPropagationCount()) +
+        " pair/quad=" + std::to_string(state.Pipeline.LastPairMergeCount()) + "/" +
+        std::to_string(state.Pipeline.LastQuadMergeCount()) +
         " templates=" + std::to_string(templates[0]) + "/" +
         std::to_string(templates[1]) + "/" + std::to_string(templates[2]) + "/" +
         std::to_string(templates[3]) +
@@ -104,9 +109,9 @@ TerrainLodAlgorithmInfo D3D12CbtTerrainLodAlgorithm::Info() const
 {
     return TerrainLodAlgorithmInfo{
         TerrainLodAlgorithmId::Cbt2024,
-        "cbt-2024-e3",
-        "CBT 2024（E3）",
-        "GPU 常驻拓扑、兼容链规划、四模板 Bisect、邻接传播、OCBT 提交和增量几何",
+        "cbt-2024-f",
+        "CBT 2024（F）",
+        "GPU 常驻拓扑、四模板 Bisect、两/四节点 merge、双向传播、槽位回收和增量几何",
     };
 }
 
@@ -117,7 +122,7 @@ TerrainLodAlgorithmCapabilities D3D12CbtTerrainLodAlgorithm::Capabilities() cons
         .SupportsGpuDrivenRendering = true,
         .SupportsProceduralIndirectRendering = true,
         .SupportsSplit = true,
-        .SupportsMerge = false,
+        .SupportsMerge = true,
         .SupportsCrackFix = true,
         .SupportsTopologyValidation = true,
         .RequiresShaderModel66 = true,
@@ -143,7 +148,7 @@ bool D3D12CbtTerrainLodAlgorithm::BuildRenderData(
     }
     if (!_backend->FrameOpen() || _backend->CommandList() == nullptr)
     {
-        SetError(errorMessage, "CBT 2024 E3 must record between BeginFrame and Present");
+        SetError(errorMessage, "CBT 2024 F must record between BeginFrame and Present");
         return false;
     }
     const Cbt2024Availability availability = QueryCbt2024Availability(*_backend);
@@ -154,7 +159,7 @@ bool D3D12CbtTerrainLodAlgorithm::BuildRenderData(
     }
     if (input.HeightMap == nullptr || !input.HeightMap->IsValid())
     {
-        SetError(errorMessage, "CBT 2024 E3 requires a valid terrain input");
+        SetError(errorMessage, "CBT 2024 F requires a valid terrain input");
         return false;
     }
 
@@ -240,20 +245,28 @@ bool D3D12CbtTerrainLodAlgorithm::BuildRenderData(
     _stats.SubdividedTriangleCount = activeCount > CbtBaseBisectorCount
         ? activeCount - CbtBaseBisectorCount
         : 0U;
-    _stats.RebuiltTriangleCount =
-        committedNodeCount + _state->Pipeline.LastCommittedDynamicSlotCount();
+    _stats.RebuiltTriangleCount = committedNodeCount +
+        _state->Pipeline.LastCommittedDynamicSlotCount() +
+        _state->Pipeline.LastPreparedSimplificationCount();
     _stats.ActiveSplitCount = committedNodeCount;
     _stats.SplitCount = committedNodeCount;
     _stats.ForcedSplitCount = committedNodeCount > _state->Pipeline.LastSplitCandidateCount()
         ? committedNodeCount - _state->Pipeline.LastSplitCandidateCount()
         : 0U;
-    _stats.ConstraintPassCount = _state->Pipeline.LastSplitPropagationCount();
+    _stats.MergeCount = _state->Pipeline.LastPreparedSimplificationCount();
+    _stats.ConstraintPassCount = _state->Pipeline.LastSplitPropagationCount() +
+        _state->Pipeline.LastSimplifyPropagationCount();
     _stats.CandidatePeakCount = _state->Pipeline.LastSplitCandidateCount() +
         _state->Pipeline.LastSimplifyCandidateCount();
     _stats.SplitTopologyCandidateCount = _state->Pipeline.LastSplitCandidateCount();
     _stats.MergeTopologyCandidateCount = _state->Pipeline.LastSimplifyCandidateCount();
     _stats.CbtCommittedDynamicSlotCount = _state->Pipeline.LastCommittedDynamicSlotCount();
     _stats.CbtSplitPropagationCount = _state->Pipeline.LastSplitPropagationCount();
+    _stats.CbtPreparedSimplificationCount = _state->Pipeline.LastPreparedSimplificationCount();
+    _stats.CbtReleasedDynamicSlotCount = _state->Pipeline.LastReleasedDynamicSlotCount();
+    _stats.CbtSimplifyPropagationCount = _state->Pipeline.LastSimplifyPropagationCount();
+    _stats.CbtPairMergeCount = _state->Pipeline.LastPairMergeCount();
+    _stats.CbtQuadMergeCount = _state->Pipeline.LastQuadMergeCount();
     const auto& templateCounts = _state->Pipeline.LastBisectTemplateCounts();
     for (std::size_t index = 0U; index < templateCounts.size(); ++index)
     {
@@ -274,7 +287,7 @@ bool D3D12CbtTerrainLodAlgorithm::BuildRenderData(
     }
     if (!outPacket.HasConsistentResourceContract())
     {
-        SetError(errorMessage, "CBT 2024 E3 produced an inconsistent GPU render packet");
+        SetError(errorMessage, "CBT 2024 F produced an inconsistent GPU render packet");
         return false;
     }
     if (errorMessage != nullptr)

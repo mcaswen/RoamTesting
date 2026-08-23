@@ -54,6 +54,23 @@
 #define CBT_GPU_ACTIVE_POSITION_DISPATCH_OFFSET_WORD 3u
 #define CBT_GPU_MODIFIED_DISPATCH_OFFSET_WORD 6u
 
-#define CBT_GPU_VALIDATION_WORD_COUNT 12u
+// Validation UAV layout shared by shader writes and delayed CPU readback:
+// [0] first validation error code;
+// [1] physical slot associated with the first error;
+// [2] duplicate split claims rejected by the planner;
+// [3] compatibility nodes shared by multiple split chains;
+// [4] total compatibility-chain traversal steps;
+// [5] longest compatibility chain observed this frame;
+// [6] dynamic slots committed by Bisect;
+// [7] neighbor rewrites emitted by split propagation;
+// [8..11] center, right, left, and triple Bisect template counts;
+// [12] legal pair or facing-pair merge groups;
+// [13] dynamic sibling slots returned to the OCBT;
+// [14] neighbor rewrites emitted by merge propagation;
+// [15] two-node merge groups committed;
+// [16] four-node merge groups committed;
+// [17] active dynamic OCBT root captured before this frame mutates it.
+// Keep this count synchronized with D3D12CbtDiagnostics readback sizing.
+#define CBT_GPU_VALIDATION_WORD_COUNT 18u
 
 #endif

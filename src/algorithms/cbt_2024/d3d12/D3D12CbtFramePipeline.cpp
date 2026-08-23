@@ -414,7 +414,7 @@ bool D3D12CbtFramePipeline::CreateDispatchCommandSignature(std::string* errorMes
             nullptr,
             IID_PPV_ARGS(&_dispatchCommandSignature))))
     {
-        SetError(errorMessage, "Failed to create CBT E3 dispatch command signature");
+        SetError(errorMessage, "Failed to create CBT F dispatch command signature");
         return false;
     }
     return true;
@@ -441,10 +441,15 @@ bool D3D12CbtFramePipeline::CreatePipelines(std::string* errorMessage)
         !CreateComputePipeline(_backend->Device(), _topologyRootSignature.Get(), shaderDirectory / (prefix + "BisectE3.cso"), pipelines.Bisect, errorMessage) ||
         !CreateComputePipeline(_backend->Device(), _topologyRootSignature.Get(), shaderDirectory / (prefix + "PreparePropagationIndirectE3.cso"), pipelines.PreparePropagationIndirect, errorMessage) ||
         !CreateComputePipeline(_backend->Device(), _topologyRootSignature.Get(), shaderDirectory / (prefix + "PropagateBisectE3.cso"), pipelines.PropagateBisect, errorMessage) ||
+        !CreateComputePipeline(_backend->Device(), _topologyRootSignature.Get(), shaderDirectory / (prefix + "PrepareSimplifyF.cso"), pipelines.PrepareSimplify, errorMessage) ||
+        !CreateComputePipeline(_backend->Device(), _topologyRootSignature.Get(), shaderDirectory / (prefix + "PrepareSimplifyIndirectF.cso"), pipelines.PrepareSimplifyIndirect, errorMessage) ||
+        !CreateComputePipeline(_backend->Device(), _topologyRootSignature.Get(), shaderDirectory / (prefix + "SimplifyF.cso"), pipelines.Simplify, errorMessage) ||
+        !CreateComputePipeline(_backend->Device(), _topologyRootSignature.Get(), shaderDirectory / (prefix + "PrepareSimplifyPropagationIndirectF.cso"), pipelines.PrepareSimplifyPropagationIndirect, errorMessage) ||
+        !CreateComputePipeline(_backend->Device(), _topologyRootSignature.Get(), shaderDirectory / (prefix + "PropagateSimplifyF.cso"), pipelines.PropagateSimplify, errorMessage) ||
         !CreateComputePipeline(_backend->Device(), _topologyRootSignature.Get(), shaderDirectory / (prefix + "ReducePre.cso"), pipelines.ReducePre, errorMessage) ||
         !CreateComputePipeline(_backend->Device(), _topologyRootSignature.Get(), shaderDirectory / (prefix + "ReduceFirst.cso"), pipelines.ReduceFirst, errorMessage) ||
         !CreateComputePipeline(_backend->Device(), _topologyRootSignature.Get(), shaderDirectory / (prefix + "ReduceSecond.cso"), pipelines.ReduceSecond, errorMessage) ||
-        !CreateComputePipeline(_backend->Device(), _topologyRootSignature.Get(), shaderDirectory / (prefix + "ValidateE3.cso"), pipelines.Validate, errorMessage))
+        !CreateComputePipeline(_backend->Device(), _topologyRootSignature.Get(), shaderDirectory / (prefix + "ValidateF.cso"), pipelines.Validate, errorMessage))
     {
         return false;
     }
@@ -554,7 +559,7 @@ bool D3D12CbtFramePipeline::ConfigureTopologyDescriptors(
         // 任一空资源都会使 descriptor table 部分有效，必须在创建视图前拒绝。
         if (bindings[index].Resource == nullptr)
         {
-            SetError(errorMessage, "CBT E3 topology resource view is incomplete");
+            SetError(errorMessage, "CBT F topology resource view is incomplete");
             return false;
         }
         D3D12_UNORDERED_ACCESS_VIEW_DESC description{};
@@ -600,7 +605,7 @@ bool D3D12CbtFramePipeline::RecordFrame(
 {
     if (!_initialized || _backend == nullptr || !_backend->FrameOpen() || _backend->CommandList() == nullptr)
     {
-        SetError(errorMessage, "CBT E3 requires an initialized pipeline and an open D3D12 frame");
+        SetError(errorMessage, "CBT F requires an initialized pipeline and an open D3D12 frame");
         return false;
     }
     ID3D12GraphicsCommandList* commandList = _backend->CommandList();
@@ -684,7 +689,7 @@ bool D3D12CbtFramePipeline::RecordFrame(
             topology.Layout.DynamicElementCount);
         if (!plan.Valid || plan.SubdivisionPatterns.size() != expectedSubdivisionPatterns.size())
         {
-            SetError(errorMessage, "CBT E3 CPU split planning reference rejected the base topology");
+            SetError(errorMessage, "CBT F CPU split planning reference rejected the base topology");
             return false;
         }
         std::copy(
@@ -928,6 +933,67 @@ bool D3D12CbtFramePipeline::RecordFrame(
         0U);
     UavBarrier(commandList);
 
+    // F merge 继续写 Bisect 已发布的 next 邻接代次，Reduce 只在两类提交都完成后执行一次。
+    // PrepareSimplify 重新检查同帧 split 后的深度、pair 和 facing-twin 关系。
+    // Simplify 上移保留 heapID，清除 sibling heapID/OCBT 位并记录传播上下文。
+    // PropagateSimplify 追踪同帧删除链，使外部邻居最终指向保留节点。
+    // 第二组 indirect 参数先保存 simplify candidate 数，再依次改写为合法 merge 和传播数。
+    commandList->SetPipelineState(pipelines.PrepareSimplify.Get());
+    commandList->ExecuteIndirect(
+        _dispatchCommandSignature.Get(),
+        1U,
+        resources.TopologyDispatchCommands,
+        sizeof(std::uint32_t) * 3U,
+        nullptr,
+        0U);
+    UavBarrier(commandList);
+
+    Transition(
+        commandList,
+        resources.TopologyDispatchCommands,
+        _topologyDispatchState,
+        D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    commandList->SetPipelineState(pipelines.PrepareSimplifyIndirect.Get());
+    commandList->Dispatch(1U, 1U, 1U);
+    UavBarrier(commandList, resources.TopologyDispatchCommands);
+    Transition(
+        commandList,
+        resources.TopologyDispatchCommands,
+        _topologyDispatchState,
+        D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT);
+    commandList->SetPipelineState(pipelines.Simplify.Get());
+    commandList->ExecuteIndirect(
+        _dispatchCommandSignature.Get(),
+        1U,
+        resources.TopologyDispatchCommands,
+        sizeof(std::uint32_t) * 3U,
+        nullptr,
+        0U);
+    UavBarrier(commandList);
+
+    Transition(
+        commandList,
+        resources.TopologyDispatchCommands,
+        _topologyDispatchState,
+        D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    commandList->SetPipelineState(pipelines.PrepareSimplifyPropagationIndirect.Get());
+    commandList->Dispatch(1U, 1U, 1U);
+    UavBarrier(commandList, resources.TopologyDispatchCommands);
+    Transition(
+        commandList,
+        resources.TopologyDispatchCommands,
+        _topologyDispatchState,
+        D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT);
+    commandList->SetPipelineState(pipelines.PropagateSimplify.Get());
+    commandList->ExecuteIndirect(
+        _dispatchCommandSignature.Get(),
+        1U,
+        resources.TopologyDispatchCommands,
+        sizeof(std::uint32_t) * 3U,
+        nullptr,
+        0U);
+    UavBarrier(commandList);
+
     commandList->SetPipelineState(pipelines.ReducePre.Get());
     commandList->Dispatch(DispatchCount(occupancy.LastTreeNodeCount), 1U, 1U);
     UavBarrier(commandList, resources.OccupancyTree);
@@ -938,7 +1004,7 @@ bool D3D12CbtFramePipeline::RecordFrame(
     commandList->Dispatch(1U, 1U, 1U);
     UavBarrier(commandList, resources.OccupancyTree);
 
-    // 先复制稳定计数；E3 全拓扑验证与 draw state 在 Indexation 后补写同一延迟槽。
+    // 先复制稳定计数；F 全拓扑验证与 draw state 在 Indexation 后补写同一延迟槽。
     // 两种路径都延迟到该 frame index 完成复用时映射，不增加 GPU wait。
     Transition(commandList, resources.Classification, _classificationState, D3D12_RESOURCE_STATE_COPY_SOURCE);
     Transition(commandList, resources.Allocation, _allocationState, D3D12_RESOURCE_STATE_COPY_SOURCE);
@@ -1193,6 +1259,31 @@ std::uint32_t D3D12CbtFramePipeline::LastSplitPropagationCount() const
 const std::array<std::uint32_t, 4>& D3D12CbtFramePipeline::LastBisectTemplateCounts() const
 {
     return _diagnostics.Snapshot().BisectTemplateCounts;
+}
+
+std::uint32_t D3D12CbtFramePipeline::LastPreparedSimplificationCount() const
+{
+    return _diagnostics.Snapshot().PreparedSimplificationCount;
+}
+
+std::uint32_t D3D12CbtFramePipeline::LastReleasedDynamicSlotCount() const
+{
+    return _diagnostics.Snapshot().ReleasedDynamicSlotCount;
+}
+
+std::uint32_t D3D12CbtFramePipeline::LastSimplifyPropagationCount() const
+{
+    return _diagnostics.Snapshot().SimplifyPropagationCount;
+}
+
+std::uint32_t D3D12CbtFramePipeline::LastPairMergeCount() const
+{
+    return _diagnostics.Snapshot().PairMergeCount;
+}
+
+std::uint32_t D3D12CbtFramePipeline::LastQuadMergeCount() const
+{
+    return _diagnostics.Snapshot().QuadMergeCount;
 }
 
 std::uint32_t D3D12CbtFramePipeline::LastActiveDynamicSlotCount() const

@@ -4,6 +4,7 @@
 #include "algorithms/cbt_2024/CbtBisectorTopology.h"
 
 #if defined(PARALLEL_ROAM_GRAPHICS_API_D3D12)
+#include "algorithms/cbt_2024/d3d12/D3D12CbtDiagnostics.h"
 #include "algorithms/cbt_2024/d3d12/D3D12CbtGpuState.h"
 #include "algorithms/cbt_2024/d3d12/D3D12CbtOccupancyTree.h"
 #include "render/D3D12GraphicsBackend.h"
@@ -345,10 +346,10 @@ int Application::Run(int maxFrameCount)
         [](bool observed) { return observed; });
     if (_cbtProceduralSmokeTestEnabled &&
         (!_cbtObservedClassificationSample || !_cbtObservedSplitCandidate ||
-         !observedAllCbtTemplates))
+         !observedAllCbtTemplates || !_cbtObservedMerge || !_cbtObservedSplitAfterMerge))
     {
-        std::cerr << "CBT E3 smoke test did not observe classification, commit work, and all four "
-                     "Bisect templates\n";
+        std::cerr << "CBT F smoke test did not observe classification, all Bisect templates, "
+                     "merge release, and split reuse after the camera returned\n";
         _terrainLodSmokeTestFailed = true;
     }
     const int exitCode =
@@ -419,14 +420,43 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
         _frameTimeMilliseconds = frameTiming.RawDeltaSeconds * 1000.0F;
     }
 
-    // 在命令列表打开前修改参数，烟测由下一次唯一的 CBT 帧事务完成全活动几何失效。
-    if (_cbtProceduralSmokeTestEnabled && _cbtProceduralSmokeFrameCount == 150U)
+    if (_cbtProceduralSmokeTestEnabled && !_cbtSmokeInitialPoseCaptured)
+    {
+        _cbtSmokeInitialCameraPosition = _camera.Position();
+        _cbtSmokeInitialCameraForward = _camera.Forward();
+        _cbtSmokeInitialYawDegrees = _camera.YawDegrees();
+        _cbtSmokeInitialPitchDegrees = _camera.PitchDegrees();
+        _cbtSmokeInitialMaxDepth = _terrainPanelState.RoamMaxDepth;
+        _cbtSmokeInitialPoseCaptured = true;
+    }
+    // 在命令列表打开前修改参数，下一帧事务会为全活动槽重建分类几何。
+    if (_cbtProceduralSmokeTestEnabled && _cbtProceduralSmokeFrameCount == 100U)
     {
         _terrainPanelState.TerrainSize *= 1.25F;
         ApplyTerrainPanelSettings();
     }
+    // 快速后退并把深度压到基础层，强制已细分拓扑连续执行 merge。
+    if (_cbtProceduralSmokeTestEnabled && _cbtProceduralSmokeFrameCount == 150U)
+    {
+        _terrainPanelState.RoamMaxDepth = 4;
+        ApplyTerrainPanelSettings();
+        _camera.SetPose(
+            _cbtSmokeInitialCameraPosition - _cbtSmokeInitialCameraForward * 40.0F,
+            _cbtSmokeInitialYawDegrees,
+            _cbtSmokeInitialPitchDegrees);
+    }
+    // 返回原视点并恢复深度，后续 split 必须复用前一阶段释放的 OCBT 槽位。
+    if (_cbtProceduralSmokeTestEnabled && _cbtProceduralSmokeFrameCount == 300U)
+    {
+        _terrainPanelState.RoamMaxDepth = _cbtSmokeInitialMaxDepth;
+        ApplyTerrainPanelSettings();
+        _camera.SetPose(
+            _cbtSmokeInitialCameraPosition,
+            _cbtSmokeInitialYawDegrees,
+            _cbtSmokeInitialPitchDegrees);
+    }
     // 末段关闭完整验证，覆盖只保留轻量计数回读的常规帧路径。
-    if (_cbtProceduralSmokeTestEnabled && _cbtProceduralSmokeFrameCount == 225U)
+    if (_cbtProceduralSmokeTestEnabled && _cbtProceduralSmokeFrameCount == 420U)
     {
         _terrainPanelState.RoamEnableTopologyValidation = false;
         ApplyTerrainPanelSettings();
@@ -436,8 +466,10 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
 
     _graphicsBackend->BeginImGuiFrame(_guiLayer);
 
-    // E3 快速烟测前半段保持静止，后半段旋转，覆盖稳定细分和移动相机提交。
-    if (_cbtProceduralSmokeTestEnabled && _cbtProceduralSmokeFrameCount >= 150U)
+    // 细分段持续旋转，远离并降深阶段保持视点固定，返回后再次覆盖动态模板。
+    if (_cbtProceduralSmokeTestEnabled &&
+        ((_cbtProceduralSmokeFrameCount >= 60U && _cbtProceduralSmokeFrameCount < 150U) ||
+         (_cbtProceduralSmokeFrameCount >= 300U && _cbtProceduralSmokeFrameCount < 420U)))
     {
         _camera.SetPose(
             _camera.Position(),
@@ -488,7 +520,7 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
         const std::string expectedCapacity = CbtCapacityName(_terrainPanelState.CbtCapacity);
         if (terrainStats.TerrainLodStatusMessage.find(expectedCapacity) == std::string::npos)
         {
-            std::cerr << "CBT E3 smoke test did not initialize requested capacity "
+            std::cerr << "CBT F smoke test did not initialize requested capacity "
                       << expectedCapacity << ": " << terrainStats.TerrainLodStatusMessage << '\n';
             _terrainLodSmokeTestFailed = true;
         }
@@ -496,8 +528,9 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
         if (generation == 0U ||
             (_lastCbtTopologyFrameGeneration != 0U && generation != _lastCbtTopologyFrameGeneration + 1U))
         {
-            std::cerr << "CBT E3 topology frame generation did not advance exactly once per frame: previous="
-                      << _lastCbtTopologyFrameGeneration << ", current=" << generation << '\n';
+            std::cerr << "CBT F topology frame generation did not advance exactly once per frame: previous="
+                      << _lastCbtTopologyFrameGeneration << ", current=" << generation
+                      << ", status=" << terrainStats.TerrainLodStatusMessage << '\n';
             _terrainLodSmokeTestFailed = true;
         }
         _lastCbtTopologyFrameGeneration = generation;
@@ -507,7 +540,7 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
             (_lastCbtClassificationSampleGeneration != 0U &&
              sampleGeneration != _lastCbtClassificationSampleGeneration + 1U))
         {
-            std::cerr << "CBT E3 commit sample generation is invalid: previous="
+            std::cerr << "CBT F commit sample generation is invalid: previous="
                       << _lastCbtClassificationSampleGeneration << ", current=" << sampleGeneration
                       << ", topology=" << generation << '\n';
             _terrainLodSmokeTestFailed = true;
@@ -521,20 +554,33 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
             terrainStats.CbtSplitCandidateCount + terrainStats.CbtSimplifyCandidateCount;
         if (sampleGeneration != 0U && classifiedCandidateCount > terrainStats.RoamNodeCount)
         {
-            std::cerr << "CBT E3 classification counters exceed the sampled active list: split="
+            std::cerr << "CBT F classification counters exceed the sampled active list: split="
                       << terrainStats.CbtSplitCandidateCount << ", simplify="
                       << terrainStats.CbtSimplifyCandidateCount << ", active="
                       << terrainStats.RoamNodeCount << '\n';
             _terrainLodSmokeTestFailed = true;
         }
-        if (_cbtProceduralSmokeFrameCount >= 225U && terrainStats.RoamCpuGpuReadbackBytes != 112U)
+#if defined(PARALLEL_ROAM_GRAPHICS_API_D3D12)
+        if (_cbtProceduralSmokeFrameCount >= 420U &&
+            terrainStats.RoamCpuGpuReadbackBytes !=
+                Algorithms::Cbt2024::D3D12::D3D12CbtDiagnostics::DiagnosticReadbackBytes)
         {
-            std::cerr << "CBT E3 validation-off path reported an unexpected readback size: "
+            std::cerr << "CBT F validation-off path reported an unexpected readback size: "
                       << terrainStats.RoamCpuGpuReadbackBytes << '\n';
             _terrainLodSmokeTestFailed = true;
         }
+#endif
         _cbtObservedSplitCandidate =
             _cbtObservedSplitCandidate || terrainStats.RoamSplitCount > 0U;
+        if (terrainStats.CbtReleasedDynamicSlotCount > 0U)
+        {
+            _cbtObservedMerge = true;
+        }
+        if (_cbtObservedMerge && _cbtProceduralSmokeFrameCount >= 300U &&
+            terrainStats.CbtCommittedDynamicSlotCount > 0U)
+        {
+            _cbtObservedSplitAfterMerge = true;
+        }
         for (std::size_t index = 0U; index < _cbtObservedBisectTemplates.size(); ++index)
         {
             _cbtObservedBisectTemplates[index] =

@@ -364,10 +364,15 @@ struct TerrainLodStats
     std::size_t SplitTopologyCommitMinCandidateCount{0};
     std::size_t MergeTopologyCommitMinCandidateCount{0};
     std::size_t SplitTopologyCandidateCount{0};
-    // CBT E3 延迟回读：本样本实际提交的槽位、传播任务和四种 Bisect 模板。
+    // CBT F 延迟回读：本样本的 split/merge 槽位、传播任务和模板计数。
     std::size_t CbtCommittedDynamicSlotCount{0};
     std::size_t CbtSplitPropagationCount{0};
     std::array<std::size_t, 4> CbtBisectTemplateCounts{};
+    std::size_t CbtPreparedSimplificationCount{0};
+    std::size_t CbtReleasedDynamicSlotCount{0};
+    std::size_t CbtSimplifyPropagationCount{0};
+    std::size_t CbtPairMergeCount{0};
+    std::size_t CbtQuadMergeCount{0};
     std::size_t SplitTopologyNonEmptyChunkCount{0};
     std::size_t SplitTopologyCommitWorkerCount{0};
     std::size_t ParallelSplitCommitCount{0};
