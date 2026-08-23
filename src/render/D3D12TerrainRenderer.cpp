@@ -1195,6 +1195,15 @@ bool TerrainRenderer::RebuildTerrainLod(const RenderContext& context, std::strin
     if (!_terrainLodAlgorithm->BuildRenderData(buildInput, renderPacket, buildError))
     {
         _terrainLodStatusMessage = buildError->empty() ? "Terrain LOD build failed" : *buildError;
+        if (UsesNativeGpuResources(_terrainLodAlgorithm->Info().Id))
+        {
+            // 失败可能发生在延迟 GPU 校验；旧借用资源不能继续绘制或留作下一帧回退。
+            ClearBorrowedGpuResources(*_d3d12State);
+            _drawVertexCount = 0U;
+            _drawIndexCount = 0U;
+            _drawTriangleCount = 0U;
+            _renderMode = Algorithms::TerrainLodRenderMode::CpuMesh;
+        }
         return false;
     }
     // 渲染器只消费完整的 CPU 网格或 CBT 的程序化资源包

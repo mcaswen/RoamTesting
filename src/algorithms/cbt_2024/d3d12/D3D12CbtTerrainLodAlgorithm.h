@@ -2,7 +2,9 @@
 
 #include "algorithms/ITerrainLodAlgorithm.h"
 
+#include <cstdint>
 #include <memory>
+#include <string>
 
 namespace ParallelRoam::Render
 {
@@ -36,5 +38,7 @@ private:
     Render::D3D12GraphicsBackend* _backend{nullptr};
     std::unique_ptr<D3D12CbtTerrainState> _state;
     TerrainLodStats _stats{};
+    std::uint64_t _recoveryCount{0U};
+    std::string _lastRecoveryMessage;
 };
 } // namespace ParallelRoam::Algorithms::Cbt2024::D3D12

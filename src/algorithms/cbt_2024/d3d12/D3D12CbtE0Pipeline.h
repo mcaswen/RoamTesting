@@ -81,6 +81,8 @@ public:
     [[nodiscard]] std::uint32_t LastActiveDynamicSlotCount() const;
     [[nodiscard]] std::uint32_t LastIndexedActiveCount() const;
     [[nodiscard]] std::uint64_t ClassificationSampleGeneration() const;
+    [[nodiscard]] bool IsFaulted() const;
+    [[nodiscard]] const std::string& FaultMessage() const;
     [[nodiscard]] bool IsInitialized() const;
 
 private:
@@ -120,6 +122,7 @@ private:
     [[nodiscard]] bool ReadCompletedClassification(
         std::uint32_t frameIndex,
         std::string* errorMessage);
+    [[nodiscard]] bool LatchFault(const std::string& message, std::string* errorMessage);
 
     // 管线对象和连续描述符只在 Initialize/Shutdown 边界变化。
     Render::D3D12GraphicsBackend* _backend{nullptr}; // 借用 renderer 后端，不拥有其队列或 device。
@@ -193,6 +196,8 @@ private:
     std::uint32_t _lastActiveDynamicSlotCount{0U}; // Reduce 根发布的动态活动数。
     std::uint32_t _lastIndexedActiveCount{CbtBaseBisectorCount}; // Indexation 发布的总活动数。
     std::uint32_t _neighborReadIndex{0U}; // 当前已发布的 ping/pong 邻接代次。
+    std::string _faultMessage; // 延迟校验失败后保留首个不可恢复错误。
+    bool _faulted{false}; // 持久 GPU 拓扑损坏后禁止继续记录。
     bool _initialized{false}; // 所有 PSO、描述符和缓冲均可用后置位。
 };
 } // namespace ParallelRoam::Algorithms::Cbt2024::D3D12

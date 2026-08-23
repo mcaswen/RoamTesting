@@ -361,6 +361,8 @@ void D3D12CbtE0Pipeline::Shutdown()
     _lastActiveDynamicSlotCount = 0U;
     _lastIndexedActiveCount = CbtBaseBisectorCount;
     _neighborReadIndex = 0U;
+    _faultMessage.clear();
+    _faulted = false;
     _heapIdState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
     _bisectorDataState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
     _baseControlPointState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
@@ -711,8 +713,7 @@ bool D3D12CbtE0Pipeline::ReadCompletedClassification(
     void* mapped = nullptr;
     if (FAILED(_classificationReadbacks[frameIndex]->Map(0U, &readRange, &mapped)))
     {
-        SetError(errorMessage, "Failed to map completed CBT E3 diagnostic counters");
-        return false;
+        return LatchFault("Failed to map completed CBT E3 diagnostic counters", errorMessage);
     }
     const auto* bytes = static_cast<const std::uint8_t*>(mapped);
     const auto* counters = reinterpret_cast<const std::uint32_t*>(bytes + ClassificationCounterOffset);
@@ -739,13 +740,12 @@ bool D3D12CbtE0Pipeline::ReadCompletedClassification(
     _classificationReadbackPending[frameIndex] = false;
     if (validation[0] != 0U)
     {
-        SetError(
-            errorMessage,
+        const std::string message =
             "CBT E3 shader validation failed at generation " +
-                std::to_string(_classificationSampleGeneration) + ": code/slot=" +
-                std::to_string(validation[0]) + "/" + std::to_string(validation[1]));
+            std::to_string(_classificationSampleGeneration) + ": code/slot=" +
+            std::to_string(validation[0]) + "/" + std::to_string(validation[1]);
         _classificationReadbacks[frameIndex]->Unmap(0U, &noWrite);
-        return false;
+        return LatchFault(message, errorMessage);
     }
     if (_classificationValidationPending[frameIndex])
     {
@@ -762,12 +762,11 @@ bool D3D12CbtE0Pipeline::ReadCompletedClassification(
             drawState.Visible.VertexCountPerInstance > drawState.Active.VertexCountPerInstance ||
             drawState.ModifiedPositionCount / 4U > drawState.ActiveBisectorCount)
         {
-            SetError(
-                errorMessage,
+            const std::string message =
                 "CBT E3 occupancy/indexation mismatch at generation " +
-                    std::to_string(_classificationSampleGeneration));
+                std::to_string(_classificationSampleGeneration);
             _classificationReadbacks[frameIndex]->Unmap(0U, &noWrite);
-            return false;
+            return LatchFault(message, errorMessage);
         }
 
         const bool exactReference = _classificationExactReferencePending[frameIndex];
@@ -779,16 +778,15 @@ bool D3D12CbtE0Pipeline::ReadCompletedClassification(
         if (_lastSplitCandidateCount != expectedSplit ||
             _lastSimplifyCandidateCount != expectedSimplify)
         {
-            SetError(
-                errorMessage,
+            const std::string message =
                 "CBT E1 CPU/GPU classification mismatch at generation " +
-                    std::to_string(_classificationSampleGeneration) +
-                    ": expected split/simplify=" + std::to_string(expectedSplit) + "/" +
-                    std::to_string(expectedSimplify) + ", GPU=" +
-                    std::to_string(_lastSplitCandidateCount) + "/" +
-                    std::to_string(_lastSimplifyCandidateCount));
+                std::to_string(_classificationSampleGeneration) +
+                ": expected split/simplify=" + std::to_string(expectedSplit) + "/" +
+                std::to_string(expectedSimplify) + ", GPU=" +
+                std::to_string(_lastSplitCandidateCount) + "/" +
+                std::to_string(_lastSimplifyCandidateCount);
             _classificationReadbacks[frameIndex]->Unmap(0U, &noWrite);
-            return false;
+            return LatchFault(message, errorMessage);
         }
 
         const std::uint32_t expectedPlanNodes = _expectedPlannedSplitNodeCounts[frameIndex];
@@ -798,17 +796,16 @@ bool D3D12CbtE0Pipeline::ReadCompletedClassification(
             _lastAllocatedSplitSlotCount != expectedSlots ||
             _lastRemainingDynamicSlotCount != expectedRemaining)
         {
-            SetError(
-                errorMessage,
+            const std::string message =
                 "CBT E2 planning counter mismatch at generation " +
-                    std::to_string(_classificationSampleGeneration) +
-                    ": expected nodes/slots/remaining=" + std::to_string(expectedPlanNodes) + "/" +
-                    std::to_string(expectedSlots) + "/" + std::to_string(expectedRemaining) +
-                    ", GPU=" + std::to_string(_lastPlannedSplitNodeCount) + "/" +
-                    std::to_string(_lastAllocatedSplitSlotCount) + "/" +
-                    std::to_string(_lastRemainingDynamicSlotCount));
+                std::to_string(_classificationSampleGeneration) +
+                ": expected nodes/slots/remaining=" + std::to_string(expectedPlanNodes) + "/" +
+                std::to_string(expectedSlots) + "/" + std::to_string(expectedRemaining) +
+                ", GPU=" + std::to_string(_lastPlannedSplitNodeCount) + "/" +
+                std::to_string(_lastAllocatedSplitSlotCount) + "/" +
+                std::to_string(_lastRemainingDynamicSlotCount);
             _classificationReadbacks[frameIndex]->Unmap(0U, &noWrite);
-            return false;
+            return LatchFault(message, errorMessage);
         }
 
         std::array<CbtBisectorData, CbtBaseBisectorCount> baseData{};
@@ -819,14 +816,13 @@ bool D3D12CbtE0Pipeline::ReadCompletedClassification(
             const std::uint32_t expectedPattern = _expectedSubdivisionPatterns[frameIndex][node];
             if (baseData[node].SubdivisionPattern != expectedPattern)
             {
-                SetError(
-                    errorMessage,
+                const std::string message =
                     "CBT E2 subdivision pattern mismatch at generation " +
-                        std::to_string(_classificationSampleGeneration) + ", base node=" +
-                        std::to_string(node) + ", expected=" + std::to_string(expectedPattern) +
-                        ", GPU=" + std::to_string(baseData[node].SubdivisionPattern));
+                    std::to_string(_classificationSampleGeneration) + ", base node=" +
+                    std::to_string(node) + ", expected=" + std::to_string(expectedPattern) +
+                    ", GPU=" + std::to_string(baseData[node].SubdivisionPattern);
                 _classificationReadbacks[frameIndex]->Unmap(0U, &noWrite);
-                return false;
+                return LatchFault(message, errorMessage);
             }
             const std::uint32_t slotCount = static_cast<std::uint32_t>(std::popcount(expectedPattern));
             for (std::uint32_t slot = 0U; slot < slotCount; ++slot)
@@ -838,37 +834,48 @@ bool D3D12CbtE0Pipeline::ReadCompletedClassification(
         if (allocatedSlots.size() != expectedSlots ||
             std::adjacent_find(allocatedSlots.begin(), allocatedSlots.end()) != allocatedSlots.end())
         {
-            SetError(errorMessage, "CBT E2 allocated physical slots are incomplete or duplicated");
             _classificationReadbacks[frameIndex]->Unmap(0U, &noWrite);
-            return false;
+            return LatchFault(
+                "CBT E2 allocated physical slots are incomplete or duplicated",
+                errorMessage);
         }
         for (std::uint32_t rank = 0U; rank < allocatedSlots.size(); ++rank)
         {
             // E2 尚未提交任何动态位，所以旧 OCBT 的前 k 个 free rank 必须恰好解码为 0..k-1。
             if (allocatedSlots[rank] != rank)
             {
-                SetError(
-                    errorMessage,
+                const std::string message =
                     "CBT E2 allocation did not use the old OCBT complement at free rank " +
-                        std::to_string(rank));
+                    std::to_string(rank);
                 _classificationReadbacks[frameIndex]->Unmap(0U, &noWrite);
-                return false;
+                return LatchFault(message, errorMessage);
             }
         }
 
         if (occupancyRoot != expectedSlots)
         {
-            SetError(
-                errorMessage,
+            const std::string message =
                 "CBT E3 committed OCBT root mismatch: expected=" +
-                    std::to_string(expectedSlots) + ", GPU=" + std::to_string(occupancyRoot));
+                std::to_string(expectedSlots) + ", GPU=" + std::to_string(occupancyRoot);
             _classificationReadbacks[frameIndex]->Unmap(0U, &noWrite);
-            return false;
+            return LatchFault(message, errorMessage);
         }
         }
     }
     _classificationReadbacks[frameIndex]->Unmap(0U, &noWrite);
     return true;
+}
+
+bool D3D12CbtE0Pipeline::LatchFault(const std::string& message, std::string* errorMessage)
+{
+    // 持久拓扑无法回滚；保留首个错误，直到算法创建全新资源代。
+    if (!_faulted)
+    {
+        _faultMessage = message;
+        _faulted = true;
+    }
+    SetError(errorMessage, _faultMessage);
+    return false;
 }
 
 bool D3D12CbtE0Pipeline::RecordFrame(
@@ -885,6 +892,11 @@ bool D3D12CbtE0Pipeline::RecordFrame(
     }
     ID3D12GraphicsCommandList* commandList = _backend->CommandList();
     const std::uint32_t frameIndex = _backend->CurrentFrameIndex();
+    if (_faulted)
+    {
+        SetError(errorMessage, _faultMessage);
+        return false;
+    }
     if (!ReadCompletedClassification(frameIndex, errorMessage))
     {
         return false;
@@ -1457,6 +1469,16 @@ std::uint32_t D3D12CbtE0Pipeline::LastIndexedActiveCount() const
 std::uint64_t D3D12CbtE0Pipeline::ClassificationSampleGeneration() const
 {
     return _classificationSampleGeneration;
+}
+
+bool D3D12CbtE0Pipeline::IsFaulted() const
+{
+    return _faulted;
+}
+
+const std::string& D3D12CbtE0Pipeline::FaultMessage() const
+{
+    return _faultMessage;
 }
 
 bool D3D12CbtE0Pipeline::IsInitialized() const

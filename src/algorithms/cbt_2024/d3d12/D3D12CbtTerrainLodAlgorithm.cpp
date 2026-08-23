@@ -145,38 +145,62 @@ bool D3D12CbtTerrainLodAlgorithm::BuildRenderData(
         return false;
     }
 
-    if (!_state->Topology.IsInitialized())
-    {
-        if (!_state->Topology.Rebuild(
+    const auto initializeState = [&](D3D12CbtTerrainState& state) {
+        if (!state.Topology.IsInitialized() &&
+            !state.Topology.Rebuild(
                 *_backend,
                 CbtOccupancyCapacity::Capacity128K,
                 errorMessage))
         {
             return false;
         }
-    }
-    if (!_state->Pipeline.IsInitialized())
-    {
-        if (!_state->Pipeline.Initialize(
+        return state.Pipeline.IsInitialized() ||
+            state.Pipeline.Initialize(
                 *_backend,
-                _state->Topology.Topology(),
-                _state->Topology.Resources(),
-                errorMessage))
+                state.Topology.Topology(),
+                state.Topology.Resources(),
+                errorMessage);
+    };
+    if (!initializeState(*_state))
+    {
+        return false;
+    }
+
+    auto recordState = [&](D3D12CbtTerrainState& state) {
+        const bool rebuild = !state.GeometryInitialized ||
+            state.TerrainSize != input.Settings.TerrainSize;
+        return state.Pipeline.RecordFrame(
+            input,
+            state.Topology.Topology(),
+            state.Topology.Resources(),
+            rebuild,
+            errorMessage);
+    };
+    bool rebuildGeometry =
+        !_state->GeometryInitialized || _state->TerrainSize != input.Settings.TerrainSize;
+    if (!recordState(*_state))
+    {
+        if (!_state->Pipeline.IsFaulted())
         {
             return false;
         }
-    }
 
-    const bool rebuildGeometry =
-        !_state->GeometryInitialized || _state->TerrainSize != input.Settings.TerrainSize;
-    if (!_state->Pipeline.RecordFrame(
-            input,
-            _state->Topology.Topology(),
-            _state->Topology.Resources(),
-            rebuildGeometry,
-            errorMessage))
-    {
-        return false;
+        // 延迟错误意味着持久邻接/OCBT 已不可继续消费。异常路径允许一次 GPU idle，
+        // 随后用全新资源代在当前空闲命令列表中重新 Bootstrap，而不是尝试局部回滚。
+        _lastRecoveryMessage = _state->Pipeline.FaultMessage();
+        _backend->WaitForGpuIdle();
+        _state = std::make_unique<D3D12CbtTerrainState>();
+        if (!initializeState(*_state) || !recordState(*_state))
+        {
+            const std::string recoveryError = errorMessage != nullptr ? *errorMessage : std::string{};
+            SetError(
+                errorMessage,
+                "CBT fault recovery failed after: " + _lastRecoveryMessage +
+                    (recoveryError.empty() ? std::string{} : "; retry: " + recoveryError));
+            return false;
+        }
+        ++_recoveryCount;
+        rebuildGeometry = true;
     }
     if (rebuildGeometry)
     {
@@ -218,6 +242,12 @@ bool D3D12CbtTerrainLodAlgorithm::BuildRenderData(
     _stats.CpuUpdateMilliseconds = buildTimer.Stop();
 
     FillRenderPacket(*_state, outPacket);
+    if (_recoveryCount != 0U)
+    {
+        outPacket.StatusMessage +=
+            " recovery=" + std::to_string(_recoveryCount) + " last-fault={" +
+            _lastRecoveryMessage + "}";
+    }
     if (!outPacket.HasConsistentResourceContract())
     {
         SetError(errorMessage, "CBT 2024 E3 produced an inconsistent GPU render packet");
