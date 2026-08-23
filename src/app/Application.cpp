@@ -405,6 +405,13 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
         _frameTimeMilliseconds = frameTiming.RawDeltaSeconds * 1000.0F;
     }
 
+    // 在命令列表打开前修改参数，烟测由下一次唯一的 CBT 帧事务完成全活动几何失效。
+    if (_cbtProceduralSmokeTestEnabled && _cbtProceduralSmokeFrameCount == 150U)
+    {
+        _terrainPanelState.TerrainSize *= 1.25F;
+        ApplyTerrainPanelSettings();
+    }
+
     _graphicsBackend->BeginFrame();
 
     _graphicsBackend->BeginImGuiFrame(_guiLayer);

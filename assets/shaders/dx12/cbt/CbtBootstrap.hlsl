@@ -224,15 +224,8 @@ float3 CbtControlToWorld(float3 control)
     return float3((control.x - 0.5) * TerrainSize, control.y, (control.z - 0.5) * TerrainSize);
 }
 
-[numthreads(64, 1, 1)]
-void CSBuildModifiedGeometry(uint modifiedOrdinal : SV_DispatchThreadID)
+void CbtBuildGeometryForSlot(uint physicalSlot)
 {
-    const uint modifiedCount = DrawState[8] / 4u;
-    if (modifiedOrdinal >= modifiedCount)
-    {
-        return;
-    }
-    const uint physicalSlot = ModifiedIndices[modifiedOrdinal];
     if (physicalSlot >= TotalElementCount || HeapIds[physicalSlot] == 0u)
     {
         return;
@@ -281,4 +274,27 @@ void CSBuildModifiedGeometry(uint modifiedOrdinal : SV_DispatchThreadID)
     const float3 parentControl = (heapId & 1u) == 0u ? parent0 : parent2;
     ClassificationPositions[TotalElementCount * 3u + physicalSlot] =
         CbtControlToWorld(parentControl);
+}
+
+[numthreads(64, 1, 1)]
+void CSBuildActiveGeometry(uint activeOrdinal : SV_DispatchThreadID)
+{
+    // 参数域变化时必须在 Classify 前重建上一代所有活动槽，不能只更新六个基础槽。
+    const uint activeCount = DrawState[9];
+    if (activeOrdinal >= activeCount)
+    {
+        return;
+    }
+    CbtBuildGeometryForSlot(ActiveIndices[activeOrdinal]);
+}
+
+[numthreads(64, 1, 1)]
+void CSBuildModifiedGeometry(uint modifiedOrdinal : SV_DispatchThreadID)
+{
+    const uint modifiedCount = DrawState[8] / 4u;
+    if (modifiedOrdinal >= modifiedCount)
+    {
+        return;
+    }
+    CbtBuildGeometryForSlot(ModifiedIndices[modifiedOrdinal]);
 }

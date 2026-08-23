@@ -129,7 +129,7 @@ private:
     std::array<CapacityPipelines, 4> _capacityPipelines; // 128K、256K、512K、1M 四档特化。
     Microsoft::WRL::ComPtr<ID3D12PipelineState> _indexationPipeline; // 从 OCBT 重建紧密活动索引。
     Microsoft::WRL::ComPtr<ID3D12PipelineState> _prepareIndirectPipeline; // 重建 draw 和几何 dispatch 参数。
-    Microsoft::WRL::ComPtr<ID3D12PipelineState> _baseGeometryPipeline; // 生成 E2 平面分类/渲染顶点。
+    Microsoft::WRL::ComPtr<ID3D12PipelineState> _activeGeometryPipeline; // 参数域变化时重建全部活动槽。
     Microsoft::WRL::ComPtr<ID3D12PipelineState> _modifiedGeometryPipeline; // 解码 modified LEB 平面几何。
     Render::D3D12DescriptorAllocation _topologySrvRange; // 连续 t0..t1 描述符。
     Render::D3D12DescriptorAllocation _topologyUavRange; // 连续 u0..u16 描述符。

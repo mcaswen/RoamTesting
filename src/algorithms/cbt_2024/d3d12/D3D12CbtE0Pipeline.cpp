@@ -337,7 +337,7 @@ void D3D12CbtE0Pipeline::Shutdown()
     _renderVertexCapacityBytes = 0U;
     _classificationPositionCapacityBytes = 0U;
     _modifiedGeometryPipeline.Reset();
-    _baseGeometryPipeline.Reset();
+    _activeGeometryPipeline.Reset();
     _prepareIndirectPipeline.Reset();
     _indexationPipeline.Reset();
     _capacityPipelines = {};
@@ -506,7 +506,7 @@ bool D3D12CbtE0Pipeline::CreatePipelines(std::string* errorMessage)
     // Bootstrap PSO 与容量无关，边界由 root constants 在运行时提供。
     return CreateComputePipeline(_backend->Device(), _bootstrapRootSignature.Get(), shaderDirectory / "CbtBootstrapIndexation.cso", _indexationPipeline, errorMessage) &&
            CreateComputePipeline(_backend->Device(), _bootstrapRootSignature.Get(), shaderDirectory / "CbtBootstrapPrepareIndirect.cso", _prepareIndirectPipeline, errorMessage) &&
-           CreateComputePipeline(_backend->Device(), _bootstrapRootSignature.Get(), shaderDirectory / "CbtBootstrapBuildBaseGeometry.cso", _baseGeometryPipeline, errorMessage) &&
+           CreateComputePipeline(_backend->Device(), _bootstrapRootSignature.Get(), shaderDirectory / "CbtBootstrapBuildActiveGeometry.cso", _activeGeometryPipeline, errorMessage) &&
            CreateComputePipeline(_backend->Device(), _bootstrapRootSignature.Get(), shaderDirectory / "CbtBootstrapBuildModifiedGeometry.cso", _modifiedGeometryPipeline, errorMessage);
 }
 
@@ -1038,14 +1038,25 @@ bool D3D12CbtE0Pipeline::RecordFrame(
     commandList->SetComputeRootUnorderedAccessView(9U, _classificationPositions->GetGPUVirtualAddress());
     commandList->SetComputeRootUnorderedAccessView(10U, _renderVertices->GetGPUVirtualAddress());
 
-    // Classify 必须看到已初始化的三子位置和父位置 因此平面 Bootstrap 位于首轮分类之前
+    // Classify 必须看到当前参数域中的三子位置和父位置。首次运行和 TerrainSize
+    // 变化都按上一代 active list 全量重建，避免动态槽继续携带旧尺度坐标。
     if (rebuildGeometry)
     {
+        Transition(commandList, resources.HeapIds, _heapIdState, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        Transition(commandList, resources.BisectorData, _bisectorDataState, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
         Transition(commandList, resources.BaseControlPoints, _baseControlPointState, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        Transition(commandList, resources.ActiveIndices, _activeIndexState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        Transition(commandList, resources.GeometryDispatchCommands, _geometryDispatchState, D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT);
         Transition(commandList, _classificationPositions.Get(), _classificationPositionState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
         Transition(commandList, _renderVertices.Get(), _renderVertexState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-        commandList->SetPipelineState(_baseGeometryPipeline.Get());
-        commandList->Dispatch(DispatchCount(CbtBaseBisectorCount), 1U, 1U);
+        commandList->SetPipelineState(_activeGeometryPipeline.Get());
+        commandList->ExecuteIndirect(
+            _dispatchCommandSignature.Get(),
+            1U,
+            resources.GeometryDispatchCommands,
+            0U,
+            nullptr,
+            0U);
         UavBarrier(commandList, _classificationPositions.Get());
         UavBarrier(commandList, _renderVertices.Get());
     }
