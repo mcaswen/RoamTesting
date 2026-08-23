@@ -1049,30 +1049,30 @@ bool D3D12CbtFramePipeline::RecordFrame(
     UavBarrier(commandList, _geometry.ClassificationPositions());
     UavBarrier(commandList, _geometry.RenderVertices());
 
-    // 验证 pass 扫描新邻接代次，并对照 OCBT、heapID、Indexation 与 draw state。
-    Transition(commandList, resources.HeapIds, _heapIdState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-    Transition(commandList, resources.BisectorData, _bisectorDataState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-    commandList->SetComputeRootSignature(_topologyRootSignature.Get());
-    commandList->SetComputeRootConstantBufferView(0U, constantsAddress);
-    commandList->SetComputeRootConstantBufferView(1U, constantsAddress + ConstantBufferSlotBytes);
-    commandList->SetComputeRootConstantBufferView(2U, constantsAddress + ConstantBufferSlotBytes * 2U);
-    commandList->SetComputeRootDescriptorTable(3U, _topologySrvRange.Gpu);
-    commandList->SetComputeRootDescriptorTable(4U, _topologyUavRange.Gpu);
-    commandList->SetPipelineState(pipelines.Validate.Get());
-    commandList->Dispatch(DispatchCount(topology.Layout.TotalElementCount), 1U, 1U);
-    UavBarrier(commandList, resources.Validation);
-
-    // 早先复制的 counters 保持不变；这里用最终验证头覆盖对应片段。
-    Transition(commandList, resources.Validation, _validationState, D3D12_RESOURCE_STATE_COPY_SOURCE);
-    commandList->CopyBufferRegion(
-        _diagnostics.Readback(frameIndex),
-        ValidationCounterOffset,
-        resources.Validation,
-        0U,
-        sizeof(std::uint32_t) * 12U);
-    Transition(commandList, resources.Validation, _validationState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     if (input.Settings.EnableTopologyValidation)
     {
+        // 完整验证显式开启时才扫描全部槽位；普通帧只保留前面的轻量错误计数回读。
+        Transition(commandList, resources.HeapIds, _heapIdState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        Transition(commandList, resources.BisectorData, _bisectorDataState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        commandList->SetComputeRootSignature(_topologyRootSignature.Get());
+        commandList->SetComputeRootConstantBufferView(0U, constantsAddress);
+        commandList->SetComputeRootConstantBufferView(1U, constantsAddress + ConstantBufferSlotBytes);
+        commandList->SetComputeRootConstantBufferView(2U, constantsAddress + ConstantBufferSlotBytes * 2U);
+        commandList->SetComputeRootDescriptorTable(3U, _topologySrvRange.Gpu);
+        commandList->SetComputeRootDescriptorTable(4U, _topologyUavRange.Gpu);
+        commandList->SetPipelineState(pipelines.Validate.Get());
+        commandList->Dispatch(DispatchCount(topology.Layout.TotalElementCount), 1U, 1U);
+        UavBarrier(commandList, resources.Validation);
+
+        // 早先复制的 counters 保持不变；这里用最终验证头覆盖对应片段。
+        Transition(commandList, resources.Validation, _validationState, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        commandList->CopyBufferRegion(
+            _diagnostics.Readback(frameIndex),
+            ValidationCounterOffset,
+            resources.Validation,
+            0U,
+            sizeof(std::uint32_t) * 12U);
+        Transition(commandList, resources.Validation, _validationState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
         Transition(commandList, resources.IndirectDrawState, _drawState, D3D12_RESOURCE_STATE_COPY_SOURCE);
         commandList->CopyBufferRegion(
             _diagnostics.Readback(frameIndex),

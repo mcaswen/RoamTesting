@@ -411,6 +411,12 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
         _terrainPanelState.TerrainSize *= 1.25F;
         ApplyTerrainPanelSettings();
     }
+    // 末段关闭完整验证，覆盖只保留轻量计数回读的常规帧路径。
+    if (_cbtProceduralSmokeTestEnabled && _cbtProceduralSmokeFrameCount == 225U)
+    {
+        _terrainPanelState.RoamEnableTopologyValidation = false;
+        ApplyTerrainPanelSettings();
+    }
 
     _graphicsBackend->BeginFrame();
 
@@ -498,6 +504,12 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
                       << terrainStats.CbtSplitCandidateCount << ", simplify="
                       << terrainStats.CbtSimplifyCandidateCount << ", active="
                       << terrainStats.RoamNodeCount << '\n';
+            _terrainLodSmokeTestFailed = true;
+        }
+        if (_cbtProceduralSmokeFrameCount >= 225U && terrainStats.RoamCpuGpuReadbackBytes != 68U)
+        {
+            std::cerr << "CBT E3 validation-off path reported an unexpected readback size: "
+                      << terrainStats.RoamCpuGpuReadbackBytes << '\n';
             _terrainLodSmokeTestFailed = true;
         }
         _cbtObservedSplitCandidate =
