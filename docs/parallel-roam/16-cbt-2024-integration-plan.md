@@ -376,6 +376,10 @@ CPU ROAM 的厚度阈值和 triangle budget 继续保留原义，不伪装成 CB
 
 `CbtBisectorData` 的默认无效字段必须初始化为 `InvalidCbtBisectorIndex`，不能依赖清零等价于无效指针。
 
+跨语言 ABI 的标志位、分类值、模板位、结构字数和字段 word offset 统一来自
+[`CbtGpuAbi.shared.h`](../../src/algorithms/cbt_2024/CbtGpuAbi.shared.h)。C++ 适配层使用 `sizeof`/`offsetof`
+静态断言锁定布局，两个生产 HLSL 入口则共同包含 [`CbtGpuAbi.hlsli`](../../assets/shaders/dx12/cbt/CbtGpuAbi.hlsli)，不再各自复制 `CbtBisectorData` 与 draw-state 索引。
+
 ### 7.2 索引和命令资源
 
 | 资源 | 大小 | 作用 |

@@ -1,20 +1,14 @@
 #pragma once
 
+#include "algorithms/cbt_2024/CbtGpuAbi.h"
 #include "algorithms/cbt_2024/CbtOccupancyTree.h"
 
 #include <array>
 #include <cstdint>
-#include <limits>
 #include <string>
 
 namespace ParallelRoam::Algorithms::Cbt2024
 {
-inline constexpr std::uint32_t InvalidCbtBisectorIndex = std::numeric_limits<std::uint32_t>::max();
-inline constexpr std::uint32_t CbtBaseBisectorCount = 6U;
-inline constexpr std::uint32_t CbtBaseControlPointCount = CbtBaseBisectorCount * 3U;
-inline constexpr std::uint32_t CbtDrawStateWordCount = 10U;
-inline constexpr std::uint32_t CbtIndirectDispatchWordCount = 9U;
-
 /// <summary>
 /// CBT 二分器按 prev、next、twin 顺序保存的物理槽位邻接
 /// </summary>

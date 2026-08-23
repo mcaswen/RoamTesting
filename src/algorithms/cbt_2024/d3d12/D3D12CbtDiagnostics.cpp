@@ -141,7 +141,7 @@ bool D3D12CbtDiagnostics::ConsumeCompleted(
     _snapshot.AllocatedSplitSlotCount = memoryCounters[0];
     _snapshot.RemainingDynamicSlotCount = memoryCounters[1];
     // validation[0..1] 是首错 code/slot，[2..11] 是无损诊断统计。
-    std::array<std::uint32_t, 12> validation{};
+    std::array<std::uint32_t, CbtValidationWordCount> validation{};
     std::memcpy(validation.data(), bytes + ValidationCounterOffset, sizeof(validation));
     _snapshot.DuplicateSplitClaimCount = validation[2];
     _snapshot.SharedCompatibilityCount = validation[3];

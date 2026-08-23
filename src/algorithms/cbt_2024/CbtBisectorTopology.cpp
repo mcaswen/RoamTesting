@@ -11,8 +11,6 @@ namespace
 constexpr std::uint32_t BaseDepth = 4U;
 constexpr std::uint64_t FirstBaseHeapId = std::uint64_t{1U} << (BaseDepth - 1U);
 constexpr std::uint32_t GeometryThreadGroupSize = 64U;
-constexpr std::uint32_t VisibleBisectorFlag = 0x1U;
-constexpr std::uint32_t ModifiedBisectorFlag = 0x2U;
 
 // 六个基础半边需要三位层内索引，官方 minimalDepth 因此为四
 // 逻辑 heap ID 从 8 开始，与物理槽位位于动态容量尾部是两套独立寻址
@@ -46,16 +44,40 @@ std::uint32_t DispatchGroupCount(std::uint32_t elementCount)
 
 static_assert(sizeof(CbtBisectorNeighbors) == 12U);
 static_assert(sizeof(CbtBaseControlPoint) == 12U);
-static_assert(sizeof(CbtBisectorData) == 32U);
+static_assert(sizeof(CbtBisectorData) == CbtBisectorDataWordCount * sizeof(std::uint32_t));
+static_assert(offsetof(CbtBisectorData, SubdivisionPattern) ==
+    CBT_GPU_BISECTOR_SUBDIVISION_PATTERN_WORD * sizeof(std::uint32_t));
+static_assert(offsetof(CbtBisectorData, Indices) ==
+    CBT_GPU_BISECTOR_INDICES_WORD * sizeof(std::uint32_t));
+static_assert(offsetof(CbtBisectorData, ProblematicNeighbor) ==
+    CBT_GPU_BISECTOR_PROBLEMATIC_NEIGHBOR_WORD * sizeof(std::uint32_t));
+static_assert(offsetof(CbtBisectorData, BisectorState) ==
+    CBT_GPU_BISECTOR_STATE_WORD * sizeof(std::uint32_t));
+static_assert(offsetof(CbtBisectorData, Flags) ==
+    CBT_GPU_BISECTOR_FLAGS_WORD * sizeof(std::uint32_t));
+static_assert(offsetof(CbtBisectorData, PropagationId) ==
+    CBT_GPU_BISECTOR_PROPAGATION_ID_WORD * sizeof(std::uint32_t));
 // draw state 的前四个 uint 会被 ExecuteIndirect 直接解释为 D3D12_DRAW_ARGUMENTS。
 // 后六个 uint 继续保持上游 visible draw、modified count 和 explicit active count 偏移。
 static_assert(sizeof(CbtDrawArguments) == 16U);
+static_assert(offsetof(CbtDrawArguments, VertexCountPerInstance) ==
+    CBT_GPU_DRAW_ACTIVE_VERTEX_COUNT_WORD * sizeof(std::uint32_t));
+static_assert(offsetof(CbtDrawArguments, InstanceCount) ==
+    CBT_GPU_DRAW_ACTIVE_INSTANCE_COUNT_WORD * sizeof(std::uint32_t));
+static_assert(offsetof(CbtDrawArguments, StartVertexLocation) ==
+    CBT_GPU_DRAW_ACTIVE_START_VERTEX_WORD * sizeof(std::uint32_t));
+static_assert(offsetof(CbtDrawArguments, StartInstanceLocation) ==
+    CBT_GPU_DRAW_ACTIVE_START_INSTANCE_WORD * sizeof(std::uint32_t));
 static_assert(sizeof(CbtDrawState) == CbtDrawStateWordCount * sizeof(std::uint32_t));
 static_assert(offsetof(CbtDrawState, Active) == 0U);
-static_assert(offsetof(CbtDrawState, Visible) == 4U * sizeof(std::uint32_t));
-static_assert(offsetof(CbtDrawState, ModifiedPositionCount) == 8U * sizeof(std::uint32_t));
-static_assert(offsetof(CbtDrawState, ActiveBisectorCount) == 9U * sizeof(std::uint32_t));
-static_assert(sizeof(CbtDispatchArguments) == 12U);
+static_assert(offsetof(CbtDrawState, Visible) ==
+    CBT_GPU_DRAW_VISIBLE_VERTEX_COUNT_WORD * sizeof(std::uint32_t));
+static_assert(offsetof(CbtDrawState, ModifiedPositionCount) ==
+    CBT_GPU_DRAW_MODIFIED_POSITION_COUNT_WORD * sizeof(std::uint32_t));
+static_assert(offsetof(CbtDrawState, ActiveBisectorCount) ==
+    CBT_GPU_DRAW_ACTIVE_BISECTOR_COUNT_WORD * sizeof(std::uint32_t));
+static_assert(sizeof(CbtDispatchArguments) ==
+    CBT_GPU_DISPATCH_ARGUMENT_WORD_COUNT * sizeof(std::uint32_t));
 
 CbtTopologyBufferLayout BuildCbtTopologyBufferLayout(CbtOccupancyCapacity capacity)
 {
@@ -75,7 +97,7 @@ CbtTopologyBufferLayout BuildCbtTopologyBufferLayout(CbtOccupancyCapacity capaci
     layout.IndexElementCount = layout.TotalElementCount;
     layout.MemoryElementCount = 2U;
     // 错误码/槽位后接 E2 链统计、E3 commit/propagation 和四模板计数。
-    layout.ValidationElementCount = 12U;
+    layout.ValidationElementCount = CbtValidationWordCount;
     layout.DrawStateElementCount = CbtDrawStateWordCount;
     layout.TopologyDispatchElementCount = CbtIndirectDispatchWordCount;
     layout.GeometryDispatchElementCount = CbtIndirectDispatchWordCount;
@@ -96,7 +118,7 @@ CbtBaseTopology BuildSquareCbtBaseTopology(CbtOccupancyCapacity capacity)
         topology.VisibleIndices[index] = baseOffset + index;
         topology.BisectorData[index].Indices.fill(InvalidCbtBisectorIndex);
         topology.BisectorData[index].ProblematicNeighbor = InvalidCbtBisectorIndex;
-        topology.BisectorData[index].Flags = VisibleBisectorFlag | ModifiedBisectorFlag;
+        topology.BisectorData[index].Flags = CbtVisibleFlag | CbtModifiedFlag;
         topology.BisectorData[index].PropagationId = InvalidCbtBisectorIndex;
     }
 

@@ -943,7 +943,7 @@ bool D3D12CbtFramePipeline::RecordFrame(
         ValidationCounterOffset,
         resources.Validation,
         0U,
-        sizeof(std::uint32_t) * 12U);
+        sizeof(std::uint32_t) * CbtValidationWordCount);
     // OCBT 根是常规活动统计的一部分，每帧复制一个 uint 不触发同步等待。
     Transition(commandList, resources.OccupancyTree, _occupancyTreeState, D3D12_RESOURCE_STATE_COPY_SOURCE);
     commandList->CopyBufferRegion(
@@ -1055,7 +1055,7 @@ bool D3D12CbtFramePipeline::RecordFrame(
             ValidationCounterOffset,
             resources.Validation,
             0U,
-            sizeof(std::uint32_t) * 12U);
+            sizeof(std::uint32_t) * CbtValidationWordCount);
         Transition(commandList, resources.Validation, _validationState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     }
     // draw state 与 OCBT 根配对发布，使关闭完整验证时活动数仍逐样本更新。

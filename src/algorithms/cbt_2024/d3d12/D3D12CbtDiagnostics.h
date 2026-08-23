@@ -67,7 +67,7 @@ public:
     static constexpr std::size_t ValidationCounterOffset = sizeof(std::uint32_t) * 5U;
     // OCBT 根只在完整验证路径复制。
     static constexpr std::size_t OccupancyRootOffset =
-        ValidationCounterOffset + sizeof(std::uint32_t) * 12U;
+        ValidationCounterOffset + sizeof(std::uint32_t) * CbtValidationWordCount;
     // draw state 位于根计数之后，保持结构体自然字节布局。
     static constexpr std::size_t DrawStateReadbackOffset =
         OccupancyRootOffset + sizeof(std::uint32_t);

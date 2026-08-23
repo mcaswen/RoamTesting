@@ -1,6 +1,4 @@
-static const uint InvalidIndex = 0xffffffffu;
-static const uint VisibleFlag = 0x1u;
-static const uint ModifiedFlag = 0x2u;
+#include "CbtGpuAbi.hlsli"
 
 // 五个 root constants 定位基础物理槽位、基础深度并控制平面世界尺寸
 cbuffer CbtBootstrapConstants : register(b0)
@@ -10,17 +8,6 @@ cbuffer CbtBootstrapConstants : register(b0)
     uint BaseElementCount;
     float TerrainSize;
     uint BaseDepth;
-};
-
-struct CbtBisectorData
-{
-    // 字段顺序与 C++ 的 32 字节 CbtBisectorData 保持二进制一致
-    uint SubdivisionPattern;
-    uint3 Indices;
-    uint ProblematicNeighbor;
-    uint BisectorState;
-    uint Flags;
-    uint PropagationId;
 };
 
 struct TerrainVertex
@@ -57,25 +44,25 @@ void CSIndexation(uint physicalSlot : SV_DispatchThreadID)
 
     uint vertexOffset;
     // draw 顶点数同时充当 active list 的三倍 append 游标
-    InterlockedAdd(DrawState[0], 3u, vertexOffset);
+    InterlockedAdd(DrawState[CbtDrawActiveVertexCountWord], 3u, vertexOffset);
     ActiveIndices[vertexOffset / 3u] = physicalSlot;
 
     // visible 和 modified 是 active 的逐级子集 只有对应标志存在才继续追加
     const uint flags = BisectorData[physicalSlot].Flags;
-    if ((flags & VisibleFlag) == 0)
+    if ((flags & CbtVisibleFlag) == 0)
     {
         return;
     }
 
-    InterlockedAdd(DrawState[4], 3u, vertexOffset);
+    InterlockedAdd(DrawState[CbtDrawVisibleVertexCountWord], 3u, vertexOffset);
     VisibleIndices[vertexOffset / 3u] = physicalSlot;
-    if ((flags & ModifiedFlag) == 0)
+    if ((flags & CbtModifiedFlag) == 0)
     {
         return;
     }
 
     uint positionOffset;
-    InterlockedAdd(DrawState[8], 4u, positionOffset);
+    InterlockedAdd(DrawState[CbtDrawModifiedPositionCountWord], 4u, positionOffset);
     ModifiedIndices[positionOffset / 4u] = physicalSlot;
 }
 
@@ -83,20 +70,20 @@ void CSIndexation(uint physicalSlot : SV_DispatchThreadID)
 void CSPrepareIndirect(uint dispatchThreadId : SV_DispatchThreadID)
 {
     // draw state 已由所有 Indexation 线程完成写入 UAV barrier 保证这里读取稳定
-    const uint activeCount = DrawState[0] / 3u;
+    const uint activeCount = DrawState[CbtDrawActiveVertexCountWord] / 3u;
     // 三组 dispatch 分别覆盖活动槽位 活动四位置和本帧修改位置
-    GeometryDispatch[0] = (activeCount + 63u) / 64u;
-    GeometryDispatch[1] = 1u;
-    GeometryDispatch[2] = 1u;
-    GeometryDispatch[3] = (activeCount * 4u + 63u) / 64u;
-    GeometryDispatch[4] = 1u;
-    GeometryDispatch[5] = 1u;
-    const uint modifiedCount = DrawState[8] / 4u;
-    GeometryDispatch[6] = (modifiedCount + 63u) / 64u;
-    GeometryDispatch[7] = 1u;
-    GeometryDispatch[8] = 1u;
+    GeometryDispatch[CbtActiveDispatchOffsetWord + 0u] = (activeCount + 63u) / 64u;
+    GeometryDispatch[CbtActiveDispatchOffsetWord + 1u] = 1u;
+    GeometryDispatch[CbtActiveDispatchOffsetWord + 2u] = 1u;
+    GeometryDispatch[CbtActivePositionDispatchOffsetWord + 0u] = (activeCount * 4u + 63u) / 64u;
+    GeometryDispatch[CbtActivePositionDispatchOffsetWord + 1u] = 1u;
+    GeometryDispatch[CbtActivePositionDispatchOffsetWord + 2u] = 1u;
+    const uint modifiedCount = DrawState[CbtDrawModifiedPositionCountWord] / 4u;
+    GeometryDispatch[CbtModifiedDispatchOffsetWord + 0u] = (modifiedCount + 63u) / 64u;
+    GeometryDispatch[CbtModifiedDispatchOffsetWord + 1u] = 1u;
+    GeometryDispatch[CbtModifiedDispatchOffsetWord + 2u] = 1u;
     // 显式活动数供下一帧分类协议使用 不参与当前 ExecuteIndirect
-    DrawState[9] = activeCount;
+    DrawState[CbtDrawActiveBisectorCountWord] = activeCount;
 }
 
 float3 DebugColor(uint localBase)

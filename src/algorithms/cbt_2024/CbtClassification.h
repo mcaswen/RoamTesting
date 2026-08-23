@@ -15,11 +15,11 @@ namespace ParallelRoam::Algorithms::Cbt2024
 /// </summary>
 enum class CbtClassificationResult : std::int32_t
 {
-    BackFaceCulled = -3,
-    FrustumCulled = -2,
-    TooSmall = -1,
-    Unchanged = 0,
-    Bisect = 1,
+    BackFaceCulled = CBT_GPU_CLASSIFICATION_BACK_FACE_CULLED,
+    FrustumCulled = CBT_GPU_CLASSIFICATION_FRUSTUM_CULLED,
+    TooSmall = CBT_GPU_CLASSIFICATION_TOO_SMALL,
+    Unchanged = CBT_GPU_CLASSIFICATION_UNCHANGED,
+    Bisect = CBT_GPU_CLASSIFICATION_BISECT,
 };
 
 /// <summary>

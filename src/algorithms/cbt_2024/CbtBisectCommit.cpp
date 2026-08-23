@@ -14,8 +14,6 @@ namespace
 {
 // CPU 参考刻意保留上游四模板的数据流，而不抽象成通用三角剖分器。
 // 这样 GPU 读回失败时，可以逐字段对照 heapID、邻接和传播元数据。
-constexpr std::uint32_t VisibleBisectorFlag = 0x1U;
-constexpr std::uint32_t ModifiedBisectorFlag = 0x2U;
 
 // 任一局部模板不满足前置条件时，整批事务都标记为无效。
 // 调用者不会消费半提交的 CPU 快照。
@@ -100,7 +98,7 @@ void WriteCommittedData(
     CbtBisectorData committed = source;
     committed.ProblematicNeighbor = problematicNeighbor;
     committed.BisectorState = 0U;
-    committed.Flags = VisibleBisectorFlag | ModifiedBisectorFlag;
+    committed.Flags = CbtVisibleFlag | CbtModifiedFlag;
     committed.PropagationId = parent;
     result.BisectorData[target] = committed;
 }

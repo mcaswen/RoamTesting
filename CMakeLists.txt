@@ -232,21 +232,31 @@ if(PARALLEL_ROAM_BUILD_APP)
                 -T vs_6_6 -E VSCbtProcedural -Fo ${PARALLEL_ROAM_DX12_CBT_PROCEDURAL_VERTEX_SHADER}
                 "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/dx12/CbtProceduralTerrain.hlsl"
             COMMAND ${PARALLEL_ROAM_DXC_EXECUTABLE}
-                -T cs_6_6 -E CSIndexation -Fo ${PARALLEL_ROAM_DX12_CBT_BOOTSTRAP_INDEXATION_SHADER}
+                -T cs_6_6 -E CSIndexation
+                -I "${CMAKE_CURRENT_SOURCE_DIR}/src/algorithms/cbt_2024"
+                -Fo ${PARALLEL_ROAM_DX12_CBT_BOOTSTRAP_INDEXATION_SHADER}
                 "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/dx12/cbt/CbtBootstrap.hlsl"
             COMMAND ${PARALLEL_ROAM_DXC_EXECUTABLE}
-                -T cs_6_6 -E CSPrepareIndirect -Fo ${PARALLEL_ROAM_DX12_CBT_BOOTSTRAP_PREPARE_SHADER}
+                -T cs_6_6 -E CSPrepareIndirect
+                -I "${CMAKE_CURRENT_SOURCE_DIR}/src/algorithms/cbt_2024"
+                -Fo ${PARALLEL_ROAM_DX12_CBT_BOOTSTRAP_PREPARE_SHADER}
                 "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/dx12/cbt/CbtBootstrap.hlsl"
             COMMAND ${PARALLEL_ROAM_DXC_EXECUTABLE}
-                -T cs_6_6 -E CSBuildActiveGeometry -Fo ${PARALLEL_ROAM_DX12_CBT_ACTIVE_GEOMETRY_SHADER}
+                -T cs_6_6 -E CSBuildActiveGeometry
+                -I "${CMAKE_CURRENT_SOURCE_DIR}/src/algorithms/cbt_2024"
+                -Fo ${PARALLEL_ROAM_DX12_CBT_ACTIVE_GEOMETRY_SHADER}
                 "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/dx12/cbt/CbtBootstrap.hlsl"
             COMMAND ${PARALLEL_ROAM_DXC_EXECUTABLE}
-                -T cs_6_6 -E CSBuildModifiedGeometry -Fo ${PARALLEL_ROAM_DX12_CBT_MODIFIED_GEOMETRY_SHADER}
+                -T cs_6_6 -E CSBuildModifiedGeometry
+                -I "${CMAKE_CURRENT_SOURCE_DIR}/src/algorithms/cbt_2024"
+                -Fo ${PARALLEL_ROAM_DX12_CBT_MODIFIED_GEOMETRY_SHADER}
                 "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/dx12/cbt/CbtBootstrap.hlsl"
             DEPENDS
                 "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/dx12/Terrain.hlsl"
                 "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/dx12/CbtProceduralTerrain.hlsl"
                 "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/dx12/cbt/CbtBootstrap.hlsl"
+                "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/dx12/cbt/CbtGpuAbi.hlsli"
+                "${CMAKE_CURRENT_SOURCE_DIR}/src/algorithms/cbt_2024/CbtGpuAbi.shared.h"
             VERBATIM
         )
         add_custom_target(parallel_roam_dx12_shaders
@@ -344,10 +354,13 @@ if(PARALLEL_ROAM_BUILD_APP)
                         -E ${PARALLEL_ROAM_CBT_ENTRY}
                         -D CBT_CAPACITY=${PARALLEL_ROAM_CBT_CAPACITY_VALUE}
                         -I "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/dx12/cbt"
+                        -I "${CMAKE_CURRENT_SOURCE_DIR}/src/algorithms/cbt_2024"
                         -Fo ${PARALLEL_ROAM_CBT_TOPOLOGY_SHADER}
                         "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/dx12/cbt/CbtTopologyE0.hlsl"
                     DEPENDS
                         "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/dx12/cbt/CbtOccupancyTree.hlsli"
+                        "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/dx12/cbt/CbtGpuAbi.hlsli"
+                        "${CMAKE_CURRENT_SOURCE_DIR}/src/algorithms/cbt_2024/CbtGpuAbi.shared.h"
                         "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/dx12/cbt/CbtTopologyE0.hlsl"
                     VERBATIM)
             endforeach()

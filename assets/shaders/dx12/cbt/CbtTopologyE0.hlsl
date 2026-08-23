@@ -1,39 +1,13 @@
+#include "CbtGpuAbi.hlsli"
 #include "CbtOccupancyTree.hlsli"
-
-static const uint CbtInvalidIndex = 0xffffffffu;
-static const uint CbtVisibleFlag = 0x1u;
-static const uint CbtModifiedFlag = 0x2u;
-static const uint CbtUnchangedElement = 0u;
-static const uint CbtBisectElement = 1u;
-static const uint CbtSimplifyElement = 2u;
-static const uint CbtNoSplitPattern = 0x00u;
-static const uint CbtCenterSplitPattern = 0x01u;
-static const uint CbtRightSplitPattern = 0x02u;
-static const uint CbtLeftSplitPattern = 0x04u;
-static const uint CbtRightDoubleSplitPattern = CbtCenterSplitPattern | CbtRightSplitPattern;
-static const uint CbtLeftDoubleSplitPattern = CbtCenterSplitPattern | CbtLeftSplitPattern;
-static const uint CbtTripleSplitPattern =
-    CbtCenterSplitPattern | CbtRightSplitPattern | CbtLeftSplitPattern;
 
 // 分类返回值的数值和上游 ClassifyBisector ABI 完全一致。
 // 负值同时承载不可见原因，正值只表示本帧请求 split。
-static const int CbtBackFaceCulled = -3;
-static const int CbtFrustumCulled = -2;
-static const int CbtTooSmall = -1;
-static const int CbtUnchanged = 0;
-static const int CbtBisect = 1;
-
-struct CbtBisectorData
-{
-    // Split 会把兼容链请求合并进 pattern；Reset/Classify 从零开始准备本帧。
-    uint SubdivisionPattern;
-    // 四种二分模板使用 indices 保存新物理槽位，不存逻辑 heapID。
-    uint3 Indices;
-    uint ProblematicNeighbor;
-    uint BisectorState;
-    uint Flags;
-    uint PropagationId;
-};
+static const int CbtBackFaceCulled = CBT_GPU_CLASSIFICATION_BACK_FACE_CULLED;
+static const int CbtFrustumCulled = CBT_GPU_CLASSIFICATION_FRUSTUM_CULLED;
+static const int CbtTooSmall = CBT_GPU_CLASSIFICATION_TOO_SMALL;
+static const int CbtUnchanged = CBT_GPU_CLASSIFICATION_UNCHANGED;
+static const int CbtBisect = CBT_GPU_CLASSIFICATION_BISECT;
 
 cbuffer CbtGlobalConstants : register(b0)
 {
@@ -192,22 +166,22 @@ void CSResetE0(uint dispatchThreadId : SV_DispatchThreadID)
     CbtValidation[1] = 0xffffffffu;
     // E2 链统计后接 E3 commit、propagation 和四模板计数。
     [unroll]
-    for (uint diagnostic = 2u; diagnostic < 12u; ++diagnostic)
+    for (uint diagnostic = 2u; diagnostic < CbtValidationWordCount; ++diagnostic)
     {
         CbtValidation[diagnostic] = 0u;
     }
 
     // 两个 draw command 保留 InstanceCount=1 其余计数由本帧 Indexation 重建
-    CbtDrawState[0] = 0;
-    CbtDrawState[1] = 1;
-    CbtDrawState[2] = 0;
-    CbtDrawState[3] = 0;
-    CbtDrawState[4] = 0;
-    CbtDrawState[5] = 1;
-    CbtDrawState[6] = 0;
-    CbtDrawState[7] = 0;
+    CbtDrawState[CbtDrawActiveVertexCountWord] = 0;
+    CbtDrawState[CbtDrawActiveInstanceCountWord] = 1;
+    CbtDrawState[CbtDrawActiveStartVertexWord] = 0;
+    CbtDrawState[CbtDrawActiveStartInstanceWord] = 0;
+    CbtDrawState[CbtDrawVisibleVertexCountWord] = 0;
+    CbtDrawState[CbtDrawVisibleInstanceCountWord] = 1;
+    CbtDrawState[CbtDrawVisibleStartVertexWord] = 0;
+    CbtDrawState[CbtDrawVisibleStartInstanceWord] = 0;
     // 尾部两个字分别是修改位置数和显式活动二分器数
-    CbtDrawState[8] = 0;
+    CbtDrawState[CbtDrawModifiedPositionCountWord] = 0;
     // 第九字保留上一帧活动数供本帧 Classify 间接调度
 
     [unroll]
@@ -307,7 +281,7 @@ int CbtClassifyTriangle(float3 p0, float3 p1, float3 p2, float3 parentPosition, 
 void CSClassify(uint activeOrdinal : SV_DispatchThreadID)
 {
     // dispatch 向上取整，显式活动数负责裁掉最后一个 thread group 的空线程。
-    if (activeOrdinal >= CbtDrawState[9])
+    if (activeOrdinal >= CbtDrawState[CbtDrawActiveBisectorCountWord])
     {
         return;
     }
@@ -1041,9 +1015,9 @@ void CSValidateE3(uint physicalSlot : SV_DispatchThreadID)
     if (physicalSlot == 0u)
     {
         const uint dynamicActive = CbtReadTreeCount(1u);
-        const uint indexedActive = CbtDrawState[0] / 3u;
+        const uint indexedActive = CbtDrawState[CbtDrawActiveVertexCountWord] / 3u;
         if (indexedActive != dynamicActive + CbtBaseElementCount ||
-            CbtDrawState[9] != indexedActive ||
+            CbtDrawState[CbtDrawActiveBisectorCountWord] != indexedActive ||
             uint(CbtMemory[0]) != CbtValidation[6] ||
             uint(CbtPropagation[0]) != CbtValidation[7] ||
             uint(CbtAllocation[0]) !=

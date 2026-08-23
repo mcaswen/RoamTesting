@@ -9,15 +9,6 @@
 
 namespace ParallelRoam::Algorithms::Cbt2024
 {
-inline constexpr std::uint32_t CbtNoSplitPattern = 0x00U; // 本帧不提交任何二分模板。
-inline constexpr std::uint32_t CbtCenterSplitPattern = 0x01U; // 当前二分器的中心模板位。
-inline constexpr std::uint32_t CbtRightSplitPattern = 0x02U; // 右侧兼容模板位。
-inline constexpr std::uint32_t CbtLeftSplitPattern = 0x04U; // 左侧兼容模板位。
-inline constexpr std::uint32_t CbtRightDoubleSplitPattern =
-    CbtCenterSplitPattern | CbtRightSplitPattern; // 中心与右侧一次提交。
-inline constexpr std::uint32_t CbtLeftDoubleSplitPattern =
-    CbtCenterSplitPattern | CbtLeftSplitPattern; // 中心与左侧一次提交。
-
 /// <summary>
 /// SplitElement 所需的最小 CPU 拓扑视图；索引均为该数组内的局部物理槽位。
 /// </summary>
