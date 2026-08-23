@@ -10,6 +10,7 @@ static const uint CbtModifiedFlag = CBT_GPU_MODIFIED_FLAG;
 static const uint CbtUnchangedElement = CBT_GPU_UNCHANGED_ELEMENT;
 static const uint CbtBisectElement = CBT_GPU_BISECT_ELEMENT;
 static const uint CbtSimplifyElement = CBT_GPU_SIMPLIFY_ELEMENT;
+static const uint CbtMergedElement = CBT_GPU_MERGED_ELEMENT;
 
 static const uint CbtNoSplitPattern = CBT_GPU_NO_SPLIT_PATTERN;
 // 派生模板保持位组合语义，与 CPU split planner 使用同一基础位。

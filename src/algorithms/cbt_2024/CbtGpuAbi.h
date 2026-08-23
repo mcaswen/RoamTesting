@@ -18,6 +18,7 @@ inline constexpr std::uint32_t CbtModifiedFlag = CBT_GPU_MODIFIED_FLAG;
 inline constexpr std::uint32_t CbtUnchangedElement = CBT_GPU_UNCHANGED_ELEMENT;
 inline constexpr std::uint32_t CbtBisectElement = CBT_GPU_BISECT_ELEMENT;
 inline constexpr std::uint32_t CbtSimplifyElement = CBT_GPU_SIMPLIFY_ELEMENT;
+inline constexpr std::uint32_t CbtMergedElement = CBT_GPU_MERGED_ELEMENT;
 
 inline constexpr std::uint32_t CbtNoSplitPattern = CBT_GPU_NO_SPLIT_PATTERN;
 // pattern 是可组合位图；double/triple 值只由三个基础模板位派生。

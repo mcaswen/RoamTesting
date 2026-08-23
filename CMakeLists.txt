@@ -73,6 +73,7 @@ if(PARALLEL_ROAM_BUILD_APP)
                 src/algorithms/cbt_2024/CbtBisectorTopology.cpp
                 src/algorithms/cbt_2024/CbtClassification.cpp
                 src/algorithms/cbt_2024/CbtOccupancyTree.cpp
+                src/algorithms/cbt_2024/CbtSimplifyCommit.cpp
                 src/algorithms/cbt_2024/CbtSplitPlanner.cpp
                 src/algorithms/classic_roam/ClassicRoamTerrainLodAlgorithm.cpp
                 src/algorithms/classic_roam/ClassicRoamMeshBuilder.cpp
@@ -124,6 +125,7 @@ if(PARALLEL_ROAM_BUILD_APP)
                 src/algorithms/cbt_2024/CbtBisectorTopology.cpp
                 src/algorithms/cbt_2024/CbtClassification.cpp
                 src/algorithms/cbt_2024/CbtOccupancyTree.cpp
+                src/algorithms/cbt_2024/CbtSimplifyCommit.cpp
                 src/algorithms/cbt_2024/CbtSplitPlanner.cpp
                 src/algorithms/cbt_2024/d3d12/D3D12CbtGpuState.cpp
                 src/algorithms/cbt_2024/d3d12/D3D12CbtDiagnostics.cpp

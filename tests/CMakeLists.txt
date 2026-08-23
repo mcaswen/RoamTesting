@@ -236,6 +236,30 @@ target_link_libraries(
 add_test(NAME cbt_bisect_commit COMMAND parallel_roam_cbt_bisect_commit_tests)
 set_tests_properties(cbt_bisect_commit PROPERTIES LABELS "unit;cbt" TIMEOUT 30)
 
+add_executable(
+    parallel_roam_cbt_simplify_commit_tests
+    CbtSimplifyCommitTests.cpp
+    ../src/algorithms/cbt_2024/CbtBisectCommit.cpp
+    ../src/algorithms/cbt_2024/CbtSimplifyCommit.cpp
+    ../src/algorithms/cbt_2024/CbtBisectorTopology.cpp
+    ../src/algorithms/cbt_2024/CbtOccupancyTree.cpp
+)
+
+target_include_directories(
+    parallel_roam_cbt_simplify_commit_tests
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+)
+
+target_link_libraries(
+    parallel_roam_cbt_simplify_commit_tests
+    PRIVATE
+        parallel_roam_project_options
+        parallel_roam_project_warnings
+)
+
+add_test(NAME cbt_simplify_commit COMMAND parallel_roam_cbt_simplify_commit_tests)
+set_tests_properties(cbt_simplify_commit PROPERTIES LABELS "unit;cbt" TIMEOUT 30)
+
 if(TARGET parallel_roam)
     if(WIN32 AND PARALLEL_ROAM_GRAPHICS_API_NORMALIZED STREQUAL "D3D12")
         add_test(
