@@ -21,6 +21,10 @@ namespace ParallelRoam::App
 {
 struct RuntimeBenchmarkOverrides
 {
+    bool HasPath{false};
+    Gui::TerrainPanelState::RuntimeBenchmarkPath Path{
+        Gui::TerrainPanelState::RuntimeBenchmarkPath::Default};
+
     bool HasHeightMapIndex{false};
     int HeightMapIndex{0};
 
@@ -38,6 +42,21 @@ struct RuntimeBenchmarkOverrides
 
     bool HasScreenSpaceMergeThresholdPixels{false};
     float ScreenSpaceMergeThresholdPixels{2.0F};
+
+    bool HasCbtTriangleAreaPixels{false};
+    float CbtTriangleAreaPixels{50.0F};
+
+    bool HasCbtCapacity{false};
+    Algorithms::TerrainLodCbtCapacity CbtCapacity{
+        Algorithms::TerrainLodCbtCapacity::Capacity128K};
+
+    bool HasCbtValidationMode{false};
+    Algorithms::TerrainLodCbtValidationMode CbtValidationMode{
+        Algorithms::TerrainLodCbtValidationMode::Off};
+
+    bool HasCbtGeometryMode{false};
+    Algorithms::TerrainLodCbtGeometryMode CbtGeometryMode{
+        Algorithms::TerrainLodCbtGeometryMode::ModifiedOnly};
 
     bool HasSampleCount{false};
     std::size_t SampleCount{0};
@@ -135,6 +154,9 @@ private:
         // PathSampleIndex 标识当前帧对应的离散相机姿态
         std::size_t PathSampleIndex{0};
 
+        // 每种算法先在路径起点运行固定帧数，初始化成本不混入稳态样本
+        std::size_t WarmupFramesRemaining{0};
+
         // StartPosition 是地形边中点上方的相机位置
         glm::vec3 StartPosition{0.0F};
 
@@ -219,6 +241,8 @@ private:
     bool _cbtObservedSplitAfterMerge{false};
     bool _cbtObservedHeightScaleChange{false};
     bool _cbtObservedHeightMapReload{false};
+    bool _cbtObservedGpuTimingSample{false};
+    bool _cbtObservedBlockingValidationWait{false};
     bool _cbtSmokeInitialPoseCaptured{false};
     glm::vec3 _cbtSmokeInitialCameraPosition{0.0F};
     glm::vec3 _cbtSmokeInitialCameraForward{0.0F, 0.0F, -1.0F};

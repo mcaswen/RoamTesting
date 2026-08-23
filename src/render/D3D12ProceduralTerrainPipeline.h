@@ -18,6 +18,8 @@ namespace ParallelRoam::Render
 class D3D12ProceduralTerrainPipeline
 {
 public:
+    static constexpr std::size_t GpuTimestampReadbackBytes = sizeof(std::uint64_t) * 2U;
+
     D3D12ProceduralTerrainPipeline() = default;
     ~D3D12ProceduralTerrainPipeline();
 
@@ -55,15 +57,20 @@ public:
         D3D12_GPU_DESCRIPTOR_HANDLE textureSrv,
         ID3D12Resource* indirectBuffer,
         std::size_t indirectArgumentOffsetBytes,
-        bool wireframe) const;
+        bool wireframe,
+        std::uint64_t topologyGeneration);
 
     [[nodiscard]] bool IsReady() const;
+    [[nodiscard]] float LastGpuDrawMilliseconds() const;
+    [[nodiscard]] std::uint64_t LastGpuDrawSampleGeneration() const;
 
 private:
     [[nodiscard]] bool CreateRootSignature(std::string* errorMessage);
     [[nodiscard]] bool CreatePipelineStates(std::string* errorMessage);
     [[nodiscard]] bool CreateCommandSignature(std::string* errorMessage);
     [[nodiscard]] bool AllocateFrameDescriptors(std::string* errorMessage);
+    [[nodiscard]] bool CreateTimingResources(std::string* errorMessage);
+    void ConsumeCompletedTiming(std::uint32_t frameIndex);
 
     // 后端只借用，管线对象和逐帧描述符槽位由本类持有
     D3D12GraphicsBackend* _backend{nullptr};
@@ -74,5 +81,12 @@ private:
     std::array<D3D12DescriptorAllocation, D3D12GraphicsBackend::FrameCount> _activeElementSrvs;
     std::array<D3D12DescriptorAllocation, D3D12GraphicsBackend::FrameCount> _vertexSrvs;
     std::array<std::uint64_t, D3D12GraphicsBackend::FrameCount> _descriptorGenerations{};
+    Microsoft::WRL::ComPtr<ID3D12QueryHeap> _timestampQueryHeap;
+    std::array<Microsoft::WRL::ComPtr<ID3D12Resource>, D3D12GraphicsBackend::FrameCount> _timestampReadbacks;
+    std::array<bool, D3D12GraphicsBackend::FrameCount> _timestampPending{};
+    std::array<std::uint64_t, D3D12GraphicsBackend::FrameCount> _timestampGenerations{};
+    std::uint64_t _timestampFrequency{0U};
+    std::uint64_t _lastGpuDrawSampleGeneration{0U};
+    float _lastGpuDrawMilliseconds{0.0F};
 };
 } // namespace ParallelRoam::Render

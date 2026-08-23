@@ -8,6 +8,7 @@
 #include "algorithms/cbt_2024/d3d12/D3D12CbtGpuState.h"
 #include "algorithms/cbt_2024/d3d12/D3D12CbtOccupancyTree.h"
 #include "render/D3D12GraphicsBackend.h"
+#include "render/D3D12ProceduralTerrainPipeline.h"
 #endif
 
 #include <glm/ext/matrix_clip_space.hpp>
@@ -94,6 +95,7 @@ BudgetSaturationCameraPose ComputeBudgetSaturationCameraPose(float normalizedTim
 // benchmark 路径是有限的相机姿态序列；压力路径的单点成本更高，因此使用较少采样点
 constexpr std::size_t DefaultRuntimeBenchmarkSampleCount = 600;
 constexpr std::size_t BudgetSaturationRuntimeBenchmarkSampleCount = 64;
+constexpr std::size_t RuntimeBenchmarkWarmupFrameCount = 8;
 
 Render::TerrainRenderSettings ToRenderSettings(const Gui::TerrainPanelState& state)
 {
@@ -110,6 +112,9 @@ Render::TerrainRenderSettings ToRenderSettings(const Gui::TerrainPanelState& sta
     settings.RoamScreenSpaceMergeThresholdPixels = state.RoamScreenSpaceMergeThresholdPixels;
     settings.RoamTriangleBudget = static_cast<std::size_t>(std::max(state.RoamTriangleBudget, 2));
     settings.CbtCapacity = state.CbtCapacity;
+    settings.CbtTriangleAreaPixels = state.CbtTriangleAreaPixels;
+    settings.CbtValidationMode = state.CbtValidationMode;
+    settings.CbtGeometryMode = state.CbtGeometryMode;
     settings.RoamEnableParallelSplit = state.RoamEnableParallelSplit;
     settings.RoamEnableLocalConstraints = state.RoamEnableLocalConstraints;
     settings.RoamEnableTopologyValidation = state.RoamEnableTopologyValidation;
@@ -132,6 +137,27 @@ const char* CbtCapacityName(Algorithms::TerrainLodCbtCapacity capacity)
     }
     return "unknown";
 }
+
+const char* CbtValidationModeName(Algorithms::TerrainLodCbtValidationMode mode)
+{
+    switch (mode)
+    {
+    case Algorithms::TerrainLodCbtValidationMode::Off: return "Off";
+    case Algorithms::TerrainLodCbtValidationMode::Delayed: return "Delayed";
+    case Algorithms::TerrainLodCbtValidationMode::BlockingSmoke: return "BlockingSmoke";
+    }
+    return "unknown";
+}
+
+const char* CbtGeometryModeName(Algorithms::TerrainLodCbtGeometryMode mode)
+{
+    switch (mode)
+    {
+    case Algorithms::TerrainLodCbtGeometryMode::ModifiedOnly: return "ModifiedOnly";
+    case Algorithms::TerrainLodCbtGeometryMode::FullDebug: return "FullDebug";
+    }
+    return "unknown";
+}
 } // 匿名命名空间
 
 Application::~Application()
@@ -146,7 +172,7 @@ void Application::EnableCbtProceduralSmokeTest(Algorithms::TerrainLodCbtCapacity
     _terrainPanelState.UseTerrainLod = true;
     _terrainPanelState.TerrainLodAlgorithm = Algorithms::TerrainLodAlgorithmId::Cbt2024;
     _terrainPanelState.CbtCapacity = capacity;
-    _terrainPanelState.RoamEnableTopologyValidation = true;
+    _terrainPanelState.CbtValidationMode = Algorithms::TerrainLodCbtValidationMode::Delayed;
 }
 
 void Application::EnableCbtOccupancyTreeSmokeTest()
@@ -347,10 +373,11 @@ int Application::Run(int maxFrameCount)
     if (_cbtProceduralSmokeTestEnabled &&
         (!_cbtObservedClassificationSample || !_cbtObservedSplitCandidate ||
          !observedAllCbtTemplates || !_cbtObservedMerge || !_cbtObservedSplitAfterMerge ||
-         !_cbtObservedHeightScaleChange || !_cbtObservedHeightMapReload))
+         !_cbtObservedHeightScaleChange || !_cbtObservedHeightMapReload ||
+         !_cbtObservedGpuTimingSample || !_cbtObservedBlockingValidationWait))
     {
-        std::cerr << "CBT G smoke test did not observe classification, all Bisect templates, "
-                     "merge release, split reuse, height-scale rebuild, and height-map reload\n";
+        std::cerr << "CBT H smoke test did not observe classification, all Bisect templates, "
+                     "merge release, split reuse, height-map changes, GPU timing, and blocking validation\n";
         _terrainLodSmokeTestFailed = true;
     }
     const int exitCode =
@@ -467,6 +494,12 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
             _cbtSmokeInitialYawDegrees,
             _cbtSmokeInitialPitchDegrees);
     }
+    // 短区间切入阻塞验证，确认显式同步被单独计时且不污染普通延迟路径
+    if (_cbtProceduralSmokeTestEnabled && _cbtProceduralSmokeFrameCount == 400U)
+    {
+        _terrainPanelState.CbtValidationMode = Algorithms::TerrainLodCbtValidationMode::BlockingSmoke;
+        ApplyTerrainPanelSettings();
+    }
     // 切换到另一张尺寸不同的高度图，强制重建算法持有的纹理与首帧精确参考。
     if (_cbtProceduralSmokeTestEnabled && _cbtProceduralSmokeFrameCount == 420U)
     {
@@ -480,7 +513,7 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
     // 末段关闭完整验证，覆盖只保留轻量计数回读的常规帧路径。
     if (_cbtProceduralSmokeTestEnabled && _cbtProceduralSmokeFrameCount == 480U)
     {
-        _terrainPanelState.RoamEnableTopologyValidation = false;
+        _terrainPanelState.CbtValidationMode = Algorithms::TerrainLodCbtValidationMode::Off;
         ApplyTerrainPanelSettings();
     }
 
@@ -542,7 +575,7 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
         const std::string expectedCapacity = CbtCapacityName(_terrainPanelState.CbtCapacity);
         if (terrainStats.TerrainLodStatusMessage.find(expectedCapacity) == std::string::npos)
         {
-            std::cerr << "CBT G smoke test did not initialize requested capacity "
+            std::cerr << "CBT smoke test did not initialize requested capacity "
                       << expectedCapacity << ": " << terrainStats.TerrainLodStatusMessage << '\n';
             _terrainLodSmokeTestFailed = true;
         }
@@ -550,7 +583,7 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
         if (generation == 0U ||
             (_lastCbtTopologyFrameGeneration != 0U && generation != _lastCbtTopologyFrameGeneration + 1U))
         {
-            std::cerr << "CBT G topology frame generation did not advance exactly once per frame: previous="
+            std::cerr << "CBT topology frame generation did not advance exactly once per frame: previous="
                       << _lastCbtTopologyFrameGeneration << ", current=" << generation
                       << ", status=" << terrainStats.TerrainLodStatusMessage << '\n';
             _terrainLodSmokeTestFailed = true;
@@ -560,9 +593,9 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
         const std::uint64_t sampleGeneration = terrainStats.GpuClassificationSampleGeneration;
         if (sampleGeneration > generation ||
             (_lastCbtClassificationSampleGeneration != 0U &&
-             sampleGeneration != _lastCbtClassificationSampleGeneration + 1U))
+             sampleGeneration < _lastCbtClassificationSampleGeneration))
         {
-            std::cerr << "CBT G commit sample generation is invalid: previous="
+            std::cerr << "CBT H diagnostic sample generation is invalid: previous="
                       << _lastCbtClassificationSampleGeneration << ", current=" << sampleGeneration
                       << ", topology=" << generation << '\n';
             _terrainLodSmokeTestFailed = true;
@@ -572,11 +605,22 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
             _cbtObservedClassificationSample = true;
             _lastCbtClassificationSampleGeneration = sampleGeneration;
         }
+        if (terrainStats.CbtGpuTimingSampleGeneration != 0U &&
+            terrainStats.CbtGpuTimingSampleGeneration == sampleGeneration &&
+            terrainStats.CbtGpuStageSumMilliseconds > 0.0F)
+        {
+            _cbtObservedGpuTimingSample = true;
+        }
+        if (_cbtProceduralSmokeFrameCount >= 400U &&
+            terrainStats.CbtBlockingValidationWaitMilliseconds > 0.0F)
+        {
+            _cbtObservedBlockingValidationWait = true;
+        }
         const std::size_t classifiedCandidateCount =
             terrainStats.CbtSplitCandidateCount + terrainStats.CbtSimplifyCandidateCount;
         if (sampleGeneration != 0U && classifiedCandidateCount > terrainStats.RoamNodeCount)
         {
-            std::cerr << "CBT G classification counters exceed the sampled active list: split="
+            std::cerr << "CBT classification counters exceed the sampled active list: split="
                       << terrainStats.CbtSplitCandidateCount << ", simplify="
                       << terrainStats.CbtSimplifyCandidateCount << ", active="
                       << terrainStats.RoamNodeCount << '\n';
@@ -585,9 +629,11 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
 #if defined(PARALLEL_ROAM_GRAPHICS_API_D3D12)
         if (_cbtProceduralSmokeFrameCount >= 480U &&
             terrainStats.RoamCpuGpuReadbackBytes !=
-                Algorithms::Cbt2024::D3D12::D3D12CbtDiagnostics::DiagnosticReadbackBytes)
+                Algorithms::Cbt2024::D3D12::D3D12CbtDiagnostics::DiagnosticReadbackBytes +
+                Algorithms::Cbt2024::D3D12::D3D12CbtDiagnostics::GpuTimestampReadbackBytes +
+                Render::D3D12ProceduralTerrainPipeline::GpuTimestampReadbackBytes)
         {
-            std::cerr << "CBT G validation-off path reported an unexpected readback size: "
+            std::cerr << "CBT validation-off path reported an unexpected readback size: "
                       << terrainStats.RoamCpuGpuReadbackBytes << '\n';
             _terrainLodSmokeTestFailed = true;
         }
@@ -722,6 +768,16 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
     debugData.RoamCpuGpuReadbackBytes = terrainStats.RoamCpuGpuReadbackBytes;
     debugData.RoamMaxDepthSetting = terrainStats.RoamMaxDepthSetting;
     debugData.RoamMaxDepthReached = terrainStats.RoamMaxDepthReached;
+    debugData.CbtTopologyGeneration = terrainStats.GpuTopologyFrameGeneration;
+    debugData.CbtDiagnosticGeneration = terrainStats.GpuClassificationSampleGeneration;
+    debugData.CbtDiagnosticSampleAge = terrainStats.CbtDiagnosticSampleAge;
+    debugData.CbtDiagnosticSampleDropped = terrainStats.CbtDiagnosticSampleDropped;
+    debugData.CbtActiveDynamicSlotCount = terrainStats.CbtActiveDynamicSlotCount;
+    debugData.CbtRemainingDynamicSlotCount = terrainStats.CbtRemainingDynamicSlotCount;
+    debugData.CbtGpuStageMilliseconds = terrainStats.CbtGpuStageMilliseconds;
+    debugData.CbtGpuStageSumMilliseconds = terrainStats.CbtGpuStageSumMilliseconds;
+    debugData.CbtBlockingValidationWaitMilliseconds =
+        terrainStats.CbtBlockingValidationWaitMilliseconds;
     // benchmark 状态走 DebugOverlayData，GUI 不直接读取 Application 成员
     debugData.BenchmarkRunning = _runtimeBenchmark.Active;
     debugData.BenchmarkAlgorithmName = CurrentRuntimeBenchmarkAlgorithmName();
@@ -730,8 +786,6 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
     {
         debugData.LastBenchmarkOutputPath = _runtimeBenchmark.LastMarkdownPath.string();
     }
-
-    RecordRuntimeBenchmarkSample(frameTiming, terrainStats, cameraPosition);
 
     const bool previousVSyncEnabled = _terrainPanelState.VSyncEnabled;
     const int previousHeightMapIndex = _terrainPanelState.HeightMapIndex;
@@ -760,6 +814,8 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
 
     // terrain renderer 消费相机矩阵和 UI 参数，不直接处理输入事件
     _terrainRenderer.Render(renderContext);
+    // 程序化 draw 的 timestamp 在 Render 内消费已完成槽位，benchmark 随后再取一次统计
+    RecordRuntimeBenchmarkSample(frameTiming, _terrainRenderer.Stats(), cameraPosition);
     _graphicsBackend->RenderImGui(_guiLayer);
 }
 
@@ -790,6 +846,10 @@ void Application::ApplyPendingRuntimeBenchmarkOverrides()
     }
 
     const RuntimeBenchmarkOverrides& overrides = _runtimeBenchmarkOverrides;
+    if (overrides.HasPath)
+    {
+        _terrainPanelState.BenchmarkPath = overrides.Path;
+    }
     if (overrides.HasHeightMapIndex)
     {
         _terrainPanelState.HeightMapIndex =
@@ -821,6 +881,24 @@ void Application::ApplyPendingRuntimeBenchmarkOverrides()
     {
         _terrainPanelState.RoamScreenSpaceMergeThresholdPixels =
             std::clamp(overrides.ScreenSpaceMergeThresholdPixels, 0.1F, 32.0F);
+    }
+
+    if (overrides.HasCbtTriangleAreaPixels)
+    {
+        _terrainPanelState.CbtTriangleAreaPixels =
+            std::clamp(overrides.CbtTriangleAreaPixels, 1.0F, 250.0F);
+    }
+    if (overrides.HasCbtCapacity)
+    {
+        _terrainPanelState.CbtCapacity = overrides.CbtCapacity;
+    }
+    if (overrides.HasCbtValidationMode)
+    {
+        _terrainPanelState.CbtValidationMode = overrides.CbtValidationMode;
+    }
+    if (overrides.HasCbtGeometryMode)
+    {
+        _terrainPanelState.CbtGeometryMode = overrides.CbtGeometryMode;
     }
 
     _terrainPanelState.RoamScreenSpaceMergeThresholdPixels = std::min(
@@ -903,8 +981,8 @@ void Application::StartRuntimeBenchmark()
         Algorithms::Cbt2024::QueryCbt2024Availability(*_graphicsBackend);
     if (cbtAvailability.Available)
     {
-        _runtimeBenchmark.Notes.push_back(
-            "CBT 2024 procedural 验证可用，但在拓扑迁移完成前不纳入本报告");
+        _runtimeBenchmark.AlgorithmSequence.push_back(Algorithms::TerrainLodAlgorithmId::Cbt2024);
+        _runtimeBenchmark.Notes.push_back("CBT 2024：已纳入相同离散路径和逐阶段 GPU 采样");
     }
     else
     {
@@ -930,13 +1008,33 @@ void Application::StartRuntimeBenchmark()
         _terrainPanelState.RoamScreenSpaceSplitThresholdPixels = 0.25F;
         _terrainPanelState.RoamScreenSpaceMergeThresholdPixels = 0.10F;
         _terrainPanelState.RoamTriangleBudget = 200000;
-        ApplyHeightMapSelection();
+        _terrainPanelState.CbtCapacity = Algorithms::TerrainLodCbtCapacity::Capacity1M;
+        _terrainPanelState.CbtTriangleAreaPixels = 25.0F;
         _runtimeBenchmark.Notes.push_back("Benchmark 路径：极限压力路径");
     }
     else
     {
         _runtimeBenchmark.Notes.push_back("Benchmark 路径：默认选项路径");
     }
+
+    // 正式性能路径默认禁用全容量验证并使用增量几何；CLI 可显式覆盖诊断实验
+    if (!_runtimeBenchmarkOverrides.HasCbtValidationMode)
+    {
+        _terrainPanelState.CbtValidationMode = Algorithms::TerrainLodCbtValidationMode::Off;
+    }
+    if (!_runtimeBenchmarkOverrides.HasCbtGeometryMode)
+    {
+        _terrainPanelState.CbtGeometryMode = Algorithms::TerrainLodCbtGeometryMode::ModifiedOnly;
+    }
+    ApplyPendingRuntimeBenchmarkOverrides();
+    ApplyHeightMapSelection();
+    _runtimeBenchmark.Notes.push_back(
+        "每种算法预热帧数：" + std::to_string(RuntimeBenchmarkWarmupFrameCount));
+    _runtimeBenchmark.Notes.push_back(
+        "CBT 参数：capacity=" + std::string{CbtCapacityName(_terrainPanelState.CbtCapacity)} +
+        "，area=" + std::to_string(_terrainPanelState.CbtTriangleAreaPixels) + " px²，validation=" +
+        CbtValidationModeName(_terrainPanelState.CbtValidationMode) + "，geometry=" +
+        CbtGeometryModeName(_terrainPanelState.CbtGeometryMode));
 
     _runtimeBenchmark.Notes.push_back(
         "路径采样点数：" + std::to_string(_runtimeBenchmark.PathSampleCount) +
@@ -993,6 +1091,7 @@ void Application::BeginRuntimeBenchmarkAlgorithm()
     _runtimeBenchmark.PitchDegrees = pitchDegrees;
     _runtimeBenchmark.ElapsedSeconds = 0.0F;
     _runtimeBenchmark.PathSampleIndex = 0;
+    _runtimeBenchmark.WarmupFramesRemaining = RuntimeBenchmarkWarmupFrameCount;
     _runtimeBenchmark.HasPreparedFirstFrame = false;
 
     _terrainPanelState.UseTerrainLod = true;
@@ -1012,7 +1111,11 @@ void Application::PrepareRuntimeBenchmarkFrame(const FrameTiming& frameTiming)
         return;
     }
 
-    if (_runtimeBenchmark.HasPreparedFirstFrame)
+    if (_runtimeBenchmark.WarmupFramesRemaining != 0U)
+    {
+        _runtimeBenchmark.HasPreparedFirstFrame = false;
+    }
+    else if (_runtimeBenchmark.HasPreparedFirstFrame)
     {
         // 第一帧从 0 开始记录；后续帧只累计实际墙钟时间
         const float deltaSeconds = std::max(frameTiming.RawDeltaSeconds, 0.0F);
@@ -1056,6 +1159,12 @@ void Application::CompleteRuntimeBenchmarkFrame()
         return;
     }
 
+    if (_runtimeBenchmark.WarmupFramesRemaining != 0U)
+    {
+        --_runtimeBenchmark.WarmupFramesRemaining;
+        return;
+    }
+
     if (_runtimeBenchmark.PathSampleCount == 0U)
     {
         _runtimeBenchmark.Failed = true;
@@ -1086,7 +1195,8 @@ void Application::RecordRuntimeBenchmarkSample(
     const Render::TerrainRenderStats& terrainStats,
     const glm::vec3& cameraPosition)
 {
-    if (!_runtimeBenchmark.Active || _runtimeBenchmark.Failed || _runtimeBenchmark.Results.empty())
+    if (!_runtimeBenchmark.Active || _runtimeBenchmark.Failed || _runtimeBenchmark.Results.empty() ||
+        _runtimeBenchmark.WarmupFramesRemaining != 0U)
     {
         return;
     }
@@ -1144,6 +1254,7 @@ void Application::FinishRuntimeBenchmark()
     _runtimeBenchmark.HasPreparedFirstFrame = false;
     _runtimeBenchmark.ElapsedSeconds = 0.0F;
     _runtimeBenchmark.PathSampleIndex = 0;
+    _runtimeBenchmark.WarmupFramesRemaining = 0U;
 
     _terrainPanelState = previousTerrainPanelState;
     _terrainPanelState.StartBenchmarkRequested = false;

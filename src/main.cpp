@@ -200,6 +200,150 @@ int main(int argc, char** argv)
             continue;
         }
 
+        if (argument == "--runtime-benchmark-path")
+        {
+            const char* value = requireValue(index, argument);
+            if (value == nullptr)
+            {
+                break;
+            }
+            const std::string_view pathValue{value};
+            if (pathValue == "default")
+            {
+                runtimeBenchmarkOverrides.Path =
+                    ParallelRoam::Gui::TerrainPanelState::RuntimeBenchmarkPath::Default;
+            }
+            else if (pathValue == "extreme" || pathValue == "budget-saturation")
+            {
+                runtimeBenchmarkOverrides.Path =
+                    ParallelRoam::Gui::TerrainPanelState::RuntimeBenchmarkPath::BudgetSaturation;
+            }
+            else
+            {
+                parseError = "Invalid runtime benchmark path: " + std::string{pathValue};
+                break;
+            }
+            runtimeBenchmarkOverrides.HasPath = true;
+            hasRuntimeBenchmarkOverrides = true;
+            continue;
+        }
+
+        if (argument == "--runtime-benchmark-cbt-area")
+        {
+            float value = 0.0F;
+            if (!parseFloatOption(index, argument, value) || !std::isfinite(value) || value <= 0.0F)
+            {
+                if (parseError.empty())
+                {
+                    parseError = "--runtime-benchmark-cbt-area must be a finite positive number";
+                }
+                break;
+            }
+            runtimeBenchmarkOverrides.HasCbtTriangleAreaPixels = true;
+            runtimeBenchmarkOverrides.CbtTriangleAreaPixels = value;
+            hasRuntimeBenchmarkOverrides = true;
+            continue;
+        }
+
+        if (argument == "--runtime-benchmark-cbt-capacity")
+        {
+            const char* value = requireValue(index, argument);
+            if (value == nullptr)
+            {
+                break;
+            }
+            const std::string_view capacityValue{value};
+            if (capacityValue == "128K" || capacityValue == "128k")
+            {
+                runtimeBenchmarkOverrides.CbtCapacity =
+                    ParallelRoam::Algorithms::TerrainLodCbtCapacity::Capacity128K;
+            }
+            else if (capacityValue == "256K" || capacityValue == "256k")
+            {
+                runtimeBenchmarkOverrides.CbtCapacity =
+                    ParallelRoam::Algorithms::TerrainLodCbtCapacity::Capacity256K;
+            }
+            else if (capacityValue == "512K" || capacityValue == "512k")
+            {
+                runtimeBenchmarkOverrides.CbtCapacity =
+                    ParallelRoam::Algorithms::TerrainLodCbtCapacity::Capacity512K;
+            }
+            else if (capacityValue == "1M" || capacityValue == "1m")
+            {
+                runtimeBenchmarkOverrides.CbtCapacity =
+                    ParallelRoam::Algorithms::TerrainLodCbtCapacity::Capacity1M;
+            }
+            else
+            {
+                parseError = "Invalid runtime CBT capacity: " + std::string{capacityValue};
+                break;
+            }
+            runtimeBenchmarkOverrides.HasCbtCapacity = true;
+            hasRuntimeBenchmarkOverrides = true;
+            continue;
+        }
+
+        if (argument == "--runtime-benchmark-cbt-validation")
+        {
+            const char* value = requireValue(index, argument);
+            if (value == nullptr)
+            {
+                break;
+            }
+            const std::string_view mode{value};
+            if (mode == "off")
+            {
+                runtimeBenchmarkOverrides.CbtValidationMode =
+                    ParallelRoam::Algorithms::TerrainLodCbtValidationMode::Off;
+            }
+            else if (mode == "delayed")
+            {
+                runtimeBenchmarkOverrides.CbtValidationMode =
+                    ParallelRoam::Algorithms::TerrainLodCbtValidationMode::Delayed;
+            }
+            else if (mode == "blocking" || mode == "blocking-smoke")
+            {
+                runtimeBenchmarkOverrides.CbtValidationMode =
+                    ParallelRoam::Algorithms::TerrainLodCbtValidationMode::BlockingSmoke;
+            }
+            else
+            {
+                parseError = "Invalid runtime CBT validation mode: " + std::string{mode};
+                break;
+            }
+            runtimeBenchmarkOverrides.HasCbtValidationMode = true;
+            hasRuntimeBenchmarkOverrides = true;
+            continue;
+        }
+
+        if (argument == "--runtime-benchmark-cbt-geometry")
+        {
+            const char* value = requireValue(index, argument);
+            if (value == nullptr)
+            {
+                break;
+            }
+            const std::string_view mode{value};
+            if (mode == "modified" || mode == "modified-only")
+            {
+                runtimeBenchmarkOverrides.CbtGeometryMode =
+                    ParallelRoam::Algorithms::TerrainLodCbtGeometryMode::ModifiedOnly;
+            }
+            else if (mode == "full" || mode == "full-debug")
+            {
+                runtimeBenchmarkOverrides.CbtGeometryMode =
+                    ParallelRoam::Algorithms::TerrainLodCbtGeometryMode::FullDebug;
+            }
+            else
+            {
+                parseError = "Invalid runtime CBT geometry mode: " + std::string{mode};
+                break;
+            }
+            runtimeBenchmarkOverrides.HasCbtGeometryMode = true;
+            hasRuntimeBenchmarkOverrides = true;
+            continue;
+        }
+
         if (argument == "--runtime-benchmark-heightmap")
         {
             int value = 0;

@@ -185,6 +185,9 @@ bool NeedsMeshRebuild(const TerrainRenderSettings& previous, const TerrainRender
            previous.RoamScreenSpaceMergeThresholdPixels != next.RoamScreenSpaceMergeThresholdPixels ||
            previous.RoamTriangleBudget != next.RoamTriangleBudget ||
            previous.CbtCapacity != next.CbtCapacity ||
+           previous.CbtTriangleAreaPixels != next.CbtTriangleAreaPixels ||
+           previous.CbtValidationMode != next.CbtValidationMode ||
+           previous.CbtGeometryMode != next.CbtGeometryMode ||
            previous.RoamEnableParallelSplit != next.RoamEnableParallelSplit ||
            previous.RoamEnableLocalConstraints != next.RoamEnableLocalConstraints ||
            previous.RoamEnableTopologyValidation != next.RoamEnableTopologyValidation;
@@ -967,7 +970,8 @@ void TerrainRenderer::Render(const RenderContext& context)
             _d3d12State->TextureSrv.Gpu,
             _d3d12State->GpuIndirectBuffer,
             _d3d12State->GpuIndirectArgumentOffsetBytes,
-            _settings.Wireframe);
+            _settings.Wireframe,
+            _terrainLodStats.GpuTopologyFrameGeneration);
         return;
     }
 
@@ -1002,6 +1006,31 @@ TerrainRenderStats TerrainRenderer::Stats() const
     stats.TerrainLodStatusMessage = _terrainLodStatusMessage;
     stats.GpuTopologyFrameGeneration = _terrainLodStats.GpuTopologyFrameGeneration;
     stats.GpuClassificationSampleGeneration = _terrainLodStats.GpuClassificationSampleGeneration;
+    stats.CbtGpuTimingSampleGeneration = _terrainLodStats.CbtGpuTimingSampleGeneration;
+    stats.CbtDiagnosticSampleAge = _terrainLodStats.CbtDiagnosticSampleAge;
+    stats.CbtDiagnosticSampleDropped = _terrainLodStats.CbtDiagnosticSampleDropped;
+    stats.CbtResourceGeneration = _terrainLodStats.CbtResourceGeneration;
+    stats.CbtCapacitySetting = _terrainLodStats.CbtCapacitySetting;
+    stats.CbtTriangleAreaPixelsSetting = _terrainLodStats.CbtTriangleAreaPixelsSetting;
+    stats.CbtValidationModeSetting = _terrainLodStats.CbtValidationModeSetting;
+    stats.CbtGeometryModeSetting = _terrainLodStats.CbtGeometryModeSetting;
+    stats.CbtActiveDynamicSlotCount = _terrainLodStats.CbtActiveDynamicSlotCount;
+    stats.CbtRemainingDynamicSlotCount = _terrainLodStats.CbtRemainingDynamicSlotCount;
+    stats.CbtGpuStageMilliseconds = _terrainLodStats.CbtGpuStageMilliseconds;
+    stats.CbtGpuStageSumMilliseconds = _terrainLodStats.CbtGpuStageSumMilliseconds;
+    if (_d3d12State != nullptr &&
+        _settings.TerrainLodAlgorithm == Algorithms::TerrainLodAlgorithmId::Cbt2024)
+    {
+        const std::size_t renderStage =
+            static_cast<std::size_t>(Algorithms::TerrainLodCbtGpuStage::TerrainRender);
+        stats.CbtGpuStageMilliseconds[renderStage] =
+            _d3d12State->ProceduralPipeline.LastGpuDrawMilliseconds();
+        stats.CbtGpuStageSumMilliseconds += stats.CbtGpuStageMilliseconds[renderStage];
+        stats.CbtTerrainRenderSampleGeneration =
+            _d3d12State->ProceduralPipeline.LastGpuDrawSampleGeneration();
+    }
+    stats.CbtBlockingValidationWaitMilliseconds =
+        _terrainLodStats.CbtBlockingValidationWaitMilliseconds;
     stats.CbtSplitCandidateCount = _terrainLodStats.SplitTopologyCandidateCount;
     stats.CbtSimplifyCandidateCount = _terrainLodStats.MergeTopologyCandidateCount;
     stats.CbtCommittedDynamicSlotCount = _terrainLodStats.CbtCommittedDynamicSlotCount;
@@ -1090,6 +1119,11 @@ TerrainRenderStats TerrainRenderer::Stats() const
     stats.RoamRenderMilliseconds = _d3d12State != nullptr ? _d3d12State->Backend->LastGpuFrameMilliseconds() : 0.0F;
     stats.RoamCpuGpuUploadBytes = _terrainLodStats.CpuGpuUploadBytes;
     stats.RoamCpuGpuReadbackBytes = _terrainLodStats.CpuGpuReadbackBytes;
+    if (_settings.TerrainLodAlgorithm == Algorithms::TerrainLodAlgorithmId::Cbt2024)
+    {
+        stats.RoamCpuGpuReadbackBytes +=
+            D3D12ProceduralTerrainPipeline::GpuTimestampReadbackBytes;
+    }
     stats.RoamMaxDepthReached = _terrainLodStats.MaxActiveDepth;
     return stats;
 }
@@ -1181,6 +1215,9 @@ bool TerrainRenderer::RebuildTerrainLod(const RenderContext& context, std::strin
     lodSettings.ScreenSpaceMergeThresholdPixels = _settings.RoamScreenSpaceMergeThresholdPixels;
     lodSettings.TriangleBudget = _settings.RoamTriangleBudget;
     lodSettings.CbtCapacity = _settings.CbtCapacity;
+    lodSettings.CbtTriangleAreaPixels = _settings.CbtTriangleAreaPixels;
+    lodSettings.CbtValidationMode = _settings.CbtValidationMode;
+    lodSettings.CbtGeometryMode = _settings.CbtGeometryMode;
     lodSettings.EnableParallelSplit = _settings.RoamEnableParallelSplit;
     lodSettings.EnableLocalConstraints = _settings.RoamEnableLocalConstraints;
     lodSettings.EnableTopologyValidation = _settings.RoamEnableTopologyValidation;

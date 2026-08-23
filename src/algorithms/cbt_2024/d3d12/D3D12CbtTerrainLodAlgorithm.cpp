@@ -57,7 +57,7 @@ void FillRenderPacket(
     const auto& templates = state.Pipeline.LastBisectTemplateCounts();
     outPacket.Mode = TerrainLodRenderMode::GpuProceduralIndirect;
     outPacket.StatusMessage =
-        "CBT 2024 G " + std::string{CbtOccupancyCapacityName(topology.Layout.Occupancy.Capacity)} +
+        "CBT 2024 H " + std::string{CbtOccupancyCapacityName(topology.Layout.Occupancy.Capacity)} +
         " commit: split=" + std::to_string(state.Pipeline.LastSplitCandidateCount()) +
         " simplify=" + std::to_string(state.Pipeline.LastSimplifyCandidateCount()) +
         " nodes=" + std::to_string(state.Pipeline.LastPlannedSplitNodeCount()) +
@@ -110,9 +110,9 @@ TerrainLodAlgorithmInfo D3D12CbtTerrainLodAlgorithm::Info() const
 {
     return TerrainLodAlgorithmInfo{
         TerrainLodAlgorithmId::Cbt2024,
-        "cbt-2024-g",
-        "CBT 2024（G）",
-        "GPU 常驻拓扑、双向 split/merge、高度图采样、差分法线和增量几何",
+        "cbt-2024-h",
+        "CBT 2024（H）",
+        "GPU 常驻拓扑、高度图增量几何、延迟诊断和逐阶段 GPU 计时",
     };
 }
 
@@ -149,7 +149,7 @@ bool D3D12CbtTerrainLodAlgorithm::BuildRenderData(
     }
     if (!_backend->FrameOpen() || _backend->CommandList() == nullptr)
     {
-        SetError(errorMessage, "CBT 2024 G must record between BeginFrame and Present");
+        SetError(errorMessage, "CBT 2024 H must record between BeginFrame and Present");
         return false;
     }
     const Cbt2024Availability availability = QueryCbt2024Availability(*_backend);
@@ -160,7 +160,7 @@ bool D3D12CbtTerrainLodAlgorithm::BuildRenderData(
     }
     if (input.HeightMap == nullptr || !input.HeightMap->IsValid())
     {
-        SetError(errorMessage, "CBT 2024 G requires a valid terrain input");
+        SetError(errorMessage, "CBT 2024 requires a valid terrain input");
         return false;
     }
 
@@ -245,6 +245,34 @@ bool D3D12CbtTerrainLodAlgorithm::BuildRenderData(
     _stats.ActiveTriangleCount = activeCount;
     _stats.GpuTopologyFrameGeneration = _state->Pipeline.TopologyFrameGeneration();
     _stats.GpuClassificationSampleGeneration = _state->Pipeline.ClassificationSampleGeneration();
+    _stats.CbtGpuTimingSampleGeneration = _state->Pipeline.GpuTimingSampleGeneration();
+    _stats.CbtDiagnosticSampleAge =
+        _stats.GpuTopologyFrameGeneration >= _stats.GpuClassificationSampleGeneration
+        ? _stats.GpuTopologyFrameGeneration - _stats.GpuClassificationSampleGeneration
+        : 0U;
+    _stats.CbtDiagnosticSampleDropped =
+        _stats.GpuClassificationSampleGeneration == 0U ||
+        _stats.GpuClassificationSampleGeneration == _lastPublishedDiagnosticGeneration ||
+        (_lastPublishedDiagnosticGeneration != 0U &&
+         _stats.GpuClassificationSampleGeneration > _lastPublishedDiagnosticGeneration + 1U);
+    if (_stats.GpuClassificationSampleGeneration != 0U &&
+        _stats.GpuClassificationSampleGeneration != _lastPublishedDiagnosticGeneration)
+    {
+        _lastPublishedDiagnosticGeneration = _stats.GpuClassificationSampleGeneration;
+    }
+    _stats.CbtResourceGeneration = _state->Topology.Generation();
+    _stats.CbtCapacitySetting = static_cast<std::uint32_t>(input.Settings.CbtCapacity);
+    _stats.CbtTriangleAreaPixelsSetting = input.Settings.CbtTriangleAreaPixels;
+    _stats.CbtValidationModeSetting = input.Settings.CbtValidationMode;
+    _stats.CbtGeometryModeSetting = input.Settings.CbtGeometryMode;
+    // 延迟计数和 compute 时间由同一诊断槽发布
+    // renderer 会用 topology generation 对齐独立的 terrain draw query
+    _stats.CbtActiveDynamicSlotCount = _state->Pipeline.LastActiveDynamicSlotCount();
+    _stats.CbtRemainingDynamicSlotCount = _state->Pipeline.LastRemainingDynamicSlotCount();
+    _stats.CbtGpuStageMilliseconds = _state->Pipeline.LastGpuStageMilliseconds();
+    _stats.CbtGpuStageSumMilliseconds = _state->Pipeline.LastGpuStageSumMilliseconds();
+    _stats.CbtBlockingValidationWaitMilliseconds =
+        _state->Pipeline.LastBlockingValidationWaitMilliseconds();
     _stats.ActiveNodeCount = activeCount;
     _stats.OriginalTriangleCount = CbtBaseBisectorCount;
     _stats.SubdividedTriangleCount = activeCount > CbtBaseBisectorCount
@@ -278,9 +306,27 @@ bool D3D12CbtTerrainLodAlgorithm::BuildRenderData(
         _stats.CbtBisectTemplateCounts[index] = templateCounts[index];
     }
     _stats.MaxActiveDepth = static_cast<int>(_state->Topology.Topology().BaseDepth);
-    _stats.CpuGpuReadbackBytes = input.Settings.EnableTopologyValidation
+    _stats.CpuGpuReadbackBytes = (input.Settings.CbtValidationMode != TerrainLodCbtValidationMode::Off
         ? D3D12CbtDiagnostics::ValidationReadbackBytes
-        : D3D12CbtDiagnostics::DiagnosticReadbackBytes;
+        : D3D12CbtDiagnostics::DiagnosticReadbackBytes) +
+        D3D12CbtDiagnostics::GpuTimestampReadbackBytes;
+    const auto stage = [&](TerrainLodCbtGpuStage value) {
+        return _stats.CbtGpuStageMilliseconds[static_cast<std::size_t>(value)];
+    };
+    _stats.SplitMilliseconds =
+        stage(TerrainLodCbtGpuStage::Split) +
+        stage(TerrainLodCbtGpuStage::Allocate) +
+        stage(TerrainLodCbtGpuStage::NeighborCopy) +
+        stage(TerrainLodCbtGpuStage::Bisect) +
+        stage(TerrainLodCbtGpuStage::PropagateBisect);
+    _stats.MergeMilliseconds =
+        stage(TerrainLodCbtGpuStage::PrepareSimplify) +
+        stage(TerrainLodCbtGpuStage::Simplify) +
+        stage(TerrainLodCbtGpuStage::PropagateSimplify);
+    _stats.EmitMilliseconds =
+        stage(TerrainLodCbtGpuStage::ClassificationGeometry) +
+        stage(TerrainLodCbtGpuStage::RenderGeometry);
+    _stats.ValidateMilliseconds = stage(TerrainLodCbtGpuStage::Validation);
     _stats.CpuUpdateMilliseconds = buildTimer.Stop();
 
     FillRenderPacket(*_state, outPacket);
@@ -292,7 +338,7 @@ bool D3D12CbtTerrainLodAlgorithm::BuildRenderData(
     }
     if (!outPacket.HasConsistentResourceContract())
     {
-        SetError(errorMessage, "CBT 2024 G produced an inconsistent GPU render packet");
+        SetError(errorMessage, "CBT 2024 produced an inconsistent GPU render packet");
         return false;
     }
     if (errorMessage != nullptr)
@@ -309,7 +355,13 @@ const TerrainLodStats& D3D12CbtTerrainLodAlgorithm::Stats() const
 
 void D3D12CbtTerrainLodAlgorithm::Reset()
 {
-    // 资源常驻；renderer 在真正销毁算法前负责等待其最后一个 fence
+    // benchmark 的每种路径必须从基础拓扑开始；等待只发生在显式 reset 边界
+    if (_backend != nullptr && _state != nullptr && _state->Topology.IsInitialized())
+    {
+        _backend->WaitForGpuIdle();
+    }
+    _state = std::make_unique<D3D12CbtTerrainState>();
     _stats = {};
+    _lastPublishedDiagnosticGeneration = 0U;
 }
 } // namespace ParallelRoam::Algorithms::Cbt2024::D3D12

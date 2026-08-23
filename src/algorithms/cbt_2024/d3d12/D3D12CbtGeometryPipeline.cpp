@@ -170,7 +170,7 @@ bool D3D12CbtGeometryPipeline::Initialize(
     if (!heightMap.IsValid() || heightMap.Values().size() !=
         static_cast<std::size_t>(heightMap.Width()) * static_cast<std::size_t>(heightMap.Height()))
     {
-        SetError(errorMessage, "CBT G requires a valid contiguous height map");
+        SetError(errorMessage, "CBT geometry requires a valid contiguous height map");
         Shutdown();
         return false;
     }
@@ -240,7 +240,7 @@ bool D3D12CbtGeometryPipeline::Initialize(
             nullptr,
             IID_PPV_ARGS(&_heightTexture))))
     {
-        SetError(errorMessage, "Failed to allocate CBT G height texture");
+        SetError(errorMessage, "Failed to allocate CBT height texture");
         Shutdown();
         return false;
     }
@@ -274,7 +274,7 @@ bool D3D12CbtGeometryPipeline::Initialize(
     void* mapped = nullptr;
     if (FAILED(_heightUpload->Map(0U, &noRead, &mapped)))
     {
-        SetError(errorMessage, "Failed to map CBT G height upload buffer");
+        SetError(errorMessage, "Failed to map CBT height upload buffer");
         Shutdown();
         return false;
     }
@@ -300,7 +300,7 @@ bool D3D12CbtGeometryPipeline::Initialize(
     // R32_FLOAT 视图与资源格式一致，不依赖 typeless 重解释。
     if (!_heightSrv.IsValid())
     {
-        SetError(errorMessage, "D3D12 descriptor heap has no slot for the CBT G height map");
+        SetError(errorMessage, "D3D12 descriptor heap has no slot for the CBT height map");
         Shutdown();
         return false;
     }
@@ -338,7 +338,7 @@ bool D3D12CbtGeometryPipeline::Initialize(
     {
         if (backend.CommandList() == nullptr || !recordUpload(backend.CommandList(), errorMessage))
         {
-            SetError(errorMessage, "CBT G height upload requires an open command list");
+            SetError(errorMessage, "CBT height upload requires an open command list");
             Shutdown();
             return false;
         }

@@ -2,6 +2,7 @@
 
 #include "algorithms/cbt_2024/CbtBisectorTopology.h"
 #include "algorithms/cbt_2024/CbtTerrainGeometry.h"
+#include "algorithms/ITerrainLodAlgorithm.h"
 #include "render/D3D12GraphicsBackend.h"
 
 #include <d3d12.h>
@@ -14,6 +15,8 @@
 
 namespace ParallelRoam::Algorithms::Cbt2024::D3D12
 {
+/// 阻塞验证所需的首帧 CPU 参考值
+/// 该数据与提交它的 readback 槽绑定，不能跨资源代复用
 struct D3D12CbtDiagnosticExpectation
 {
     // 首帧精确对照由 CPU 分类器和 split planner 生成。
@@ -30,6 +33,8 @@ struct D3D12CbtDiagnosticExpectation
     std::array<CbtTerrainGeometryResult, CbtBaseBisectorCount> BaseGeometry{};
 };
 
+/// 已由 GPU 完成并可安全发布给 renderer 的延迟诊断快照
+/// 计数和 compute 时间共享 SampleGeneration，draw 时间由 renderer 对齐
 struct D3D12CbtDiagnosticSnapshot
 {
     // SampleGeneration 标识延迟回读对应的 GPU 拓扑事务，而非当前 CPU 帧。
@@ -62,6 +67,10 @@ struct D3D12CbtDiagnosticSnapshot
     // OCBT 根只含动态槽位；draw state 的活动数还包含六个基础二分器。
     std::uint32_t ActiveDynamicSlotCount{0U};
     std::uint32_t IndexedActiveCount{CbtBaseBisectorCount};
+    // GPU timestamp 与计数槽一同轮转，数组末项 TerrainRender 由 renderer 单独填充
+    std::uint64_t GpuTimingSampleGeneration{0U};
+    std::array<float, TerrainLodCbtGpuStageCount> GpuStageMilliseconds{};
+    float GpuStageSumMilliseconds{0.0F};
 };
 
 /// Owns delayed readback slots, their CPU reference data, and the persistent fault latch.
@@ -102,9 +111,12 @@ public:
     // 最大范围覆盖全部诊断分段，作为每槽资源的统一容量。
     static constexpr std::size_t ValidationReadbackBytes =
         BaseParentPositionOffset + sizeof(glm::vec3) * CbtBaseBisectorCount;
+    static constexpr std::size_t GpuTimestampReadbackBytes =
+        static_cast<std::size_t>(TerrainLodCbtGpuStage::TerrainRender) * 2U *
+        sizeof(std::uint64_t);
 
     // 每个 swap-chain frame 分配一个 readback，复用槽位时 GPU 已完成该资源。
-    [[nodiscard]] bool Initialize(ID3D12Device* device, std::string* errorMessage);
+    [[nodiscard]] bool Initialize(Render::D3D12GraphicsBackend& backend, std::string* errorMessage);
     void Shutdown();
 
     [[nodiscard]] ID3D12Resource* Readback(std::uint32_t frameIndex) const;
@@ -117,6 +129,21 @@ public:
         const D3D12CbtDiagnosticExpectation& expectation);
     // ConsumeCompleted 在当前 frame index 再次可用时读取上一轮数据。
     [[nodiscard]] bool ConsumeCompleted(std::uint32_t frameIndex, std::string* errorMessage);
+    // 显式 GPU idle 后按生成代次消费全部槽，专供阻塞 smoke 验证
+    // 排序保证最终 Snapshot 始终代表最新事务
+    [[nodiscard]] bool ConsumeAllCompleted(std::string* errorMessage);
+    // 每个阶段使用独立的 timestamp 对，避免嵌套区间造成重复计时
+    // TerrainRender 属于 graphics pipeline，不进入这里的 query 区间
+    void BeginGpuStage(
+        ID3D12GraphicsCommandList* commandList,
+        std::uint32_t frameIndex,
+        TerrainLodCbtGpuStage stage);
+    void EndGpuStage(
+        ID3D12GraphicsCommandList* commandList,
+        std::uint32_t frameIndex,
+        TerrainLodCbtGpuStage stage);
+    // Resolve 仅把当前槽 query 写入 readback，不映射也不等待 GPU
+    void ResolveGpuTimings(ID3D12GraphicsCommandList* commandList, std::uint32_t frameIndex);
     // 首个持久拓扑错误会被锁存，恢复由上层整体替换 GPU state 完成。
     [[nodiscard]] bool LatchFault(const std::string& message, std::string* errorMessage);
 
@@ -126,9 +153,20 @@ public:
 
 private:
     static constexpr std::size_t FrameCount = Render::D3D12GraphicsBackend::FrameCount;
+    static constexpr std::size_t ProfiledStageCount =
+        static_cast<std::size_t>(TerrainLodCbtGpuStage::TerrainRender);
+    static constexpr std::size_t TimestampCountPerFrame = ProfiledStageCount * 2U;
+    static constexpr std::size_t TimestampReadbackBytes =
+        GpuTimestampReadbackBytes;
 
     // readback 与所有期望数组使用相同 frame index，避免跨槽引用失配。
     std::array<Microsoft::WRL::ComPtr<ID3D12Resource>, FrameCount> _readbacks;
+    // query heap 按 frame-major、stage-minor 排列，每个阶段连续保存起止时间
+    Microsoft::WRL::ComPtr<ID3D12QueryHeap> _timestampQueryHeap;
+    // timestamp readback 与 counter readback 独立，避免扩大全量验证映射范围
+    std::array<Microsoft::WRL::ComPtr<ID3D12Resource>, FrameCount> _timestampReadbacks;
+    // 频率来自承载本帧命令的 direct queue，不能使用固定硬件常数换算
+    std::uint64_t _timestampFrequency{0U};
     // Pending 在成功映射前保持置位，映射失败则同时锁存故障。
     std::array<bool, FrameCount> _pending{};
     // Generations 让错误信息对应 GPU 事务，而不是延迟后的显示帧。

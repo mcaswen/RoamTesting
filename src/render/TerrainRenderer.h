@@ -67,6 +67,11 @@ struct TerrainRenderSettings
     // CBT 独立选择 OCBT 资源与 shader 特化容量；CPU ROAM 忽略该字段。
     Algorithms::TerrainLodCbtCapacity CbtCapacity{
         Algorithms::TerrainLodCbtCapacity::Capacity128K};
+    float CbtTriangleAreaPixels{50.0F};
+    Algorithms::TerrainLodCbtValidationMode CbtValidationMode{
+        Algorithms::TerrainLodCbtValidationMode::Off};
+    Algorithms::TerrainLodCbtGeometryMode CbtGeometryMode{
+        Algorithms::TerrainLodCbtGeometryMode::ModifiedOnly};
     // DOD 专属实验开关；其他算法忽略该字段。
     bool RoamEnableParallelSplit{true};
 
@@ -105,6 +110,22 @@ struct TerrainRenderStats
     std::string TerrainLodStatusMessage;
     std::uint64_t GpuTopologyFrameGeneration{0U};
     std::uint64_t GpuClassificationSampleGeneration{0U};
+    std::uint64_t CbtGpuTimingSampleGeneration{0U};
+    std::uint64_t CbtTerrainRenderSampleGeneration{0U};
+    std::uint64_t CbtDiagnosticSampleAge{0U};
+    bool CbtDiagnosticSampleDropped{false};
+    std::uint64_t CbtResourceGeneration{0U};
+    std::uint32_t CbtCapacitySetting{0U};
+    float CbtTriangleAreaPixelsSetting{0.0F};
+    Algorithms::TerrainLodCbtValidationMode CbtValidationModeSetting{
+        Algorithms::TerrainLodCbtValidationMode::Off};
+    Algorithms::TerrainLodCbtGeometryMode CbtGeometryModeSetting{
+        Algorithms::TerrainLodCbtGeometryMode::ModifiedOnly};
+    std::size_t CbtActiveDynamicSlotCount{0U};
+    std::size_t CbtRemainingDynamicSlotCount{0U};
+    std::array<float, Algorithms::TerrainLodCbtGpuStageCount> CbtGpuStageMilliseconds{};
+    float CbtGpuStageSumMilliseconds{0.0F};
+    float CbtBlockingValidationWaitMilliseconds{0.0F};
     std::size_t CbtSplitCandidateCount{0U};
     std::size_t CbtSimplifyCandidateCount{0U};
     std::size_t CbtCommittedDynamicSlotCount{0U};

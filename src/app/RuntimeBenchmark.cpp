@@ -1,6 +1,7 @@
 #include "app/RuntimeBenchmark.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <ctime>
@@ -87,7 +88,84 @@ struct RuntimeBenchmarkSummary
 
     // 拓扑问题合并输出，汇总表不用展开三类错误
     std::size_t MaxInvalidTopologyCount{0};
+
+    std::array<float, Algorithms::TerrainLodCbtGpuStageCount> AverageCbtGpuStageMilliseconds{};
+    float AverageCbtGpuStageSumMilliseconds{0.0F};
+    float MaxCbtGpuStageSumMilliseconds{0.0F};
+    float MaxCbtBlockingValidationWaitMilliseconds{0.0F};
+    std::uint64_t MaxCbtDiagnosticSampleAge{0U};
+    std::size_t CbtDroppedSampleCount{0U};
+    std::size_t CbtFreshSampleCount{0U};
+    double AverageCbtActiveDynamicSlots{0.0};
+    double AverageCbtRemainingDynamicSlots{0.0};
+    double AverageCbtSplitCandidates{0.0};
+    double AverageCbtSimplifyCandidates{0.0};
+    double AverageCbtCommittedSlots{0.0};
+    double AverageCbtReleasedSlots{0.0};
 };
+
+constexpr std::array<const char*, Algorithms::TerrainLodCbtGpuStageCount> CbtGpuStageNames{
+    "classificationGeometry",
+    "reset",
+    "classify",
+    "split",
+    "allocate",
+    "neighborCopy",
+    "bisect",
+    "propagateBisect",
+    "prepareSimplify",
+    "simplify",
+    "propagateSimplify",
+    "reducePre",
+    "reduceFirst",
+    "reduceSecond",
+    "indexation",
+    "renderGeometry",
+    "validation",
+    "terrainRender",
+};
+
+constexpr std::array<const char*, Algorithms::TerrainLodCbtGpuStageCount> CbtGpuStageDisplayNames{
+    "Classification geometry",
+    "Reset",
+    "Classify",
+    "Split",
+    "Allocate",
+    "Neighbor copy",
+    "Bisect",
+    "PropagateBisect",
+    "PrepareSimplify",
+    "Simplify",
+    "PropagateSimplify",
+    "ReducePre",
+    "ReduceFirst",
+    "ReduceSecond",
+    "Indexation / indirect",
+    "Render vertex evaluation",
+    "Validation",
+    "Terrain render",
+};
+
+const char* CbtValidationModeName(Algorithms::TerrainLodCbtValidationMode mode)
+{
+    switch (mode)
+    {
+    case Algorithms::TerrainLodCbtValidationMode::Off: return "Off";
+    case Algorithms::TerrainLodCbtValidationMode::Delayed: return "Delayed";
+    case Algorithms::TerrainLodCbtValidationMode::BlockingSmoke: return "BlockingSmoke";
+    }
+    return "Unknown";
+}
+
+const char* CbtGeometryModeName(Algorithms::TerrainLodCbtGeometryMode mode)
+{
+    switch (mode)
+    {
+    case Algorithms::TerrainLodCbtGeometryMode::ModifiedOnly: return "ModifiedOnly";
+    case Algorithms::TerrainLodCbtGeometryMode::FullDebug: return "FullDebug";
+    }
+    return "Unknown";
+}
 
 std::tm ToLocalTime(std::time_t timestamp)
 {
@@ -127,6 +205,19 @@ const Render::TerrainRenderStats* FindFirstSampleStats(
     }
 
     return nullptr;
+}
+
+const RuntimeBenchmarkAlgorithmResult* FindAlgorithmResult(
+    const std::vector<RuntimeBenchmarkAlgorithmResult>& results,
+    Algorithms::TerrainLodAlgorithmId algorithmId)
+{
+    const auto result = std::find_if(
+        results.begin(),
+        results.end(),
+        [algorithmId](const RuntimeBenchmarkAlgorithmResult& candidate) {
+            return candidate.AlgorithmId == algorithmId;
+        });
+    return result == results.end() ? nullptr : &*result;
 }
 
 RuntimeBenchmarkSummary SummarizeRuntimeBenchmark(const RuntimeBenchmarkAlgorithmResult& result)
@@ -178,6 +269,14 @@ RuntimeBenchmarkSummary SummarizeRuntimeBenchmark(const RuntimeBenchmarkAlgorith
     double totalCpuMeshReusedTriangles = 0.0;
     double totalCpuMeshDirtyRanges = 0.0;
     double totalCpuUtilization = 0.0;
+    std::array<double, Algorithms::TerrainLodCbtGpuStageCount> totalCbtGpuStageMilliseconds{};
+    double totalCbtGpuStageSumMilliseconds = 0.0;
+    double totalCbtActiveDynamicSlots = 0.0;
+    double totalCbtRemainingDynamicSlots = 0.0;
+    double totalCbtSplitCandidates = 0.0;
+    double totalCbtSimplifyCandidates = 0.0;
+    double totalCbtCommittedSlots = 0.0;
+    double totalCbtReleasedSlots = 0.0;
 
     for (const RuntimeBenchmarkSample& sample : result.Samples)
     {
@@ -238,6 +337,29 @@ RuntimeBenchmarkSummary SummarizeRuntimeBenchmark(const RuntimeBenchmarkAlgorith
         totalCpuMeshReusedTriangles += static_cast<double>(stats.RoamCpuMeshReusedTriangleCount);
         totalCpuMeshDirtyRanges += static_cast<double>(stats.RoamCpuMeshDirtyRangeCount);
         totalCpuUtilization += stats.RoamCpuUtilizationPercent;
+        const bool freshCbtSample = stats.CbtResourceGeneration != 0U &&
+            !stats.CbtDiagnosticSampleDropped &&
+            stats.GpuClassificationSampleGeneration == stats.CbtGpuTimingSampleGeneration &&
+            stats.GpuClassificationSampleGeneration == stats.CbtTerrainRenderSampleGeneration;
+        if (freshCbtSample)
+        {
+            ++summary.CbtFreshSampleCount;
+            for (std::size_t stage = 0U; stage < totalCbtGpuStageMilliseconds.size(); ++stage)
+            {
+                totalCbtGpuStageMilliseconds[stage] += stats.CbtGpuStageMilliseconds[stage];
+            }
+            totalCbtGpuStageSumMilliseconds += stats.CbtGpuStageSumMilliseconds;
+            totalCbtActiveDynamicSlots += static_cast<double>(stats.CbtActiveDynamicSlotCount);
+            totalCbtRemainingDynamicSlots += static_cast<double>(stats.CbtRemainingDynamicSlotCount);
+            totalCbtSplitCandidates += static_cast<double>(stats.CbtSplitCandidateCount);
+            totalCbtSimplifyCandidates += static_cast<double>(stats.CbtSimplifyCandidateCount);
+            totalCbtCommittedSlots += static_cast<double>(stats.CbtCommittedDynamicSlotCount);
+            totalCbtReleasedSlots += static_cast<double>(stats.CbtReleasedDynamicSlotCount);
+            summary.MaxCbtGpuStageSumMilliseconds =
+                std::max(summary.MaxCbtGpuStageSumMilliseconds, stats.CbtGpuStageSumMilliseconds);
+        }
+        summary.CbtDroppedSampleCount +=
+            stats.CbtResourceGeneration != 0U && !freshCbtSample ? 1U : 0U;
 
         summary.MaxFrameMilliseconds = std::max(summary.MaxFrameMilliseconds, sample.FrameMilliseconds);
         summary.MaxTotalLodMilliseconds =
@@ -257,6 +379,11 @@ RuntimeBenchmarkSummary SummarizeRuntimeBenchmark(const RuntimeBenchmarkAlgorith
         summary.MaxDepthSetting = std::max(summary.MaxDepthSetting, stats.RoamMaxDepthSetting);
         summary.MaxDepthReached = std::max(summary.MaxDepthReached, stats.RoamMaxDepthReached);
         summary.MaxInvalidTopologyCount = std::max(summary.MaxInvalidTopologyCount, invalidTopologyCount);
+        summary.MaxCbtBlockingValidationWaitMilliseconds = std::max(
+            summary.MaxCbtBlockingValidationWaitMilliseconds,
+            stats.CbtBlockingValidationWaitMilliseconds);
+        summary.MaxCbtDiagnosticSampleAge =
+            std::max(summary.MaxCbtDiagnosticSampleAge, stats.CbtDiagnosticSampleAge);
     }
 
     const double sampleCount = static_cast<double>(summary.SampleCount);
@@ -317,6 +444,21 @@ RuntimeBenchmarkSummary SummarizeRuntimeBenchmark(const RuntimeBenchmarkAlgorith
     summary.AverageCpuMeshReusedTriangles = totalCpuMeshReusedTriangles / sampleCount;
     summary.AverageCpuMeshDirtyRanges = totalCpuMeshDirtyRanges / sampleCount;
     summary.AverageCpuUtilizationPercent = static_cast<float>(totalCpuUtilization / sampleCount);
+    const double cbtSampleCount = static_cast<double>(
+        std::max(summary.CbtFreshSampleCount, static_cast<std::size_t>(1U)));
+    for (std::size_t stage = 0U; stage < totalCbtGpuStageMilliseconds.size(); ++stage)
+    {
+        summary.AverageCbtGpuStageMilliseconds[stage] =
+            static_cast<float>(totalCbtGpuStageMilliseconds[stage] / cbtSampleCount);
+    }
+    summary.AverageCbtGpuStageSumMilliseconds =
+        static_cast<float>(totalCbtGpuStageSumMilliseconds / cbtSampleCount);
+    summary.AverageCbtActiveDynamicSlots = totalCbtActiveDynamicSlots / cbtSampleCount;
+    summary.AverageCbtRemainingDynamicSlots = totalCbtRemainingDynamicSlots / cbtSampleCount;
+    summary.AverageCbtSplitCandidates = totalCbtSplitCandidates / cbtSampleCount;
+    summary.AverageCbtSimplifyCandidates = totalCbtSimplifyCandidates / cbtSampleCount;
+    summary.AverageCbtCommittedSlots = totalCbtCommittedSlots / cbtSampleCount;
+    summary.AverageCbtReleasedSlots = totalCbtReleasedSlots / cbtSampleCount;
     return summary;
 }
 
@@ -370,7 +512,21 @@ void WriteDetailedCsv(
         << "cpuUploadMilliseconds,"
         << "frameFenceWaitMilliseconds,renderMilliseconds,"
         << "cpuGpuUploadBytes,cpuGpuReadbackBytes,splitMilliseconds,"
-        << "mergeMilliseconds,emitMilliseconds,validateMilliseconds,maxDepthReached\n";
+        << "mergeMilliseconds,emitMilliseconds,validateMilliseconds,maxDepthReached,"
+        << "cbtCapacity,cbtTriangleAreaPixels,cbtValidationMode,cbtGeometryMode,"
+        << "cbtResourceGeneration,cbtTopologyGeneration,cbtDiagnosticSampleGeneration,"
+        << "cbtGpuTimingSampleGeneration,cbtTerrainRenderSampleGeneration,"
+        << "cbtDiagnosticSampleAge,cbtDiagnosticSampleDropped,cbtActiveDynamicSlots,"
+        << "cbtRemainingDynamicSlots,cbtSplitCandidates,cbtSimplifyCandidates,"
+        << "cbtCommittedSlots,cbtSplitPropagation,cbtPreparedSimplification,"
+        << "cbtReleasedSlots,cbtSimplifyPropagation,cbtPairMerges,cbtQuadMerges,"
+        << "cbtTemplateCenter,cbtTemplateRight,cbtTemplateLeft,cbtTemplateTriple,"
+        << "cbtGpuStageSumMilliseconds,cbtBlockingValidationWaitMilliseconds";
+    for (const char* stageName : CbtGpuStageNames)
+    {
+        csv << ",cbtGpu" << stageName << "Milliseconds";
+    }
+    csv << '\n';
 
     csv << std::fixed << std::setprecision(3);
     for (const RuntimeBenchmarkAlgorithmResult& result : results)
@@ -457,7 +613,40 @@ void WriteDetailedCsv(
                 << stats.RoamMergeMilliseconds << ','
                 << stats.RoamEmitMilliseconds << ','
                 << stats.RoamValidateMilliseconds << ','
-                << stats.RoamMaxDepthReached << '\n';
+                << stats.RoamMaxDepthReached << ','
+                << stats.CbtCapacitySetting << ','
+                << stats.CbtTriangleAreaPixelsSetting << ','
+                << CbtValidationModeName(stats.CbtValidationModeSetting) << ','
+                << CbtGeometryModeName(stats.CbtGeometryModeSetting) << ','
+                << stats.CbtResourceGeneration << ','
+                << stats.GpuTopologyFrameGeneration << ','
+                << stats.GpuClassificationSampleGeneration << ','
+                << stats.CbtGpuTimingSampleGeneration << ','
+                << stats.CbtTerrainRenderSampleGeneration << ','
+                << stats.CbtDiagnosticSampleAge << ','
+                << (stats.CbtDiagnosticSampleDropped ? "true" : "false") << ','
+                << stats.CbtActiveDynamicSlotCount << ','
+                << stats.CbtRemainingDynamicSlotCount << ','
+                << stats.CbtSplitCandidateCount << ','
+                << stats.CbtSimplifyCandidateCount << ','
+                << stats.CbtCommittedDynamicSlotCount << ','
+                << stats.CbtSplitPropagationCount << ','
+                << stats.CbtPreparedSimplificationCount << ','
+                << stats.CbtReleasedDynamicSlotCount << ','
+                << stats.CbtSimplifyPropagationCount << ','
+                << stats.CbtPairMergeCount << ','
+                << stats.CbtQuadMergeCount << ','
+                << stats.CbtBisectTemplateCounts[0] << ','
+                << stats.CbtBisectTemplateCounts[1] << ','
+                << stats.CbtBisectTemplateCounts[2] << ','
+                << stats.CbtBisectTemplateCounts[3] << ','
+                << stats.CbtGpuStageSumMilliseconds << ','
+                << stats.CbtBlockingValidationWaitMilliseconds;
+            for (float milliseconds : stats.CbtGpuStageMilliseconds)
+            {
+                csv << ',' << milliseconds;
+            }
+            csv << '\n';
         }
     }
 }
@@ -531,6 +720,16 @@ void WriteSummaryMarkdown(
         markdown << "- DOD 并行 Split："
                  << (stats->RoamParallelSplitEnabled ? "开启" : "关闭") << "\n\n";
     }
+    const RuntimeBenchmarkAlgorithmResult* cbtResult =
+        FindAlgorithmResult(results, Algorithms::TerrainLodAlgorithmId::Cbt2024);
+    if (cbtResult != nullptr && !cbtResult->Samples.empty())
+    {
+        const Render::TerrainRenderStats& stats = cbtResult->Samples.front().Stats;
+        markdown << "- CBT capacity：" << stats.CbtCapacitySetting << "\n";
+        markdown << "- CBT triangle area：" << stats.CbtTriangleAreaPixelsSetting << " px²\n";
+        markdown << "- CBT validation：" << CbtValidationModeName(stats.CbtValidationModeSetting) << "\n";
+        markdown << "- CBT geometry：" << CbtGeometryModeName(stats.CbtGeometryModeSetting) << "\n\n";
+    }
     markdown << "## 总体结果\n\n";
     markdown << "| Algorithm | Samples | Avg Frame ms | Max Frame ms | Avg LOD ms | Max LOD ms | "
              << "Avg Triangles | Max Triangles | Avg Nodes | Max Nodes | Avg CPU % | Max CPU % | "
@@ -564,6 +763,50 @@ void WriteSummaryMarkdown(
                  << " | " << summary.MaxDepthReached
                  << " | " << summary.MaxInvalidTopologyCount
                  << " |\n";
+    }
+
+    if (cbtResult != nullptr && !cbtResult->Samples.empty())
+    {
+        markdown << "\n> CPU ROAM 使用边长误差阈值，CBT 使用投影三角形面积阈值；"
+                    "本表可比较固定输入下的绝对开销和规模趋势，但不表示三者已经质量匹配。\n";
+    }
+
+    if (cbtResult != nullptr && !cbtResult->Samples.empty())
+    {
+        const RuntimeBenchmarkSummary cbtSummary = SummarizeRuntimeBenchmark(*cbtResult);
+        markdown << "\n## CBT 2024 GPU 阶段\n\n";
+        markdown << "GPU 阶段均来自按交换链帧轮转的 timestamp query，不等待当前帧。"
+                 << "汇总只使用计数、compute timestamp 和 terrain draw timestamp 代次一致的新鲜样本。\n\n";
+        markdown << "- 有效对齐样本：" << cbtSummary.CbtFreshSampleCount
+                 << " / " << cbtSummary.SampleCount << "\n";
+        markdown << "- dropped/错代样本：" << cbtSummary.CbtDroppedSampleCount << "\n";
+        markdown << "- 最大诊断样本年龄：" << cbtSummary.MaxCbtDiagnosticSampleAge << " 帧\n";
+        markdown << "- 平均 GPU 阶段合计：" << std::fixed << std::setprecision(4)
+                 << cbtSummary.AverageCbtGpuStageSumMilliseconds << " ms\n";
+        markdown << "- 最大 GPU 阶段合计：" << cbtSummary.MaxCbtGpuStageSumMilliseconds << " ms\n";
+        markdown << "- 最大 BlockingSmoke 等待："
+                 << cbtSummary.MaxCbtBlockingValidationWaitMilliseconds << " ms\n\n";
+
+        markdown << "| CBT GPU 阶段 | Avg ms |\n";
+        markdown << "| --- | ---: |\n";
+        for (std::size_t stage = 0U; stage < CbtGpuStageDisplayNames.size(); ++stage)
+        {
+            markdown << "| " << CbtGpuStageDisplayNames[stage] << " | "
+                     << cbtSummary.AverageCbtGpuStageMilliseconds[stage] << " |\n";
+        }
+
+        markdown << "\n### CBT 延迟计数\n\n";
+        markdown << "| Fresh samples | Avg active dynamic | Avg remaining dynamic | Avg split candidates | "
+                 << "Avg simplify candidates | Avg committed slots | Avg released slots | Max readback B |\n";
+        markdown << "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n";
+        markdown << "| " << cbtSummary.CbtFreshSampleCount
+                 << " | " << cbtSummary.AverageCbtActiveDynamicSlots
+                 << " | " << cbtSummary.AverageCbtRemainingDynamicSlots
+                 << " | " << cbtSummary.AverageCbtSplitCandidates
+                 << " | " << cbtSummary.AverageCbtSimplifyCandidates
+                 << " | " << cbtSummary.AverageCbtCommittedSlots
+                 << " | " << cbtSummary.AverageCbtReleasedSlots
+                 << " | " << cbtSummary.MaxCpuGpuReadbackBytes << " |\n";
     }
 
     const RuntimeBenchmarkSummary classicSummary =
@@ -620,6 +863,10 @@ void WriteSummaryMarkdown(
     markdown << "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n";
     for (const RuntimeBenchmarkAlgorithmResult& result : results)
     {
+        if (result.AlgorithmId == Algorithms::TerrainLodAlgorithmId::Cbt2024)
+        {
+            continue;
+        }
         const RuntimeBenchmarkSummary summary = SummarizeRuntimeBenchmark(result);
         markdown << "| " << result.AlgorithmName
                  << " | " << summary.AverageCpuUpdateMilliseconds
@@ -689,6 +936,10 @@ void WriteSummaryMarkdown(
     markdown << "| --- | ---: | ---: | ---: | ---: | ---: |\n";
     for (const RuntimeBenchmarkAlgorithmResult& result : results)
     {
+        if (result.AlgorithmId == Algorithms::TerrainLodAlgorithmId::Cbt2024)
+        {
+            continue;
+        }
         const RuntimeBenchmarkSummary summary = SummarizeRuntimeBenchmark(result);
         markdown << "| " << result.AlgorithmName
                  << " | " << summary.CpuMeshFullRebuildCount
@@ -738,7 +989,7 @@ std::string RuntimeBenchmarkAlgorithmDisplayName(Algorithms::TerrainLodAlgorithm
     case Algorithms::TerrainLodAlgorithmId::DataOrientedCpuRoam:
         return "Data-Oriented CPU ROAM";
     case Algorithms::TerrainLodAlgorithmId::Cbt2024:
-        return "CBT 2024（程序化绘制验证）";
+        return "CBT 2024（GPU 常驻拓扑）";
     case Algorithms::TerrainLodAlgorithmId::Count:
         break;
     }

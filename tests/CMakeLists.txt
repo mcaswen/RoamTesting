@@ -298,13 +298,13 @@ set_tests_properties(
 if(TARGET parallel_roam)
     if(WIN32 AND PARALLEL_ROAM_GRAPHICS_API_NORMALIZED STREQUAL "D3D12")
         add_test(
-            NAME cbt_procedural_g_quick
+            NAME cbt_procedural_h_quick
             COMMAND $<TARGET_FILE:parallel_roam> --cbt-procedural-smoke-test --cbt-capacity 128K
         )
         foreach(CBT_CAPACITY IN ITEMS 256K 512K 1M)
             string(TOLOWER "${CBT_CAPACITY}" CBT_CAPACITY_TEST_SUFFIX)
             add_test(
-                NAME cbt_procedural_g_${CBT_CAPACITY_TEST_SUFFIX}
+                NAME cbt_procedural_h_${CBT_CAPACITY_TEST_SUFFIX}
                 COMMAND
                     $<TARGET_FILE:parallel_roam>
                     --cbt-procedural-smoke-test
@@ -312,7 +312,7 @@ if(TARGET parallel_roam)
                     ${CBT_CAPACITY}
             )
             set_tests_properties(
-                cbt_procedural_g_${CBT_CAPACITY_TEST_SUFFIX}
+                cbt_procedural_h_${CBT_CAPACITY_TEST_SUFFIX}
                 PROPERTIES
                     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."
                     LABELS "gpu-quick;cbt;integration;capacity"
@@ -320,10 +320,52 @@ if(TARGET parallel_roam)
             )
         endforeach()
         set_tests_properties(
-            cbt_procedural_g_quick
+            cbt_procedural_h_quick
             PROPERTIES
                 WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."
                 LABELS "gpu-quick;cbt;integration"
+                TIMEOUT 90
+        )
+        foreach(CBT_RUNTIME_PATH IN ITEMS default extreme)
+            add_test(
+                NAME cbt_runtime_h_${CBT_RUNTIME_PATH}_quick
+                COMMAND
+                    $<TARGET_FILE:parallel_roam>
+                    --runtime-benchmark
+                    --runtime-benchmark-path
+                    ${CBT_RUNTIME_PATH}
+                    --runtime-benchmark-samples
+                    2
+                    --runtime-benchmark-label
+                    ctest-h-${CBT_RUNTIME_PATH}
+            )
+            set_tests_properties(
+                cbt_runtime_h_${CBT_RUNTIME_PATH}_quick
+                PROPERTIES
+                    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."
+                    LABELS "gpu-quick;cbt;integration;benchmark"
+                    TIMEOUT 90
+            )
+        endforeach()
+        add_test(
+            NAME cbt_runtime_h_full_geometry_quick
+            COMMAND
+                $<TARGET_FILE:parallel_roam>
+                --runtime-benchmark
+                --runtime-benchmark-path
+                default
+                --runtime-benchmark-samples
+                2
+                --runtime-benchmark-cbt-geometry
+                full-debug
+                --runtime-benchmark-label
+                ctest-h-full-geometry
+        )
+        set_tests_properties(
+            cbt_runtime_h_full_geometry_quick
+            PROPERTIES
+                WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."
+                LABELS "gpu-quick;cbt;integration;benchmark;geometry"
                 TIMEOUT 90
         )
     endif()

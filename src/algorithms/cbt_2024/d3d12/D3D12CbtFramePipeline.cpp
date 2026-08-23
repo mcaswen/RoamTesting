@@ -4,6 +4,7 @@
 #include "algorithms/cbt_2024/CbtSplitPlanner.h"
 #include "algorithms/cbt_2024/CbtTerrainGeometry.h"
 #include "terrain/TerrainMeshBuilder.h"
+#include "tools/PerformanceTimer.h"
 
 #include <algorithm>
 #include <array>
@@ -275,7 +276,7 @@ bool D3D12CbtFramePipeline::Initialize(
         !CreateDispatchCommandSignature(errorMessage) ||
         !CreatePipelines(errorMessage) ||
         !CreateConstantBuffers(errorMessage) ||
-        !_diagnostics.Initialize(backend.Device(), errorMessage) ||
+        !_diagnostics.Initialize(backend, errorMessage) ||
         !_geometry.Initialize(backend, _bootstrapRootSignature.Get(), topology, heightMap, errorMessage) ||
         !ConfigureTopologyDescriptors(topology, resources, errorMessage))
     {
@@ -317,6 +318,7 @@ void D3D12CbtFramePipeline::Shutdown()
     _bootstrapRootSignature.Reset();
     _topologyRootSignature.Reset();
     _topologyFrameGeneration = 0U;
+    _lastBlockingValidationWaitMilliseconds = 0.0F;
     _neighborReadIndex = 0U;
     _heapIdState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
     _bisectorDataState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
@@ -435,7 +437,7 @@ bool D3D12CbtFramePipeline::CreateDispatchCommandSignature(std::string* errorMes
             nullptr,
             IID_PPV_ARGS(&_dispatchCommandSignature))))
     {
-        SetError(errorMessage, "Failed to create CBT G dispatch command signature");
+        SetError(errorMessage, "Failed to create CBT dispatch command signature");
         return false;
     }
     return true;
@@ -580,7 +582,7 @@ bool D3D12CbtFramePipeline::ConfigureTopologyDescriptors(
         // 任一空资源都会使 descriptor table 部分有效，必须在创建视图前拒绝。
         if (bindings[index].Resource == nullptr)
         {
-            SetError(errorMessage, "CBT G topology resource view is incomplete");
+            SetError(errorMessage, "CBT topology resource view is incomplete");
             return false;
         }
         D3D12_UNORDERED_ACCESS_VIEW_DESC description{};
@@ -626,26 +628,44 @@ bool D3D12CbtFramePipeline::RecordFrame(
 {
     if (!_initialized || _backend == nullptr || !_backend->FrameOpen() || _backend->CommandList() == nullptr)
     {
-        SetError(errorMessage, "CBT G requires an initialized pipeline and an open D3D12 frame");
+        SetError(errorMessage, "CBT frame pipeline requires initialization and an open D3D12 frame");
         return false;
     }
     if (input.HeightMap == nullptr || input.HeightMap->Width() <= 0 || input.HeightMap->Height() <= 0)
     {
-        SetError(errorMessage, "CBT G requires a non-empty height map");
+        SetError(errorMessage, "CBT frame pipeline requires a non-empty height map");
         return false;
     }
     ID3D12GraphicsCommandList* commandList = _backend->CommandList();
     const std::uint32_t frameIndex = _backend->CurrentFrameIndex();
+    const bool fullValidation =
+        input.Settings.CbtValidationMode != TerrainLodCbtValidationMode::Off;
+    _lastBlockingValidationWaitMilliseconds = 0.0F;
     if (_diagnostics.IsFaulted())
     {
         SetError(errorMessage, _diagnostics.FaultMessage());
         return false;
+    }
+    if (input.Settings.CbtValidationMode == TerrainLodCbtValidationMode::BlockingSmoke &&
+        _topologyFrameGeneration != 0U)
+    {
+        // 阻塞模式只用于验证与故障定位，等待时间不混入任何 GPU pass
+        // idle 后消费全部 pending 槽，可立即暴露此前延迟的 shader 故障
+        Tools::PerformanceTimer waitTimer;
+        _backend->WaitForGpuIdle();
+        _lastBlockingValidationWaitMilliseconds = waitTimer.Stop();
+        if (!_diagnostics.ConsumeAllCompleted(errorMessage))
+        {
+            return false;
+        }
     }
     if (!_diagnostics.ConsumeCompleted(frameIndex, errorMessage))
     {
         return false;
     }
 
+    // Delayed 与 Off 都只消费当前已回收的 frame 槽
+    // 该位置不额外等待，因为 BeginFrame 已完成槽位 fence 同步
     // 验证值与本帧 readback 槽绑定；等该 swap-chain 槽完成并再次复用时再比较，
     // 因而不会为统计或验证额外等待 GPU。
     std::uint32_t expectedSplitCandidateCount = 0U;
@@ -655,8 +675,7 @@ bool D3D12CbtFramePipeline::RecordFrame(
     std::uint32_t expectedAllocatedSplitSlotCount = 0U;
     std::uint32_t expectedRemainingDynamicSlotCount = 0U;
     std::array<CbtTerrainGeometryResult, CbtBaseBisectorCount> expectedBaseGeometry{};
-    const bool exactReference =
-        input.Settings.EnableTopologyValidation && _topologyFrameGeneration == 0U;
+    const bool exactReference = fullValidation && _topologyFrameGeneration == 0U;
     if (exactReference)
     {
         const auto triangles = BuildCbtBaseClassificationTriangles(
@@ -720,7 +739,7 @@ bool D3D12CbtFramePipeline::RecordFrame(
             topology.Layout.DynamicElementCount);
         if (!plan.Valid || plan.SubdivisionPatterns.size() != expectedSubdivisionPatterns.size())
         {
-            SetError(errorMessage, "CBT G CPU split planning reference rejected the base topology");
+            SetError(errorMessage, "CBT CPU split planning reference rejected the base topology");
             return false;
         }
         std::copy(
@@ -756,7 +775,7 @@ bool D3D12CbtFramePipeline::RecordFrame(
                 input.Settings.HeightScale);
             if (!expectedBaseGeometry[node].Valid)
             {
-                SetError(errorMessage, "CBT G CPU terrain geometry reference rejected a retained base bisector");
+                SetError(errorMessage, "CBT CPU terrain geometry reference rejected a retained base bisector");
                 return false;
             }
         }
@@ -845,8 +864,17 @@ bool D3D12CbtFramePipeline::RecordFrame(
     };
     bindBootstrapResources();
 
+    const auto beginGpuStage = [&](TerrainLodCbtGpuStage stage) {
+        _diagnostics.BeginGpuStage(commandList, frameIndex, stage);
+    };
+    // 包装器使所有 pass 保持统一的 query 索引和 frame 槽归属
+    const auto endGpuStage = [&](TerrainLodCbtGpuStage stage) {
+        _diagnostics.EndGpuStage(commandList, frameIndex, stage);
+    };
+
     // Classify 必须看到当前参数域中的三子位置和父位置。首次运行和 TerrainSize
     // 变化都按上一代 active list 全量重建，避免动态槽继续携带旧尺度坐标。
+    beginGpuStage(TerrainLodCbtGpuStage::ClassificationGeometry);
     if (rebuildGeometry)
     {
         Transition(commandList, resources.HeapIds, _heapIdState, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
@@ -867,6 +895,7 @@ bool D3D12CbtFramePipeline::RecordFrame(
         UavBarrier(commandList, _geometry.ClassificationPositions());
         UavBarrier(commandList, _geometry.RenderVertices());
     }
+    endGpuStage(TerrainLodCbtGpuStage::ClassificationGeometry);
     _geometry.TransitionClassification(commandList, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     _geometry.TransitionVertices(commandList, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
 
@@ -888,11 +917,14 @@ bool D3D12CbtFramePipeline::RecordFrame(
 
     const CbtOccupancyLayout& occupancy = topology.Layout.Occupancy;
     CapacityPipelines& pipelines = _pipelines;
+    beginGpuStage(TerrainLodCbtGpuStage::Reset);
     commandList->SetPipelineState(pipelines.Reset.Get());
     commandList->Dispatch(1U, 1U, 1U);
     UavBarrier(commandList);
+    endGpuStage(TerrainLodCbtGpuStage::Reset);
 
     // 上一帧 PrepareIndirect 的第一组 dispatch 与 drawState[9] 共同限定活动列表消费范围
+    beginGpuStage(TerrainLodCbtGpuStage::Classify);
     commandList->SetPipelineState(pipelines.Classify.Get());
     commandList->ExecuteIndirect(
         _dispatchCommandSignature.Get(),
@@ -911,8 +943,10 @@ bool D3D12CbtFramePipeline::RecordFrame(
         resources.TopologyDispatchCommands,
         _topologyDispatchState,
         D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT);
+    endGpuStage(TerrainLodCbtGpuStage::Classify);
 
-    // E2 Split 只规划兼容链和预留内存，不复制邻接、不写 heapID、也不修改 OCBT 位。
+    // Split 只规划兼容链和预留内存，不复制邻接、不写 heapID、也不修改 OCBT 位
+    beginGpuStage(TerrainLodCbtGpuStage::Split);
     commandList->SetPipelineState(pipelines.Split.Get());
     commandList->ExecuteIndirect(
         _dispatchCommandSignature.Get(),
@@ -936,8 +970,10 @@ bool D3D12CbtFramePipeline::RecordFrame(
         resources.TopologyDispatchCommands,
         _topologyDispatchState,
         D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT);
+    endGpuStage(TerrainLodCbtGpuStage::Split);
 
     // Allocate 从仍未修改的旧 OCBT 补集中取得互异槽位，只写 BisectorData.indices。
+    beginGpuStage(TerrainLodCbtGpuStage::Allocate);
     commandList->SetPipelineState(pipelines.Allocate.Get());
     commandList->ExecuteIndirect(
         _dispatchCommandSignature.Get(),
@@ -947,8 +983,10 @@ bool D3D12CbtFramePipeline::RecordFrame(
         nullptr,
         0U);
     UavBarrier(commandList);
+    endGpuStage(TerrainLodCbtGpuStage::Allocate);
 
     // 整资源复制由 D3D12 copy 语义完成；随后四模板只覆盖下一代的局部节点。
+    beginGpuStage(TerrainLodCbtGpuStage::NeighborCopy);
     const std::uint32_t neighborWriteIndex = _neighborReadIndex ^ 1U;
     ID3D12Resource* currentNeighbors = resources.Neighbors[_neighborReadIndex];
     ID3D12Resource* nextNeighbors = resources.Neighbors[neighborWriteIndex];
@@ -973,6 +1011,8 @@ bool D3D12CbtFramePipeline::RecordFrame(
         nextNeighbors,
         _neighborStates[neighborWriteIndex],
         D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    endGpuStage(TerrainLodCbtGpuStage::NeighborCopy);
+    beginGpuStage(TerrainLodCbtGpuStage::Bisect);
     commandList->SetPipelineState(pipelines.Bisect.Get());
     commandList->ExecuteIndirect(
         _dispatchCommandSignature.Get(),
@@ -982,6 +1022,8 @@ bool D3D12CbtFramePipeline::RecordFrame(
         nullptr,
         0U);
     UavBarrier(commandList);
+    endGpuStage(TerrainLodCbtGpuStage::Bisect);
+    beginGpuStage(TerrainLodCbtGpuStage::PropagateBisect);
 
     Transition(
         commandList,
@@ -1005,12 +1047,14 @@ bool D3D12CbtFramePipeline::RecordFrame(
         nullptr,
         0U);
     UavBarrier(commandList);
+    endGpuStage(TerrainLodCbtGpuStage::PropagateBisect);
 
-    // F merge 继续写 Bisect 已发布的 next 邻接代次，Reduce 只在两类提交都完成后执行一次。
+    // merge 继续写 Bisect 已发布的 next 邻接代次，Reduce 只在两类提交都完成后执行一次
     // PrepareSimplify 重新检查同帧 split 后的深度、pair 和 facing-twin 关系。
     // Simplify 上移保留 heapID，清除 sibling heapID/OCBT 位并记录传播上下文。
     // PropagateSimplify 追踪同帧删除链，使外部邻居最终指向保留节点。
     // 第二组 indirect 参数先保存 simplify candidate 数，再依次改写为合法 merge 和传播数。
+    beginGpuStage(TerrainLodCbtGpuStage::PrepareSimplify);
     commandList->SetPipelineState(pipelines.PrepareSimplify.Get());
     commandList->ExecuteIndirect(
         _dispatchCommandSignature.Get(),
@@ -1034,6 +1078,8 @@ bool D3D12CbtFramePipeline::RecordFrame(
         resources.TopologyDispatchCommands,
         _topologyDispatchState,
         D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT);
+    endGpuStage(TerrainLodCbtGpuStage::PrepareSimplify);
+    beginGpuStage(TerrainLodCbtGpuStage::Simplify);
     commandList->SetPipelineState(pipelines.Simplify.Get());
     commandList->ExecuteIndirect(
         _dispatchCommandSignature.Get(),
@@ -1043,7 +1089,9 @@ bool D3D12CbtFramePipeline::RecordFrame(
         nullptr,
         0U);
     UavBarrier(commandList);
+    endGpuStage(TerrainLodCbtGpuStage::Simplify);
 
+    beginGpuStage(TerrainLodCbtGpuStage::PropagateSimplify);
     Transition(
         commandList,
         resources.TopologyDispatchCommands,
@@ -1066,18 +1114,25 @@ bool D3D12CbtFramePipeline::RecordFrame(
         nullptr,
         0U);
     UavBarrier(commandList);
+    endGpuStage(TerrainLodCbtGpuStage::PropagateSimplify);
 
+    beginGpuStage(TerrainLodCbtGpuStage::ReducePre);
     commandList->SetPipelineState(pipelines.ReducePre.Get());
     commandList->Dispatch(DispatchCount(occupancy.LastTreeNodeCount), 1U, 1U);
     UavBarrier(commandList, resources.OccupancyTree);
+    endGpuStage(TerrainLodCbtGpuStage::ReducePre);
+    beginGpuStage(TerrainLodCbtGpuStage::ReduceFirst);
     commandList->SetPipelineState(pipelines.ReduceFirst.Get());
     commandList->Dispatch(occupancy.SubtreeCount, 1U, 1U);
     UavBarrier(commandList, resources.OccupancyTree);
+    endGpuStage(TerrainLodCbtGpuStage::ReduceFirst);
+    beginGpuStage(TerrainLodCbtGpuStage::ReduceSecond);
     commandList->SetPipelineState(pipelines.ReduceSecond.Get());
     commandList->Dispatch(1U, 1U, 1U);
     UavBarrier(commandList, resources.OccupancyTree);
+    endGpuStage(TerrainLodCbtGpuStage::ReduceSecond);
 
-    // 先复制稳定计数；F 全拓扑验证与 draw state 在 Indexation 后补写同一延迟槽。
+    // 先复制稳定计数；全拓扑验证与 draw state 在 Indexation 后补写同一延迟槽
     // 两种路径都延迟到该 frame index 完成复用时映射，不增加 GPU wait。
     Transition(commandList, resources.Classification, _classificationState, D3D12_RESOURCE_STATE_COPY_SOURCE);
     Transition(commandList, resources.Allocation, _allocationState, D3D12_RESOURCE_STATE_COPY_SOURCE);
@@ -1116,7 +1171,7 @@ bool D3D12CbtFramePipeline::RecordFrame(
         0U,
         sizeof(std::uint32_t));
     Transition(commandList, resources.OccupancyTree, _occupancyTreeState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-    if (input.Settings.EnableTopologyValidation)
+    if (fullValidation)
     {
         Transition(commandList, resources.BisectorData, _bisectorDataState, D3D12_RESOURCE_STATE_COPY_SOURCE);
         commandList->CopyBufferRegion(
@@ -1142,7 +1197,7 @@ bool D3D12CbtFramePipeline::RecordFrame(
     _diagnostics.QueueSample(
         frameIndex,
         _topologyFrameGeneration + 1U,
-        input.Settings.EnableTopologyValidation,
+        fullValidation,
         exactReference,
         expectation);
 
@@ -1156,12 +1211,14 @@ bool D3D12CbtFramePipeline::RecordFrame(
 
     bindBootstrapResources();
 
+    beginGpuStage(TerrainLodCbtGpuStage::Indexation);
     commandList->SetPipelineState(_indexationPipeline.Get());
     commandList->Dispatch(DispatchCount(topology.Layout.TotalElementCount), 1U, 1U);
     UavBarrier(commandList);
     commandList->SetPipelineState(_prepareIndirectPipeline.Get());
     commandList->Dispatch(1U, 1U, 1U);
     UavBarrier(commandList);
+    endGpuStage(TerrainLodCbtGpuStage::Indexation);
 
     // modified list 中每个节点重新解码当前 child 和父辅助点，供下一帧分类及本帧绘制使用。
     Transition(
@@ -1171,20 +1228,27 @@ bool D3D12CbtFramePipeline::RecordFrame(
         D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT);
     _geometry.TransitionClassification(commandList, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     _geometry.TransitionVertices(commandList, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-    commandList->SetPipelineState(_geometry.ModifiedPipeline());
+    beginGpuStage(TerrainLodCbtGpuStage::RenderGeometry);
+    // ModifiedOnly 消费本帧 compact modified list，FullDebug 重算 compact active list
+    // 两种模式写相同 vertex ABI，区别只在调度规模和调试覆盖范围
+    const bool fullGeometry =
+        input.Settings.CbtGeometryMode == TerrainLodCbtGeometryMode::FullDebug;
+    commandList->SetPipelineState(fullGeometry ? _geometry.ActivePipeline() : _geometry.ModifiedPipeline());
     commandList->ExecuteIndirect(
         _dispatchCommandSignature.Get(),
         1U,
         resources.GeometryDispatchCommands,
-        sizeof(std::uint32_t) * 6U,
+        fullGeometry ? 0U : sizeof(std::uint32_t) * 6U,
         nullptr,
         0U);
     UavBarrier(commandList, _geometry.ClassificationPositions());
     UavBarrier(commandList, _geometry.RenderVertices());
+    endGpuStage(TerrainLodCbtGpuStage::RenderGeometry);
 
-    if (input.Settings.EnableTopologyValidation)
+    beginGpuStage(TerrainLodCbtGpuStage::Validation);
+    if (fullValidation)
     {
-        // Geometry validation follows the compact active list and checks every published vertex.
+        // 几何验证沿 compact active list 检查每个已发布顶点
         commandList->SetPipelineState(_geometry.ValidatePipeline());
         commandList->ExecuteIndirect(
             _dispatchCommandSignature.Get(),
@@ -1218,6 +1282,7 @@ bool D3D12CbtFramePipeline::RecordFrame(
             sizeof(std::uint32_t) * CbtValidationWordCount);
         Transition(commandList, resources.Validation, _validationState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     }
+    endGpuStage(TerrainLodCbtGpuStage::Validation);
     if (exactReference)
     {
         // 只复制固定六个 retained base 槽，诊断成本不随 CBT 容量增长。
@@ -1260,6 +1325,8 @@ bool D3D12CbtFramePipeline::RecordFrame(
         0U,
         sizeof(CbtDrawState));
     Transition(commandList, resources.IndirectDrawState, _drawState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    // query resolve 放在最后一个被测 compute pass 后，terrain draw 由 renderer 单独包围
+    _diagnostics.ResolveGpuTimings(commandList, frameIndex);
 
     Transition(commandList, resources.ActiveIndices, _activeIndexState, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     Transition(commandList, resources.VisibleIndices, _visibleIndexState, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
@@ -1402,6 +1469,27 @@ std::uint32_t D3D12CbtFramePipeline::LastIndexedActiveCount() const
 std::uint64_t D3D12CbtFramePipeline::ClassificationSampleGeneration() const
 {
     return _diagnostics.Snapshot().SampleGeneration;
+}
+
+std::uint64_t D3D12CbtFramePipeline::GpuTimingSampleGeneration() const
+{
+    return _diagnostics.Snapshot().GpuTimingSampleGeneration;
+}
+
+const std::array<float, TerrainLodCbtGpuStageCount>&
+D3D12CbtFramePipeline::LastGpuStageMilliseconds() const
+{
+    return _diagnostics.Snapshot().GpuStageMilliseconds;
+}
+
+float D3D12CbtFramePipeline::LastGpuStageSumMilliseconds() const
+{
+    return _diagnostics.Snapshot().GpuStageSumMilliseconds;
+}
+
+float D3D12CbtFramePipeline::LastBlockingValidationWaitMilliseconds() const
+{
+    return _lastBlockingValidationWaitMilliseconds;
 }
 
 bool D3D12CbtFramePipeline::IsFaulted() const

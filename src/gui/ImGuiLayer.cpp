@@ -213,7 +213,7 @@ const char* TerrainModeName(bool useTerrainLod, Algorithms::TerrainLodAlgorithmI
 
     if (algorithmId == Algorithms::TerrainLodAlgorithmId::Cbt2024)
     {
-        return "CBT 2024（程序化绘制验证）";
+        return "CBT 2024（GPU 常驻拓扑）";
     }
 
     return "Classic CPU ROAM";
@@ -401,6 +401,31 @@ void DrawDetailedPerformanceMetrics(const DebugOverlayData& data)
     DrawMetricFloat("Frame fence wait ms", data.RoamFrameFenceWaitMilliseconds, "%.2f");
     DrawMetricSize("上传 B", data.RoamCpuGpuUploadBytes);
     DrawMetricSize("回读 B", data.RoamCpuGpuReadbackBytes);
+    if (data.TerrainLodAlgorithm == Algorithms::TerrainLodAlgorithmId::Cbt2024)
+    {
+        DrawSectionHeader("CBT GPU");
+        DrawMetricSize("拓扑代次", static_cast<std::size_t>(data.CbtTopologyGeneration));
+        DrawMetricSize("诊断代次", static_cast<std::size_t>(data.CbtDiagnosticGeneration));
+        DrawMetricSize("样本年龄", static_cast<std::size_t>(data.CbtDiagnosticSampleAge));
+        DrawMetricRow("Dropped", data.CbtDiagnosticSampleDropped ? "是" : "否");
+        DrawMetricSize("动态槽", data.CbtActiveDynamicSlotCount);
+        DrawMetricSize("剩余槽", data.CbtRemainingDynamicSlotCount);
+        DrawMetricFloat("GPU 阶段合计 ms", data.CbtGpuStageSumMilliseconds, "%.4f");
+        DrawMetricFloat(
+            "阻塞验证等待 ms",
+            data.CbtBlockingValidationWaitMilliseconds,
+            "%.4f");
+        constexpr std::array<const char*, Algorithms::TerrainLodCbtGpuStageCount> stageNames{
+            "分类几何", "Reset", "Classify", "Split", "Allocate", "邻接复制",
+            "Bisect", "Split 传播", "Prepare simplify", "Simplify", "Merge 传播",
+            "Reduce pre", "Reduce first", "Reduce second", "Indexation",
+            "渲染顶点评估", "Validation", "Terrain render",
+        };
+        for (std::size_t stage = 0U; stage < stageNames.size(); ++stage)
+        {
+            DrawMetricFloat(stageNames[stage], data.CbtGpuStageMilliseconds[stage], "%.4f");
+        }
+    }
     DrawMetricInt("设置深度", data.RoamMaxDepthSetting);
     DrawMetricInt("实际深度", data.RoamMaxDepthReached);
     if (!data.TerrainLodStatusMessage.empty())
@@ -711,7 +736,7 @@ bool ImGuiLayer::DrawDebugOverlay(const DebugOverlayData& data, TerrainPanelStat
         data.TerrainLodAvailability[
             static_cast<std::size_t>(Algorithms::TerrainLodAlgorithmId::Cbt2024)];
     const char* cbtModeLabel =
-        cbtAvailability.Available ? "CBT 2024（程序化绘制验证）" : "CBT 2024（不可用）";
+        cbtAvailability.Available ? "CBT 2024（GPU 常驻拓扑）" : "CBT 2024（不可用）";
     const char* terrainModeItems[] = {
         "规则网格",
         "Classic CPU ROAM",
@@ -751,7 +776,6 @@ bool ImGuiLayer::DrawDebugOverlay(const DebugOverlayData& data, TerrainPanelStat
 
     DrawSectionHeader("ROAM");
     changed |= ImGui::Checkbox("局部约束", &terrainState.RoamEnableLocalConstraints);
-    changed |= ImGui::Checkbox("拓扑验证", &terrainState.RoamEnableTopologyValidation);
     if (terrainState.TerrainLodAlgorithm == Algorithms::TerrainLodAlgorithmId::DataOrientedCpuRoam)
     {
         changed |= ImGui::Checkbox("并行 Split", &terrainState.RoamEnableParallelSplit);
@@ -775,10 +799,33 @@ bool ImGuiLayer::DrawDebugOverlay(const DebugOverlayData& data, TerrainPanelStat
             terrainState.CbtCapacity = capacities[static_cast<std::size_t>(capacityIndex)];
             changed = true;
         }
+        changed |= ImGui::SliderFloat(
+            "CBT 面积阈值 (px²)",
+            &terrainState.CbtTriangleAreaPixels,
+            1.0F,
+            250.0F,
+            "%.1f");
+        const char* validationNames[] = {"关闭", "延迟", "阻塞 Smoke"};
+        int validationIndex = static_cast<int>(terrainState.CbtValidationMode);
+        if (ImGui::Combo("CBT 验证", &validationIndex, validationNames, 3))
+        {
+            terrainState.CbtValidationMode =
+                static_cast<Algorithms::TerrainLodCbtValidationMode>(validationIndex);
+            changed = true;
+        }
+        const char* geometryNames[] = {"Modified only", "Full debug"};
+        int geometryIndex = static_cast<int>(terrainState.CbtGeometryMode);
+        if (ImGui::Combo("CBT 几何", &geometryIndex, geometryNames, 2))
+        {
+            terrainState.CbtGeometryMode =
+                static_cast<Algorithms::TerrainLodCbtGeometryMode>(geometryIndex);
+            changed = true;
+        }
     }
     if (terrainState.TerrainLodAlgorithm == Algorithms::TerrainLodAlgorithmId::ClassicCpuRoam ||
         terrainState.TerrainLodAlgorithm == Algorithms::TerrainLodAlgorithmId::DataOrientedCpuRoam)
     {
+        changed |= ImGui::Checkbox("拓扑验证", &terrainState.RoamEnableTopologyValidation);
         changed |= ImGui::SliderFloat(
             "Split 误差 (px)",
             &terrainState.RoamScreenSpaceSplitThresholdPixels,

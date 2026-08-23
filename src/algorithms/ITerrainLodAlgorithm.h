@@ -81,6 +81,48 @@ enum class TerrainLodCbtCapacity : std::uint32_t
     Capacity1M = 1048576U,
 };
 
+/// CBT 全拓扑验证策略；普通性能采样必须使用 Off 或非阻塞 Delayed
+enum class TerrainLodCbtValidationMode : std::uint8_t
+{
+    Off,
+    Delayed,
+    BlockingSmoke,
+};
+
+/// CBT 顶点更新策略；FullDebug 每帧重算全部活动叶，仅用于诊断对照
+enum class TerrainLodCbtGeometryMode : std::uint8_t
+{
+    ModifiedOnly,
+    FullDebug,
+};
+
+/// CBT GPU timestamp 的互斥阶段顺序；Count 只用于固定数组容量
+enum class TerrainLodCbtGpuStage : std::uint8_t
+{
+    ClassificationGeometry,
+    Reset,
+    Classify,
+    Split,
+    Allocate,
+    NeighborCopy,
+    Bisect,
+    PropagateBisect,
+    PrepareSimplify,
+    Simplify,
+    PropagateSimplify,
+    ReducePre,
+    ReduceFirst,
+    ReduceSecond,
+    Indexation,
+    RenderGeometry,
+    Validation,
+    TerrainRender,
+    Count,
+};
+
+inline constexpr std::size_t TerrainLodCbtGpuStageCount =
+    static_cast<std::size_t>(TerrainLodCbtGpuStage::Count);
+
 /// <summary>
 /// terrain LOD 算法共享的运行参数，benchmark 和 renderer 使用同一套字段做公平对比
 /// </summary>
@@ -95,6 +137,8 @@ struct TerrainLodSettings
     // CBT 官方分类使用投影三角形面积，不能与 CPU ROAM 厚度阈值混用。
     float CbtTriangleAreaPixels{50.0F};
     TerrainLodCbtCapacity CbtCapacity{TerrainLodCbtCapacity::Capacity128K};
+    TerrainLodCbtValidationMode CbtValidationMode{TerrainLodCbtValidationMode::Off};
+    TerrainLodCbtGeometryMode CbtGeometryMode{TerrainLodCbtGeometryMode::ModifiedOnly};
     // 两种 CPU ROAM 路径共享活动 leaf triangle 硬上限。
     std::size_t TriangleBudget{20000U};
     // 仅供 DOD 选择是否执行 chunk 并行 Split 预提交；评分并行不受影响。
@@ -327,6 +371,21 @@ struct TerrainLodStats
     std::uint64_t GpuTopologyFrameGeneration{0U};
     // 延迟分类回读所对应的 GPU 帧代次；零表示尚无已完成样本。
     std::uint64_t GpuClassificationSampleGeneration{0U};
+    // timestamp 与计数使用同一帧槽，但分别保留代次，便于检测错位
+    std::uint64_t CbtGpuTimingSampleGeneration{0U};
+    std::uint64_t CbtTerrainRenderSampleGeneration{0U};
+    std::uint64_t CbtDiagnosticSampleAge{0U};
+    bool CbtDiagnosticSampleDropped{false};
+    std::uint64_t CbtResourceGeneration{0U};
+    std::uint32_t CbtCapacitySetting{0U};
+    float CbtTriangleAreaPixelsSetting{0.0F};
+    TerrainLodCbtValidationMode CbtValidationModeSetting{TerrainLodCbtValidationMode::Off};
+    TerrainLodCbtGeometryMode CbtGeometryModeSetting{TerrainLodCbtGeometryMode::ModifiedOnly};
+    std::size_t CbtActiveDynamicSlotCount{0U};
+    std::size_t CbtRemainingDynamicSlotCount{0U};
+    std::array<float, TerrainLodCbtGpuStageCount> CbtGpuStageMilliseconds{};
+    float CbtGpuStageSumMilliseconds{0.0F};
+    float CbtBlockingValidationWaitMilliseconds{0.0F};
     std::size_t ActiveTriangleCount{0};
     std::size_t ActiveNodeCount{0};
     std::size_t OriginalTriangleCount{0};

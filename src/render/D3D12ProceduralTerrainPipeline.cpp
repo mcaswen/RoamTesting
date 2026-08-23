@@ -82,6 +82,28 @@ D3D12_DEPTH_STENCIL_DESC DepthStencilDescription()
     description.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
     return description;
 }
+
+D3D12_HEAP_PROPERTIES ReadbackHeapProperties()
+{
+    D3D12_HEAP_PROPERTIES properties{};
+    properties.Type = D3D12_HEAP_TYPE_READBACK;
+    properties.CreationNodeMask = 1U;
+    properties.VisibleNodeMask = 1U;
+    return properties;
+}
+
+D3D12_RESOURCE_DESC TimestampReadbackDescription()
+{
+    D3D12_RESOURCE_DESC description{};
+    description.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+    description.Width = D3D12ProceduralTerrainPipeline::GpuTimestampReadbackBytes;
+    description.Height = 1U;
+    description.DepthOrArraySize = 1U;
+    description.MipLevels = 1U;
+    description.SampleDesc.Count = 1U;
+    description.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+    return description;
+}
 } // namespace
 
 D3D12ProceduralTerrainPipeline::~D3D12ProceduralTerrainPipeline()
@@ -102,7 +124,8 @@ bool D3D12ProceduralTerrainPipeline::Initialize(
     if (!CreateRootSignature(errorMessage) ||
         !CreatePipelineStates(errorMessage) ||
         !CreateCommandSignature(errorMessage) ||
-        !AllocateFrameDescriptors(errorMessage))
+        !AllocateFrameDescriptors(errorMessage) ||
+        !CreateTimingResources(errorMessage))
     {
         Shutdown();
         return false;
@@ -125,6 +148,13 @@ void D3D12ProceduralTerrainPipeline::Shutdown()
     }
     // 先归还外部分配的描述符，再释放引用这些槽位的管线对象
     _descriptorGenerations = {};
+    _timestampPending = {};
+    _timestampGenerations = {};
+    _timestampReadbacks = {};
+    _timestampQueryHeap.Reset();
+    _timestampFrequency = 0U;
+    _lastGpuDrawSampleGeneration = 0U;
+    _lastGpuDrawMilliseconds = 0.0F;
     _drawCommandSignature.Reset();
     _wireframePipelineState.Reset();
     _fillPipelineState.Reset();
@@ -221,8 +251,15 @@ void D3D12ProceduralTerrainPipeline::RecordDraw(
     D3D12_GPU_DESCRIPTOR_HANDLE textureSrv,
     ID3D12Resource* indirectBuffer,
     std::size_t indirectArgumentOffsetBytes,
-    bool wireframe) const
+    bool wireframe,
+    std::uint64_t topologyGeneration)
 {
+    ConsumeCompletedTiming(frameIndex);
+    const UINT queryStart = frameIndex * 2U;
+    if (_timestampQueryHeap != nullptr)
+    {
+        commandList->EndQuery(_timestampQueryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, queryStart);
+    }
     // 根参数顺序固定为 b0、t0、t1、t2，与独立 root signature 完全一致
     commandList->SetPipelineState(wireframe ? _wireframePipelineState.Get() : _fillPipelineState.Get());
     commandList->SetGraphicsRootSignature(_rootSignature.Get());
@@ -239,6 +276,19 @@ void D3D12ProceduralTerrainPipeline::RecordDraw(
         static_cast<UINT64>(indirectArgumentOffsetBytes),
         nullptr,
         0);
+    if (_timestampQueryHeap != nullptr && _timestampReadbacks[frameIndex] != nullptr)
+    {
+        commandList->EndQuery(_timestampQueryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, queryStart + 1U);
+        commandList->ResolveQueryData(
+            _timestampQueryHeap.Get(),
+            D3D12_QUERY_TYPE_TIMESTAMP,
+            queryStart,
+            2U,
+            _timestampReadbacks[frameIndex].Get(),
+            0U);
+        _timestampPending[frameIndex] = true;
+        _timestampGenerations[frameIndex] = topologyGeneration;
+    }
 }
 
 // Ready 只表示持久管线对象完整，不代表某一帧算法资源已经绑定
@@ -249,6 +299,42 @@ bool D3D12ProceduralTerrainPipeline::IsReady() const
            _fillPipelineState != nullptr &&
            _wireframePipelineState != nullptr &&
            _drawCommandSignature != nullptr;
+}
+
+float D3D12ProceduralTerrainPipeline::LastGpuDrawMilliseconds() const
+{
+    return _lastGpuDrawMilliseconds;
+}
+
+std::uint64_t D3D12ProceduralTerrainPipeline::LastGpuDrawSampleGeneration() const
+{
+    return _lastGpuDrawSampleGeneration;
+}
+
+void D3D12ProceduralTerrainPipeline::ConsumeCompletedTiming(std::uint32_t frameIndex)
+{
+    if (frameIndex >= D3D12GraphicsBackend::FrameCount || !_timestampPending[frameIndex] ||
+        _timestampReadbacks[frameIndex] == nullptr || _timestampFrequency == 0U)
+    {
+        return;
+    }
+    const D3D12_RANGE readRange{0U, GpuTimestampReadbackBytes};
+    void* mapped = nullptr;
+    if (FAILED(_timestampReadbacks[frameIndex]->Map(0U, &readRange, &mapped)))
+    {
+        return;
+    }
+    const auto* timestamps = static_cast<const std::uint64_t*>(mapped);
+    if (timestamps[1] >= timestamps[0])
+    {
+        _lastGpuDrawMilliseconds = static_cast<float>(
+            static_cast<double>(timestamps[1] - timestamps[0]) * 1000.0 /
+            static_cast<double>(_timestampFrequency));
+        _lastGpuDrawSampleGeneration = _timestampGenerations[frameIndex];
+    }
+    const D3D12_RANGE noWrite{0U, 0U};
+    _timestampReadbacks[frameIndex]->Unmap(0U, &noWrite);
+    _timestampPending[frameIndex] = false;
 }
 
 // 根签名专门描述无 IA 顶点输入的 terrain 绘制协议
@@ -425,6 +511,49 @@ bool D3D12ProceduralTerrainPipeline::AllocateFrameDescriptors(std::string* error
             SetError(errorMessage, "D3D12 SRV heap has no descriptors for procedural terrain rendering");
             return false;
         }
+    }
+    return true;
+}
+
+bool D3D12ProceduralTerrainPipeline::CreateTimingResources(std::string* errorMessage)
+{
+    if (_backend == nullptr || _backend->Device() == nullptr || _backend->CommandQueue() == nullptr)
+    {
+        SetError(errorMessage, "D3D12 procedural timing requires an initialized backend");
+        return false;
+    }
+    D3D12_QUERY_HEAP_DESC queryDescription{};
+    queryDescription.Type = D3D12_QUERY_HEAP_TYPE_TIMESTAMP;
+    queryDescription.Count = D3D12GraphicsBackend::FrameCount * 2U;
+    if (FAILED(_backend->Device()->CreateQueryHeap(
+            &queryDescription,
+            IID_PPV_ARGS(_timestampQueryHeap.ReleaseAndGetAddressOf()))))
+    {
+        SetError(errorMessage, "D3D12 procedural draw timestamp query creation failed");
+        return false;
+    }
+
+    const D3D12_HEAP_PROPERTIES heap = ReadbackHeapProperties();
+    const D3D12_RESOURCE_DESC description = TimestampReadbackDescription();
+    for (Microsoft::WRL::ComPtr<ID3D12Resource>& readback : _timestampReadbacks)
+    {
+        if (FAILED(_backend->Device()->CreateCommittedResource(
+                &heap,
+                D3D12_HEAP_FLAG_NONE,
+                &description,
+                D3D12_RESOURCE_STATE_COPY_DEST,
+                nullptr,
+                IID_PPV_ARGS(readback.ReleaseAndGetAddressOf()))))
+        {
+            SetError(errorMessage, "D3D12 procedural draw timestamp readback creation failed");
+            return false;
+        }
+    }
+    if (FAILED(_backend->CommandQueue()->GetTimestampFrequency(&_timestampFrequency)) ||
+        _timestampFrequency == 0U)
+    {
+        SetError(errorMessage, "D3D12 procedural draw timestamp frequency query failed");
+        return false;
     }
     return true;
 }

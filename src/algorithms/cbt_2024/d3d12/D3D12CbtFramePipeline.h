@@ -18,7 +18,7 @@
 namespace ParallelRoam::Algorithms::Cbt2024::D3D12
 {
 /// <summary>
-/// E0-G 的正式 GPU 事务：分类、split/merge、传播、Reduce、Indexation 和高度图增量几何。
+/// CBT 正式 GPU 事务：分类、split/merge、传播、Reduce、Indexation 和高度图增量几何
 ///
 /// 生命周期约束：
 /// - Topology 由 D3D12CbtTerrainState 持有，并且必须比本对象更晚销毁；
@@ -95,6 +95,10 @@ public:
     [[nodiscard]] std::uint32_t LastActiveDynamicSlotCount() const;
     [[nodiscard]] std::uint32_t LastIndexedActiveCount() const;
     [[nodiscard]] std::uint64_t ClassificationSampleGeneration() const;
+    [[nodiscard]] std::uint64_t GpuTimingSampleGeneration() const;
+    [[nodiscard]] const std::array<float, TerrainLodCbtGpuStageCount>& LastGpuStageMilliseconds() const;
+    [[nodiscard]] float LastGpuStageSumMilliseconds() const;
+    [[nodiscard]] float LastBlockingValidationWaitMilliseconds() const;
     [[nodiscard]] bool IsFaulted() const;
     [[nodiscard]] const std::string& FaultMessage() const;
     [[nodiscard]] bool IsInitialized() const;
@@ -174,10 +178,11 @@ private:
     D3D12_RESOURCE_STATES _drawState{D3D12_RESOURCE_STATE_UNORDERED_ACCESS}; // GPU 写与 renderer draw indirect。
     D3D12_RESOURCE_STATES _geometryDispatchState{D3D12_RESOURCE_STATE_UNORDERED_ACCESS}; // 上帧 Classify indirect 参数。
 
-    // generation 只统计成功记录的完整 E0-G 帧事务。
+    // generation 只统计成功记录的完整帧事务
     // 它用于测试和诊断，不决定 GPU draw 数量或资源生命周期。
     CbtOccupancyCapacity _capacity{CbtOccupancyCapacity::Capacity128K}; // 当前选中的特化档位。
     std::uint64_t _topologyFrameGeneration{0U}; // 成功记录的最新 GPU 事务代次。
+    float _lastBlockingValidationWaitMilliseconds{0.0F}; // 仅 BlockingSmoke 非零。
     std::uint32_t _neighborReadIndex{0U}; // 当前已发布的 ping/pong 邻接代次。
     bool _initialized{false}; // 所有 PSO、描述符和缓冲均可用后置位。
 };

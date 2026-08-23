@@ -28,12 +28,12 @@ D3D12_HEAP_PROPERTIES ReadbackHeapProperties()
     return properties;
 }
 
-D3D12_RESOURCE_DESC ReadbackDescription()
+D3D12_RESOURCE_DESC ReadbackDescription(std::size_t byteCount)
 {
     // 始终按最大验证载荷分配；普通帧仅映射计数头的有效范围。
     D3D12_RESOURCE_DESC description{};
     description.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-    description.Width = D3D12CbtDiagnostics::ValidationReadbackBytes;
+    description.Width = byteCount;
     description.Height = 1U;
     description.DepthOrArraySize = 1U;
     description.MipLevels = 1U;
@@ -73,17 +73,21 @@ bool Near(const Terrain::TerrainMeshVertex& lhs, const Terrain::TerrainMeshVerte
 static_assert(D3D12CbtDiagnostics::DiagnosticReadbackBytes == 136U);
 static_assert(D3D12CbtDiagnostics::ValidationReadbackBytes == 1552U);
 
-bool D3D12CbtDiagnostics::Initialize(ID3D12Device* device, std::string* errorMessage)
+bool D3D12CbtDiagnostics::Initialize(
+    Render::D3D12GraphicsBackend& backend,
+    std::string* errorMessage)
 {
     // 初始化保持全有或全无语义，失败不会留下部分可用的 readback ring。
     Shutdown();
-    if (device == nullptr)
+    ID3D12Device* device = backend.Device();
+    ID3D12CommandQueue* commandQueue = backend.CommandQueue();
+    if (device == nullptr || commandQueue == nullptr)
     {
         SetError(errorMessage, "CBT diagnostics requires a D3D12 device");
         return false;
     }
     const D3D12_HEAP_PROPERTIES heap = ReadbackHeapProperties();
-    const D3D12_RESOURCE_DESC description = ReadbackDescription();
+    const D3D12_RESOURCE_DESC description = ReadbackDescription(ValidationReadbackBytes);
     for (Microsoft::WRL::ComPtr<ID3D12Resource>& readback : _readbacks)
     {
         if (FAILED(device->CreateCommittedResource(
@@ -99,6 +103,43 @@ bool D3D12CbtDiagnostics::Initialize(ID3D12Device* device, std::string* errorMes
             return false;
         }
     }
+    // 所有 compute/geometry 区间共用一个 query heap
+    // frame index 划分互斥范围，避免在途帧覆盖彼此的 timestamp
+    D3D12_QUERY_HEAP_DESC queryDescription{};
+    queryDescription.Type = D3D12_QUERY_HEAP_TYPE_TIMESTAMP;
+    queryDescription.Count = static_cast<UINT>(FrameCount * TimestampCountPerFrame);
+    if (FAILED(device->CreateQueryHeap(
+            &queryDescription,
+            IID_PPV_ARGS(_timestampQueryHeap.ReleaseAndGetAddressOf()))))
+    {
+        SetError(errorMessage, "Failed to create CBT GPU timestamp query heap");
+        Shutdown();
+        return false;
+    }
+    // timestamp 单独使用固定小 readback，普通统计不会映射基础几何尾部
+    const D3D12_RESOURCE_DESC timestampDescription = ReadbackDescription(TimestampReadbackBytes);
+    for (Microsoft::WRL::ComPtr<ID3D12Resource>& readback : _timestampReadbacks)
+    {
+        if (FAILED(device->CreateCommittedResource(
+                &heap,
+                D3D12_HEAP_FLAG_NONE,
+                &timestampDescription,
+                D3D12_RESOURCE_STATE_COPY_DEST,
+                nullptr,
+                IID_PPV_ARGS(readback.ReleaseAndGetAddressOf()))))
+        {
+            SetError(errorMessage, "Failed to create CBT GPU timestamp readback buffer");
+            Shutdown();
+            return false;
+        }
+    }
+    // GPU tick 只能用执行该 command list 的 queue 频率换算
+    if (FAILED(commandQueue->GetTimestampFrequency(&_timestampFrequency)) || _timestampFrequency == 0U)
+    {
+        SetError(errorMessage, "Failed to query CBT GPU timestamp frequency");
+        Shutdown();
+        return false;
+    }
     return true;
 }
 
@@ -106,6 +147,9 @@ void D3D12CbtDiagnostics::Shutdown()
 {
     // 清空资源和对应元数据，防止重建后消费旧 GPU 代次的期望值。
     _readbacks = {};
+    _timestampReadbacks = {};
+    _timestampQueryHeap.Reset();
+    _timestampFrequency = 0U;
     _pending = {};
     _generations = {};
     _validationPending = {};
@@ -154,7 +198,7 @@ bool D3D12CbtDiagnostics::ConsumeCompleted(
     void* mapped = nullptr;
     if (FAILED(_readbacks[frameIndex]->Map(0U, &readRange, &mapped)))
     {
-        return LatchFault("Failed to map completed CBT G diagnostic counters", errorMessage);
+        return LatchFault("Failed to map completed CBT diagnostic counters", errorMessage);
     }
     // 四段计数保持原始 UAV 字节布局，避免为诊断再增加 GPU packing pass。
     const auto* bytes = static_cast<const std::uint8_t*>(mapped);
@@ -194,11 +238,12 @@ bool D3D12CbtDiagnostics::ConsumeCompleted(
     const D3D12_RANGE noWrite{0U, 0U};
     // 先发布样本代次并释放槽位；任何失败随后都会锁存并阻止继续录制。
     _snapshot.SampleGeneration = _generations[frameIndex];
+    _snapshot.GpuTimingSampleGeneration = _generations[frameIndex];
     _pending[frameIndex] = false;
     if (validation[0] != 0U)
     {
         const std::string message =
-            "CBT G shader validation failed at generation " +
+            "CBT shader validation failed at generation " +
             std::to_string(_snapshot.SampleGeneration) + ": code/slot=" +
             std::to_string(validation[0]) + "/" + std::to_string(validation[1]);
         _readbacks[frameIndex]->Unmap(0U, &noWrite);
@@ -225,7 +270,7 @@ bool D3D12CbtDiagnostics::ConsumeCompleted(
         drawState.ModifiedPositionCount / 4U > drawState.ActiveBisectorCount)
     {
         const std::string message =
-            "CBT G occupancy/indexation mismatch at generation " +
+            "CBT occupancy/indexation mismatch at generation " +
             std::to_string(_snapshot.SampleGeneration);
         _readbacks[frameIndex]->Unmap(0U, &noWrite);
         return LatchFault(message, errorMessage);
@@ -318,7 +363,7 @@ bool D3D12CbtDiagnostics::ConsumeCompleted(
             if (occupancyRoot != expected.AllocatedSplitSlotCount)
             {
                 const std::string message =
-                    "CBT G committed OCBT root mismatch: expected=" +
+                    "CBT committed OCBT root mismatch: expected=" +
                     std::to_string(expected.AllocatedSplitSlotCount) + ", GPU=" +
                     std::to_string(occupancyRoot);
                 _readbacks[frameIndex]->Unmap(0U, &noWrite);
@@ -357,7 +402,7 @@ bool D3D12CbtDiagnostics::ConsumeCompleted(
                 {
                     _readbacks[frameIndex]->Unmap(0U, &noWrite);
                     return LatchFault(
-                        "CBT G parent classification position differs from the CPU reference at base node " +
+                        "CBT parent classification position differs from the CPU reference at base node " +
                             std::to_string(node),
                         errorMessage);
                 }
@@ -372,7 +417,7 @@ bool D3D12CbtDiagnostics::ConsumeCompleted(
                     {
                         _readbacks[frameIndex]->Unmap(0U, &noWrite);
                         return LatchFault(
-                            "CBT G height geometry differs from the CPU reference at base node/vertex " +
+                            "CBT height geometry differs from the CPU reference at base node/vertex " +
                                 std::to_string(node) + "/" + std::to_string(vertex),
                             errorMessage);
                     }
@@ -380,8 +425,127 @@ bool D3D12CbtDiagnostics::ConsumeCompleted(
             }
         }
     }
+    // counter 与 timestamp 在同一 frame-slot fence 后消费，因此代次天然一致
+    // terrain draw 的独立 query 会在 renderer 中再进行一次代次匹配
+    void* timestampMapped = nullptr;
+    const D3D12_RANGE timestampReadRange{0U, TimestampReadbackBytes};
+    if (FAILED(_timestampReadbacks[frameIndex]->Map(0U, &timestampReadRange, &timestampMapped)))
+    {
+        _readbacks[frameIndex]->Unmap(0U, &noWrite);
+        return LatchFault("Failed to map completed CBT GPU timestamps", errorMessage);
+    }
+    const auto* timestamps = static_cast<const std::uint64_t*>(timestampMapped);
+    _snapshot.GpuStageMilliseconds = {};
+    _snapshot.GpuStageSumMilliseconds = 0.0F;
+    // 所有区间互斥，阶段和可直接表示本次 CBT GPU 工作量
+    // 无 dispatch 的阶段仍保留合法的零长度区间
+    for (std::size_t stage = 0U; stage < ProfiledStageCount; ++stage)
+    {
+        const std::uint64_t begin = timestamps[stage * 2U];
+        const std::uint64_t end = timestamps[stage * 2U + 1U];
+        if (end < begin)
+        {
+            _timestampReadbacks[frameIndex]->Unmap(0U, &noWrite);
+            _readbacks[frameIndex]->Unmap(0U, &noWrite);
+            return LatchFault("CBT GPU timestamp order is invalid", errorMessage);
+        }
+        const float milliseconds = static_cast<float>(
+            static_cast<double>(end - begin) * 1000.0 /
+            static_cast<double>(_timestampFrequency));
+        _snapshot.GpuStageMilliseconds[stage] = milliseconds;
+        _snapshot.GpuStageSumMilliseconds += milliseconds;
+    }
+    _timestampReadbacks[frameIndex]->Unmap(0U, &noWrite);
     _readbacks[frameIndex]->Unmap(0U, &noWrite);
     return true;
+}
+
+bool D3D12CbtDiagnostics::ConsumeAllCompleted(std::string* errorMessage)
+{
+    // WaitForGpuIdle 已由调用方执行，此处只决定多槽发布顺序
+    // generation 为零的空槽自然排在旧样本之前
+    std::array<std::uint32_t, FrameCount> frameIndices{};
+    for (std::uint32_t frameIndex = 0U; frameIndex < FrameCount; ++frameIndex)
+    {
+        frameIndices[frameIndex] = frameIndex;
+    }
+    std::sort(
+        frameIndices.begin(),
+        frameIndices.end(),
+        [&](std::uint32_t lhs, std::uint32_t rhs) {
+            if (!_pending[lhs])
+            {
+                return false;
+            }
+            if (!_pending[rhs])
+            {
+                return true;
+            }
+            return _generations[lhs] < _generations[rhs];
+        });
+    for (std::uint32_t frameIndex : frameIndices)
+    {
+        if (!ConsumeCompleted(frameIndex, errorMessage))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+void D3D12CbtDiagnostics::BeginGpuStage(
+    ID3D12GraphicsCommandList* commandList,
+    std::uint32_t frameIndex,
+    TerrainLodCbtGpuStage stage)
+{
+    // D3D12 timestamp 使用 EndQuery 写入瞬时值，并不存在 BeginQuery 配对状态
+    const std::size_t stageIndex = static_cast<std::size_t>(stage);
+    if (commandList == nullptr || _timestampQueryHeap == nullptr ||
+        frameIndex >= FrameCount || stageIndex >= ProfiledStageCount)
+    {
+        return;
+    }
+    const UINT query = static_cast<UINT>(
+        frameIndex * TimestampCountPerFrame + stageIndex * 2U);
+    commandList->EndQuery(_timestampQueryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, query);
+}
+
+void D3D12CbtDiagnostics::EndGpuStage(
+    ID3D12GraphicsCommandList* commandList,
+    std::uint32_t frameIndex,
+    TerrainLodCbtGpuStage stage)
+{
+    // 起止索引在同一 frame 范围内连续，消费端可按 stage * 2 解码
+    const std::size_t stageIndex = static_cast<std::size_t>(stage);
+    if (commandList == nullptr || _timestampQueryHeap == nullptr ||
+        frameIndex >= FrameCount || stageIndex >= ProfiledStageCount)
+    {
+        return;
+    }
+    const UINT query = static_cast<UINT>(
+        frameIndex * TimestampCountPerFrame + stageIndex * 2U + 1U);
+    commandList->EndQuery(_timestampQueryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, query);
+}
+
+void D3D12CbtDiagnostics::ResolveGpuTimings(
+    ID3D12GraphicsCommandList* commandList,
+    std::uint32_t frameIndex)
+{
+    // Resolve 命令跟随所有被测 pass，确保 readback 中每对值来自同一事务
+    // frame 槽再次进入 CPU 前会先等待自己的 fence
+    if (commandList == nullptr || _timestampQueryHeap == nullptr ||
+        frameIndex >= FrameCount || _timestampReadbacks[frameIndex] == nullptr)
+    {
+        return;
+    }
+    const UINT queryStart = static_cast<UINT>(frameIndex * TimestampCountPerFrame);
+    commandList->ResolveQueryData(
+        _timestampQueryHeap.Get(),
+        D3D12_QUERY_TYPE_TIMESTAMP,
+        queryStart,
+        static_cast<UINT>(TimestampCountPerFrame),
+        _timestampReadbacks[frameIndex].Get(),
+        0U);
 }
 
 bool D3D12CbtDiagnostics::LatchFault(const std::string& message, std::string* errorMessage)

@@ -164,6 +164,15 @@ struct DebugOverlayData
     std::size_t RoamCpuGpuReadbackBytes{0};
     int RoamMaxDepthSetting{0};
     int RoamMaxDepthReached{0};
+    std::uint64_t CbtTopologyGeneration{0U};
+    std::uint64_t CbtDiagnosticGeneration{0U};
+    std::uint64_t CbtDiagnosticSampleAge{0U};
+    bool CbtDiagnosticSampleDropped{false};
+    std::size_t CbtActiveDynamicSlotCount{0U};
+    std::size_t CbtRemainingDynamicSlotCount{0U};
+    std::array<float, Algorithms::TerrainLodCbtGpuStageCount> CbtGpuStageMilliseconds{};
+    float CbtGpuStageSumMilliseconds{0.0F};
+    float CbtBlockingValidationWaitMilliseconds{0.0F};
 
     // 运行时 benchmark 状态用于绘制顶部提示和输出路径
     bool BenchmarkRunning{false};
@@ -202,6 +211,11 @@ struct TerrainPanelState
     int RoamTriangleBudget{20000};
     Algorithms::TerrainLodCbtCapacity CbtCapacity{
         Algorithms::TerrainLodCbtCapacity::Capacity128K};
+    float CbtTriangleAreaPixels{50.0F};
+    Algorithms::TerrainLodCbtValidationMode CbtValidationMode{
+        Algorithms::TerrainLodCbtValidationMode::Off};
+    Algorithms::TerrainLodCbtGeometryMode CbtGeometryMode{
+        Algorithms::TerrainLodCbtGeometryMode::ModifiedOnly};
 
     // 只控制 DOD 的 chunk Split 拓扑提交，不关闭并行误差评分。
     bool RoamEnableParallelSplit{false};
