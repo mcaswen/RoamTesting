@@ -2,7 +2,7 @@
 
 > 初稿日期：2026-07-16
 > 源码复核：2026-08-23
-> 状态：实施计划 v0.8；阶段 E3 已完成，当前进入阶段 F
+> 状态：实施计划 v0.9；阶段 F 已完成，当前进入阶段 G
 > 前置条件：D3D12 迁移阶段已完成
 > 上游参考：`third_party/large_cbt`，提交 `7ae736d179528a0996449c0cc2db7f3279edc8ee`
 > 本机兼容基线：提交 `7ae736d179528a0996449c0cc2db7f3279edc8ee`，仅替换 NVIDIA 64 位 `firstbithigh` 实现
@@ -677,6 +677,8 @@ E3 对外启用 `SupportsSplit`、`SupportsCrackFix` 和 `SupportsTopologyValida
 
 ### 阶段 F：simplify/merge 与正式帧闭环
 
+状态：已完成，2026-08-23。
+
 任务：
 
 - 在 E1 产生的 simplify 候选上实现 `PrepareSimplify`；
@@ -695,6 +697,15 @@ E3 对外启用 `SupportsSplit`、`SupportsCrackFix` 和 `SupportsTopologyValida
 - 无裂缝、悬空引用或持续占用增长；
 - 同帧相邻 split/merge 与上游顺序一致；
 - `SupportsMerge` 只有在此阶段验收后才启用；E3 已验收的 split 与裂缝修复能力保持启用。
+
+验收记录：
+
+- 新增 `CbtSimplifyCommit` CPU 参考，覆盖 pair、facing pair、四节点同深度、最小逻辑 `heapID` 唯一提交和相邻 merge 转发；单测验证 split/merge 往返、深度拒绝、无悬空引用与 OCBT 空闲 rank 复用；
+- GPU 帧事务按 `Bisect -> PropagateBisect -> PrepareSimplify -> Simplify -> PropagateSimplify -> Reduce` 排列，split 和 merge 共用一个 next-neighbor 代次并只执行一轮 Reduce；
+- `PrepareSimplify` 会在同帧 split 后重新检查 pair、facing twin 和四节点深度；`Simplify` 上移保留节点 `heapID`，清零删除 sibling 的 `heapID` 和 OCBT 位，再修补或转发外部邻接；
+- validation UAV 扩展为 18 个共享 ABI 字，延迟诊断核对 merge 分组、释放槽、传播数与帧前/帧后动态根；常规回读为 136 bytes，完整验证为 328 bytes，不增加 GPU wait；
+- `cbt_procedural_f_quick` 及 256K、512K、1M 容量 smoke 在 RTX 5090 D / D3D12 上各运行 480 帧；流程先观察四种 Bisect 模板，再于第 150 帧后退并降低最大深度，第 300 帧恢复视点与深度，实际观察到槽位释放与后续重新分配；
+- Debug 下 11 项 CBT 单测/集成测试全部通过，RelWithDebInfo 的 128K 往返 smoke 同样通过；`SupportsMerge` 已与 split、裂缝修复和拓扑验证一同启用。
 
 ### 阶段 G：高度图几何求值
 
@@ -725,7 +736,7 @@ E3 对外启用 `SupportsSplit`、`SupportsCrackFix` 和 `SupportsTopologyValida
 - 算法选择；
 - 可用性提示；
 - OCBT、基础拓扑和程序化绘制入口。
-- 四档 E3 300 帧 quick smoke、显式 `--cbt-capacity` 参数和 topology frame generation。
+- 四档 F 480 帧 split/merge 往返 smoke、显式 `--cbt-capacity` 参数和 topology frame generation。
 
 待完成：
 
@@ -912,6 +923,8 @@ CTest 应使用 `unit`、`gpu-quick`、`integration` 标签并设置明确超时
 
 ### 批次 5：F merge 闭环
 
+状态：已完成，2026-08-23。
+
 1. PrepareSimplify；
 2. 两节点和四节点合法性；
 3. Simplify；
@@ -926,7 +939,7 @@ CTest 应使用 `unit`、`gpu-quick`、`integration` 标签并设置明确超时
 4. 延迟统计；
 5. UI、CLI、runtime benchmark 和完整测试矩阵。
 
-每个批次必须先通过自身正确性门槛，再进入下一批。阶段 E3 的 split-only 结果不能代替阶段 F 的正式 CBT 基线。
+每个批次必须先通过自身正确性门槛，再进入下一批。阶段 F 已完成平面几何上的完整拓扑闭环，当前批次转入 G-H 的高度图几何与实验接入。
 
 ## 13. 主要风险与控制措施
 
@@ -979,20 +992,20 @@ CTest 应使用 `unit`、`gpu-quick`、`integration` 标签并设置明确超时
 
 | 主题 | 上游源码 | 当前项目对应位置 |
 |---|---|---|
-| 帧拓扑编排 | [`mesh_updater.cpp`](../../third_party/large_cbt/demo/src/mesh/mesh_updater.cpp) | [`D3D12CbtFramePipeline.cpp`](../../src/algorithms/cbt_2024/d3d12/D3D12CbtFramePipeline.cpp)，已接入 E0-E3 分类、规划、提交、传播、Reduce、Indexation 与增量几何 |
+| 帧拓扑编排 | [`mesh_updater.cpp`](../../third_party/large_cbt/demo/src/mesh/mesh_updater.cpp) | [`D3D12CbtFramePipeline.cpp`](../../src/algorithms/cbt_2024/d3d12/D3D12CbtFramePipeline.cpp)，已接入 E0-F 的 split/merge、双向传播、单轮 Reduce、Indexation 与增量几何 |
 | shader 入口和面积分类 | [`UpdateMesh.compute`](../../third_party/large_cbt/shaders/UpdateMesh.compute) | [`CbtTopologyE0.hlsl`](../../assets/shaders/dx12/cbt/CbtTopologyE0.hlsl) 与 [`CbtClassification.cpp`](../../src/algorithms/cbt_2024/CbtClassification.cpp) CPU 参考 |
 | split 规划与分配 | [`update_utilities.hlsl`](../../third_party/large_cbt/shaders/shader_lib/update_utilities.hlsl) | [`CbtTopologyE0.hlsl`](../../assets/shaders/dx12/cbt/CbtTopologyE0.hlsl) 与 [`CbtSplitPlanner.cpp`](../../src/algorithms/cbt_2024/CbtSplitPlanner.cpp) CPU 参考 |
-| split 提交、merge、传播 | [`update_utilities.hlsl`](../../third_party/large_cbt/shaders/shader_lib/update_utilities.hlsl) | [`CbtTopologyE0.hlsl`](../../assets/shaders/dx12/cbt/CbtTopologyE0.hlsl) 与 [`CbtBisectCommit.cpp`](../../src/algorithms/cbt_2024/CbtBisectCommit.cpp) 已迁移 split/传播；merge 待 F |
+| split 提交、merge、传播 | [`update_utilities.hlsl`](../../third_party/large_cbt/shaders/shader_lib/update_utilities.hlsl) | [`CbtTopologyE0.hlsl`](../../assets/shaders/dx12/cbt/CbtTopologyE0.hlsl)、[`CbtBisectCommit.cpp`](../../src/algorithms/cbt_2024/CbtBisectCommit.cpp) 与 [`CbtSimplifyCommit.cpp`](../../src/algorithms/cbt_2024/CbtSimplifyCommit.cpp) 已完成 split/merge 及双向传播 |
 | OCBT | [`ocbt_generic.hlsl`](../../third_party/large_cbt/shaders/shader_lib/ocbt_generic.hlsl) | [`CbtOccupancyTree.hlsli`](../../assets/shaders/dx12/cbt/CbtOccupancyTree.hlsli) |
 | 基础半边展开 | [`cpu_mesh.cpp`](../../third_party/large_cbt/demo/src/mesh/cpu_mesh.cpp) | [`CbtBisectorTopology.cpp`](../../src/algorithms/cbt_2024/CbtBisectorTopology.cpp) |
 | GPU 资源布局 | [`mesh.cpp`](../../third_party/large_cbt/demo/src/mesh/mesh.cpp) | [`D3D12CbtGpuState.cpp`](../../src/algorithms/cbt_2024/d3d12/D3D12CbtGpuState.cpp) |
 | 逻辑几何 | [`PlanetGeometry.compute`](../../third_party/large_cbt/shaders/PlanetGeometry.compute) | [`CbtBootstrap.hlsl`](../../assets/shaders/dx12/cbt/CbtBootstrap.hlsl) 已提供平面 Bootstrap，高度图求值待 G |
 | 算法接口 | — | [`ITerrainLodAlgorithm.h`](../../src/algorithms/ITerrainLodAlgorithm.h) |
 | 调度与绘制 | — | [`D3D12TerrainRenderer.cpp`](../../src/render/D3D12TerrainRenderer.cpp) |
-| 当前 E3 adapter | — | [`D3D12CbtTerrainLodAlgorithm.cpp`](../../src/algorithms/cbt_2024/d3d12/D3D12CbtTerrainLodAlgorithm.cpp) |
+| 当前 F adapter | — | [`D3D12CbtTerrainLodAlgorithm.cpp`](../../src/algorithms/cbt_2024/d3d12/D3D12CbtTerrainLodAlgorithm.cpp) |
 
 ## 17. 结论
 
-当前仓库已经完成 OCBT、方形基础半边、程序化间接绘制、阶段 E0 的动态管线前置契约、阶段 E1 的官方面积分类、阶段 E2 的兼容链规划与旧 OCBT 空闲槽位分配，以及阶段 E3 的四模板 Bisect、邻接双缓冲、split 传播、Reduce、Indexation 和平面增量几何。上一帧活动列表、候选、保守预留、共享 pattern、allocation、提交计数、四模板读回和全拓扑验证已经形成可连续运行 300 帧的 split-only 闭环。
+当前仓库已经完成 OCBT、方形基础半边、程序化间接绘制、阶段 E0 的动态管线前置契约、阶段 E1 的官方面积分类、阶段 E2 的兼容链规划与旧 OCBT 空闲槽位分配、阶段 E3 的四模板 Bisect 及 split 传播，以及阶段 F 的两/四节点 merge、释放槽位回收与 merge 传播。split 和 merge 现在共享一个邻接代次与一轮 Reduce，并已通过四档容量 480 帧相机往返验证槽位释放和重新分配。
 
-下一步进入阶段 F，把 simplify/merge、释放槽位回收和 merge 传播放回上游同一帧顺序，形成可随相机往返细化与简化的忠实闭环；阶段 G 再接入高度图几何求值。这样冻结出的阶段 I 基线才足以支撑后续兼容闭包感知预算调度研究。
+下一步进入阶段 G，用 GPU 高度图采样替换当前平面几何求值，补齐法线、UV、调试色与重载验证；阶段 H 再完成统计和 benchmark 接入，为阶段 I 的官方语义冻结准备可复现输入。
