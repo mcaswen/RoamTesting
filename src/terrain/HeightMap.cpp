@@ -131,4 +131,9 @@ const std::filesystem::path& HeightMap::SourcePath() const
 {
     return _sourcePath;
 }
+
+std::span<const float> HeightMap::Values() const
+{
+    return _heightValues;
+}
 } // 命名空间 ParallelRoam::Terrain

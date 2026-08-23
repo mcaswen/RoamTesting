@@ -51,4 +51,12 @@ struct CbtClassificationEvaluation
 BuildCbtBaseClassificationTriangles(
     const CbtBaseTopology& topology,
     float terrainSize);
+
+/// @brief 使用真实高度图生成首帧 CPU/GPU 精确分类参考
+[[nodiscard]] std::array<CbtClassificationTriangle, CbtBaseBisectorCount>
+BuildCbtBaseClassificationTriangles(
+    const CbtBaseTopology& topology,
+    const Terrain::HeightMap& heightMap,
+    float terrainSize,
+    float heightScale);
 } // namespace ParallelRoam::Algorithms::Cbt2024

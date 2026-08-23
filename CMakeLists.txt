@@ -75,6 +75,7 @@ if(PARALLEL_ROAM_BUILD_APP)
                 src/algorithms/cbt_2024/CbtOccupancyTree.cpp
                 src/algorithms/cbt_2024/CbtSimplifyCommit.cpp
                 src/algorithms/cbt_2024/CbtSplitPlanner.cpp
+                src/algorithms/cbt_2024/CbtTerrainGeometry.cpp
                 src/algorithms/classic_roam/ClassicRoamTerrainLodAlgorithm.cpp
                 src/algorithms/classic_roam/ClassicRoamMeshBuilder.cpp
                 src/algorithms/classic_roam/ClassicRoamMeshEmit.cpp
@@ -127,6 +128,7 @@ if(PARALLEL_ROAM_BUILD_APP)
                 src/algorithms/cbt_2024/CbtOccupancyTree.cpp
                 src/algorithms/cbt_2024/CbtSimplifyCommit.cpp
                 src/algorithms/cbt_2024/CbtSplitPlanner.cpp
+                src/algorithms/cbt_2024/CbtTerrainGeometry.cpp
                 src/algorithms/cbt_2024/d3d12/D3D12CbtGpuState.cpp
                 src/algorithms/cbt_2024/d3d12/D3D12CbtDiagnostics.cpp
                 src/algorithms/cbt_2024/d3d12/D3D12CbtGeometryPipeline.cpp

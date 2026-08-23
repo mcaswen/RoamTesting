@@ -172,6 +172,7 @@ add_executable(
     ../src/algorithms/cbt_2024/CbtClassification.cpp
     ../src/algorithms/cbt_2024/CbtBisectorTopology.cpp
     ../src/algorithms/cbt_2024/CbtOccupancyTree.cpp
+    ../src/terrain/HeightMap.cpp
 )
 
 target_include_directories(
@@ -185,6 +186,7 @@ target_link_libraries(
         parallel_roam_project_options
         parallel_roam_project_warnings
         ParallelROAM::GLM
+        ParallelROAM::STB
 )
 
 add_test(NAME cbt_classification COMMAND parallel_roam_cbt_classification_tests)
@@ -259,6 +261,39 @@ target_link_libraries(
 
 add_test(NAME cbt_simplify_commit COMMAND parallel_roam_cbt_simplify_commit_tests)
 set_tests_properties(cbt_simplify_commit PROPERTIES LABELS "unit;cbt" TIMEOUT 30)
+
+add_executable(
+    parallel_roam_cbt_terrain_geometry_tests
+    CbtTerrainGeometryTests.cpp
+    ../src/algorithms/cbt_2024/CbtTerrainGeometry.cpp
+    ../src/algorithms/cbt_2024/CbtBisectCommit.cpp
+    ../src/algorithms/cbt_2024/CbtBisectorTopology.cpp
+    ../src/algorithms/cbt_2024/CbtOccupancyTree.cpp
+    ../src/terrain/HeightMap.cpp
+)
+
+target_include_directories(
+    parallel_roam_cbt_terrain_geometry_tests
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+)
+
+target_link_libraries(
+    parallel_roam_cbt_terrain_geometry_tests
+    PRIVATE
+        parallel_roam_project_options
+        parallel_roam_project_warnings
+        ParallelROAM::GLM
+        ParallelROAM::STB
+)
+
+add_test(NAME cbt_terrain_geometry COMMAND parallel_roam_cbt_terrain_geometry_tests)
+set_tests_properties(
+    cbt_terrain_geometry
+    PROPERTIES
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."
+        LABELS "unit;cbt"
+        TIMEOUT 30
+)
 
 if(TARGET parallel_roam)
     if(WIN32 AND PARALLEL_ROAM_GRAPHICS_API_NORMALIZED STREQUAL "D3D12")

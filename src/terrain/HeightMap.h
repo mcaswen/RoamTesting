@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -28,6 +29,8 @@ public:
     [[nodiscard]] int Height() const;
     [[nodiscard]] bool IsValid() const;
     [[nodiscard]] const std::filesystem::path& SourcePath() const;
+    /// @brief 按 y * Width + x 的顺序暴露归一化高度，供 GPU 纹理上传使用
+    [[nodiscard]] std::span<const float> Values() const;
 
 private:
     std::vector<float> _heightValues;

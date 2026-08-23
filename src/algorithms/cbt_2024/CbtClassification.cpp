@@ -135,4 +135,32 @@ BuildCbtBaseClassificationTriangles(
     }
     return triangles;
 }
+
+std::array<CbtClassificationTriangle, CbtBaseBisectorCount>
+BuildCbtBaseClassificationTriangles(
+    const CbtBaseTopology& topology,
+    const Terrain::HeightMap& heightMap,
+    float terrainSize,
+    float heightScale)
+{
+    std::array<CbtClassificationTriangle, CbtBaseBisectorCount> triangles{};
+    for (std::size_t bisector = 0U; bisector < triangles.size(); ++bisector)
+    {
+        const std::size_t controlOffset = bisector * 3U;
+        for (std::size_t vertex = 0U; vertex < 3U; ++vertex)
+        {
+            const CbtBaseControlPoint& control = topology.ControlPoints[controlOffset + vertex];
+            const float height = heightMap.SampleBilinear(control.U, control.V);
+            triangles[bisector].Positions[vertex] = {
+                (control.U - 0.5F) * terrainSize,
+                height * heightScale,
+                (control.V - 0.5F) * terrainSize,
+            };
+        }
+        // 基础 heapID 没有子路径，GPU LEB 解码会按奇偶取 parent[2]/parent[0]。
+        const std::size_t parentVertex = (topology.HeapIds[bisector] & 1U) == 0U ? 0U : 2U;
+        triangles[bisector].Positions[3] = triangles[bisector].Positions[parentVertex];
+    }
+    return triangles;
+}
 } // namespace ParallelRoam::Algorithms::Cbt2024
