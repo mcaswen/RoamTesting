@@ -64,7 +64,7 @@ subject to cost(S) <= available_capacity
 | --- | --- | --- | --- |
 | Classic CPU ROAM | 对象式节点、裸指针二叉三角树、串行索引堆 | 持久 `Q_s/Q_m`、统一交叉调度、split、forced split、diamond merge、视锥感知、固定叶三角形预算、增量 indexed CPU Mesh | 采用工程等价复现口径：公式、连续拓扑和增量输出对应 ROAM 1997 论文主要效果，但不追求完整最优性证明 |
 | Data-Oriented CPU ROAM | SoA 节点池、索引邻接、持久 `Q_s/Q_m`、批量评分与条件并行 | 与 Classic 使用相同的误差公式、阈值、预算和拓扑验证口径；并行刷新队列优先级，局部维护队列成员，并持续执行预算交换直至队首条件收敛 | 拓扑依赖限制并行度，最终仍生成 CPU Mesh |
-| CBT 2024 | D3D12、OCBT 位域/归约树、GPU 基础二分器资源 | 四档 OCBT、基础拓扑、程序化间接绘制及专项验证 | 动态 split/merge、兼容传播和高度图自适应路径尚待实现 |
+| CBT 2024 | D3D12、OCBT 位域/归约树、GPU 常驻二分器资源 | 四档容量、面积分类、split/merge、双向传播、高度图增量几何、间接绘制、延迟诊断及逐阶段 GPU 计时 | 忠实实现已进入可复现 benchmark，后续阶段冻结官方语义基线 |
 | 闭包感知预算调度器 | 计划中的独立研究变体 | 研究问题、假设、基线和验收标准已定义 | 尚未实现；必须在忠实 CBT 基线冻结后开展 |
 
 ### 统一误差、预算与拓扑语义
@@ -210,14 +210,14 @@ powershell -ExecutionPolicy Bypass -File scripts/setup_cbt_dx12_dependencies.ps1
 .\build\relwithdebinfo-fetch\bin\ParallelROAM.exe --runtime-benchmark
 ```
 
-运行时 benchmark 会在同一配置下依次让可用算法走完相同的离散相机采样点，关闭 VSync，并在 `benchmark-output/` 生成：
+运行时 benchmark 会在同一配置下依次让可用算法走完相同的离散相机采样点，关闭 VSync，并在 `benchmark-output/` 生成。D3D12 构建在设备支持时自动加入 CBT，OpenGL 构建继续运行 Classic 与 DOD：
 
 - `runtime-benchmark-<timestamp>.md`：中文汇总和阶段对比；
 - `runtime-benchmark-<timestamp>.csv`：逐帧原始数据。
 
-默认选项路径包含 600 个采样点，极限压力路径包含 64 个采样点；每种算法都按相同 `sampleIndex` 执行，因此算法快慢不会再改变路径采样密度。可通过 `--runtime-benchmark-heightmap`、`--runtime-benchmark-terrain-size`、`--runtime-benchmark-height-scale`、`--runtime-benchmark-max-depth`、`--runtime-benchmark-split-pixels`、`--runtime-benchmark-merge-pixels`、`--runtime-benchmark-samples` 和 `--runtime-benchmark-label` 覆盖实验参数。旧 `--runtime-benchmark-duration` 仅作为兼容参数保留，每个名义秒换算为 60 个离散采样点。
+默认选项路径包含 600 个采样点，极限压力路径包含 64 个采样点；每种算法都按相同 `sampleIndex` 执行，因此算法快慢不会改变路径采样密度。极限路径默认将 CBT 设为 1M 容量和 25 px² 面积阈值，性能路径默认使用 `Off` 验证与 `ModifiedOnly` 几何。可通过 `--runtime-benchmark-path`、`--runtime-benchmark-heightmap`、`--runtime-benchmark-terrain-size`、`--runtime-benchmark-height-scale`、`--runtime-benchmark-max-depth`、`--runtime-benchmark-split-pixels`、`--runtime-benchmark-merge-pixels`、`--runtime-benchmark-cbt-area`、`--runtime-benchmark-cbt-capacity`、`--runtime-benchmark-cbt-validation`、`--runtime-benchmark-cbt-geometry`、`--runtime-benchmark-samples` 和 `--runtime-benchmark-label` 覆盖实验参数。旧 `--runtime-benchmark-duration` 仅作为兼容参数保留，每个名义秒换算为 60 个离散采样点。
 
-正式对比实验将为每条算法路径独立执行 warm-up，并轮换或随机化算法运行顺序，以降低缓存状态、GPU 频率和设备温度造成的顺序偏差。
+每条算法路径会独立预热 8 帧，初始化成本不进入稳态样本。单次运行顺序固定为 Classic、DOD、CBT；正式重复实验仍应轮换启动顺序，以降低缓存状态、GPU 频率和设备温度造成的顺序偏差。Markdown/CSV 会记录 CBT 参数、资源/拓扑/诊断代次、样本年龄与 dropped 标记、动态槽位计数，以及 compute、几何和 terrain draw 的逐阶段 GPU 时间。
 
 > ROAM 1997 论文公式 (1) 和公式 (2)/(3) 接入后，候选优先级分数（score）与活动拓扑语义已经变化。旧版本的三角形数量、score 分布等结果不应与当前版本直接横向比较。
 
@@ -272,7 +272,7 @@ powershell -ExecutionPolicy Bypass -File scripts/setup_cbt_dx12_dependencies.ps1
 ## 当前限制
 
 - 兼容闭包感知调度器目前仅完成问题定义、假设、基线和实验计划，算法实现与 H1–H5 验证尚未开展；
-- CBT 2024 当前只到基础拓扑和程序化绘制，完整动态 split/merge 尚未接入；
+- CBT 2024 已形成动态 split/merge、高度图几何和性能采样闭环，但官方语义冻结、四档正式重复结果及上游差异报告仍待阶段 I 完成；
 - GPU ROAM-like 已移至 `archive/gpu-roam-like` 分支，不属于主分支构建目标；
 - Classic 已实现公式 (1)-(3)、连续二叉三角树/diamond 拓扑、持久双队列和增量 Mesh 输出；最终 priority、硬预算和输出格式是项目变体，当前研究不追求补齐 ROAM 1997 论文完整最优性证明；
 - 当前正式场景数量和 DEM 多样性不足，旧性能数据也需要在新误差口径下重跑；
