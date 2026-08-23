@@ -2,7 +2,7 @@
 
 > 初稿日期：2026-07-16
 > 源码复核：2026-08-23
-> 状态：实施计划 v0.9；阶段 F 已完成，当前进入阶段 G
+> 状态：实施计划 v1.0；阶段 G 已完成，当前进入阶段 H
 > 前置条件：D3D12 迁移阶段已完成
 > 上游参考：`third_party/large_cbt`，提交 `7ae736d179528a0996449c0cc2db7f3279edc8ee`
 > 本机兼容基线：提交 `7ae736d179528a0996449c0cc2db7f3279edc8ee`，仅替换 NVIDIA 64 位 `firstbithigh` 实现
@@ -709,6 +709,8 @@ E3 对外启用 `SupportsSplit`、`SupportsCrackFix` 和 `SupportsTopologyValida
 
 ### 阶段 G：高度图几何求值
 
+状态：已完成，2026-08-23。
+
 任务：
 
 - 根据 `heapID` 和基础控制点解码平面 LEB 坐标；
@@ -727,6 +729,16 @@ E3 对外启用 `SupportsSplit`、`SupportsCrackFix` 和 `SupportsTopologyValida
 - 动态更新中无 NaN、未初始化顶点或视觉裂缝；
 - 普通帧不再由 CPU 填充整容量顶点上传缓冲。
 
+验收记录：
+
+- 新增 `CbtTerrainGeometry` CPU 参考，统一 LEB child/parent、双线性高度、四点差分法线、UV、归一化高度和六基础半边调试色；单测覆盖边界 clamp、非对称纹理方向、正 Y 绕序、尺度和无效 `heapID`；
+- `D3D12CbtGeometryPipeline` 持有 `R32_FLOAT` 高度纹理、上传资源和 shader-visible SRV；高度图重载通过算法整体重建替换资源代，首帧上传后发布为 compute SRV；
+- Bootstrap ABI 扩展为八个 root constants 与 `t3/u7`，active 全量失效和 modified 增量路径都从 `heapID` 重建三个 `TerrainMeshVertex` 与一个父级分类位置，普通帧不再上传 CPU 顶点；
+- `CSValidateGeometryG` 按 compact active list 检查有限值、高度、法线、UV、正 Y 绕序和父级位置；首帧延迟诊断额外复制六个 retained base 槽，与 CPU 参考逐顶点对照，完整验证载荷为 1552 bytes；
+- `HeightScale` 与 `TerrainSize` 变化会在下一帧分类前重建全部活动几何，高度图切换则重建算法持有纹理；默认帧继续只执行 modified dispatch，并保留 active full-rebuild 路径；
+- `cbt_procedural_g_quick` 及 256K、512K、1M smoke 各运行 540 帧，覆盖尺度变化、split/merge 往返、槽位复用、129×129 到 513×513 高度图重载和 validation-off 尾段；
+- Debug 下 12 项 CBT 单测/集成测试全部通过，RelWithDebInfo 的几何单测与 128K G smoke 通过，OpenGL/D3D12 Debug 构建均成功；注释率门禁包含 shader，`assets/shaders` 为 15.3%，`src/algorithms/cbt_2024` 为 16.2%。
+
 ### 阶段 H：应用、统计和 benchmark
 
 状态：部分完成。
@@ -736,14 +748,14 @@ E3 对外启用 `SupportsSplit`、`SupportsCrackFix` 和 `SupportsTopologyValida
 - 算法选择；
 - 可用性提示；
 - OCBT、基础拓扑和程序化绘制入口。
-- 四档 F 480 帧 split/merge 往返 smoke、显式 `--cbt-capacity` 参数和 topology frame generation。
+- 四档 G 540 帧 split/merge、尺度和高度图重载 smoke，显式 `--cbt-capacity` 参数和 topology frame generation。
 
 待完成：
 
 - 独立 CBT 面积阈值、容量、验证模式和几何模式；
 - 专用计数和 GPU 阶段时间；
 - 延迟读回样本年龄和 dropped sample 标记；
-- 高度图重载、容量切换和算法重置；
+- 容量切换和算法重置的统一自动化矩阵；
 - 固定离散相机路径；
 - CBT runtime benchmark；
 
@@ -933,13 +945,15 @@ CTest 应使用 `unit`、`gpu-quick`、`integration` 标签并设置明确超时
 
 ### 批次 6：G-H 高度图和实验接入
 
+状态：进行中；阶段 G 已完成，阶段 H 待收口。
+
 1. GPU 高度图；
 2. modified/full 几何；
 3. 法线、UV 和调试色；
 4. 延迟统计；
 5. UI、CLI、runtime benchmark 和完整测试矩阵。
 
-每个批次必须先通过自身正确性门槛，再进入下一批。阶段 F 已完成平面几何上的完整拓扑闭环，当前批次转入 G-H 的高度图几何与实验接入。
+每个批次必须先通过自身正确性门槛，再进入下一批。阶段 G 已完成高度图几何、增量更新与重载验证，当前批次继续收口阶段 H 的延迟统计、UI/CLI 和 runtime benchmark。
 
 ## 13. 主要风险与控制措施
 
@@ -992,20 +1006,20 @@ CTest 应使用 `unit`、`gpu-quick`、`integration` 标签并设置明确超时
 
 | 主题 | 上游源码 | 当前项目对应位置 |
 |---|---|---|
-| 帧拓扑编排 | [`mesh_updater.cpp`](../../third_party/large_cbt/demo/src/mesh/mesh_updater.cpp) | [`D3D12CbtFramePipeline.cpp`](../../src/algorithms/cbt_2024/d3d12/D3D12CbtFramePipeline.cpp)，已接入 E0-F 的 split/merge、双向传播、单轮 Reduce、Indexation 与增量几何 |
+| 帧拓扑编排 | [`mesh_updater.cpp`](../../third_party/large_cbt/demo/src/mesh/mesh_updater.cpp) | [`D3D12CbtFramePipeline.cpp`](../../src/algorithms/cbt_2024/d3d12/D3D12CbtFramePipeline.cpp)，已接入 E0-G 的 split/merge、双向传播、单轮 Reduce、Indexation 与高度图增量几何 |
 | shader 入口和面积分类 | [`UpdateMesh.compute`](../../third_party/large_cbt/shaders/UpdateMesh.compute) | [`CbtTopologyE0.hlsl`](../../assets/shaders/dx12/cbt/CbtTopologyE0.hlsl) 与 [`CbtClassification.cpp`](../../src/algorithms/cbt_2024/CbtClassification.cpp) CPU 参考 |
 | split 规划与分配 | [`update_utilities.hlsl`](../../third_party/large_cbt/shaders/shader_lib/update_utilities.hlsl) | [`CbtTopologyE0.hlsl`](../../assets/shaders/dx12/cbt/CbtTopologyE0.hlsl) 与 [`CbtSplitPlanner.cpp`](../../src/algorithms/cbt_2024/CbtSplitPlanner.cpp) CPU 参考 |
 | split 提交、merge、传播 | [`update_utilities.hlsl`](../../third_party/large_cbt/shaders/shader_lib/update_utilities.hlsl) | [`CbtTopologyE0.hlsl`](../../assets/shaders/dx12/cbt/CbtTopologyE0.hlsl)、[`CbtBisectCommit.cpp`](../../src/algorithms/cbt_2024/CbtBisectCommit.cpp) 与 [`CbtSimplifyCommit.cpp`](../../src/algorithms/cbt_2024/CbtSimplifyCommit.cpp) 已完成 split/merge 及双向传播 |
 | OCBT | [`ocbt_generic.hlsl`](../../third_party/large_cbt/shaders/shader_lib/ocbt_generic.hlsl) | [`CbtOccupancyTree.hlsli`](../../assets/shaders/dx12/cbt/CbtOccupancyTree.hlsli) |
 | 基础半边展开 | [`cpu_mesh.cpp`](../../third_party/large_cbt/demo/src/mesh/cpu_mesh.cpp) | [`CbtBisectorTopology.cpp`](../../src/algorithms/cbt_2024/CbtBisectorTopology.cpp) |
 | GPU 资源布局 | [`mesh.cpp`](../../third_party/large_cbt/demo/src/mesh/mesh.cpp) | [`D3D12CbtGpuState.cpp`](../../src/algorithms/cbt_2024/d3d12/D3D12CbtGpuState.cpp) |
-| 逻辑几何 | [`PlanetGeometry.compute`](../../third_party/large_cbt/shaders/PlanetGeometry.compute) | [`CbtBootstrap.hlsl`](../../assets/shaders/dx12/cbt/CbtBootstrap.hlsl) 已提供平面 Bootstrap，高度图求值待 G |
+| 逻辑几何 | [`PlanetGeometry.compute`](../../third_party/large_cbt/shaders/PlanetGeometry.compute) | [`CbtBootstrap.hlsl`](../../assets/shaders/dx12/cbt/CbtBootstrap.hlsl) 与 [`CbtTerrainGeometry.cpp`](../../src/algorithms/cbt_2024/CbtTerrainGeometry.cpp) 已提供 GPU/CPU 对照的高度、法线、UV、调试色和父级分类位置 |
 | 算法接口 | — | [`ITerrainLodAlgorithm.h`](../../src/algorithms/ITerrainLodAlgorithm.h) |
 | 调度与绘制 | — | [`D3D12TerrainRenderer.cpp`](../../src/render/D3D12TerrainRenderer.cpp) |
-| 当前 F adapter | — | [`D3D12CbtTerrainLodAlgorithm.cpp`](../../src/algorithms/cbt_2024/d3d12/D3D12CbtTerrainLodAlgorithm.cpp) |
+| 当前 G adapter | — | [`D3D12CbtTerrainLodAlgorithm.cpp`](../../src/algorithms/cbt_2024/d3d12/D3D12CbtTerrainLodAlgorithm.cpp) |
 
 ## 17. 结论
 
-当前仓库已经完成 OCBT、方形基础半边、程序化间接绘制、阶段 E0 的动态管线前置契约、阶段 E1 的官方面积分类、阶段 E2 的兼容链规划与旧 OCBT 空闲槽位分配、阶段 E3 的四模板 Bisect 及 split 传播，以及阶段 F 的两/四节点 merge、释放槽位回收与 merge 传播。split 和 merge 现在共享一个邻接代次与一轮 Reduce，并已通过四档容量 480 帧相机往返验证槽位释放和重新分配。
+当前仓库已经完成 OCBT、方形基础半边、程序化间接绘制、阶段 E0 的动态管线前置契约、阶段 E1 的官方面积分类、阶段 E2 的兼容链规划与旧 OCBT 空闲槽位分配、阶段 E3 的四模板 Bisect 及 split 传播、阶段 F 的两/四节点 merge 与槽位回收，以及阶段 G 的 GPU 高度图、法线、UV、调试色和分类辅助位置。split 和 merge 共享一个邻接代次与一轮 Reduce，高度几何默认按 modified list 增量更新，并已通过四档容量 540 帧的尺度、相机往返与高度图重载验证。
 
-下一步进入阶段 G，用 GPU 高度图采样替换当前平面几何求值，补齐法线、UV、调试色与重载验证；阶段 H 再完成统计和 benchmark 接入，为阶段 I 的官方语义冻结准备可复现输入。
+下一步进入阶段 H，收口独立验证模式、延迟样本年龄、专用 GPU 阶段时间、UI/CLI 和 runtime benchmark，为阶段 I 的官方语义冻结准备可复现输入。
