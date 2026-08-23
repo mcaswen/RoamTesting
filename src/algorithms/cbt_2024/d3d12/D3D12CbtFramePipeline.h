@@ -98,7 +98,6 @@ private:
         Microsoft::WRL::ComPtr<ID3D12PipelineState> Split; // 规划兼容链并建立 allocation list。
         Microsoft::WRL::ComPtr<ID3D12PipelineState> PrepareAllocationIndirect; // 发布 allocation 调度。
         Microsoft::WRL::ComPtr<ID3D12PipelineState> Allocate; // 从旧 OCBT 补集分配唯一槽位。
-        Microsoft::WRL::ComPtr<ID3D12PipelineState> CopyNeighbors; // 复制已发布邻接到下一代。
         Microsoft::WRL::ComPtr<ID3D12PipelineState> Bisect; // 提交四模板、heapID 和 OCBT 位。
         Microsoft::WRL::ComPtr<ID3D12PipelineState> PreparePropagationIndirect; // 发布传播调度。
         Microsoft::WRL::ComPtr<ID3D12PipelineState> PropagateBisect; // 修复外部邻居引用。
@@ -141,6 +140,11 @@ private:
     D3D12_RESOURCE_STATES _heapIdState{D3D12_RESOURCE_STATE_UNORDERED_ACCESS}; // Classify 写路径和 Bootstrap 读路径切换。
     D3D12_RESOURCE_STATES _bisectorDataState{D3D12_RESOURCE_STATE_UNORDERED_ACCESS}; // 分类状态生产与 Indexation 消费。
     D3D12_RESOURCE_STATES _baseControlPointState{D3D12_RESOURCE_STATE_UNORDERED_ACCESS}; // 初始化上传后只读。
+    // 两份邻接资源始终成对切换：已发布代次作为 COPY_SOURCE，写代次作为 COPY_DEST。
+    // CopyResource 完成后二者恢复 UAV，Bisect/Propagate 只修改写代次。
+    std::array<D3D12_RESOURCE_STATES, 2> _neighborStates{
+        D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+        D3D12_RESOURCE_STATE_UNORDERED_ACCESS}; // ping/pong 在原生复制与拓扑 UAV 之间切换。
     D3D12_RESOURCE_STATES _activeIndexState{D3D12_RESOURCE_STATE_UNORDERED_ACCESS}; // 上帧 SRV、本帧尾 UAV。
     D3D12_RESOURCE_STATES _visibleIndexState{D3D12_RESOURCE_STATE_UNORDERED_ACCESS}; // Indexation 的可见输出。
     D3D12_RESOURCE_STATES _modifiedIndexState{D3D12_RESOURCE_STATE_UNORDERED_ACCESS}; // 后续几何更新任务输出。

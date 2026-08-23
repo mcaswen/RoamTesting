@@ -614,18 +614,6 @@ void CSAllocateE2(uint dispatchId : SV_DispatchThreadID)
     CbtBisectorDataBuffer[currentId] = data;
 }
 
-[numthreads(64, 1, 1)]
-void CSCopyNeighborsE3(uint physicalSlot : SV_DispatchThreadID)
-{
-    // 每帧只从已发布代次读取，并完整复制到另一份缓冲后再执行局部模板写入。
-    // 全槽复制让未修改节点天然继承邻接，模板只需覆盖实际输出节点。
-    // dispatch 后的 UAV barrier 是下一代邻接开始可见的发布边界。
-    if (physicalSlot < CbtTotalElementCount)
-    {
-        CbtStoreNextNeighbors(physicalSlot, CbtLoadCurrentNeighbors(physicalSlot));
-    }
-}
-
 bool CbtEvaluateCommittedNeighbors(
     uint currentId,
     uint neighborId,

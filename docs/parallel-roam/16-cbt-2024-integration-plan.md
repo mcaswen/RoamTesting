@@ -665,7 +665,7 @@ E2 只写 `subdivisionPattern` 和预分配 `indices`，不写新 `heapID`、邻
 验收记录：
 
 - 新增 `CbtBisectCommit` CPU 参考，逐字段对应上游四种 `BisectElement` 模板与 `PropagateBisectElement`；单测分别覆盖 center、right-double、left-double、triple、开放边界传播，以及 LEB child/parent 平面坐标；
-- 正式 GPU 帧事务现按 `CopyNeighbors -> Bisect -> PropagateBisect -> Reduce -> Indexation -> PrepareIndirect -> BuildModifiedGeometry -> Validate` 执行，E2 预分配槽只在 Bisect 成功写完 `heapID`、邻接和元数据后置位；
+- 正式 GPU 帧事务现以 D3D12 `CopyResource` 发布邻接下一代，再按 `Bisect -> PropagateBisect -> Reduce -> Indexation -> PrepareIndirect -> BuildModifiedGeometry -> Validate` 执行；不再为全容量邻接复制调度 compute PSO，E2 预分配槽只在 Bisect 成功写完 `heapID`、邻接和元数据后置位；
 - 邻接使用 u3/u4 ping-pong 代次；规划只读已发布代次，模板写下一代，传播按单个边分量原子条件替换，避免并行任务对同一 `uint3` 的读改写覆盖；
 - RoamTesting 的开放方形边界允许 `INVALID` 外侧邻居，center/right-double 的边界传播会作为“无需修补”完成；其他越界或非活动 problem neighbor 仍由 shader validation 拒绝；
 - 四档容量均成功编译 Copy/Bisect/Propagation/Validate PSO；验证 pass 全槽检查动态 OCBT 位与非零 `heapID` 一致、活动邻接在范围内且互反，并核对 Reduce root、active indices、draw args、allocation/commit/propagation 和四模板计数守恒；

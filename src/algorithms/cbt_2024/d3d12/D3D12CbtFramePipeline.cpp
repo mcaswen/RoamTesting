@@ -312,6 +312,10 @@ void D3D12CbtFramePipeline::Shutdown()
     _heapIdState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
     _bisectorDataState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
     _baseControlPointState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+    _neighborStates = {
+        D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+        D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+    };
     _activeIndexState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
     _visibleIndexState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
     _modifiedIndexState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
@@ -434,7 +438,6 @@ bool D3D12CbtFramePipeline::CreatePipelines(std::string* errorMessage)
         !CreateComputePipeline(_backend->Device(), _topologyRootSignature.Get(), shaderDirectory / (prefix + "SplitE2.cso"), pipelines.Split, errorMessage) ||
         !CreateComputePipeline(_backend->Device(), _topologyRootSignature.Get(), shaderDirectory / (prefix + "PrepareAllocationIndirect.cso"), pipelines.PrepareAllocationIndirect, errorMessage) ||
         !CreateComputePipeline(_backend->Device(), _topologyRootSignature.Get(), shaderDirectory / (prefix + "AllocateE2.cso"), pipelines.Allocate, errorMessage) ||
-        !CreateComputePipeline(_backend->Device(), _topologyRootSignature.Get(), shaderDirectory / (prefix + "CopyNeighborsE3.cso"), pipelines.CopyNeighbors, errorMessage) ||
         !CreateComputePipeline(_backend->Device(), _topologyRootSignature.Get(), shaderDirectory / (prefix + "BisectE3.cso"), pipelines.Bisect, errorMessage) ||
         !CreateComputePipeline(_backend->Device(), _topologyRootSignature.Get(), shaderDirectory / (prefix + "PreparePropagationIndirectE3.cso"), pipelines.PreparePropagationIndirect, errorMessage) ||
         !CreateComputePipeline(_backend->Device(), _topologyRootSignature.Get(), shaderDirectory / (prefix + "PropagateBisectE3.cso"), pipelines.PropagateBisect, errorMessage) ||
@@ -867,10 +870,31 @@ bool D3D12CbtFramePipeline::RecordFrame(
         0U);
     UavBarrier(commandList);
 
-    // 邻接复制覆盖完整容量，随后四模板只写下一代的局部节点。
-    commandList->SetPipelineState(pipelines.CopyNeighbors.Get());
-    commandList->Dispatch(DispatchCount(topology.Layout.TotalElementCount), 1U, 1U);
-    UavBarrier(commandList);
+    // 整资源复制由 D3D12 copy 语义完成；随后四模板只覆盖下一代的局部节点。
+    const std::uint32_t neighborWriteIndex = _neighborReadIndex ^ 1U;
+    ID3D12Resource* currentNeighbors = resources.Neighbors[_neighborReadIndex];
+    ID3D12Resource* nextNeighbors = resources.Neighbors[neighborWriteIndex];
+    Transition(
+        commandList,
+        currentNeighbors,
+        _neighborStates[_neighborReadIndex],
+        D3D12_RESOURCE_STATE_COPY_SOURCE);
+    Transition(
+        commandList,
+        nextNeighbors,
+        _neighborStates[neighborWriteIndex],
+        D3D12_RESOURCE_STATE_COPY_DEST);
+    commandList->CopyResource(nextNeighbors, currentNeighbors);
+    Transition(
+        commandList,
+        currentNeighbors,
+        _neighborStates[_neighborReadIndex],
+        D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    Transition(
+        commandList,
+        nextNeighbors,
+        _neighborStates[neighborWriteIndex],
+        D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     commandList->SetPipelineState(pipelines.Bisect.Get());
     commandList->ExecuteIndirect(
         _dispatchCommandSignature.Get(),
