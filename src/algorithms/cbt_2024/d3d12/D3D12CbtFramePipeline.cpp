@@ -51,20 +51,6 @@ std::uint32_t DispatchCount(std::uint32_t count)
     return (count + WorkGroupSize - 1U) / WorkGroupSize;
 }
 
-// 四档 OCBT 的宏布局不同，必须选择与资源容量完全相同的预编译 PSO。
-// 未知枚举只作为防御性回退；公开布局构造器会先拒绝非法容量。
-std::size_t CapacityIndex(CbtOccupancyCapacity capacity)
-{
-    switch (capacity)
-    {
-    case CbtOccupancyCapacity::Capacity128K: return 0U;
-    case CbtOccupancyCapacity::Capacity256K: return 1U;
-    case CbtOccupancyCapacity::Capacity512K: return 2U;
-    case CbtOccupancyCapacity::Capacity1M: return 3U;
-    }
-    return 0U;
-}
-
 // 运行时只读取 CMake/DXC 已生成的字节码，不在首帧动态编译 shader。
 // 初始化失败保留具体路径，便于诊断部署时遗漏的 cso。
 std::vector<std::uint8_t> ReadBinaryFile(const std::filesystem::path& path, std::string* errorMessage)
@@ -317,7 +303,7 @@ void D3D12CbtFramePipeline::Shutdown()
     _geometry.Shutdown();
     _prepareIndirectPipeline.Reset();
     _indexationPipeline.Reset();
-    _capacityPipelines = {};
+    _pipelines = {};
     _dispatchCommandSignature.Reset();
     _bootstrapRootSignature.Reset();
     _topologyRootSignature.Reset();
@@ -437,30 +423,27 @@ bool D3D12CbtFramePipeline::CreatePipelines(std::string* errorMessage)
 #else
     const std::filesystem::path shaderDirectory{"assets/shaders/dx12"};
 #endif
-    const std::array<const char*, 4> capacityNames{"128K", "256K", "512K", "1M"};
     // OCBT reduction 的数组长度由编译期宏决定，不能用一个动态 PSO 混用容量。
-    // 每档包含 E0-E3 分类、规划、提交、传播、Reduce 和验证生产管线。
-    for (std::size_t index = 0U; index < capacityNames.size(); ++index)
+    // 初始化只装载当前资源档位，避免为三个未选容量创建无用的 PSO 集合。
+    const std::string prefix =
+        std::string{"CbtTopology"} + CbtOccupancyCapacityName(_capacity);
+    CapacityPipelines& pipelines = _pipelines;
+    if (!CreateComputePipeline(_backend->Device(), _topologyRootSignature.Get(), shaderDirectory / (prefix + "ResetE0.cso"), pipelines.Reset, errorMessage) ||
+        !CreateComputePipeline(_backend->Device(), _topologyRootSignature.Get(), shaderDirectory / (prefix + "Classify.cso"), pipelines.Classify, errorMessage) ||
+        !CreateComputePipeline(_backend->Device(), _topologyRootSignature.Get(), shaderDirectory / (prefix + "PrepareClassificationIndirect.cso"), pipelines.PrepareClassificationIndirect, errorMessage) ||
+        !CreateComputePipeline(_backend->Device(), _topologyRootSignature.Get(), shaderDirectory / (prefix + "SplitE2.cso"), pipelines.Split, errorMessage) ||
+        !CreateComputePipeline(_backend->Device(), _topologyRootSignature.Get(), shaderDirectory / (prefix + "PrepareAllocationIndirect.cso"), pipelines.PrepareAllocationIndirect, errorMessage) ||
+        !CreateComputePipeline(_backend->Device(), _topologyRootSignature.Get(), shaderDirectory / (prefix + "AllocateE2.cso"), pipelines.Allocate, errorMessage) ||
+        !CreateComputePipeline(_backend->Device(), _topologyRootSignature.Get(), shaderDirectory / (prefix + "CopyNeighborsE3.cso"), pipelines.CopyNeighbors, errorMessage) ||
+        !CreateComputePipeline(_backend->Device(), _topologyRootSignature.Get(), shaderDirectory / (prefix + "BisectE3.cso"), pipelines.Bisect, errorMessage) ||
+        !CreateComputePipeline(_backend->Device(), _topologyRootSignature.Get(), shaderDirectory / (prefix + "PreparePropagationIndirectE3.cso"), pipelines.PreparePropagationIndirect, errorMessage) ||
+        !CreateComputePipeline(_backend->Device(), _topologyRootSignature.Get(), shaderDirectory / (prefix + "PropagateBisectE3.cso"), pipelines.PropagateBisect, errorMessage) ||
+        !CreateComputePipeline(_backend->Device(), _topologyRootSignature.Get(), shaderDirectory / (prefix + "ReducePre.cso"), pipelines.ReducePre, errorMessage) ||
+        !CreateComputePipeline(_backend->Device(), _topologyRootSignature.Get(), shaderDirectory / (prefix + "ReduceFirst.cso"), pipelines.ReduceFirst, errorMessage) ||
+        !CreateComputePipeline(_backend->Device(), _topologyRootSignature.Get(), shaderDirectory / (prefix + "ReduceSecond.cso"), pipelines.ReduceSecond, errorMessage) ||
+        !CreateComputePipeline(_backend->Device(), _topologyRootSignature.Get(), shaderDirectory / (prefix + "ValidateE3.cso"), pipelines.Validate, errorMessage))
     {
-        const std::string prefix = std::string{"CbtTopology"} + capacityNames[index];
-        CapacityPipelines& pipelines = _capacityPipelines[index];
-        if (!CreateComputePipeline(_backend->Device(), _topologyRootSignature.Get(), shaderDirectory / (prefix + "ResetE0.cso"), pipelines.Reset, errorMessage) ||
-            !CreateComputePipeline(_backend->Device(), _topologyRootSignature.Get(), shaderDirectory / (prefix + "Classify.cso"), pipelines.Classify, errorMessage) ||
-            !CreateComputePipeline(_backend->Device(), _topologyRootSignature.Get(), shaderDirectory / (prefix + "PrepareClassificationIndirect.cso"), pipelines.PrepareClassificationIndirect, errorMessage) ||
-            !CreateComputePipeline(_backend->Device(), _topologyRootSignature.Get(), shaderDirectory / (prefix + "SplitE2.cso"), pipelines.Split, errorMessage) ||
-            !CreateComputePipeline(_backend->Device(), _topologyRootSignature.Get(), shaderDirectory / (prefix + "PrepareAllocationIndirect.cso"), pipelines.PrepareAllocationIndirect, errorMessage) ||
-            !CreateComputePipeline(_backend->Device(), _topologyRootSignature.Get(), shaderDirectory / (prefix + "AllocateE2.cso"), pipelines.Allocate, errorMessage) ||
-            !CreateComputePipeline(_backend->Device(), _topologyRootSignature.Get(), shaderDirectory / (prefix + "CopyNeighborsE3.cso"), pipelines.CopyNeighbors, errorMessage) ||
-            !CreateComputePipeline(_backend->Device(), _topologyRootSignature.Get(), shaderDirectory / (prefix + "BisectE3.cso"), pipelines.Bisect, errorMessage) ||
-            !CreateComputePipeline(_backend->Device(), _topologyRootSignature.Get(), shaderDirectory / (prefix + "PreparePropagationIndirectE3.cso"), pipelines.PreparePropagationIndirect, errorMessage) ||
-            !CreateComputePipeline(_backend->Device(), _topologyRootSignature.Get(), shaderDirectory / (prefix + "PropagateBisectE3.cso"), pipelines.PropagateBisect, errorMessage) ||
-            !CreateComputePipeline(_backend->Device(), _topologyRootSignature.Get(), shaderDirectory / (prefix + "ReducePre.cso"), pipelines.ReducePre, errorMessage) ||
-            !CreateComputePipeline(_backend->Device(), _topologyRootSignature.Get(), shaderDirectory / (prefix + "ReduceFirst.cso"), pipelines.ReduceFirst, errorMessage) ||
-            !CreateComputePipeline(_backend->Device(), _topologyRootSignature.Get(), shaderDirectory / (prefix + "ReduceSecond.cso"), pipelines.ReduceSecond, errorMessage) ||
-            !CreateComputePipeline(_backend->Device(), _topologyRootSignature.Get(), shaderDirectory / (prefix + "ValidateE3.cso"), pipelines.Validate, errorMessage))
-        {
-            return false;
-        }
+        return false;
     }
 
     // Bootstrap PSO 与容量无关，边界由 root constants 在运行时提供。
@@ -823,7 +806,7 @@ bool D3D12CbtFramePipeline::RecordFrame(
     commandList->SetComputeRootDescriptorTable(4U, _topologyUavRange.Gpu);
 
     const CbtOccupancyLayout& occupancy = topology.Layout.Occupancy;
-    CapacityPipelines& pipelines = _capacityPipelines[CapacityIndex(occupancy.Capacity)];
+    CapacityPipelines& pipelines = _pipelines;
     commandList->SetPipelineState(pipelines.Reset.Get());
     commandList->Dispatch(1U, 1U, 1U);
     UavBarrier(commandList);

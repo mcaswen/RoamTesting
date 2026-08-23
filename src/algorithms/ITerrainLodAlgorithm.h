@@ -72,6 +72,15 @@ struct TerrainLodAlgorithmAvailability
     std::string UnavailableReason;
 };
 
+/// CBT OCBT 的编译期容量档位；数值等于动态位域的元素容量。
+enum class TerrainLodCbtCapacity : std::uint32_t
+{
+    Capacity128K = 131072U,
+    Capacity256K = 262144U,
+    Capacity512K = 524288U,
+    Capacity1M = 1048576U,
+};
+
 /// <summary>
 /// terrain LOD 算法共享的运行参数，benchmark 和 renderer 使用同一套字段做公平对比
 /// </summary>
@@ -85,6 +94,7 @@ struct TerrainLodSettings
     float ScreenSpaceMergeThresholdPixels{2.0F};
     // CBT 官方分类使用投影三角形面积，不能与 CPU ROAM 厚度阈值混用。
     float CbtTriangleAreaPixels{50.0F};
+    TerrainLodCbtCapacity CbtCapacity{TerrainLodCbtCapacity::Capacity128K};
     // 两种 CPU ROAM 路径共享活动 leaf triangle 硬上限。
     std::size_t TriangleBudget{20000U};
     // 仅供 DOD 选择是否执行 chunk 并行 Split 预提交；评分并行不受影响。

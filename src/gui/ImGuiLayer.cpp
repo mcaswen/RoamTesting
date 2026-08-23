@@ -757,6 +757,25 @@ bool ImGuiLayer::DrawDebugOverlay(const DebugOverlayData& data, TerrainPanelStat
         changed |= ImGui::Checkbox("并行 Split", &terrainState.RoamEnableParallelSplit);
     }
     changed |= ImGui::SliderInt("最大深度", &terrainState.RoamMaxDepth, 1, 20);
+    if (terrainState.TerrainLodAlgorithm == Algorithms::TerrainLodAlgorithmId::Cbt2024)
+    {
+        constexpr std::array<Algorithms::TerrainLodCbtCapacity, 4> capacities{
+            Algorithms::TerrainLodCbtCapacity::Capacity128K,
+            Algorithms::TerrainLodCbtCapacity::Capacity256K,
+            Algorithms::TerrainLodCbtCapacity::Capacity512K,
+            Algorithms::TerrainLodCbtCapacity::Capacity1M,
+        };
+        const char* capacityNames[] = {"128K", "256K", "512K", "1M"};
+        const auto selected = std::find(capacities.begin(), capacities.end(), terrainState.CbtCapacity);
+        int capacityIndex = selected == capacities.end()
+            ? 0
+            : static_cast<int>(std::distance(capacities.begin(), selected));
+        if (ImGui::Combo("CBT 容量", &capacityIndex, capacityNames, 4))
+        {
+            terrainState.CbtCapacity = capacities[static_cast<std::size_t>(capacityIndex)];
+            changed = true;
+        }
+    }
     if (terrainState.TerrainLodAlgorithm == Algorithms::TerrainLodAlgorithmId::ClassicCpuRoam ||
         terrainState.TerrainLodAlgorithm == Algorithms::TerrainLodAlgorithmId::DataOrientedCpuRoam)
     {

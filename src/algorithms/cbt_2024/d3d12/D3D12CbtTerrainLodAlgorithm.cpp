@@ -35,6 +35,18 @@ void SetError(std::string* errorMessage, const std::string& message)
     }
 }
 
+CbtOccupancyCapacity ToCbtCapacity(TerrainLodCbtCapacity capacity)
+{
+    switch (capacity)
+    {
+    case TerrainLodCbtCapacity::Capacity128K: return CbtOccupancyCapacity::Capacity128K;
+    case TerrainLodCbtCapacity::Capacity256K: return CbtOccupancyCapacity::Capacity256K;
+    case TerrainLodCbtCapacity::Capacity512K: return CbtOccupancyCapacity::Capacity512K;
+    case TerrainLodCbtCapacity::Capacity1M: return CbtOccupancyCapacity::Capacity1M;
+    }
+    return CbtOccupancyCapacity::Capacity128K;
+}
+
 void FillRenderPacket(
     const D3D12CbtTerrainState& state,
     TerrainLodRenderPacket& outPacket)
@@ -44,7 +56,8 @@ void FillRenderPacket(
     const auto& templates = state.Pipeline.LastBisectTemplateCounts();
     outPacket.Mode = TerrainLodRenderMode::GpuProceduralIndirect;
     outPacket.StatusMessage =
-        "CBT 2024 E3 commit: split=" + std::to_string(state.Pipeline.LastSplitCandidateCount()) +
+        "CBT 2024 E3 " + std::string{CbtOccupancyCapacityName(topology.Layout.Occupancy.Capacity)} +
+        " commit: split=" + std::to_string(state.Pipeline.LastSplitCandidateCount()) +
         " simplify=" + std::to_string(state.Pipeline.LastSimplifyCandidateCount()) +
         " nodes=" + std::to_string(state.Pipeline.LastPlannedSplitNodeCount()) +
         " slots=" + std::to_string(state.Pipeline.LastAllocatedSplitSlotCount()) +
@@ -145,11 +158,20 @@ bool D3D12CbtTerrainLodAlgorithm::BuildRenderData(
         return false;
     }
 
+    const CbtOccupancyCapacity requestedCapacity = ToCbtCapacity(input.Settings.CbtCapacity);
+    // 容量会改变全部持久 buffer 与编译期特化 PSO；切换时等待旧资源代不再被 GPU 使用。
+    if (_state->Topology.IsInitialized() &&
+        _state->Topology.Topology().Layout.Occupancy.Capacity != requestedCapacity)
+    {
+        _backend->WaitForGpuIdle();
+        _state = std::make_unique<D3D12CbtTerrainState>();
+    }
+
     const auto initializeState = [&](D3D12CbtTerrainState& state) {
         if (!state.Topology.IsInitialized() &&
             !state.Topology.Rebuild(
                 *_backend,
-                CbtOccupancyCapacity::Capacity128K,
+                requestedCapacity,
                 errorMessage))
         {
             return false;

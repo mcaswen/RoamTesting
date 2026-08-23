@@ -57,7 +57,9 @@ public:
     Application(const Application&) = delete;
     Application& operator=(const Application&) = delete;
 
-    void EnableCbtProceduralSmokeTest();
+    void EnableCbtProceduralSmokeTest(
+        Algorithms::TerrainLodCbtCapacity capacity =
+            Algorithms::TerrainLodCbtCapacity::Capacity128K);
     void EnableCbtOccupancyTreeSmokeTest();
     void EnableCbtBaseTopologySmokeTest();
     void EnableAutomaticRuntimeBenchmark();

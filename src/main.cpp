@@ -31,6 +31,9 @@ int main(int argc, char** argv)
     bool cbtProceduralSmokeTest = false;
     bool cbtOccupancyTreeSmokeTest = false;
     bool cbtBaseTopologySmokeTest = false;
+    bool cbtCapacitySpecified = false;
+    ParallelRoam::Algorithms::TerrainLodCbtCapacity cbtCapacity =
+        ParallelRoam::Algorithms::TerrainLodCbtCapacity::Capacity128K;
     bool automaticRuntimeBenchmark = false;
     ParallelRoam::App::RuntimeBenchmarkOverrides runtimeBenchmarkOverrides{};
     bool hasRuntimeBenchmarkOverrides = false;
@@ -126,6 +129,38 @@ int main(int argc, char** argv)
             parseError = "--cbt-procedural-smoke-test requires PARALLEL_ROAM_GRAPHICS_API=D3D12";
             break;
 #endif
+        }
+
+        if (argument == "--cbt-capacity")
+        {
+            const char* value = requireValue(index, argument);
+            if (value == nullptr)
+            {
+                break;
+            }
+            const std::string_view capacityValue{value};
+            if (capacityValue == "128K" || capacityValue == "128k")
+            {
+                cbtCapacity = ParallelRoam::Algorithms::TerrainLodCbtCapacity::Capacity128K;
+            }
+            else if (capacityValue == "256K" || capacityValue == "256k")
+            {
+                cbtCapacity = ParallelRoam::Algorithms::TerrainLodCbtCapacity::Capacity256K;
+            }
+            else if (capacityValue == "512K" || capacityValue == "512k")
+            {
+                cbtCapacity = ParallelRoam::Algorithms::TerrainLodCbtCapacity::Capacity512K;
+            }
+            else if (capacityValue == "1M" || capacityValue == "1m")
+            {
+                cbtCapacity = ParallelRoam::Algorithms::TerrainLodCbtCapacity::Capacity1M;
+            }
+            else
+            {
+                parseError = "Invalid CBT capacity: " + std::string{capacityValue};
+                break;
+            }
+            cbtCapacitySpecified = true;
         }
 
         if (argument == "--cbt-ocbt-smoke-test")
@@ -325,6 +360,11 @@ int main(int argc, char** argv)
         std::cerr << parseError << '\n';
         return 2;
     }
+    if (cbtCapacitySpecified && !cbtProceduralSmokeTest)
+    {
+        std::cerr << "--cbt-capacity requires --cbt-procedural-smoke-test.\n";
+        return 2;
+    }
 
     const int specializedSmokeTestCount =
         static_cast<int>(cbtProceduralSmokeTest) +
@@ -351,7 +391,7 @@ int main(int argc, char** argv)
     }
     if (cbtProceduralSmokeTest)
     {
-        application.EnableCbtProceduralSmokeTest();
+        application.EnableCbtProceduralSmokeTest(cbtCapacity);
     }
     if (cbtOccupancyTreeSmokeTest)
     {

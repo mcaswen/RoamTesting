@@ -108,6 +108,7 @@ Render::TerrainRenderSettings ToRenderSettings(const Gui::TerrainPanelState& sta
     settings.RoamScreenSpaceSplitThresholdPixels = state.RoamScreenSpaceSplitThresholdPixels;
     settings.RoamScreenSpaceMergeThresholdPixels = state.RoamScreenSpaceMergeThresholdPixels;
     settings.RoamTriangleBudget = static_cast<std::size_t>(std::max(state.RoamTriangleBudget, 2));
+    settings.CbtCapacity = state.CbtCapacity;
     settings.RoamEnableParallelSplit = state.RoamEnableParallelSplit;
     settings.RoamEnableLocalConstraints = state.RoamEnableLocalConstraints;
     settings.RoamEnableTopologyValidation = state.RoamEnableTopologyValidation;
@@ -118,6 +119,18 @@ Render::TerrainRenderSettings ToRenderSettings(const Gui::TerrainPanelState& sta
     settings.SpecularStrength = state.SpecularStrength;
     return settings;
 }
+
+const char* CbtCapacityName(Algorithms::TerrainLodCbtCapacity capacity)
+{
+    switch (capacity)
+    {
+    case Algorithms::TerrainLodCbtCapacity::Capacity128K: return "128K";
+    case Algorithms::TerrainLodCbtCapacity::Capacity256K: return "256K";
+    case Algorithms::TerrainLodCbtCapacity::Capacity512K: return "512K";
+    case Algorithms::TerrainLodCbtCapacity::Capacity1M: return "1M";
+    }
+    return "unknown";
+}
 } // 匿名命名空间
 
 Application::~Application()
@@ -125,12 +138,13 @@ Application::~Application()
     Shutdown();
 }
 
-void Application::EnableCbtProceduralSmokeTest()
+void Application::EnableCbtProceduralSmokeTest(Algorithms::TerrainLodCbtCapacity capacity)
 {
     _terrainLodSmokeTestEnabled = true;
     _cbtProceduralSmokeTestEnabled = true;
     _terrainPanelState.UseTerrainLod = true;
     _terrainPanelState.TerrainLodAlgorithm = Algorithms::TerrainLodAlgorithmId::Cbt2024;
+    _terrainPanelState.CbtCapacity = capacity;
     _terrainPanelState.RoamEnableTopologyValidation = true;
 }
 
@@ -471,6 +485,13 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
     const Render::TerrainRenderStats terrainStats = _terrainRenderer.Stats();
     if (_cbtProceduralSmokeTestEnabled)
     {
+        const std::string expectedCapacity = CbtCapacityName(_terrainPanelState.CbtCapacity);
+        if (terrainStats.TerrainLodStatusMessage.find(expectedCapacity) == std::string::npos)
+        {
+            std::cerr << "CBT E3 smoke test did not initialize requested capacity "
+                      << expectedCapacity << ": " << terrainStats.TerrainLodStatusMessage << '\n';
+            _terrainLodSmokeTestFailed = true;
+        }
         const std::uint64_t generation = terrainStats.GpuTopologyFrameGeneration;
         if (generation == 0U ||
             (_lastCbtTopologyFrameGeneration != 0U && generation != _lastCbtTopologyFrameGeneration + 1U))

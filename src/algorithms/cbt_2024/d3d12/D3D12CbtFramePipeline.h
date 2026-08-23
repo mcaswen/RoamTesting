@@ -123,7 +123,7 @@ private:
     Microsoft::WRL::ComPtr<ID3D12RootSignature> _topologyRootSignature; // 官方 b0..b2/t0..t1/u0..u16 ABI。
     Microsoft::WRL::ComPtr<ID3D12RootSignature> _bootstrapRootSignature; // 仓库适配层的 root descriptor ABI。
     Microsoft::WRL::ComPtr<ID3D12CommandSignature> _dispatchCommandSignature; // 一组 12-byte Dispatch 参数。
-    std::array<CapacityPipelines, 4> _capacityPipelines; // 128K、256K、512K、1M 四档特化。
+    CapacityPipelines _pipelines; // 仅创建当前 OCBT 容量对应的一组特化 PSO。
     Microsoft::WRL::ComPtr<ID3D12PipelineState> _indexationPipeline; // 从 OCBT 重建紧密活动索引。
     Microsoft::WRL::ComPtr<ID3D12PipelineState> _prepareIndirectPipeline; // 重建 draw 和几何 dispatch 参数。
     D3D12CbtGeometryPipeline _geometry; // 参数几何、最终顶点及其独立状态机。

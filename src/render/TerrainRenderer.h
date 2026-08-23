@@ -64,6 +64,9 @@ struct TerrainRenderSettings
     float RoamScreenSpaceSplitThresholdPixels{4.0F};
     float RoamScreenSpaceMergeThresholdPixels{2.0F};
     std::size_t RoamTriangleBudget{20000U};
+    // CBT 独立选择 OCBT 资源与 shader 特化容量；CPU ROAM 忽略该字段。
+    Algorithms::TerrainLodCbtCapacity CbtCapacity{
+        Algorithms::TerrainLodCbtCapacity::Capacity128K};
     // DOD 专属实验开关；其他算法忽略该字段。
     bool RoamEnableParallelSplit{true};
 

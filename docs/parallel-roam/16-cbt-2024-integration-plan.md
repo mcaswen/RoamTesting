@@ -188,7 +188,7 @@ currentVertexBuffer[3 * totalNumElements + slot]
 | CBT terrain adapter | CPU 只写六个基础三角形，顶点容量为每槽 3 个 | 已由 GPU Bootstrap 生成四位置分类布局和 52-byte render vertex |
 | 资源同步 | 基础 adapter 使用持久 upload heap；没有计算/绘制状态机 | topology 和几何已迁至 default heap 常驻，并集中维护 UAV、SRV 和 `INDIRECT_ARGUMENT` 状态 |
 | 统计 | 只有统一 CPU ROAM 字段 | 已增加 topology frame generation 和零普通帧算法读回口径；专用计数、分阶段 GPU 时间和延迟样本仍属于阶段 H |
-| 测试 | GPU smoke 是四档容量穷举长测试，D3D12 CTest 未形成快测闭环 | 已增加 `gpu-quick` 128K/300 帧 CTest 与 90 秒超时；四档 exhaustive CLI 保留 |
+| 测试 | GPU smoke 是四档容量穷举长测试，D3D12 CTest 未形成快测闭环 | 已增加 128K、256K、512K、1M 四档 `gpu-quick`/300 帧 CTest 与 90 秒超时 |
 
 ### 3.3 基础阶段 D 的完成边界
 
@@ -411,7 +411,7 @@ CPU ROAM 的厚度阈值和 triangle budget 继续保留原义，不伪装成 CB
 - 每个交换链帧资源拥有独立 CBT 常量上传区，不能覆盖仍在执行的上一帧常量；
 - topology root signature 必须覆盖 `b0..b2`、`t0..t1` 和 `u0..u16`；
 - 当前共享 CBV/SRV/UAV heap 只有单槽分配接口，阶段 E0 必须增加连续 descriptor range，或明确采用满足 64 DWORD 限制的 root descriptor 方案；
-- 第一版按四档容量编译完整拓扑 entry point，先保证语义一致，再考虑减少重复 PSO；
+- 构建期按四档容量编译完整拓扑 entry point，运行期只为当前显式容量创建一组 PSO；
 - 生产 OCBT 与测试 OCBT 必须共用同一份 rank-select 和 Reduce 实现，不能维护两套算法副本。
 
 ## 8. 修正后的单帧资源依赖
@@ -545,7 +545,7 @@ E0 需要把测试 shader 中的 Reduce 提升为生产共用函数，并增加�
 4. 区分 topology indirect scratch 与 geometry dispatch arguments；
 5. 增加 memory、validation 和 per-frame constants；复用后端按帧 timestamp/readback，算法普通帧不新增同步读回；
 6. 将 OCBT Reduce 提升到生产 HLSL；
-7. 建立 topology root signature、四档容量 PSO 和 descriptor range；
+7. 建立 topology root signature、当前容量 PSO 和 descriptor range；
 8. 建立集中式 D3D12 资源状态/屏障辅助；
 9. 实现 Bootstrap Indexation 和最小平面 LEB 几何；
 10. 将初始化/容量切换与稳定帧统计分离。
@@ -557,7 +557,7 @@ E0 需要把测试 shader 中的 Reduce 提升为生产共用函数，并增加�
 - renderer 不依赖 CPU 实时活动数；
 - 普通帧 fence wait 和 readback bytes 为 0；
 - Debug Layer、GPU validation 和资源状态检查无错误；
-- 128K quick smoke 在 CI 限时内退出。
+- 四档容量 quick smoke 均在 CI 限时内退出。
 
 验收记录：
 
@@ -721,7 +721,7 @@ E3 对外启用 `SupportsSplit`、`SupportsCrackFix` 和 `SupportsTopologyValida
 - 算法选择；
 - 可用性提示；
 - OCBT、基础拓扑和程序化绘制入口。
-- 128K E3 300 帧 quick smoke、四档 exhaustive CLI 和 topology frame generation。
+- 四档 E3 300 帧 quick smoke、显式 `--cbt-capacity` 参数和 topology frame generation。
 
 待完成：
 

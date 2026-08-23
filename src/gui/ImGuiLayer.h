@@ -200,6 +200,8 @@ struct TerrainPanelState
     float RoamScreenSpaceSplitThresholdPixels{4.0F};
     float RoamScreenSpaceMergeThresholdPixels{2.0F};
     int RoamTriangleBudget{20000};
+    Algorithms::TerrainLodCbtCapacity CbtCapacity{
+        Algorithms::TerrainLodCbtCapacity::Capacity128K};
 
     // 只控制 DOD 的 chunk Split 拓扑提交，不关闭并行误差评分。
     bool RoamEnableParallelSplit{false};

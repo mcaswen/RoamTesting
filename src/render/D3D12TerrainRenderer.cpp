@@ -184,6 +184,7 @@ bool NeedsMeshRebuild(const TerrainRenderSettings& previous, const TerrainRender
            previous.RoamScreenSpaceSplitThresholdPixels != next.RoamScreenSpaceSplitThresholdPixels ||
            previous.RoamScreenSpaceMergeThresholdPixels != next.RoamScreenSpaceMergeThresholdPixels ||
            previous.RoamTriangleBudget != next.RoamTriangleBudget ||
+           previous.CbtCapacity != next.CbtCapacity ||
            previous.RoamEnableParallelSplit != next.RoamEnableParallelSplit ||
            previous.RoamEnableLocalConstraints != next.RoamEnableLocalConstraints ||
            previous.RoamEnableTopologyValidation != next.RoamEnableTopologyValidation;
@@ -1174,6 +1175,7 @@ bool TerrainRenderer::RebuildTerrainLod(const RenderContext& context, std::strin
     lodSettings.ScreenSpaceSplitThresholdPixels = _settings.RoamScreenSpaceSplitThresholdPixels;
     lodSettings.ScreenSpaceMergeThresholdPixels = _settings.RoamScreenSpaceMergeThresholdPixels;
     lodSettings.TriangleBudget = _settings.RoamTriangleBudget;
+    lodSettings.CbtCapacity = _settings.CbtCapacity;
     lodSettings.EnableParallelSplit = _settings.RoamEnableParallelSplit;
     lodSettings.EnableLocalConstraints = _settings.RoamEnableLocalConstraints;
     lodSettings.EnableTopologyValidation = _settings.RoamEnableTopologyValidation;
