@@ -961,24 +961,25 @@ bool D3D12CbtFramePipeline::RecordFrame(
         resources.Validation,
         0U,
         sizeof(std::uint32_t) * 12U);
+    // OCBT 根是常规活动统计的一部分，每帧复制一个 uint 不触发同步等待。
+    Transition(commandList, resources.OccupancyTree, _occupancyTreeState, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    commandList->CopyBufferRegion(
+        _diagnostics.Readback(frameIndex),
+        OccupancyRootOffset,
+        resources.OccupancyTree,
+        0U,
+        sizeof(std::uint32_t));
+    Transition(commandList, resources.OccupancyTree, _occupancyTreeState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     if (input.Settings.EnableTopologyValidation)
     {
         Transition(commandList, resources.BisectorData, _bisectorDataState, D3D12_RESOURCE_STATE_COPY_SOURCE);
-        Transition(commandList, resources.OccupancyTree, _occupancyTreeState, D3D12_RESOURCE_STATE_COPY_SOURCE);
         commandList->CopyBufferRegion(
             _diagnostics.Readback(frameIndex),
             BaseBisectorDataOffset,
             resources.BisectorData,
             static_cast<std::uint64_t>(topology.Layout.BaseElementOffset) * sizeof(CbtBisectorData),
             sizeof(CbtBisectorData) * CbtBaseBisectorCount);
-        commandList->CopyBufferRegion(
-            _diagnostics.Readback(frameIndex),
-            OccupancyRootOffset,
-            resources.OccupancyTree,
-            0U,
-            sizeof(std::uint32_t));
         Transition(commandList, resources.BisectorData, _bisectorDataState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-        Transition(commandList, resources.OccupancyTree, _occupancyTreeState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     }
     Transition(commandList, resources.Classification, _classificationState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     Transition(commandList, resources.Allocation, _allocationState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
@@ -1073,15 +1074,16 @@ bool D3D12CbtFramePipeline::RecordFrame(
             0U,
             sizeof(std::uint32_t) * 12U);
         Transition(commandList, resources.Validation, _validationState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-        Transition(commandList, resources.IndirectDrawState, _drawState, D3D12_RESOURCE_STATE_COPY_SOURCE);
-        commandList->CopyBufferRegion(
-            _diagnostics.Readback(frameIndex),
-            DrawStateReadbackOffset,
-            resources.IndirectDrawState,
-            0U,
-            sizeof(CbtDrawState));
-        Transition(commandList, resources.IndirectDrawState, _drawState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     }
+    // draw state 与 OCBT 根配对发布，使关闭完整验证时活动数仍逐样本更新。
+    Transition(commandList, resources.IndirectDrawState, _drawState, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    commandList->CopyBufferRegion(
+        _diagnostics.Readback(frameIndex),
+        DrawStateReadbackOffset,
+        resources.IndirectDrawState,
+        0U,
+        sizeof(CbtDrawState));
+    Transition(commandList, resources.IndirectDrawState, _drawState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 
     Transition(commandList, resources.ActiveIndices, _activeIndexState, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     Transition(commandList, resources.VisibleIndices, _visibleIndexState, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);

@@ -74,8 +74,8 @@ public:
     // 六个基础节点数据放在 staging 尾部，供首帧精确参考读取。
     static constexpr std::size_t BaseBisectorDataOffset =
         DrawStateReadbackOffset + sizeof(CbtDrawState);
-    // 普通路径只消费稳定计数，不读取尚未复制的验证尾部。
-    static constexpr std::size_t DiagnosticReadbackBytes = OccupancyRootOffset;
+    // 普通路径消费稳定计数、OCBT 根与 draw state，不读取基础节点验证尾部。
+    static constexpr std::size_t DiagnosticReadbackBytes = BaseBisectorDataOffset;
     // 最大范围覆盖全部诊断分段，作为每槽资源的统一容量。
     static constexpr std::size_t ValidationReadbackBytes =
         BaseBisectorDataOffset + sizeof(CbtBisectorData) * CbtBaseBisectorCount;

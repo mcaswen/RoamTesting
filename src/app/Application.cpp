@@ -506,7 +506,7 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
                       << terrainStats.RoamNodeCount << '\n';
             _terrainLodSmokeTestFailed = true;
         }
-        if (_cbtProceduralSmokeFrameCount >= 225U && terrainStats.RoamCpuGpuReadbackBytes != 68U)
+        if (_cbtProceduralSmokeFrameCount >= 225U && terrainStats.RoamCpuGpuReadbackBytes != 112U)
         {
             std::cerr << "CBT E3 validation-off path reported an unexpected readback size: "
                       << terrainStats.RoamCpuGpuReadbackBytes << '\n';

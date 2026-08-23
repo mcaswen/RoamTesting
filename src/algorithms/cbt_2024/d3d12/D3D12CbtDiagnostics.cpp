@@ -42,7 +42,7 @@ D3D12_RESOURCE_DESC ReadbackDescription()
 }
 } // namespace
 
-static_assert(D3D12CbtDiagnostics::DiagnosticReadbackBytes == 68U);
+static_assert(D3D12CbtDiagnostics::DiagnosticReadbackBytes == 112U);
 static_assert(D3D12CbtDiagnostics::ValidationReadbackBytes == 304U);
 
 bool D3D12CbtDiagnostics::Initialize(ID3D12Device* device, std::string* errorMessage)
@@ -166,29 +166,29 @@ bool D3D12CbtDiagnostics::ConsumeCompleted(
         _readbacks[frameIndex]->Unmap(0U, &noWrite);
         return LatchFault(message, errorMessage);
     }
+    // 活动统计属于常规诊断样本，不依赖昂贵的全拓扑验证开关。
+    std::uint32_t occupancyRoot = 0U;
+    CbtDrawState drawState{};
+    std::memcpy(&occupancyRoot, bytes + OccupancyRootOffset, sizeof(occupancyRoot));
+    std::memcpy(&drawState, bytes + DrawStateReadbackOffset, sizeof(drawState));
+    _snapshot.ActiveDynamicSlotCount = occupancyRoot;
+    _snapshot.IndexedActiveCount = drawState.ActiveBisectorCount;
+    if (_snapshot.CommittedDynamicSlotCount != _snapshot.AllocatedSplitSlotCount ||
+        drawState.Active.VertexCountPerInstance / 3U != drawState.ActiveBisectorCount ||
+        drawState.ActiveBisectorCount != occupancyRoot + CbtBaseBisectorCount ||
+        drawState.Visible.VertexCountPerInstance > drawState.Active.VertexCountPerInstance ||
+        drawState.ModifiedPositionCount / 4U > drawState.ActiveBisectorCount)
+    {
+        const std::string message =
+            "CBT E3 occupancy/indexation mismatch at generation " +
+            std::to_string(_snapshot.SampleGeneration);
+        _readbacks[frameIndex]->Unmap(0U, &noWrite);
+        return LatchFault(message, errorMessage);
+    }
+
     if (_validationPending[frameIndex])
     {
-        // OCBT 根、Indexation 总数和 indirect draw 顶点数必须表达同一活动集合。
         _validationPending[frameIndex] = false;
-        std::uint32_t occupancyRoot = 0U;
-        CbtDrawState drawState{};
-        std::memcpy(&occupancyRoot, bytes + OccupancyRootOffset, sizeof(occupancyRoot));
-        std::memcpy(&drawState, bytes + DrawStateReadbackOffset, sizeof(drawState));
-        _snapshot.ActiveDynamicSlotCount = occupancyRoot;
-        _snapshot.IndexedActiveCount = drawState.ActiveBisectorCount;
-        if (_snapshot.CommittedDynamicSlotCount != _snapshot.AllocatedSplitSlotCount ||
-            drawState.Active.VertexCountPerInstance / 3U != drawState.ActiveBisectorCount ||
-            drawState.ActiveBisectorCount != occupancyRoot + CbtBaseBisectorCount ||
-            drawState.Visible.VertexCountPerInstance > drawState.Active.VertexCountPerInstance ||
-            drawState.ModifiedPositionCount / 4U > drawState.ActiveBisectorCount)
-        {
-            const std::string message =
-                "CBT E3 occupancy/indexation mismatch at generation " +
-                std::to_string(_snapshot.SampleGeneration);
-            _readbacks[frameIndex]->Unmap(0U, &noWrite);
-            return LatchFault(message, errorMessage);
-        }
-
         const bool exactReference = _exactReferencePending[frameIndex];
         _exactReferencePending[frameIndex] = false;
         if (exactReference)
