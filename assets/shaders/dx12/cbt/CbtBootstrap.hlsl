@@ -1,6 +1,6 @@
 #include "CbtGpuAbi.hlsli"
 
-// 五个 root constants 定位基础物理槽位、基础深度并控制平面世界尺寸
+// 八个 root constants 固定拓扑容量、高度图尺寸与世界缩放协议。
 cbuffer CbtBootstrapConstants : register(b0)
 {
     uint TotalElementCount;
@@ -8,6 +8,9 @@ cbuffer CbtBootstrapConstants : register(b0)
     uint BaseElementCount;
     float TerrainSize;
     uint BaseDepth;
+    uint HeightMapWidth;
+    uint HeightMapHeight;
+    float HeightScale;
 };
 
 struct TerrainVertex
@@ -25,6 +28,8 @@ StructuredBuffer<uint64_t> HeapIds : register(t0);
 StructuredBuffer<CbtBisectorData> BisectorData : register(t1);
 // 基础控制点仅用于首次或 terrain size 变化时重建平面几何
 StructuredBuffer<float3> BaseControlPoints : register(t2);
+// 使用 Load 手动双线性采样，与 CPU HeightMap 的 clamp 和插值顺序一致。
+Texture2D<float> HeightMapTexture : register(t3);
 RWStructuredBuffer<uint> ActiveIndices : register(u0);
 RWStructuredBuffer<uint> VisibleIndices : register(u1);
 RWStructuredBuffer<uint> ModifiedIndices : register(u2);
@@ -32,6 +37,7 @@ RWStructuredBuffer<uint> DrawState : register(u3);
 RWStructuredBuffer<uint> GeometryDispatch : register(u4);
 RWStructuredBuffer<float3> ClassificationPositions : register(u5);
 RWStructuredBuffer<TerrainVertex> RenderVertices : register(u6);
+RWStructuredBuffer<uint> Validation : register(u7);
 
 [numthreads(64, 1, 1)]
 void CSIndexation(uint physicalSlot : SV_DispatchThreadID)
@@ -100,6 +106,66 @@ float3 DebugColor(uint localBase)
     return Colors[min(localBase, 5u)];
 }
 
+float CbtSampleHeight(float2 uv)
+{
+    // CPU reference clamps normalized coordinates before converting to texel space.
+    // Integer Load keeps filtering independent from sampler and driver state.
+    // The low/high pair deliberately collapses at the last row or column.
+    // Interpolation remains horizontal-first, then vertical, matching HeightMap.
+    const uint2 dimensions = max(uint2(HeightMapWidth, HeightMapHeight), 1u);
+    const float2 pixel = saturate(uv) * float2(dimensions - 1u);
+    const uint2 low = uint2(pixel);
+    const uint2 high = min(low + 1u, dimensions - 1u);
+    const float2 interpolation = pixel - float2(low);
+    const float h00 = HeightMapTexture.Load(int3(low, 0));
+    const float h10 = HeightMapTexture.Load(int3(uint2(high.x, low.y), 0));
+    const float h01 = HeightMapTexture.Load(int3(uint2(low.x, high.y), 0));
+    const float h11 = HeightMapTexture.Load(int3(high, 0));
+    return lerp(lerp(h00, h10, interpolation.x), lerp(h01, h11, interpolation.x), interpolation.y);
+}
+
+float3 CbtTerrainPosition(float2 uv)
+{
+    const float height = CbtSampleHeight(uv);
+    return float3(
+        (uv.x - 0.5) * TerrainSize,
+        height * HeightScale,
+        (uv.y - 0.5) * TerrainSize);
+}
+
+float3 CbtTerrainNormal(float2 uv)
+{
+    // One texel in each axis is the common finite-difference footprint.
+    // Boundary samples rely on CbtSampleHeight clamping instead of one-sided code.
+    // Tangents include both terrain extent and height scale in world units.
+    // cross(Z, X) preserves the renderer's positive-Y winding convention.
+    // Degenerate one-pixel or zero-scale inputs fall back to a stable up vector.
+    const float2 denominator = max(float2(HeightMapWidth - 1u, HeightMapHeight - 1u), 1.0);
+    const float2 step = 1.0 / denominator;
+    const float left = CbtSampleHeight(uv - float2(step.x, 0.0));
+    const float right = CbtSampleHeight(uv + float2(step.x, 0.0));
+    const float down = CbtSampleHeight(uv - float2(0.0, step.y));
+    const float up = CbtSampleHeight(uv + float2(0.0, step.y));
+    const float3 tangentX = float3(step.x * 2.0 * TerrainSize, (right - left) * HeightScale, 0.0);
+    const float3 tangentZ = float3(0.0, (up - down) * HeightScale, step.y * 2.0 * TerrainSize);
+    const float3 normal = cross(tangentZ, tangentX);
+    return dot(normal, normal) <= 1.192092896e-7 ? float3(0.0, 1.0, 0.0) : normalize(normal);
+}
+
+TerrainVertex CbtBuildTerrainVertex(float3 control, uint localBase)
+{
+    const float2 uv = control.xz;
+    const float height = CbtSampleHeight(uv);
+    TerrainVertex vertex;
+    vertex.Position = CbtTerrainPosition(uv);
+    vertex.Normal = CbtTerrainNormal(uv);
+    vertex.TexCoord = uv;
+    vertex.Height = height;
+    vertex.DebugColor = DebugColor(localBase);
+    vertex.DebugHighlight = 1.0;
+    return vertex;
+}
+
 [numthreads(64, 1, 1)]
 void CSBuildBaseGeometry(uint localBase : SV_DispatchThreadID)
 {
@@ -116,26 +182,17 @@ void CSBuildBaseGeometry(uint localBase : SV_DispatchThreadID)
     for (uint localVertex = 0; localVertex < 3; ++localVertex)
     {
         const float3 control = BaseControlPoints[localBase * 3u + localVertex];
-        positions[localVertex] = float3(
-            (control.x - 0.5) * TerrainSize,
-            0.0,
-            (control.z - 0.5) * TerrainSize);
+        const TerrainVertex vertex = CbtBuildTerrainVertex(control, localBase);
+        positions[localVertex] = vertex.Position;
         // 子位置位于前三个容量平面 父位置单独位于第四个平面
         ClassificationPositions[physicalSlot * 3u + localVertex] = positions[localVertex];
 
-        TerrainVertex vertex;
-        vertex.Position = positions[localVertex];
-        vertex.Normal = float3(0.0, 1.0, 0.0);
-        vertex.TexCoord = control.xz;
-        vertex.Height = 0.0;
-        vertex.DebugColor = DebugColor(localBase);
-        vertex.DebugHighlight = 0.75;
         vertices[localVertex] = vertex;
     }
 
     // 基础深度不消费父位置 仍写入有限值以保证分类缓冲完全初始化
     ClassificationPositions[TotalElementCount * 3u + physicalSlot] =
-        (positions[0] + positions[1] + positions[2]) / 3.0;
+        (HeapIds[physicalSlot] & 1u) == 0u ? positions[0] : positions[2];
     [unroll]
     for (uint outputVertex = 0; outputVertex < 3; ++outputVertex)
     {
@@ -208,11 +265,14 @@ bool CbtEvaluatePlaneTriangle(
 
 float3 CbtControlToWorld(float3 control)
 {
-    return float3((control.x - 0.5) * TerrainSize, control.y, (control.z - 0.5) * TerrainSize);
+    return CbtTerrainPosition(control.xz);
 }
 
 void CbtBuildGeometryForSlot(uint physicalSlot)
 {
+    // A physical slot owns three render vertices and three child classification points.
+    // Its fourth classification value lives in a separate parent plane after all children.
+    // Reconstructing from heapID avoids any CPU vertex upload on ordinary frames.
     if (physicalSlot >= TotalElementCount || HeapIds[physicalSlot] == 0u)
     {
         return;
@@ -244,16 +304,9 @@ void CbtBuildGeometryForSlot(uint physicalSlot)
     for (uint vertexIndex = 0u; vertexIndex < 3u; ++vertexIndex)
     {
         const float3 control = childControl[vertexIndex];
-        const float3 position = CbtControlToWorld(control);
+        const TerrainVertex vertex = CbtBuildTerrainVertex(control, localBase);
+        const float3 position = vertex.Position;
         ClassificationPositions[physicalSlot * 3u + vertexIndex] = position;
-
-        TerrainVertex vertex;
-        vertex.Position = position;
-        vertex.Normal = float3(0.0, 1.0, 0.0);
-        vertex.TexCoord = control.xz;
-        vertex.Height = control.y;
-        vertex.DebugColor = DebugColor(localBase);
-        vertex.DebugHighlight = 1.0;
         RenderVertices[physicalSlot * 3u + vertexIndex] = vertex;
     }
 
@@ -284,4 +337,111 @@ void CSBuildModifiedGeometry(uint modifiedOrdinal : SV_DispatchThreadID)
         return;
     }
     CbtBuildGeometryForSlot(ModifiedIndices[modifiedOrdinal]);
+}
+
+void CbtSetGeometryValidationError(uint code, uint physicalSlot)
+{
+    uint previousCode;
+    InterlockedCompareExchange(Validation[0], 0u, code, previousCode);
+    if (previousCode == 0u || previousCode == code)
+    {
+        InterlockedMin(Validation[1], physicalSlot);
+    }
+}
+
+bool CbtFinite(float value)
+{
+    return value == value && abs(value) <= 3.402823466e+38;
+}
+
+bool CbtFinite3(float3 value)
+{
+    return CbtFinite(value.x) && CbtFinite(value.y) && CbtFinite(value.z);
+}
+
+[numthreads(64, 1, 1)]
+void CSValidateGeometryG(uint activeOrdinal : SV_DispatchThreadID)
+{
+    // Validation is dispatched from the same compact count consumed by rendering.
+    // Rebuilding expected values in shader detects stale modified-list publication.
+    // Error codes separate identity, finite-value, position, attribute, winding,
+    // and parent-classification failures without copying full-capacity buffers.
+    const uint activeCount = DrawState[CbtDrawActiveBisectorCountWord];
+    if (activeOrdinal >= activeCount)
+    {
+        return;
+    }
+    const uint physicalSlot = ActiveIndices[activeOrdinal];
+    if (physicalSlot >= TotalElementCount || HeapIds[physicalSlot] == 0u)
+    {
+        CbtSetGeometryValidationError(50u, physicalSlot);
+        return;
+    }
+
+    uint localBase;
+    float3 child0;
+    float3 child1;
+    float3 child2;
+    float3 parent0;
+    float3 parent1;
+    float3 parent2;
+    const uint64_t heapId = HeapIds[physicalSlot];
+    if (!CbtEvaluatePlaneTriangle(
+            heapId,
+            localBase,
+            child0,
+            child1,
+            child2,
+            parent0,
+            parent1,
+            parent2))
+    {
+        CbtSetGeometryValidationError(51u, physicalSlot);
+        return;
+    }
+
+    const float3 controls[3] = {child0, child1, child2};
+    float3 positions[3];
+    [unroll]
+    for (uint vertexIndex = 0u; vertexIndex < 3u; ++vertexIndex)
+    {
+        const TerrainVertex actual = RenderVertices[physicalSlot * 3u + vertexIndex];
+        const TerrainVertex expected = CbtBuildTerrainVertex(controls[vertexIndex], localBase);
+        const float3 classification = ClassificationPositions[physicalSlot * 3u + vertexIndex];
+        positions[vertexIndex] = actual.Position;
+        if (!CbtFinite3(actual.Position) || !CbtFinite3(actual.Normal) ||
+            !CbtFinite(actual.Height) || !CbtFinite3(classification))
+        {
+            CbtSetGeometryValidationError(52u, physicalSlot);
+            return;
+        }
+        if (distance(actual.Position, expected.Position) > 1.0e-4 ||
+            distance(classification, expected.Position) > 1.0e-4 ||
+            abs(actual.Height - expected.Height) > 1.0e-5)
+        {
+            CbtSetGeometryValidationError(53u, physicalSlot);
+            return;
+        }
+        if (distance(actual.Normal, expected.Normal) > 1.0e-4 ||
+            abs(length(actual.Normal) - 1.0) > 1.0e-3 ||
+            any(abs(actual.TexCoord - controls[vertexIndex].xz) > 1.0e-6))
+        {
+            CbtSetGeometryValidationError(54u, physicalSlot);
+            return;
+        }
+    }
+
+    const float3 faceNormal = cross(positions[1] - positions[0], positions[2] - positions[0]);
+    if (!CbtFinite3(faceNormal) || faceNormal.y <= 0.0)
+    {
+        CbtSetGeometryValidationError(55u, physicalSlot);
+        return;
+    }
+    const float3 parentControl = (heapId & 1u) == 0u ? parent0 : parent2;
+    const float3 expectedParent = CbtControlToWorld(parentControl);
+    const float3 actualParent = ClassificationPositions[TotalElementCount * 3u + physicalSlot];
+    if (!CbtFinite3(actualParent) || distance(actualParent, expectedParent) > 1.0e-4)
+    {
+        CbtSetGeometryValidationError(56u, physicalSlot);
+    }
 }

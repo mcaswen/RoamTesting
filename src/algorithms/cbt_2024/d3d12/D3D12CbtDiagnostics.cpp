@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <bit>
+#include <cmath>
 #include <cstring>
 #include <vector>
 
@@ -40,10 +41,37 @@ D3D12_RESOURCE_DESC ReadbackDescription()
     description.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
     return description;
 }
+
+bool Near(float lhs, float rhs, float tolerance)
+{
+    return std::isfinite(lhs) && std::isfinite(rhs) && std::abs(lhs - rhs) <= tolerance;
+}
+
+bool Near(const glm::vec2& lhs, const glm::vec2& rhs, float tolerance)
+{
+    return Near(lhs.x, rhs.x, tolerance) && Near(lhs.y, rhs.y, tolerance);
+}
+
+bool Near(const glm::vec3& lhs, const glm::vec3& rhs, float tolerance)
+{
+    return Near(lhs.x, rhs.x, tolerance) &&
+           Near(lhs.y, rhs.y, tolerance) &&
+           Near(lhs.z, rhs.z, tolerance);
+}
+
+bool Near(const Terrain::TerrainMeshVertex& lhs, const Terrain::TerrainMeshVertex& rhs)
+{
+    return Near(lhs.Position, rhs.Position, 2.0e-4F) &&
+           Near(lhs.Normal, rhs.Normal, 2.0e-4F) &&
+           Near(lhs.TexCoord, rhs.TexCoord, 1.0e-5F) &&
+           Near(lhs.Height, rhs.Height, 1.0e-5F) &&
+           Near(lhs.DebugColor, rhs.DebugColor, 1.0e-5F) &&
+           Near(lhs.DebugHighlight, rhs.DebugHighlight, 1.0e-5F);
+}
 } // namespace
 
 static_assert(D3D12CbtDiagnostics::DiagnosticReadbackBytes == 136U);
-static_assert(D3D12CbtDiagnostics::ValidationReadbackBytes == 328U);
+static_assert(D3D12CbtDiagnostics::ValidationReadbackBytes == 1552U);
 
 bool D3D12CbtDiagnostics::Initialize(ID3D12Device* device, std::string* errorMessage)
 {
@@ -126,7 +154,7 @@ bool D3D12CbtDiagnostics::ConsumeCompleted(
     void* mapped = nullptr;
     if (FAILED(_readbacks[frameIndex]->Map(0U, &readRange, &mapped)))
     {
-        return LatchFault("Failed to map completed CBT F diagnostic counters", errorMessage);
+        return LatchFault("Failed to map completed CBT G diagnostic counters", errorMessage);
     }
     // 四段计数保持原始 UAV 字节布局，避免为诊断再增加 GPU packing pass。
     const auto* bytes = static_cast<const std::uint8_t*>(mapped);
@@ -170,7 +198,7 @@ bool D3D12CbtDiagnostics::ConsumeCompleted(
     if (validation[0] != 0U)
     {
         const std::string message =
-            "CBT F shader validation failed at generation " +
+            "CBT G shader validation failed at generation " +
             std::to_string(_snapshot.SampleGeneration) + ": code/slot=" +
             std::to_string(validation[0]) + "/" + std::to_string(validation[1]);
         _readbacks[frameIndex]->Unmap(0U, &noWrite);
@@ -197,7 +225,7 @@ bool D3D12CbtDiagnostics::ConsumeCompleted(
         drawState.ModifiedPositionCount / 4U > drawState.ActiveBisectorCount)
     {
         const std::string message =
-            "CBT F occupancy/indexation mismatch at generation " +
+            "CBT G occupancy/indexation mismatch at generation " +
             std::to_string(_snapshot.SampleGeneration);
         _readbacks[frameIndex]->Unmap(0U, &noWrite);
         return LatchFault(message, errorMessage);
@@ -290,11 +318,65 @@ bool D3D12CbtDiagnostics::ConsumeCompleted(
             if (occupancyRoot != expected.AllocatedSplitSlotCount)
             {
                 const std::string message =
-                    "CBT F committed OCBT root mismatch: expected=" +
+                    "CBT G committed OCBT root mismatch: expected=" +
                     std::to_string(expected.AllocatedSplitSlotCount) + ", GPU=" +
                     std::to_string(occupancyRoot);
                 _readbacks[frameIndex]->Unmap(0U, &noWrite);
                 return LatchFault(message, errorMessage);
+            }
+
+            // 高度图对照使用数值容差，不对 float 执行字节级比较。
+            // readback 顺序与帧管线的三个 CopyBufferRegion 目标偏移完全一致。
+            // 顶点比较覆盖位置、法线、UV、归一化高度、调试色和高亮值。
+            // child classification 点单独比较，避免渲染输出正确却分类数据陈旧。
+            // parent 点来自 heapID 奇偶选择的旧父顶点，不使用三角形质心替代。
+            // 容差只吸收 CPU/HLSL 浮点运算次序差异，不掩盖纹理方向错误。
+            // 非有限值会由 Near 直接拒绝，并由 fault latch 保留第一处证据。
+            // 该精确载荷只在新 pipeline 首帧启用，普通帧不复制几何尾部。
+            // shader 全活动验证仍逐帧覆盖后续 modified-only 更新。
+            std::array<Terrain::TerrainMeshVertex, CbtBaseBisectorCount * 3U> vertices{};
+            std::array<glm::vec3, CbtBaseBisectorCount * 3U> classificationPositions{};
+            std::array<glm::vec3, CbtBaseBisectorCount> parentPositions{};
+            std::memcpy(vertices.data(), bytes + BaseRenderVertexOffset, sizeof(vertices));
+            std::memcpy(
+                classificationPositions.data(),
+                bytes + BaseClassificationPositionOffset,
+                sizeof(classificationPositions));
+            std::memcpy(
+                parentPositions.data(),
+                bytes + BaseParentPositionOffset,
+                sizeof(parentPositions));
+            for (std::size_t node = 0U; node < expected.BaseGeometry.size(); ++node)
+            {
+                const CbtTerrainGeometryResult& expectedGeometry = expected.BaseGeometry[node];
+                if (!expectedGeometry.Valid ||
+                    !Near(
+                        parentPositions[node],
+                        expectedGeometry.ParentClassificationPosition,
+                        2.0e-4F))
+                {
+                    _readbacks[frameIndex]->Unmap(0U, &noWrite);
+                    return LatchFault(
+                        "CBT G parent classification position differs from the CPU reference at base node " +
+                            std::to_string(node),
+                        errorMessage);
+                }
+                for (std::size_t vertex = 0U; vertex < expectedGeometry.Vertices.size(); ++vertex)
+                {
+                    const std::size_t output = node * 3U + vertex;
+                    if (!Near(vertices[output], expectedGeometry.Vertices[vertex]) ||
+                        !Near(
+                            classificationPositions[output],
+                            expectedGeometry.Vertices[vertex].Position,
+                            2.0e-4F))
+                    {
+                        _readbacks[frameIndex]->Unmap(0U, &noWrite);
+                        return LatchFault(
+                            "CBT G height geometry differs from the CPU reference at base node/vertex " +
+                                std::to_string(node) + "/" + std::to_string(vertex),
+                            errorMessage);
+                    }
+                }
             }
         }
     }

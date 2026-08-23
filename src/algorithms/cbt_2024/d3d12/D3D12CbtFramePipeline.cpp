@@ -2,6 +2,7 @@
 
 #include "algorithms/cbt_2024/CbtClassification.h"
 #include "algorithms/cbt_2024/CbtSplitPlanner.h"
+#include "algorithms/cbt_2024/CbtTerrainGeometry.h"
 #include "terrain/TerrainMeshBuilder.h"
 
 #include <algorithm>
@@ -34,6 +35,10 @@ constexpr std::size_t ValidationCounterOffset = D3D12CbtDiagnostics::ValidationC
 constexpr std::size_t OccupancyRootOffset = D3D12CbtDiagnostics::OccupancyRootOffset;
 constexpr std::size_t DrawStateReadbackOffset = D3D12CbtDiagnostics::DrawStateReadbackOffset;
 constexpr std::size_t BaseBisectorDataOffset = D3D12CbtDiagnostics::BaseBisectorDataOffset;
+constexpr std::size_t BaseRenderVertexOffset = D3D12CbtDiagnostics::BaseRenderVertexOffset;
+constexpr std::size_t BaseClassificationPositionOffset =
+    D3D12CbtDiagnostics::BaseClassificationPositionOffset;
+constexpr std::size_t BaseParentPositionOffset = D3D12CbtDiagnostics::BaseParentPositionOffset;
 constexpr std::uint32_t WorkGroupSize = 64U;
 constexpr std::uint32_t TopologyUavCount = 17U;
 
@@ -230,6 +235,9 @@ struct BootstrapConstants
     std::uint32_t BaseElementCount{0U};
     float TerrainSize{0.0F};
     std::uint32_t BaseDepth{0U};
+    std::uint32_t HeightMapWidth{0U};
+    std::uint32_t HeightMapHeight{0U};
+    float HeightScale{0.0F};
 };
 
 struct TopologyUpdateConstants
@@ -240,7 +248,7 @@ struct TopologyUpdateConstants
     std::array<std::array<float, 4>, 6> FrustumPlanes{};
 };
 
-static_assert(sizeof(BootstrapConstants) == 20U);
+static_assert(sizeof(BootstrapConstants) == 32U);
 static_assert(sizeof(TopologyUpdateConstants) == 144U);
 static_assert(sizeof(Terrain::TerrainMeshVertex) == 52U);
 } // namespace
@@ -254,6 +262,7 @@ bool D3D12CbtFramePipeline::Initialize(
     Render::D3D12GraphicsBackend& backend,
     const CbtBaseTopology& topology,
     const D3D12CbtGpuResourceView& resources,
+    const Terrain::HeightMap& heightMap,
     std::string* errorMessage)
 {
     // 初始化采用全有或全无语义：任一资源或 PSO 失败都会释放此前创建的对象。
@@ -267,7 +276,7 @@ bool D3D12CbtFramePipeline::Initialize(
         !CreatePipelines(errorMessage) ||
         !CreateConstantBuffers(errorMessage) ||
         !_diagnostics.Initialize(backend.Device(), errorMessage) ||
-        !_geometry.Initialize(backend, _bootstrapRootSignature.Get(), topology, errorMessage) ||
+        !_geometry.Initialize(backend, _bootstrapRootSignature.Get(), topology, heightMap, errorMessage) ||
         !ConfigureTopologyDescriptors(topology, resources, errorMessage))
     {
         Shutdown();
@@ -376,13 +385,20 @@ bool D3D12CbtFramePipeline::CreateTopologyRootSignature(std::string* errorMessag
 bool D3D12CbtFramePipeline::CreateBootstrapRootSignature(std::string* errorMessage)
 {
     // Bootstrap 是仓库侧适配层，使用 root descriptors 直接借用常驻资源。
-    // root[0] 提供四个 32 位常量。
+    // root[0] 提供容量、高度图尺寸与世界缩放所需的八个 32 位常量。
     // root[1..3] 分别为 heap ids、bisector data、base control points。
     // root[4..10] 分别为三类索引、draw state、geometry dispatch 和两类几何输出。
+    // root[11] 为高度纹理 SRV，root[12] 为几何验证头 UAV。
     // 该签名不进入生产 topology ABI，因此不会改变官方 u0..u16 编号。
-    std::array<D3D12_ROOT_PARAMETER, 11> parameters{};
+    D3D12_DESCRIPTOR_RANGE heightMapRange{};
+    heightMapRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+    heightMapRange.NumDescriptors = 1U;
+    heightMapRange.BaseShaderRegister = 3U;
+    heightMapRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+
+    std::array<D3D12_ROOT_PARAMETER, 13> parameters{};
     parameters[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
-    parameters[0].Constants.Num32BitValues = 5U;
+    parameters[0].Constants.Num32BitValues = 8U;
     parameters[0].Constants.ShaderRegister = 0U;
     for (std::uint32_t index = 0U; index < 3U; ++index)
     {
@@ -394,6 +410,11 @@ bool D3D12CbtFramePipeline::CreateBootstrapRootSignature(std::string* errorMessa
         parameters[4U + index].ParameterType = D3D12_ROOT_PARAMETER_TYPE_UAV;
         parameters[4U + index].Descriptor.ShaderRegister = index;
     }
+    parameters[11].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+    parameters[11].DescriptorTable.NumDescriptorRanges = 1U;
+    parameters[11].DescriptorTable.pDescriptorRanges = &heightMapRange;
+    parameters[12].ParameterType = D3D12_ROOT_PARAMETER_TYPE_UAV;
+    parameters[12].Descriptor.ShaderRegister = 7U;
 
     D3D12_ROOT_SIGNATURE_DESC description{};
     description.NumParameters = static_cast<UINT>(parameters.size());
@@ -414,7 +435,7 @@ bool D3D12CbtFramePipeline::CreateDispatchCommandSignature(std::string* errorMes
             nullptr,
             IID_PPV_ARGS(&_dispatchCommandSignature))))
     {
-        SetError(errorMessage, "Failed to create CBT F dispatch command signature");
+        SetError(errorMessage, "Failed to create CBT G dispatch command signature");
         return false;
     }
     return true;
@@ -559,7 +580,7 @@ bool D3D12CbtFramePipeline::ConfigureTopologyDescriptors(
         // 任一空资源都会使 descriptor table 部分有效，必须在创建视图前拒绝。
         if (bindings[index].Resource == nullptr)
         {
-            SetError(errorMessage, "CBT F topology resource view is incomplete");
+            SetError(errorMessage, "CBT G topology resource view is incomplete");
             return false;
         }
         D3D12_UNORDERED_ACCESS_VIEW_DESC description{};
@@ -605,7 +626,12 @@ bool D3D12CbtFramePipeline::RecordFrame(
 {
     if (!_initialized || _backend == nullptr || !_backend->FrameOpen() || _backend->CommandList() == nullptr)
     {
-        SetError(errorMessage, "CBT F requires an initialized pipeline and an open D3D12 frame");
+        SetError(errorMessage, "CBT G requires an initialized pipeline and an open D3D12 frame");
+        return false;
+    }
+    if (input.HeightMap == nullptr || input.HeightMap->Width() <= 0 || input.HeightMap->Height() <= 0)
+    {
+        SetError(errorMessage, "CBT G requires a non-empty height map");
         return false;
     }
     ID3D12GraphicsCommandList* commandList = _backend->CommandList();
@@ -628,11 +654,16 @@ bool D3D12CbtFramePipeline::RecordFrame(
     std::uint32_t expectedPlannedSplitNodeCount = 0U;
     std::uint32_t expectedAllocatedSplitSlotCount = 0U;
     std::uint32_t expectedRemainingDynamicSlotCount = 0U;
+    std::array<CbtTerrainGeometryResult, CbtBaseBisectorCount> expectedBaseGeometry{};
     const bool exactReference =
         input.Settings.EnableTopologyValidation && _topologyFrameGeneration == 0U;
     if (exactReference)
     {
-        const auto triangles = BuildCbtBaseClassificationTriangles(topology, input.Settings.TerrainSize);
+        const auto triangles = BuildCbtBaseClassificationTriangles(
+            topology,
+            *input.HeightMap,
+            input.Settings.TerrainSize,
+            input.Settings.HeightScale);
         const std::uint32_t maxDepth = static_cast<std::uint32_t>(std::max(input.Settings.MaxDepth, 0));
         std::array<CbtClassificationResult, CbtBaseBisectorCount> classificationResults{};
         std::vector<std::uint32_t> splitCandidates;
@@ -689,7 +720,7 @@ bool D3D12CbtFramePipeline::RecordFrame(
             topology.Layout.DynamicElementCount);
         if (!plan.Valid || plan.SubdivisionPatterns.size() != expectedSubdivisionPatterns.size())
         {
-            SetError(errorMessage, "CBT F CPU split planning reference rejected the base topology");
+            SetError(errorMessage, "CBT G CPU split planning reference rejected the base topology");
             return false;
         }
         std::copy(
@@ -699,6 +730,36 @@ bool D3D12CbtFramePipeline::RecordFrame(
         expectedPlannedSplitNodeCount = static_cast<std::uint32_t>(plan.AllocationNodes.size());
         expectedAllocatedSplitSlotCount = plan.RequiredSlotCount;
         expectedRemainingDynamicSlotCount = plan.RemainingMemory;
+
+        for (std::size_t node = 0U; node < expectedBaseGeometry.size(); ++node)
+        {
+            // 首帧 split 后原物理槽保留哪个逻辑 child 由四模板协议决定。
+            // center 与 left-double 保留一层偶子，right-double 与 triple 保留两层偶子。
+            // 该推导只覆盖固定六槽，因此无需复制动态 heapID 表构造 CPU 参考。
+            // height-map reload 会重建 pipeline，使新纹理再次进入这条精确路径。
+            const std::uint32_t pattern = expectedSubdivisionPatterns[node];
+            std::uint64_t retainedHeapId = topology.HeapIds[node];
+            if (pattern == CbtCenterSplitPattern || pattern == CbtLeftDoubleSplitPattern)
+            {
+                retainedHeapId *= 2U;
+            }
+            else if (pattern == CbtRightDoubleSplitPattern || pattern == CbtTripleSplitPattern)
+            {
+                retainedHeapId *= 4U;
+            }
+            expectedBaseGeometry[node] = EvaluateCbtTerrainGeometry(
+                retainedHeapId,
+                topology.BaseDepth,
+                topology.ControlPoints,
+                *input.HeightMap,
+                input.Settings.TerrainSize,
+                input.Settings.HeightScale);
+            if (!expectedBaseGeometry[node].Valid)
+            {
+                SetError(errorMessage, "CBT G CPU terrain geometry reference rejected a retained base bisector");
+                return false;
+            }
+        }
     }
 
     std::memset(_mappedConstants[frameIndex], 0, ConstantBufferBytes);
@@ -754,23 +815,35 @@ bool D3D12CbtFramePipeline::RecordFrame(
         CbtBaseBisectorCount,
         input.Settings.TerrainSize,
         topology.BaseDepth,
+        static_cast<std::uint32_t>(input.HeightMap->Width()),
+        static_cast<std::uint32_t>(input.HeightMap->Height()),
+        input.Settings.HeightScale,
     };
-    commandList->SetComputeRootSignature(_bootstrapRootSignature.Get());
-    commandList->SetComputeRoot32BitConstants(0U, 5U, &bootstrapConstants, 0U);
-    commandList->SetComputeRootShaderResourceView(1U, resources.HeapIds->GetGPUVirtualAddress());
-    commandList->SetComputeRootShaderResourceView(2U, resources.BisectorData->GetGPUVirtualAddress());
-    commandList->SetComputeRootShaderResourceView(3U, resources.BaseControlPoints->GetGPUVirtualAddress());
-    commandList->SetComputeRootUnorderedAccessView(4U, resources.ActiveIndices->GetGPUVirtualAddress());
-    commandList->SetComputeRootUnorderedAccessView(5U, resources.VisibleIndices->GetGPUVirtualAddress());
-    commandList->SetComputeRootUnorderedAccessView(6U, resources.ModifiedIndices->GetGPUVirtualAddress());
-    commandList->SetComputeRootUnorderedAccessView(7U, resources.IndirectDrawState->GetGPUVirtualAddress());
-    commandList->SetComputeRootUnorderedAccessView(8U, resources.GeometryDispatchCommands->GetGPUVirtualAddress());
-    commandList->SetComputeRootUnorderedAccessView(
-        9U,
-        _geometry.ClassificationPositions()->GetGPUVirtualAddress());
-    commandList->SetComputeRootUnorderedAccessView(
-        10U,
-        _geometry.RenderVertices()->GetGPUVirtualAddress());
+    const auto bindBootstrapResources = [&]() {
+        // 两个 bootstrap 区段共享完全相同的 root ABI，集中绑定可防止槽位漂移。
+        // buffer SRV 使用 GPU virtual address，高度 Texture2D 必须使用描述符表。
+        // validation 保持独立 u7，避免改变 topology shader 的官方 u0..u16 ABI。
+        // 每次 topology root signature 覆盖后都重新调用该绑定函数。
+        commandList->SetComputeRootSignature(_bootstrapRootSignature.Get());
+        commandList->SetComputeRoot32BitConstants(0U, 8U, &bootstrapConstants, 0U);
+        commandList->SetComputeRootShaderResourceView(1U, resources.HeapIds->GetGPUVirtualAddress());
+        commandList->SetComputeRootShaderResourceView(2U, resources.BisectorData->GetGPUVirtualAddress());
+        commandList->SetComputeRootShaderResourceView(3U, resources.BaseControlPoints->GetGPUVirtualAddress());
+        commandList->SetComputeRootUnorderedAccessView(4U, resources.ActiveIndices->GetGPUVirtualAddress());
+        commandList->SetComputeRootUnorderedAccessView(5U, resources.VisibleIndices->GetGPUVirtualAddress());
+        commandList->SetComputeRootUnorderedAccessView(6U, resources.ModifiedIndices->GetGPUVirtualAddress());
+        commandList->SetComputeRootUnorderedAccessView(7U, resources.IndirectDrawState->GetGPUVirtualAddress());
+        commandList->SetComputeRootUnorderedAccessView(8U, resources.GeometryDispatchCommands->GetGPUVirtualAddress());
+        commandList->SetComputeRootUnorderedAccessView(
+            9U,
+            _geometry.ClassificationPositions()->GetGPUVirtualAddress());
+        commandList->SetComputeRootUnorderedAccessView(
+            10U,
+            _geometry.RenderVertices()->GetGPUVirtualAddress());
+        commandList->SetComputeRootDescriptorTable(11U, _geometry.HeightMapSrv());
+        commandList->SetComputeRootUnorderedAccessView(12U, resources.Validation->GetGPUVirtualAddress());
+    };
+    bindBootstrapResources();
 
     // Classify 必须看到当前参数域中的三子位置和父位置。首次运行和 TerrainSize
     // 变化都按上一代 active list 全量重建，避免动态槽继续携带旧尺度坐标。
@@ -1065,6 +1138,7 @@ bool D3D12CbtFramePipeline::RecordFrame(
     expectation.PlannedSplitNodeCount = expectedPlannedSplitNodeCount;
     expectation.AllocatedSplitSlotCount = expectedAllocatedSplitSlotCount;
     expectation.RemainingDynamicSlotCount = expectedRemainingDynamicSlotCount;
+    expectation.BaseGeometry = expectedBaseGeometry;
     _diagnostics.QueueSample(
         frameIndex,
         _topologyFrameGeneration + 1U,
@@ -1080,22 +1154,7 @@ bool D3D12CbtFramePipeline::RecordFrame(
     Transition(commandList, resources.BisectorData, _bisectorDataState, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     Transition(commandList, resources.BaseControlPoints, _baseControlPointState, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
 
-    commandList->SetComputeRootSignature(_bootstrapRootSignature.Get());
-    commandList->SetComputeRoot32BitConstants(0U, 5U, &bootstrapConstants, 0U);
-    commandList->SetComputeRootShaderResourceView(1U, resources.HeapIds->GetGPUVirtualAddress());
-    commandList->SetComputeRootShaderResourceView(2U, resources.BisectorData->GetGPUVirtualAddress());
-    commandList->SetComputeRootShaderResourceView(3U, resources.BaseControlPoints->GetGPUVirtualAddress());
-    commandList->SetComputeRootUnorderedAccessView(4U, resources.ActiveIndices->GetGPUVirtualAddress());
-    commandList->SetComputeRootUnorderedAccessView(5U, resources.VisibleIndices->GetGPUVirtualAddress());
-    commandList->SetComputeRootUnorderedAccessView(6U, resources.ModifiedIndices->GetGPUVirtualAddress());
-    commandList->SetComputeRootUnorderedAccessView(7U, resources.IndirectDrawState->GetGPUVirtualAddress());
-    commandList->SetComputeRootUnorderedAccessView(8U, resources.GeometryDispatchCommands->GetGPUVirtualAddress());
-    commandList->SetComputeRootUnorderedAccessView(
-        9U,
-        _geometry.ClassificationPositions()->GetGPUVirtualAddress());
-    commandList->SetComputeRootUnorderedAccessView(
-        10U,
-        _geometry.RenderVertices()->GetGPUVirtualAddress());
+    bindBootstrapResources();
 
     commandList->SetPipelineState(_indexationPipeline.Get());
     commandList->Dispatch(DispatchCount(topology.Layout.TotalElementCount), 1U, 1U);
@@ -1125,6 +1184,17 @@ bool D3D12CbtFramePipeline::RecordFrame(
 
     if (input.Settings.EnableTopologyValidation)
     {
+        // Geometry validation follows the compact active list and checks every published vertex.
+        commandList->SetPipelineState(_geometry.ValidatePipeline());
+        commandList->ExecuteIndirect(
+            _dispatchCommandSignature.Get(),
+            1U,
+            resources.GeometryDispatchCommands,
+            0U,
+            nullptr,
+            0U);
+        UavBarrier(commandList, resources.Validation);
+
         // 完整验证显式开启时才扫描全部槽位；普通帧只保留前面的轻量错误计数回读。
         Transition(commandList, resources.HeapIds, _heapIdState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
         Transition(commandList, resources.BisectorData, _bisectorDataState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
@@ -1147,6 +1217,39 @@ bool D3D12CbtFramePipeline::RecordFrame(
             0U,
             sizeof(std::uint32_t) * CbtValidationWordCount);
         Transition(commandList, resources.Validation, _validationState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    }
+    if (exactReference)
+    {
+        // 只复制固定六个 retained base 槽，诊断成本不随 CBT 容量增长。
+        // render buffer 以三顶点连续存放，源偏移需要同时乘物理槽和顶点数。
+        // classification child plane 使用相同的三点布局。
+        // parent plane 位于 totalCount * 3 之后，每物理槽仅保存一个 vec3。
+        // 两个资源复制后立即恢复 UAV，保持末尾发布状态路径统一。
+        _geometry.TransitionVertices(commandList, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        commandList->CopyBufferRegion(
+            _diagnostics.Readback(frameIndex),
+            BaseRenderVertexOffset,
+            _geometry.RenderVertices(),
+            static_cast<std::uint64_t>(topology.Layout.BaseElementOffset) * 3U *
+                sizeof(Terrain::TerrainMeshVertex),
+            sizeof(Terrain::TerrainMeshVertex) * CbtBaseBisectorCount * 3U);
+        _geometry.TransitionVertices(commandList, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+
+        _geometry.TransitionClassification(commandList, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        commandList->CopyBufferRegion(
+            _diagnostics.Readback(frameIndex),
+            BaseClassificationPositionOffset,
+            _geometry.ClassificationPositions(),
+            static_cast<std::uint64_t>(topology.Layout.BaseElementOffset) * 3U * sizeof(glm::vec3),
+            sizeof(glm::vec3) * CbtBaseBisectorCount * 3U);
+        commandList->CopyBufferRegion(
+            _diagnostics.Readback(frameIndex),
+            BaseParentPositionOffset,
+            _geometry.ClassificationPositions(),
+            (static_cast<std::uint64_t>(topology.Layout.TotalElementCount) * 3U +
+             topology.Layout.BaseElementOffset) * sizeof(glm::vec3),
+            sizeof(glm::vec3) * CbtBaseBisectorCount);
+        _geometry.TransitionClassification(commandList, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     }
     // draw state 与 OCBT 根配对发布，使关闭完整验证时活动数仍逐样本更新。
     Transition(commandList, resources.IndirectDrawState, _drawState, D3D12_RESOURCE_STATE_COPY_SOURCE);

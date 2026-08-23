@@ -1,6 +1,7 @@
 #pragma once
 
 #include "algorithms/cbt_2024/CbtBisectorTopology.h"
+#include "algorithms/cbt_2024/CbtTerrainGeometry.h"
 #include "render/D3D12GraphicsBackend.h"
 
 #include <d3d12.h>
@@ -25,6 +26,8 @@ struct D3D12CbtDiagnosticExpectation
     std::uint32_t PlannedSplitNodeCount{0U};
     std::uint32_t AllocatedSplitSlotCount{0U};
     std::uint32_t RemainingDynamicSlotCount{0U};
+    // 初始事务的六个 retained 基础槽用于高度图顶点精确对照。
+    std::array<CbtTerrainGeometryResult, CbtBaseBisectorCount> BaseGeometry{};
 };
 
 struct D3D12CbtDiagnosticSnapshot
@@ -84,11 +87,21 @@ public:
     // 六个基础节点数据放在 staging 尾部，供首帧精确参考读取。
     static constexpr std::size_t BaseBisectorDataOffset =
         DrawStateReadbackOffset + sizeof(CbtDrawState);
+    // G 精确参考连续复制六个基础槽的十八个最终顶点。
+    static constexpr std::size_t BaseRenderVertexOffset =
+        BaseBisectorDataOffset + sizeof(CbtBisectorData) * CbtBaseBisectorCount;
+    // 子分类位置与顶点位置分开校验，避免只验证渲染输出。
+    static constexpr std::size_t BaseClassificationPositionOffset =
+        BaseRenderVertexOffset +
+        sizeof(Terrain::TerrainMeshVertex) * CbtBaseBisectorCount * 3U;
+    // 父级辅助位置位于 classification buffer 的第四平面。
+    static constexpr std::size_t BaseParentPositionOffset =
+        BaseClassificationPositionOffset + sizeof(glm::vec3) * CbtBaseBisectorCount * 3U;
     // 普通路径消费稳定计数、OCBT 根与 draw state，不读取基础节点验证尾部。
     static constexpr std::size_t DiagnosticReadbackBytes = BaseBisectorDataOffset;
     // 最大范围覆盖全部诊断分段，作为每槽资源的统一容量。
     static constexpr std::size_t ValidationReadbackBytes =
-        BaseBisectorDataOffset + sizeof(CbtBisectorData) * CbtBaseBisectorCount;
+        BaseParentPositionOffset + sizeof(glm::vec3) * CbtBaseBisectorCount;
 
     // 每个 swap-chain frame 分配一个 readback，复用槽位时 GPU 已完成该资源。
     [[nodiscard]] bool Initialize(ID3D12Device* device, std::string* errorMessage);

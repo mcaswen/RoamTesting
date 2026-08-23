@@ -22,6 +22,7 @@ struct D3D12CbtTerrainState
     D3D12CbtGpuState Topology;
     D3D12CbtFramePipeline Pipeline;
     float TerrainSize{0.0F};
+    float HeightScale{0.0F};
     bool GeometryInitialized{false};
 };
 
@@ -56,7 +57,7 @@ void FillRenderPacket(
     const auto& templates = state.Pipeline.LastBisectTemplateCounts();
     outPacket.Mode = TerrainLodRenderMode::GpuProceduralIndirect;
     outPacket.StatusMessage =
-        "CBT 2024 F " + std::string{CbtOccupancyCapacityName(topology.Layout.Occupancy.Capacity)} +
+        "CBT 2024 G " + std::string{CbtOccupancyCapacityName(topology.Layout.Occupancy.Capacity)} +
         " commit: split=" + std::to_string(state.Pipeline.LastSplitCandidateCount()) +
         " simplify=" + std::to_string(state.Pipeline.LastSimplifyCandidateCount()) +
         " nodes=" + std::to_string(state.Pipeline.LastPlannedSplitNodeCount()) +
@@ -109,9 +110,9 @@ TerrainLodAlgorithmInfo D3D12CbtTerrainLodAlgorithm::Info() const
 {
     return TerrainLodAlgorithmInfo{
         TerrainLodAlgorithmId::Cbt2024,
-        "cbt-2024-f",
-        "CBT 2024（F）",
-        "GPU 常驻拓扑、四模板 Bisect、两/四节点 merge、双向传播、槽位回收和增量几何",
+        "cbt-2024-g",
+        "CBT 2024（G）",
+        "GPU 常驻拓扑、双向 split/merge、高度图采样、差分法线和增量几何",
     };
 }
 
@@ -148,7 +149,7 @@ bool D3D12CbtTerrainLodAlgorithm::BuildRenderData(
     }
     if (!_backend->FrameOpen() || _backend->CommandList() == nullptr)
     {
-        SetError(errorMessage, "CBT 2024 F must record between BeginFrame and Present");
+        SetError(errorMessage, "CBT 2024 G must record between BeginFrame and Present");
         return false;
     }
     const Cbt2024Availability availability = QueryCbt2024Availability(*_backend);
@@ -159,7 +160,7 @@ bool D3D12CbtTerrainLodAlgorithm::BuildRenderData(
     }
     if (input.HeightMap == nullptr || !input.HeightMap->IsValid())
     {
-        SetError(errorMessage, "CBT 2024 F requires a valid terrain input");
+        SetError(errorMessage, "CBT 2024 G requires a valid terrain input");
         return false;
     }
 
@@ -186,6 +187,7 @@ bool D3D12CbtTerrainLodAlgorithm::BuildRenderData(
                 *_backend,
                 state.Topology.Topology(),
                 state.Topology.Resources(),
+                *input.HeightMap,
                 errorMessage);
     };
     if (!initializeState(*_state))
@@ -195,7 +197,8 @@ bool D3D12CbtTerrainLodAlgorithm::BuildRenderData(
 
     auto recordState = [&](D3D12CbtTerrainState& state) {
         const bool rebuild = !state.GeometryInitialized ||
-            state.TerrainSize != input.Settings.TerrainSize;
+            state.TerrainSize != input.Settings.TerrainSize ||
+            state.HeightScale != input.Settings.HeightScale;
         return state.Pipeline.RecordFrame(
             input,
             state.Topology.Topology(),
@@ -204,7 +207,8 @@ bool D3D12CbtTerrainLodAlgorithm::BuildRenderData(
             errorMessage);
     };
     bool rebuildGeometry =
-        !_state->GeometryInitialized || _state->TerrainSize != input.Settings.TerrainSize;
+        !_state->GeometryInitialized || _state->TerrainSize != input.Settings.TerrainSize ||
+        _state->HeightScale != input.Settings.HeightScale;
     if (!recordState(*_state))
     {
         if (!_state->Pipeline.IsFaulted())
@@ -232,6 +236,7 @@ bool D3D12CbtTerrainLodAlgorithm::BuildRenderData(
     if (rebuildGeometry)
     {
         _state->TerrainSize = input.Settings.TerrainSize;
+        _state->HeightScale = input.Settings.HeightScale;
         _state->GeometryInitialized = true;
     }
 
@@ -287,7 +292,7 @@ bool D3D12CbtTerrainLodAlgorithm::BuildRenderData(
     }
     if (!outPacket.HasConsistentResourceContract())
     {
-        SetError(errorMessage, "CBT 2024 F produced an inconsistent GPU render packet");
+        SetError(errorMessage, "CBT 2024 G produced an inconsistent GPU render packet");
         return false;
     }
     if (errorMessage != nullptr)

@@ -298,13 +298,13 @@ set_tests_properties(
 if(TARGET parallel_roam)
     if(WIN32 AND PARALLEL_ROAM_GRAPHICS_API_NORMALIZED STREQUAL "D3D12")
         add_test(
-            NAME cbt_procedural_f_quick
+            NAME cbt_procedural_g_quick
             COMMAND $<TARGET_FILE:parallel_roam> --cbt-procedural-smoke-test --cbt-capacity 128K
         )
         foreach(CBT_CAPACITY IN ITEMS 256K 512K 1M)
             string(TOLOWER "${CBT_CAPACITY}" CBT_CAPACITY_TEST_SUFFIX)
             add_test(
-                NAME cbt_procedural_f_${CBT_CAPACITY_TEST_SUFFIX}
+                NAME cbt_procedural_g_${CBT_CAPACITY_TEST_SUFFIX}
                 COMMAND
                     $<TARGET_FILE:parallel_roam>
                     --cbt-procedural-smoke-test
@@ -312,7 +312,7 @@ if(TARGET parallel_roam)
                     ${CBT_CAPACITY}
             )
             set_tests_properties(
-                cbt_procedural_f_${CBT_CAPACITY_TEST_SUFFIX}
+                cbt_procedural_g_${CBT_CAPACITY_TEST_SUFFIX}
                 PROPERTIES
                     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."
                     LABELS "gpu-quick;cbt;integration;capacity"
@@ -320,7 +320,7 @@ if(TARGET parallel_roam)
             )
         endforeach()
         set_tests_properties(
-            cbt_procedural_f_quick
+            cbt_procedural_g_quick
             PROPERTIES
                 WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."
                 LABELS "gpu-quick;cbt;integration"

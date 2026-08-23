@@ -346,10 +346,11 @@ int Application::Run(int maxFrameCount)
         [](bool observed) { return observed; });
     if (_cbtProceduralSmokeTestEnabled &&
         (!_cbtObservedClassificationSample || !_cbtObservedSplitCandidate ||
-         !observedAllCbtTemplates || !_cbtObservedMerge || !_cbtObservedSplitAfterMerge))
+         !observedAllCbtTemplates || !_cbtObservedMerge || !_cbtObservedSplitAfterMerge ||
+         !_cbtObservedHeightScaleChange || !_cbtObservedHeightMapReload))
     {
-        std::cerr << "CBT F smoke test did not observe classification, all Bisect templates, "
-                     "merge release, and split reuse after the camera returned\n";
+        std::cerr << "CBT G smoke test did not observe classification, all Bisect templates, "
+                     "merge release, split reuse, height-scale rebuild, and height-map reload\n";
         _terrainLodSmokeTestFailed = true;
     }
     const int exitCode =
@@ -427,12 +428,21 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
         _cbtSmokeInitialYawDegrees = _camera.YawDegrees();
         _cbtSmokeInitialPitchDegrees = _camera.PitchDegrees();
         _cbtSmokeInitialMaxDepth = _terrainPanelState.RoamMaxDepth;
+        _cbtSmokeInitialTerrainSize = _terrainPanelState.TerrainSize;
+        _cbtSmokeInitialHeightScale = _terrainPanelState.HeightScale;
+        _cbtSmokeChangedHeightScale = _cbtSmokeInitialHeightScale < 10.0F
+            ? _cbtSmokeInitialHeightScale + 2.0F
+            : _cbtSmokeInitialHeightScale * 0.5F;
+        _cbtSmokeInitialHeightMapIndex = _terrainPanelState.HeightMapIndex;
+        _cbtSmokeReloadHeightMapIndex =
+            (_cbtSmokeInitialHeightMapIndex + 1) % static_cast<int>(HeightMapPaths.size());
         _cbtSmokeInitialPoseCaptured = true;
     }
     // 在命令列表打开前修改参数，下一帧事务会为全活动槽重建分类几何。
     if (_cbtProceduralSmokeTestEnabled && _cbtProceduralSmokeFrameCount == 100U)
     {
         _terrainPanelState.TerrainSize *= 1.25F;
+        _terrainPanelState.HeightScale = _cbtSmokeChangedHeightScale;
         ApplyTerrainPanelSettings();
     }
     // 快速后退并把深度压到基础层，强制已细分拓扑连续执行 merge。
@@ -449,14 +459,26 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
     if (_cbtProceduralSmokeTestEnabled && _cbtProceduralSmokeFrameCount == 300U)
     {
         _terrainPanelState.RoamMaxDepth = _cbtSmokeInitialMaxDepth;
+        _terrainPanelState.TerrainSize = _cbtSmokeInitialTerrainSize;
+        _terrainPanelState.HeightScale = _cbtSmokeInitialHeightScale;
         ApplyTerrainPanelSettings();
         _camera.SetPose(
             _cbtSmokeInitialCameraPosition,
             _cbtSmokeInitialYawDegrees,
             _cbtSmokeInitialPitchDegrees);
     }
-    // 末段关闭完整验证，覆盖只保留轻量计数回读的常规帧路径。
+    // 切换到另一张尺寸不同的高度图，强制重建算法持有的纹理与首帧精确参考。
     if (_cbtProceduralSmokeTestEnabled && _cbtProceduralSmokeFrameCount == 420U)
+    {
+        _terrainPanelState.HeightMapIndex = _cbtSmokeReloadHeightMapIndex;
+        ApplyHeightMapSelection();
+        _cbtSmokeHeightMapReloadRequested =
+            _terrainPanelState.HeightMapIndex == _cbtSmokeReloadHeightMapIndex;
+        _lastCbtTopologyFrameGeneration = 0U;
+        _lastCbtClassificationSampleGeneration = 0U;
+    }
+    // 末段关闭完整验证，覆盖只保留轻量计数回读的常规帧路径。
+    if (_cbtProceduralSmokeTestEnabled && _cbtProceduralSmokeFrameCount == 480U)
     {
         _terrainPanelState.RoamEnableTopologyValidation = false;
         ApplyTerrainPanelSettings();
@@ -469,7 +491,7 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
     // 细分段持续旋转，远离并降深阶段保持视点固定，返回后再次覆盖动态模板。
     if (_cbtProceduralSmokeTestEnabled &&
         ((_cbtProceduralSmokeFrameCount >= 60U && _cbtProceduralSmokeFrameCount < 150U) ||
-         (_cbtProceduralSmokeFrameCount >= 300U && _cbtProceduralSmokeFrameCount < 420U)))
+         (_cbtProceduralSmokeFrameCount >= 300U && _cbtProceduralSmokeFrameCount < 480U)))
     {
         _camera.SetPose(
             _camera.Position(),
@@ -520,7 +542,7 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
         const std::string expectedCapacity = CbtCapacityName(_terrainPanelState.CbtCapacity);
         if (terrainStats.TerrainLodStatusMessage.find(expectedCapacity) == std::string::npos)
         {
-            std::cerr << "CBT F smoke test did not initialize requested capacity "
+            std::cerr << "CBT G smoke test did not initialize requested capacity "
                       << expectedCapacity << ": " << terrainStats.TerrainLodStatusMessage << '\n';
             _terrainLodSmokeTestFailed = true;
         }
@@ -528,7 +550,7 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
         if (generation == 0U ||
             (_lastCbtTopologyFrameGeneration != 0U && generation != _lastCbtTopologyFrameGeneration + 1U))
         {
-            std::cerr << "CBT F topology frame generation did not advance exactly once per frame: previous="
+            std::cerr << "CBT G topology frame generation did not advance exactly once per frame: previous="
                       << _lastCbtTopologyFrameGeneration << ", current=" << generation
                       << ", status=" << terrainStats.TerrainLodStatusMessage << '\n';
             _terrainLodSmokeTestFailed = true;
@@ -540,7 +562,7 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
             (_lastCbtClassificationSampleGeneration != 0U &&
              sampleGeneration != _lastCbtClassificationSampleGeneration + 1U))
         {
-            std::cerr << "CBT F commit sample generation is invalid: previous="
+            std::cerr << "CBT G commit sample generation is invalid: previous="
                       << _lastCbtClassificationSampleGeneration << ", current=" << sampleGeneration
                       << ", topology=" << generation << '\n';
             _terrainLodSmokeTestFailed = true;
@@ -554,18 +576,18 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
             terrainStats.CbtSplitCandidateCount + terrainStats.CbtSimplifyCandidateCount;
         if (sampleGeneration != 0U && classifiedCandidateCount > terrainStats.RoamNodeCount)
         {
-            std::cerr << "CBT F classification counters exceed the sampled active list: split="
+            std::cerr << "CBT G classification counters exceed the sampled active list: split="
                       << terrainStats.CbtSplitCandidateCount << ", simplify="
                       << terrainStats.CbtSimplifyCandidateCount << ", active="
                       << terrainStats.RoamNodeCount << '\n';
             _terrainLodSmokeTestFailed = true;
         }
 #if defined(PARALLEL_ROAM_GRAPHICS_API_D3D12)
-        if (_cbtProceduralSmokeFrameCount >= 420U &&
+        if (_cbtProceduralSmokeFrameCount >= 480U &&
             terrainStats.RoamCpuGpuReadbackBytes !=
                 Algorithms::Cbt2024::D3D12::D3D12CbtDiagnostics::DiagnosticReadbackBytes)
         {
-            std::cerr << "CBT F validation-off path reported an unexpected readback size: "
+            std::cerr << "CBT G validation-off path reported an unexpected readback size: "
                       << terrainStats.RoamCpuGpuReadbackBytes << '\n';
             _terrainLodSmokeTestFailed = true;
         }
@@ -580,6 +602,18 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
             terrainStats.CbtCommittedDynamicSlotCount > 0U)
         {
             _cbtObservedSplitAfterMerge = true;
+        }
+        if (_cbtProceduralSmokeFrameCount >= 100U && _cbtProceduralSmokeFrameCount < 300U &&
+            std::abs(terrainStats.HeightScale - _cbtSmokeChangedHeightScale) <= 0.0001F)
+        {
+            _cbtObservedHeightScaleChange = true;
+        }
+        if (_cbtSmokeHeightMapReloadRequested &&
+            terrainStats.HeightMapPath ==
+                HeightMapPaths[static_cast<std::size_t>(_cbtSmokeReloadHeightMapIndex)] &&
+            terrainStats.HeightMapWidth > 0 && terrainStats.HeightMapHeight > 0)
+        {
+            _cbtObservedHeightMapReload = true;
         }
         for (std::size_t index = 0U; index < _cbtObservedBisectTemplates.size(); ++index)
         {
