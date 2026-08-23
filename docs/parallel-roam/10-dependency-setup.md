@@ -56,7 +56,7 @@ cmake --build --preset debug
 Windows CMD 可直接运行：
 
 ```bat
-scripts\run_debug_fetch.bat --smoke-test
+scripts\run\opengl\run_debug_fetch.bat --smoke-test
 ```
 
 虽然脚本名保留了 `fetch`，但在 `third_party` 依赖齐全时不会下载 SDL2、GLM、stb 或 Dear ImGui；只有本地和系统依赖都缺失时，`PARALLEL_ROAM_FETCH_MISSING_DEPS=ON` 才会触发 FetchContent 兜底。
@@ -125,52 +125,70 @@ D3D12 使用独立 preset。固定 Agility SDK 和 DXC 已准备完成后，可�
 
 ## 快捷构建脚本
 
-仓库提供 `scripts/` 下的快捷脚本，脚本会自动执行 configure、build 和 run。macOS / Linux 使用 `.sh`，Windows 可使用 PowerShell `.ps1` 或 CMD `.bat`。
+仓库将启动脚本按后端放在 `scripts/run/opengl` 与 `scripts/run/d3d12`，脚本会自动执行 configure、build 和 run。OpenGL 在 macOS / Linux 使用 `.sh`，Windows 可使用 PowerShell `.ps1` 或 CMD `.bat`；D3D12 仅提供 Windows 入口。
+
+OpenGL：
 
 ```sh
-./scripts/run_debug_fetch.sh
-./scripts/run_relwithdebinfo_fetch.sh
-./scripts/run_release_fetch.sh
-./scripts/run_smoke_test_fetch.sh
+./scripts/run/opengl/run_debug_fetch.sh
+./scripts/run/opengl/run_relwithdebinfo_fetch.sh
+./scripts/run/opengl/run_release_fetch.sh
+./scripts/run/opengl/run_smoke_test_fetch.sh
 ```
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/run_debug_fetch.ps1
-powershell -ExecutionPolicy Bypass -File scripts/run_relwithdebinfo_fetch.ps1
-powershell -ExecutionPolicy Bypass -File scripts/run_release_fetch.ps1
-powershell -ExecutionPolicy Bypass -File scripts/run_smoke_test_fetch.ps1
+powershell -ExecutionPolicy Bypass -File scripts/run/opengl/run_debug_fetch.ps1
+powershell -ExecutionPolicy Bypass -File scripts/run/opengl/run_relwithdebinfo_fetch.ps1
+powershell -ExecutionPolicy Bypass -File scripts/run/opengl/run_release_fetch.ps1
+powershell -ExecutionPolicy Bypass -File scripts/run/opengl/run_smoke_test_fetch.ps1
 ```
 
 ```bat
-scripts\run_debug_fetch.bat
-scripts\run_relwithdebinfo_fetch.bat
-scripts\run_release_fetch.bat
-scripts\run_smoke_test_fetch.bat
+scripts\run\opengl\run_debug_fetch.bat
+scripts\run\opengl\run_relwithdebinfo_fetch.bat
+scripts\run\opengl\run_release_fetch.bat
+scripts\run\opengl\run_smoke_test_fetch.bat
 ```
 
-脚本选择建议：
+D3D12 首次运行前需要先准备固定依赖，之后可使用：
 
-| 脚本 | CMake preset | 用途 |
-|---|---|---|
-| `run_debug_fetch` | `debug-fetch` | 断点调试和崩溃定位，性能数据不可信 |
-| `run_relwithdebinfo_fetch` | `relwithdebinfo-fetch` | 日常运行、性能观察和 profiler 分析 |
-| `run_release_fetch` | `release-fetch` | 接近发布配置的最高优化运行 |
-| `run_smoke_test_fetch` | `debug-fetch` | 快速验证窗口、OpenGL、资源加载的最小闭环 |
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/run/d3d12/run_debug_fetch.ps1
+powershell -ExecutionPolicy Bypass -File scripts/run/d3d12/run_relwithdebinfo_fetch.ps1
+powershell -ExecutionPolicy Bypass -File scripts/run/d3d12/run_release_fetch.ps1
+powershell -ExecutionPolicy Bypass -File scripts/run/d3d12/run_smoke_test_fetch.ps1
+```
+
+```bat
+scripts\run\d3d12\run_debug_fetch.bat
+scripts\run\d3d12\run_relwithdebinfo_fetch.bat
+scripts\run\d3d12\run_release_fetch.bat
+scripts\run\d3d12\run_smoke_test_fetch.bat
+```
+
+脚本与 preset 对应关系：
+
+| 脚本 | OpenGL preset | D3D12 preset | 用途 |
+|---|---|---|---|
+| `run_debug_fetch` | `debug-fetch` | `debug-d3d12-fetch` | 断点调试和崩溃定位，性能数据不可信 |
+| `run_relwithdebinfo_fetch` | `relwithdebinfo-fetch` | `relwithdebinfo-d3d12-fetch` | 日常运行、性能观察和 profiler 分析 |
+| `run_release_fetch` | `release-fetch` | `release-d3d12-fetch` | 接近发布配置的最高优化运行 |
+| `run_smoke_test_fetch` | `debug-fetch` | `debug-d3d12-fetch` | 快速验证窗口、后端初始化和资源加载的最小闭环 |
 
 `.sh`、`.ps1` 和 `.bat` 脚本都会把额外命令行参数透传给 `ParallelROAM`。例如：
 
 ```sh
-./scripts/run_relwithdebinfo_fetch.sh --smoke-test
+./scripts/run/opengl/run_relwithdebinfo_fetch.sh --smoke-test
 ```
 
 ```bat
-scripts\run_relwithdebinfo_fetch.bat --smoke-test
+scripts\run\d3d12\run_relwithdebinfo_fetch.bat --smoke-test
 ```
 
 支持 OpenGL 4.3 Compute Shader 的机器还可以运行 GPU 专用 smoke test。该入口会连续强制重建 32 帧，覆盖 GPU split-only topology、active leaf compaction、mesh emit 和 indirect draw：
 
 ```bat
-scripts\run_relwithdebinfo_fetch.bat --gpu-smoke-test
+scripts\run\opengl\run_relwithdebinfo_fetch.bat --gpu-smoke-test
 ```
 
 D3D12 构建可以独立验证 CBT OCBT 的四种容量特化。该入口不会初始化 terrain renderer 和 GUI，会检查空树、满树、边界位、交替位图和随机更新：
@@ -191,13 +209,13 @@ D3D12 构建可以独立验证 CBT OCBT 的四种容量特化。该入口不会�
 .\build\debug-d3d12-fetch\bin\ParallelROAM.exe --cbt-procedural-smoke-test
 ```
 
-运行完整的 Classic、Data-Oriented、GPU ROAM-like 三算法 runtime benchmark：
+运行包含 Classic、Data-Oriented 与 CBT 2024 的 D3D12 runtime benchmark：
 
 ```bat
-scripts\run_relwithdebinfo_fetch.bat --runtime-benchmark
+scripts\run\d3d12\run_relwithdebinfo_fetch.bat --runtime-benchmark
 ```
 
-该命令会让每种可用算法依次执行同一组离散相机采样点，生成 `benchmark-output/runtime-benchmark-*.md` 和对应逐点 CSV 后自动退出。默认选项路径为 600 点，极限压力路径为 64 点，也可通过 `--runtime-benchmark-samples` 覆盖；算法耗时只改变完成整轮测试所需的墙钟时间，不再改变采样点数量或姿态。GPU capability 不满足时，报告会保留 CPU 结果并写明 GPU skip 原因。CBT 2024 在完整 split/merge 和高度图路径完成前仅参与专用验证，不进入这组三算法性能排名。
+该命令会让每种可用算法依次执行同一组离散相机采样点，生成 `benchmark-output/runtime-benchmark-*.md` 和对应逐点 CSV 后自动退出。默认选项路径为 600 点，极限压力路径为 64 点，也可通过 `--runtime-benchmark-samples` 覆盖；算法耗时只改变完成整轮测试所需的墙钟时间，不再改变采样点数量或姿态。GPU capability 不满足时，报告会保留 CPU 结果并写明 CBT skip 原因；D3D12 能力满足时，CBT 会记录延迟诊断和逐阶段 GPU 计时。
 
 当前 pin 的版本：
 

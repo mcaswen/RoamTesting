@@ -133,7 +133,7 @@ DOD 也持久维护同口径的 `Q_s/Q_m`。预算满载时，只要 `max(Q_s) >
 也可以使用快捷脚本：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/run_relwithdebinfo_fetch.ps1
+powershell -ExecutionPolicy Bypass -File scripts/run/opengl/run_relwithdebinfo_fetch.ps1
 ```
 
 ### D3D12
@@ -150,6 +150,12 @@ powershell -ExecutionPolicy Bypass -File scripts/setup_cbt_dx12_dependencies.ps1
 .\tools\cmake\bin\cmake.exe --preset relwithdebinfo-d3d12-fetch
 .\tools\cmake\bin\cmake.exe --build --preset relwithdebinfo-d3d12-fetch --parallel
 .\build\relwithdebinfo-d3d12-fetch\bin\ParallelROAM.exe
+```
+
+也可以使用对应的 D3D12 快捷脚本：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/run/d3d12/run_relwithdebinfo_fetch.ps1
 ```
 
 依赖版本、离线策略和平台差异见[依赖配置说明](docs/parallel-roam/10-dependency-setup.md)。
