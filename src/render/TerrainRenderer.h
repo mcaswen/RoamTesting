@@ -7,6 +7,7 @@
 #include "terrain/HeightMap.h"
 #include "terrain/TerrainMeshBuilder.h"
 
+#include <array>
 #include <cstddef>
 #include <filesystem>
 #include <memory>
@@ -103,6 +104,9 @@ struct TerrainRenderStats
     std::uint64_t GpuClassificationSampleGeneration{0U};
     std::size_t CbtSplitCandidateCount{0U};
     std::size_t CbtSimplifyCandidateCount{0U};
+    std::size_t CbtCommittedDynamicSlotCount{0U};
+    std::size_t CbtSplitPropagationCount{0U};
+    std::array<std::size_t, 4> CbtBisectTemplateCounts{};
 
     // setting 字段来自 UI 快照，不与算法实际达到的状态混用
     int RoamMaxDepthSetting{0};

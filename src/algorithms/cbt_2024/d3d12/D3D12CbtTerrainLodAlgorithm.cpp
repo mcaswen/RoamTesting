@@ -41,12 +41,19 @@ void FillRenderPacket(
 {
     const CbtBaseTopology& topology = state.Topology.Topology();
     const D3D12CbtTopologyResourceView resources = state.Topology.Resources();
+    const auto& templates = state.Pipeline.LastBisectTemplateCounts();
     outPacket.Mode = TerrainLodRenderMode::GpuProceduralIndirect;
     outPacket.StatusMessage =
-        "CBT 2024 E2 plan: split=" + std::to_string(state.Pipeline.LastSplitCandidateCount()) +
+        "CBT 2024 E3 commit: split=" + std::to_string(state.Pipeline.LastSplitCandidateCount()) +
         " simplify=" + std::to_string(state.Pipeline.LastSimplifyCandidateCount()) +
         " nodes=" + std::to_string(state.Pipeline.LastPlannedSplitNodeCount()) +
         " slots=" + std::to_string(state.Pipeline.LastAllocatedSplitSlotCount()) +
+        " committed=" + std::to_string(state.Pipeline.LastCommittedDynamicSlotCount()) +
+        " propagate=" + std::to_string(state.Pipeline.LastSplitPropagationCount()) +
+        " templates=" + std::to_string(templates[0]) + "/" +
+        std::to_string(templates[1]) + "/" + std::to_string(templates[2]) + "/" +
+        std::to_string(templates[3]) +
+        " active=" + std::to_string(state.Pipeline.LastIndexedActiveCount()) +
         " remaining=" + std::to_string(state.Pipeline.LastRemainingDynamicSlotCount()) +
         " duplicate/shared=" + std::to_string(state.Pipeline.LastDuplicateSplitClaimCount()) + "/" +
         std::to_string(state.Pipeline.LastSharedCompatibilityCount()) +
@@ -66,9 +73,9 @@ void FillRenderPacket(
     outPacket.GpuIndirectDrawArgumentOffsetBytes = offsetof(CbtDrawState, Active);
     outPacket.GpuResourceLifetime = TerrainLodGpuResourceLifetime::UntilNextBuildOrReset;
     outPacket.GpuResourceGeneration = state.Topology.Generation();
-    // 这两个数量是初始化阶段已知的延迟诊断值；绘制正确性只依赖 GPU draw state
-    outPacket.ActiveLeafCount = CbtBaseBisectorCount;
-    outPacket.ActiveTriangleCount = CbtBaseBisectorCount;
+    // 数量来自延迟诊断镜像；绘制正确性仍只依赖 GPU draw state。
+    outPacket.ActiveLeafCount = state.Pipeline.LastIndexedActiveCount();
+    outPacket.ActiveTriangleCount = state.Pipeline.LastIndexedActiveCount();
 }
 } // namespace
 
@@ -84,9 +91,9 @@ TerrainLodAlgorithmInfo D3D12CbtTerrainLodAlgorithm::Info() const
 {
     return TerrainLodAlgorithmInfo{
         TerrainLodAlgorithmId::Cbt2024,
-        "cbt-2024-e2",
-        "CBT 2024（E2）",
-        "GPU 常驻基础拓扑、官方分类、兼容链规划、保守预留和旧 OCBT 空闲分配",
+        "cbt-2024-e3",
+        "CBT 2024（E3）",
+        "GPU 常驻拓扑、兼容链规划、四模板 Bisect、邻接传播、OCBT 提交和增量几何",
     };
 }
 
@@ -96,10 +103,10 @@ TerrainLodAlgorithmCapabilities D3D12CbtTerrainLodAlgorithm::Capabilities() cons
         .SupportsCpuMeshOutput = false,
         .SupportsGpuDrivenRendering = true,
         .SupportsProceduralIndirectRendering = true,
-        .SupportsSplit = false,
+        .SupportsSplit = true,
         .SupportsMerge = false,
-        .SupportsCrackFix = false,
-        .SupportsTopologyValidation = false,
+        .SupportsCrackFix = true,
+        .SupportsTopologyValidation = true,
         .RequiresShaderModel66 = true,
         .RequiresInt64ShaderOps = true,
         .RequiresInt64Atomics = true,
@@ -123,7 +130,7 @@ bool D3D12CbtTerrainLodAlgorithm::BuildRenderData(
     }
     if (!_backend->FrameOpen() || _backend->CommandList() == nullptr)
     {
-        SetError(errorMessage, "CBT 2024 E2 must record between BeginFrame and Present");
+        SetError(errorMessage, "CBT 2024 E3 must record between BeginFrame and Present");
         return false;
     }
     const Cbt2024Availability availability = QueryCbt2024Availability(*_backend);
@@ -134,7 +141,7 @@ bool D3D12CbtTerrainLodAlgorithm::BuildRenderData(
     }
     if (input.HeightMap == nullptr || !input.HeightMap->IsValid())
     {
-        SetError(errorMessage, "CBT 2024 E2 requires a valid terrain input");
+        SetError(errorMessage, "CBT 2024 E3 requires a valid terrain input");
         return false;
     }
 
@@ -177,21 +184,43 @@ bool D3D12CbtTerrainLodAlgorithm::BuildRenderData(
         _state->GeometryInitialized = true;
     }
 
-    _stats.ActiveTriangleCount = CbtBaseBisectorCount;
+    const std::size_t activeCount = _state->Pipeline.LastIndexedActiveCount();
+    const std::size_t committedNodeCount = _state->Pipeline.LastPlannedSplitNodeCount();
+    _stats.ActiveTriangleCount = activeCount;
     _stats.GpuTopologyFrameGeneration = _state->Pipeline.TopologyFrameGeneration();
     _stats.GpuClassificationSampleGeneration = _state->Pipeline.ClassificationSampleGeneration();
-    _stats.ActiveNodeCount = CbtBaseBisectorCount;
+    _stats.ActiveNodeCount = activeCount;
     _stats.OriginalTriangleCount = CbtBaseBisectorCount;
+    _stats.SubdividedTriangleCount = activeCount > CbtBaseBisectorCount
+        ? activeCount - CbtBaseBisectorCount
+        : 0U;
+    _stats.RebuiltTriangleCount =
+        committedNodeCount + _state->Pipeline.LastCommittedDynamicSlotCount();
+    _stats.ActiveSplitCount = committedNodeCount;
+    _stats.SplitCount = committedNodeCount;
+    _stats.ForcedSplitCount = committedNodeCount > _state->Pipeline.LastSplitCandidateCount()
+        ? committedNodeCount - _state->Pipeline.LastSplitCandidateCount()
+        : 0U;
+    _stats.ConstraintPassCount = _state->Pipeline.LastSplitPropagationCount();
+    _stats.CandidatePeakCount = _state->Pipeline.LastSplitCandidateCount() +
+        _state->Pipeline.LastSimplifyCandidateCount();
     _stats.SplitTopologyCandidateCount = _state->Pipeline.LastSplitCandidateCount();
     _stats.MergeTopologyCandidateCount = _state->Pipeline.LastSimplifyCandidateCount();
+    _stats.CbtCommittedDynamicSlotCount = _state->Pipeline.LastCommittedDynamicSlotCount();
+    _stats.CbtSplitPropagationCount = _state->Pipeline.LastSplitPropagationCount();
+    const auto& templateCounts = _state->Pipeline.LastBisectTemplateCounts();
+    for (std::size_t index = 0U; index < templateCounts.size(); ++index)
+    {
+        _stats.CbtBisectTemplateCounts[index] = templateCounts[index];
+    }
     _stats.MaxActiveDepth = static_cast<int>(_state->Topology.Topology().BaseDepth);
-    _stats.CpuGpuReadbackBytes = input.Settings.EnableTopologyValidation ? 240U : 44U;
+    _stats.CpuGpuReadbackBytes = input.Settings.EnableTopologyValidation ? 304U : 68U;
     _stats.CpuUpdateMilliseconds = buildTimer.Stop();
 
     FillRenderPacket(*_state, outPacket);
     if (!outPacket.HasConsistentResourceContract())
     {
-        SetError(errorMessage, "CBT 2024 E2 produced an inconsistent GPU render packet");
+        SetError(errorMessage, "CBT 2024 E3 produced an inconsistent GPU render packet");
         return false;
     }
     if (errorMessage != nullptr)

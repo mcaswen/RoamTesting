@@ -325,10 +325,16 @@ int Application::Run(int maxFrameCount)
 
     const bool automaticBenchmarkIncomplete =
         _automaticRuntimeBenchmarkEnabled && !_automaticRuntimeBenchmarkCompleted;
+    const bool observedAllCbtTemplates = std::all_of(
+        _cbtObservedBisectTemplates.begin(),
+        _cbtObservedBisectTemplates.end(),
+        [](bool observed) { return observed; });
     if (_cbtProceduralSmokeTestEnabled &&
-        (!_cbtObservedClassificationSample || !_cbtObservedSplitCandidate))
+        (!_cbtObservedClassificationSample || !_cbtObservedSplitCandidate ||
+         !observedAllCbtTemplates))
     {
-        std::cerr << "CBT E2 smoke test did not observe a completed planning sample with split candidates\n";
+        std::cerr << "CBT E3 smoke test did not observe classification, commit work, and all four "
+                     "Bisect templates\n";
         _terrainLodSmokeTestFailed = true;
     }
     const int exitCode =
@@ -403,7 +409,7 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
 
     _graphicsBackend->BeginImGuiFrame(_guiLayer);
 
-    // E2 快速烟测前半段保持静止，后半段只旋转，以覆盖规划链的两类 EveryFrame 输入。
+    // E3 快速烟测前半段保持静止，后半段旋转，覆盖稳定细分和移动相机提交。
     if (_cbtProceduralSmokeTestEnabled && _cbtProceduralSmokeFrameCount >= 150U)
     {
         _camera.SetPose(
@@ -456,7 +462,7 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
         if (generation == 0U ||
             (_lastCbtTopologyFrameGeneration != 0U && generation != _lastCbtTopologyFrameGeneration + 1U))
         {
-            std::cerr << "CBT E2 topology frame generation did not advance exactly once per frame: previous="
+            std::cerr << "CBT E3 topology frame generation did not advance exactly once per frame: previous="
                       << _lastCbtTopologyFrameGeneration << ", current=" << generation << '\n';
             _terrainLodSmokeTestFailed = true;
         }
@@ -467,7 +473,7 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
             (_lastCbtClassificationSampleGeneration != 0U &&
              sampleGeneration != _lastCbtClassificationSampleGeneration + 1U))
         {
-            std::cerr << "CBT E2 planning sample generation is invalid: previous="
+            std::cerr << "CBT E3 commit sample generation is invalid: previous="
                       << _lastCbtClassificationSampleGeneration << ", current=" << sampleGeneration
                       << ", topology=" << generation << '\n';
             _terrainLodSmokeTestFailed = true;
@@ -477,16 +483,24 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
             _cbtObservedClassificationSample = true;
             _lastCbtClassificationSampleGeneration = sampleGeneration;
         }
-        if (terrainStats.CbtSplitCandidateCount > Algorithms::Cbt2024::CbtBaseBisectorCount ||
-            terrainStats.CbtSimplifyCandidateCount > Algorithms::Cbt2024::CbtBaseBisectorCount)
+        const std::size_t classifiedCandidateCount =
+            terrainStats.CbtSplitCandidateCount + terrainStats.CbtSimplifyCandidateCount;
+        if (sampleGeneration != 0U && classifiedCandidateCount > terrainStats.RoamNodeCount)
         {
-            std::cerr << "CBT E2 classification counters exceed the active base list: split="
+            std::cerr << "CBT E3 classification counters exceed the sampled active list: split="
                       << terrainStats.CbtSplitCandidateCount << ", simplify="
-                      << terrainStats.CbtSimplifyCandidateCount << '\n';
+                      << terrainStats.CbtSimplifyCandidateCount << ", active="
+                      << terrainStats.RoamNodeCount << '\n';
             _terrainLodSmokeTestFailed = true;
         }
         _cbtObservedSplitCandidate =
-            _cbtObservedSplitCandidate || terrainStats.CbtSplitCandidateCount > 0U;
+            _cbtObservedSplitCandidate || terrainStats.RoamSplitCount > 0U;
+        for (std::size_t index = 0U; index < _cbtObservedBisectTemplates.size(); ++index)
+        {
+            _cbtObservedBisectTemplates[index] =
+                _cbtObservedBisectTemplates[index] ||
+                terrainStats.CbtBisectTemplateCounts[index] > 0U;
+        }
         ++_cbtProceduralSmokeFrameCount;
     }
     Gui::DebugOverlayData debugData{};

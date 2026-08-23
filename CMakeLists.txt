@@ -69,6 +69,7 @@ if(PARALLEL_ROAM_BUILD_APP)
                 src/app/RuntimeBenchmark.cpp
                 src/algorithms/TerrainLodView.cpp
                 src/algorithms/cbt_2024/Cbt2024Support.cpp
+                src/algorithms/cbt_2024/CbtBisectCommit.cpp
                 src/algorithms/cbt_2024/CbtBisectorTopology.cpp
                 src/algorithms/cbt_2024/CbtClassification.cpp
                 src/algorithms/cbt_2024/CbtOccupancyTree.cpp
@@ -119,6 +120,7 @@ if(PARALLEL_ROAM_BUILD_APP)
                 src/app/RuntimeBenchmark.cpp
                 src/algorithms/TerrainLodView.cpp
                 src/algorithms/cbt_2024/Cbt2024Support.cpp
+                src/algorithms/cbt_2024/CbtBisectCommit.cpp
                 src/algorithms/cbt_2024/CbtBisectorTopology.cpp
                 src/algorithms/cbt_2024/CbtClassification.cpp
                 src/algorithms/cbt_2024/CbtOccupancyTree.cpp
@@ -204,6 +206,7 @@ if(PARALLEL_ROAM_BUILD_APP)
         set(PARALLEL_ROAM_DX12_CBT_BOOTSTRAP_INDEXATION_SHADER "${PARALLEL_ROAM_DX12_SHADER_DIR}/CbtBootstrapIndexation.cso")
         set(PARALLEL_ROAM_DX12_CBT_BOOTSTRAP_PREPARE_SHADER "${PARALLEL_ROAM_DX12_SHADER_DIR}/CbtBootstrapPrepareIndirect.cso")
         set(PARALLEL_ROAM_DX12_CBT_BOOTSTRAP_GEOMETRY_SHADER "${PARALLEL_ROAM_DX12_SHADER_DIR}/CbtBootstrapBuildBaseGeometry.cso")
+        set(PARALLEL_ROAM_DX12_CBT_MODIFIED_GEOMETRY_SHADER "${PARALLEL_ROAM_DX12_SHADER_DIR}/CbtBootstrapBuildModifiedGeometry.cso")
         target_compile_definitions(
             parallel_roam
             PRIVATE PARALLEL_ROAM_DX12_SHADER_DIR="${PARALLEL_ROAM_DX12_SHADER_DIR}")
@@ -215,6 +218,7 @@ if(PARALLEL_ROAM_BUILD_APP)
                 ${PARALLEL_ROAM_DX12_CBT_BOOTSTRAP_INDEXATION_SHADER}
                 ${PARALLEL_ROAM_DX12_CBT_BOOTSTRAP_PREPARE_SHADER}
                 ${PARALLEL_ROAM_DX12_CBT_BOOTSTRAP_GEOMETRY_SHADER}
+                ${PARALLEL_ROAM_DX12_CBT_MODIFIED_GEOMETRY_SHADER}
             COMMAND ${CMAKE_COMMAND} -E make_directory "${PARALLEL_ROAM_DX12_SHADER_DIR}"
             COMMAND ${PARALLEL_ROAM_DXC_EXECUTABLE}
                 -T vs_6_0 -E VSMain -Fo ${PARALLEL_ROAM_DX12_VERTEX_SHADER}
@@ -234,6 +238,9 @@ if(PARALLEL_ROAM_BUILD_APP)
             COMMAND ${PARALLEL_ROAM_DXC_EXECUTABLE}
                 -T cs_6_6 -E CSBuildBaseGeometry -Fo ${PARALLEL_ROAM_DX12_CBT_BOOTSTRAP_GEOMETRY_SHADER}
                 "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/dx12/cbt/CbtBootstrap.hlsl"
+            COMMAND ${PARALLEL_ROAM_DXC_EXECUTABLE}
+                -T cs_6_6 -E CSBuildModifiedGeometry -Fo ${PARALLEL_ROAM_DX12_CBT_MODIFIED_GEOMETRY_SHADER}
+                "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/dx12/cbt/CbtBootstrap.hlsl"
             DEPENDS
                 "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/dx12/Terrain.hlsl"
                 "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/dx12/CbtProceduralTerrain.hlsl"
@@ -247,7 +254,8 @@ if(PARALLEL_ROAM_BUILD_APP)
                 ${PARALLEL_ROAM_DX12_CBT_PROCEDURAL_VERTEX_SHADER}
                 ${PARALLEL_ROAM_DX12_CBT_BOOTSTRAP_INDEXATION_SHADER}
                 ${PARALLEL_ROAM_DX12_CBT_BOOTSTRAP_PREPARE_SHADER}
-                ${PARALLEL_ROAM_DX12_CBT_BOOTSTRAP_GEOMETRY_SHADER})
+                ${PARALLEL_ROAM_DX12_CBT_BOOTSTRAP_GEOMETRY_SHADER}
+                ${PARALLEL_ROAM_DX12_CBT_MODIFIED_GEOMETRY_SHADER})
 
         set(PARALLEL_ROAM_CBT_OCBT_CAPACITY_NAMES 128K 256K 512K 1M)
         set(PARALLEL_ROAM_CBT_OCBT_CAPACITY_VALUES 131072 262144 524288 1048576)
@@ -315,13 +323,13 @@ if(PARALLEL_ROAM_BUILD_APP)
             parallel_roam_dx12_cbt_ocbt_shaders
             DEPENDS ${PARALLEL_ROAM_DX12_CBT_OCBT_SHADERS})
 
-        set(PARALLEL_ROAM_CBT_TOPOLOGY_ENTRIES CSResetE0 CSClassify CSPrepareClassificationIndirect CSSplitE2 CSPrepareAllocationIndirect CSAllocateE2 CSReducePre CSReduceFirst CSReduceSecond)
-        set(PARALLEL_ROAM_CBT_TOPOLOGY_SUFFIXES ResetE0 Classify PrepareClassificationIndirect SplitE2 PrepareAllocationIndirect AllocateE2 ReducePre ReduceFirst ReduceSecond)
+        set(PARALLEL_ROAM_CBT_TOPOLOGY_ENTRIES CSResetE0 CSClassify CSPrepareClassificationIndirect CSSplitE2 CSPrepareAllocationIndirect CSAllocateE2 CSCopyNeighborsE3 CSBisectE3 CSPreparePropagationIndirectE3 CSPropagateBisectE3 CSReducePre CSReduceFirst CSReduceSecond CSValidateE3)
+        set(PARALLEL_ROAM_CBT_TOPOLOGY_SUFFIXES ResetE0 Classify PrepareClassificationIndirect SplitE2 PrepareAllocationIndirect AllocateE2 CopyNeighborsE3 BisectE3 PreparePropagationIndirectE3 PropagateBisectE3 ReducePre ReduceFirst ReduceSecond ValidateE3)
         set(PARALLEL_ROAM_DX12_CBT_TOPOLOGY_SHADERS)
         foreach(PARALLEL_ROAM_CBT_CAPACITY_INDEX RANGE 0 3)
             list(GET PARALLEL_ROAM_CBT_OCBT_CAPACITY_NAMES ${PARALLEL_ROAM_CBT_CAPACITY_INDEX} PARALLEL_ROAM_CBT_CAPACITY_NAME)
             list(GET PARALLEL_ROAM_CBT_OCBT_CAPACITY_VALUES ${PARALLEL_ROAM_CBT_CAPACITY_INDEX} PARALLEL_ROAM_CBT_CAPACITY_VALUE)
-            foreach(PARALLEL_ROAM_CBT_ENTRY_INDEX RANGE 0 8)
+            foreach(PARALLEL_ROAM_CBT_ENTRY_INDEX RANGE 0 13)
                 list(GET PARALLEL_ROAM_CBT_TOPOLOGY_ENTRIES ${PARALLEL_ROAM_CBT_ENTRY_INDEX} PARALLEL_ROAM_CBT_ENTRY)
                 list(GET PARALLEL_ROAM_CBT_TOPOLOGY_SUFFIXES ${PARALLEL_ROAM_CBT_ENTRY_INDEX} PARALLEL_ROAM_CBT_SUFFIX)
                 set(PARALLEL_ROAM_CBT_TOPOLOGY_SHADER

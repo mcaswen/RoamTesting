@@ -2,13 +2,14 @@ static const uint InvalidIndex = 0xffffffffu;
 static const uint VisibleFlag = 0x1u;
 static const uint ModifiedFlag = 0x2u;
 
-// 四个 root constants 定位基础物理槽位并控制平面世界尺寸
+// 五个 root constants 定位基础物理槽位、基础深度并控制平面世界尺寸
 cbuffer CbtBootstrapConstants : register(b0)
 {
     uint TotalElementCount;
     uint BaseElementOffset;
     uint BaseElementCount;
     float TerrainSize;
+    uint BaseDepth;
 };
 
 struct CbtBisectorData
@@ -90,7 +91,8 @@ void CSPrepareIndirect(uint dispatchThreadId : SV_DispatchThreadID)
     GeometryDispatch[3] = (activeCount * 4u + 63u) / 64u;
     GeometryDispatch[4] = 1u;
     GeometryDispatch[5] = 1u;
-    GeometryDispatch[6] = (DrawState[8] + 63u) / 64u;
+    const uint modifiedCount = DrawState[8] / 4u;
+    GeometryDispatch[6] = (modifiedCount + 63u) / 64u;
     GeometryDispatch[7] = 1u;
     GeometryDispatch[8] = 1u;
     // 显式活动数供下一帧分类协议使用 不参与当前 ExecuteIndirect
@@ -144,7 +146,6 @@ void CSBuildBaseGeometry(uint localBase : SV_DispatchThreadID)
         vertices[localVertex] = vertex;
     }
 
-    // 基础深度不会访问父位置；仍写入有限值，避免首帧分类读取未初始化数据
     // 基础深度不消费父位置 仍写入有限值以保证分类缓冲完全初始化
     ClassificationPositions[TotalElementCount * 3u + physicalSlot] =
         (positions[0] + positions[1] + positions[2]) / 3.0;
@@ -153,4 +154,131 @@ void CSBuildBaseGeometry(uint localBase : SV_DispatchThreadID)
     {
         RenderVertices[physicalSlot * 3u + outputVertex] = vertices[outputVertex];
     }
+}
+
+uint CbtBootstrapHeapDepth(uint64_t heapId)
+{
+    const uint high = uint(heapId >> 32u);
+    return high != 0u ? uint(firstbithigh(high)) + 33u : uint(firstbithigh(uint(heapId))) + 1u;
+}
+
+void CbtSplitPlaneTriangle(inout float3 p0, inout float3 p1, inout float3 p2, bool rightChild)
+{
+    const float3 previous0 = p0;
+    const float3 previous1 = p1;
+    const float3 previous2 = p2;
+    const float3 midpoint = (previous0 + previous2) * 0.5;
+    // 与官方 LEB splitting matrix 的 bit=0/1 两种排列逐行等价。
+    p0 = rightChild ? previous1 : previous2;
+    p1 = midpoint;
+    p2 = rightChild ? previous0 : previous1;
+}
+
+bool CbtEvaluatePlaneTriangle(
+    uint64_t heapId,
+    out uint localBase,
+    out float3 child0,
+    out float3 child1,
+    out float3 child2,
+    out float3 parent0,
+    out float3 parent1,
+    out float3 parent2)
+{
+    localBase = 0u;
+    child0 = child1 = child2 = 0.0;
+    parent0 = parent1 = parent2 = 0.0;
+    const uint depth = CbtBootstrapHeapDepth(heapId);
+    if (heapId == 0u || depth < BaseDepth)
+    {
+        return false;
+    }
+
+    const uint subtreeDepth = depth - BaseDepth;
+    const uint64_t firstBaseHeapId = uint64_t(1) << (BaseDepth - 1u);
+    const uint64_t baseHeapId = heapId >> subtreeDepth;
+    if (baseHeapId < firstBaseHeapId || baseHeapId - firstBaseHeapId >= BaseElementCount)
+    {
+        return false;
+    }
+    localBase = uint(baseHeapId - firstBaseHeapId);
+    child0 = BaseControlPoints[localBase * 3u + 0u];
+    child1 = BaseControlPoints[localBase * 3u + 1u];
+    child2 = BaseControlPoints[localBase * 3u + 2u];
+    parent0 = child0;
+    parent1 = child1;
+    parent2 = child2;
+    [loop]
+    for (uint remaining = subtreeDepth; remaining > 0u; --remaining)
+    {
+        parent0 = child0;
+        parent1 = child1;
+        parent2 = child2;
+        const uint bit = remaining - 1u;
+        CbtSplitPlaneTriangle(child0, child1, child2, ((heapId >> bit) & 1u) != 0u);
+    }
+    return true;
+}
+
+float3 CbtControlToWorld(float3 control)
+{
+    return float3((control.x - 0.5) * TerrainSize, control.y, (control.z - 0.5) * TerrainSize);
+}
+
+[numthreads(64, 1, 1)]
+void CSBuildModifiedGeometry(uint modifiedOrdinal : SV_DispatchThreadID)
+{
+    const uint modifiedCount = DrawState[8] / 4u;
+    if (modifiedOrdinal >= modifiedCount)
+    {
+        return;
+    }
+    const uint physicalSlot = ModifiedIndices[modifiedOrdinal];
+    if (physicalSlot >= TotalElementCount || HeapIds[physicalSlot] == 0u)
+    {
+        return;
+    }
+
+    uint localBase;
+    float3 child0;
+    float3 child1;
+    float3 child2;
+    float3 parent0;
+    float3 parent1;
+    float3 parent2;
+    const uint64_t heapId = HeapIds[physicalSlot];
+    if (!CbtEvaluatePlaneTriangle(
+            heapId,
+            localBase,
+            child0,
+            child1,
+            child2,
+            parent0,
+            parent1,
+            parent2))
+    {
+        return;
+    }
+
+    const float3 childControl[3] = {child0, child1, child2};
+    [unroll]
+    for (uint vertexIndex = 0u; vertexIndex < 3u; ++vertexIndex)
+    {
+        const float3 control = childControl[vertexIndex];
+        const float3 position = CbtControlToWorld(control);
+        ClassificationPositions[physicalSlot * 3u + vertexIndex] = position;
+
+        TerrainVertex vertex;
+        vertex.Position = position;
+        vertex.Normal = float3(0.0, 1.0, 0.0);
+        vertex.TexCoord = control.xz;
+        vertex.Height = control.y;
+        vertex.DebugColor = DebugColor(localBase);
+        vertex.DebugHighlight = 1.0;
+        RenderVertices[physicalSlot * 3u + vertexIndex] = vertex;
+    }
+
+    // 分类父面积只需要与当前最长边相对的旧父顶点。
+    const float3 parentControl = (heapId & 1u) == 0u ? parent0 : parent2;
+    ClassificationPositions[TotalElementCount * 3u + physicalSlot] =
+        CbtControlToWorld(parentControl);
 }

@@ -9,6 +9,7 @@
 #include "render/TerrainRenderer.h"
 #include "tools/PerformanceTimer.h"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -211,6 +212,7 @@ private:
     std::uint64_t _lastCbtClassificationSampleGeneration{0U};
     bool _cbtObservedClassificationSample{false};
     bool _cbtObservedSplitCandidate{false};
+    std::array<bool, 4> _cbtObservedBisectTemplates{};
     bool _cbtOccupancyTreeSmokeTestEnabled{false};
     bool _cbtBaseTopologySmokeTestEnabled{false};
     bool _automaticRuntimeBenchmarkEnabled{false};
