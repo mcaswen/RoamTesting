@@ -1,8 +1,8 @@
 #include "algorithms/cbt_2024/d3d12/D3D12CbtTerrainLodAlgorithm.h"
 
 #include "algorithms/cbt_2024/Cbt2024Support.h"
-#include "algorithms/cbt_2024/d3d12/D3D12CbtBaseTopology.h"
-#include "algorithms/cbt_2024/d3d12/D3D12CbtE0Pipeline.h"
+#include "algorithms/cbt_2024/d3d12/D3D12CbtFramePipeline.h"
+#include "algorithms/cbt_2024/d3d12/D3D12CbtGpuState.h"
 #include "render/D3D12GraphicsBackend.h"
 #include "terrain/TerrainMeshBuilder.h"
 #include "tools/PerformanceTimer.h"
@@ -19,8 +19,8 @@ namespace ParallelRoam::Algorithms::Cbt2024::D3D12
 struct D3D12CbtTerrainState
 {
     // Topology 必须晚于 Pipeline 析构；成员逆序销毁保证描述符先归还再释放资源
-    D3D12CbtBaseTopologyState Topology;
-    D3D12CbtE0Pipeline Pipeline;
+    D3D12CbtGpuState Topology;
+    D3D12CbtFramePipeline Pipeline;
     float TerrainSize{0.0F};
     bool GeometryInitialized{false};
 };
@@ -40,7 +40,7 @@ void FillRenderPacket(
     TerrainLodRenderPacket& outPacket)
 {
     const CbtBaseTopology& topology = state.Topology.Topology();
-    const D3D12CbtTopologyResourceView resources = state.Topology.Resources();
+    const D3D12CbtGpuResourceView resources = state.Topology.Resources();
     const auto& templates = state.Pipeline.LastBisectTemplateCounts();
     outPacket.Mode = TerrainLodRenderMode::GpuProceduralIndirect;
     outPacket.StatusMessage =

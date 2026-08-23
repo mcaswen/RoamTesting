@@ -419,8 +419,10 @@ split 和 merge 只修改底层占用位。之后必须执行三段归约：
 D3D12CbtTerrainLodAlgorithm : ITerrainLodAlgorithm
 ├── CbtOccupancyTree            CPU OCBT 参考结构
 ├── CbtBaseTopology             CPU 基础二分器与 buffer layout
-├── D3D12CbtBaseTopologyState   GPU 常驻拓扑、任务、索引和命令资源
-├── 后续 CbtTopologyPipeline    Classify、Split、Merge、Propagate 和 Reduce
+├── D3D12CbtGpuState            GPU 常驻拓扑、任务、索引和命令资源
+├── D3D12CbtFramePipeline       Classify、Split、Commit、Propagate 和 Reduce 帧编排
+│   ├── D3D12CbtGeometryPipeline 参数几何、最终顶点和独立资源状态
+│   └── D3D12CbtDiagnostics     延迟回读、CPU 参考对照和持久故障锁存
 └── TerrainLodRenderPacket      借用 GPU 资源，不转移所有权
 ```
 

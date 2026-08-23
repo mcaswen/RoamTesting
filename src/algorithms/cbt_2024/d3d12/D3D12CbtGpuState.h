@@ -19,7 +19,7 @@ namespace ParallelRoam::Algorithms::Cbt2024::D3D12
 /// <summary>
 /// 不拥有资源的 D3D12 CBT 缓冲视图，供后续更新和绘制 pass 绑定
 /// </summary>
-struct D3D12CbtTopologyResourceView
+struct D3D12CbtGpuResourceView
 {
     ID3D12Resource* OccupancyTree{nullptr};
     ID3D12Resource* OccupancyBitfield{nullptr};
@@ -44,14 +44,14 @@ struct D3D12CbtTopologyResourceView
 /// <summary>
 /// 持有方形基础二分器和 CBT 更新链所需的全部 D3D12 常驻资源
 /// </summary>
-class D3D12CbtBaseTopologyState
+class D3D12CbtGpuState
 {
 public:
-    D3D12CbtBaseTopologyState();
-    ~D3D12CbtBaseTopologyState();
+    D3D12CbtGpuState();
+    ~D3D12CbtGpuState();
 
-    D3D12CbtBaseTopologyState(const D3D12CbtBaseTopologyState&) = delete;
-    D3D12CbtBaseTopologyState& operator=(const D3D12CbtBaseTopologyState&) = delete;
+    D3D12CbtGpuState(const D3D12CbtGpuState&) = delete;
+    D3D12CbtGpuState& operator=(const D3D12CbtGpuState&) = delete;
 
     /// @brief 在帧外等待 GPU 空闲并原子替换整套容量资源
     [[nodiscard]] bool Rebuild(
@@ -67,7 +67,7 @@ public:
     [[nodiscard]] const CbtBaseTopology& Topology() const;
 
     /// @brief 返回值只在下次 Rebuild、Reset 或析构前有效
-    [[nodiscard]] D3D12CbtTopologyResourceView Resources() const;
+    [[nodiscard]] D3D12CbtGpuResourceView Resources() const;
 
 private:
     struct Impl;

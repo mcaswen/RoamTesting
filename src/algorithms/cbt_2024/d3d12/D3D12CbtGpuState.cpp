@@ -1,4 +1,4 @@
-#include "algorithms/cbt_2024/d3d12/D3D12CbtBaseTopology.h"
+#include "algorithms/cbt_2024/d3d12/D3D12CbtGpuState.h"
 
 #include "algorithms/cbt_2024/Cbt2024Support.h"
 #include "render/D3D12GraphicsBackend.h"
@@ -180,7 +180,7 @@ bool CreateReadbackBuffer(
     return true;
 }
 
-D3D12CbtTopologyResourceView BuildResourceView(const CbtTopologyResources& resources)
+D3D12CbtGpuResourceView BuildResourceView(const CbtTopologyResources& resources)
 {
     return {
         resources.OccupancyTree.Get(),
@@ -206,7 +206,7 @@ D3D12CbtTopologyResourceView BuildResourceView(const CbtTopologyResources& resou
 
 std::vector<ResourceRecord> BuildResourceRecords(
     const CbtBaseTopology& topology,
-    const D3D12CbtTopologyResourceView& resources)
+    const D3D12CbtGpuResourceView& resources)
 {
     // 这里集中定义物理缓冲尺寸，创建、清零和读回验证共同消费同一记录
     // 后续增加 pass 缓冲时必须只扩展这一份清单，避免某条生命周期路径漏处理
@@ -459,7 +459,7 @@ void AddZeroSlice(
 
 bool ValidateResourceSizes(
     const CbtBaseTopology& topology,
-    const D3D12CbtTopologyResourceView& resources,
+    const D3D12CbtGpuResourceView& resources,
     std::string* errorMessage)
 {
     // 资源宽度本身也是协议的一部分，错误 stride 即使初始片段正确也不能通过
@@ -477,7 +477,7 @@ bool ValidateResourceSizes(
 bool ValidateGpuInitialState(
     Render::D3D12GraphicsBackend& backend,
     const CbtBaseTopology& topology,
-    const D3D12CbtTopologyResourceView& resources,
+    const D3D12CbtGpuResourceView& resources,
     std::string* errorMessage)
 {
     if (!ValidateResourceSizes(topology, resources, errorMessage))
@@ -597,7 +597,7 @@ bool ValidateGpuInitialState(
 }
 } // namespace
 
-struct D3D12CbtBaseTopologyState::Impl
+struct D3D12CbtGpuState::Impl
 {
     CbtBaseTopology Topology{};
     CbtTopologyResources Resources{};
@@ -605,14 +605,14 @@ struct D3D12CbtBaseTopologyState::Impl
     bool Initialized{false};
 };
 
-D3D12CbtBaseTopologyState::D3D12CbtBaseTopologyState()
+D3D12CbtGpuState::D3D12CbtGpuState()
     : _impl(std::make_unique<Impl>())
 {
 }
 
-D3D12CbtBaseTopologyState::~D3D12CbtBaseTopologyState() = default;
+D3D12CbtGpuState::~D3D12CbtGpuState() = default;
 
-bool D3D12CbtBaseTopologyState::Rebuild(
+bool D3D12CbtGpuState::Rebuild(
     Render::D3D12GraphicsBackend& backend,
     CbtOccupancyCapacity capacity,
     std::string* errorMessage)
@@ -656,7 +656,7 @@ bool D3D12CbtBaseTopologyState::Rebuild(
     return true;
 }
 
-bool D3D12CbtBaseTopologyState::Reset(
+bool D3D12CbtGpuState::Reset(
     Render::D3D12GraphicsBackend& backend,
     std::string* errorMessage)
 {
@@ -678,22 +678,22 @@ bool D3D12CbtBaseTopologyState::Reset(
     return true;
 }
 
-bool D3D12CbtBaseTopologyState::IsInitialized() const
+bool D3D12CbtGpuState::IsInitialized() const
 {
     return _impl->Initialized;
 }
 
-std::uint64_t D3D12CbtBaseTopologyState::Generation() const
+std::uint64_t D3D12CbtGpuState::Generation() const
 {
     return _impl->Generation;
 }
 
-const CbtBaseTopology& D3D12CbtBaseTopologyState::Topology() const
+const CbtBaseTopology& D3D12CbtGpuState::Topology() const
 {
     return _impl->Topology;
 }
 
-D3D12CbtTopologyResourceView D3D12CbtBaseTopologyState::Resources() const
+D3D12CbtGpuResourceView D3D12CbtGpuState::Resources() const
 {
     return BuildResourceView(_impl->Resources);
 }
@@ -710,7 +710,7 @@ bool RunD3D12CbtBaseTopologySmokeTest(
         return false;
     }
 
-    D3D12CbtBaseTopologyState state;
+    D3D12CbtGpuState state;
     const std::array<CbtOccupancyCapacity, 5> capacities{
         CbtOccupancyCapacity::Capacity128K,
         CbtOccupancyCapacity::Capacity256K,

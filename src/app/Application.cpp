@@ -4,7 +4,7 @@
 #include "algorithms/cbt_2024/CbtBisectorTopology.h"
 
 #if defined(PARALLEL_ROAM_GRAPHICS_API_D3D12)
-#include "algorithms/cbt_2024/d3d12/D3D12CbtBaseTopology.h"
+#include "algorithms/cbt_2024/d3d12/D3D12CbtGpuState.h"
 #include "algorithms/cbt_2024/d3d12/D3D12CbtOccupancyTree.h"
 #include "render/D3D12GraphicsBackend.h"
 #endif

@@ -183,7 +183,7 @@ currentVertexBuffer[3 * totalNumElements + slot]
 | `TerrainRenderer::UpdateForView` | CBT 只在平移超过阈值或 mesh dirty 时 Build；纯旋转可能不更新 | 已增加 `EveryFrame` policy；300 帧 smoke 逐帧校验 topology generation，覆盖 150 帧静止和 150 帧纯旋转 |
 | `TerrainLodRenderPacket` | GPU 模式要求 CPU 提供大于零的实时活动数，并用它判断 drawable | 已由 GPU 间接命令拥有真实 draw count；CPU 活动数为零时资源契约仍可绘制 |
 | `CbtTopologyBufferLayout` | draw buffer 被建模为三个 draw command | 已改为上游精确 10 `uint` draw state，并增加独立 9 `uint` geometry dispatch |
-| `D3D12CbtBaseTopologyState` | 没有 `memoryBuffer`、`validationBuffer` 和内部 topology indirect scratch | 已补齐 memory、validation、topology dispatch、geometry dispatch 和精确初始化数据 |
+| `D3D12CbtGpuState` | 没有 `memoryBuffer`、`validationBuffer` 和内部 topology indirect scratch | 已补齐 memory、validation、topology dispatch、geometry dispatch 和精确初始化数据 |
 | OCBT HLSL | rank-select 已验证，Reduce 实现仍位于测试 shader | 测试与生产入口已共用 `CbtReducePre/First/Second` |
 | CBT terrain adapter | CPU 只写六个基础三角形，顶点容量为每槽 3 个 | 已由 GPU Bootstrap 生成四位置分类布局和 52-byte render vertex |
 | 资源同步 | 基础 adapter 使用持久 upload heap；没有计算/绘制状态机 | topology 和几何已迁至 default heap 常驻，并集中维护 UAV、SRV 和 `INDIRECT_ARGUMENT` 状态 |
@@ -975,13 +975,13 @@ CTest 应使用 `unit`、`gpu-quick`、`integration` 标签并设置明确超时
 
 | 主题 | 上游源码 | 当前项目对应位置 |
 |---|---|---|
-| 帧拓扑编排 | [`mesh_updater.cpp`](../../third_party/large_cbt/demo/src/mesh/mesh_updater.cpp) | [`D3D12CbtE0Pipeline.cpp`](../../src/algorithms/cbt_2024/d3d12/D3D12CbtE0Pipeline.cpp)，已接入 E0-E3 分类、规划、提交、传播、Reduce、Indexation 与增量几何 |
+| 帧拓扑编排 | [`mesh_updater.cpp`](../../third_party/large_cbt/demo/src/mesh/mesh_updater.cpp) | [`D3D12CbtFramePipeline.cpp`](../../src/algorithms/cbt_2024/d3d12/D3D12CbtFramePipeline.cpp)，已接入 E0-E3 分类、规划、提交、传播、Reduce、Indexation 与增量几何 |
 | shader 入口和面积分类 | [`UpdateMesh.compute`](../../third_party/large_cbt/shaders/UpdateMesh.compute) | [`CbtTopologyE0.hlsl`](../../assets/shaders/dx12/cbt/CbtTopologyE0.hlsl) 与 [`CbtClassification.cpp`](../../src/algorithms/cbt_2024/CbtClassification.cpp) CPU 参考 |
 | split 规划与分配 | [`update_utilities.hlsl`](../../third_party/large_cbt/shaders/shader_lib/update_utilities.hlsl) | [`CbtTopologyE0.hlsl`](../../assets/shaders/dx12/cbt/CbtTopologyE0.hlsl) 与 [`CbtSplitPlanner.cpp`](../../src/algorithms/cbt_2024/CbtSplitPlanner.cpp) CPU 参考 |
 | split 提交、merge、传播 | [`update_utilities.hlsl`](../../third_party/large_cbt/shaders/shader_lib/update_utilities.hlsl) | [`CbtTopologyE0.hlsl`](../../assets/shaders/dx12/cbt/CbtTopologyE0.hlsl) 与 [`CbtBisectCommit.cpp`](../../src/algorithms/cbt_2024/CbtBisectCommit.cpp) 已迁移 split/传播；merge 待 F |
 | OCBT | [`ocbt_generic.hlsl`](../../third_party/large_cbt/shaders/shader_lib/ocbt_generic.hlsl) | [`CbtOccupancyTree.hlsli`](../../assets/shaders/dx12/cbt/CbtOccupancyTree.hlsli) |
 | 基础半边展开 | [`cpu_mesh.cpp`](../../third_party/large_cbt/demo/src/mesh/cpu_mesh.cpp) | [`CbtBisectorTopology.cpp`](../../src/algorithms/cbt_2024/CbtBisectorTopology.cpp) |
-| GPU 资源布局 | [`mesh.cpp`](../../third_party/large_cbt/demo/src/mesh/mesh.cpp) | [`D3D12CbtBaseTopology.cpp`](../../src/algorithms/cbt_2024/d3d12/D3D12CbtBaseTopology.cpp) |
+| GPU 资源布局 | [`mesh.cpp`](../../third_party/large_cbt/demo/src/mesh/mesh.cpp) | [`D3D12CbtGpuState.cpp`](../../src/algorithms/cbt_2024/d3d12/D3D12CbtGpuState.cpp) |
 | 逻辑几何 | [`PlanetGeometry.compute`](../../third_party/large_cbt/shaders/PlanetGeometry.compute) | [`CbtBootstrap.hlsl`](../../assets/shaders/dx12/cbt/CbtBootstrap.hlsl) 已提供平面 Bootstrap，高度图求值待 G |
 | 算法接口 | — | [`ITerrainLodAlgorithm.h`](../../src/algorithms/ITerrainLodAlgorithm.h) |
 | 调度与绘制 | — | [`D3D12TerrainRenderer.cpp`](../../src/render/D3D12TerrainRenderer.cpp) |
