@@ -305,7 +305,7 @@ bool D3D12CbtTerrainLodAlgorithm::BuildRenderData(
     {
         _stats.CbtBisectTemplateCounts[index] = templateCounts[index];
     }
-    _stats.MaxActiveDepth = static_cast<int>(_state->Topology.Topology().BaseDepth);
+    _stats.MaxActiveDepth = static_cast<int>(_state->Pipeline.LastMaximumActiveDepth());
     _stats.CpuGpuReadbackBytes = (input.Settings.CbtValidationMode != TerrainLodCbtValidationMode::Off
         ? D3D12CbtDiagnostics::ValidationReadbackBytes
         : D3D12CbtDiagnostics::DiagnosticReadbackBytes) +

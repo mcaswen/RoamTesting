@@ -639,6 +639,16 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
                           << terrainStats.RoamNodeCount << '\n';
                 _terrainLodSmokeTestFailed = true;
             }
+            if (sampleGeneration != 0U &&
+                (terrainStats.RoamMaxDepthReached < static_cast<int>(Algorithms::Cbt2024::CbtBaseDepth) ||
+                 (terrainStats.RoamNodeCount > Algorithms::Cbt2024::CbtBaseBisectorCount &&
+                  terrainStats.RoamMaxDepthReached == static_cast<int>(Algorithms::Cbt2024::CbtBaseDepth))))
+            {
+                std::cerr << "CBT maximum active depth does not match the sampled active topology: depth="
+                          << terrainStats.RoamMaxDepthReached << ", active="
+                          << terrainStats.RoamNodeCount << '\n';
+                _terrainLodSmokeTestFailed = true;
+            }
 #if defined(PARALLEL_ROAM_GRAPHICS_API_D3D12)
             if (_cbtProceduralSmokeFrameCount >= 480U &&
                 terrainStats.RoamCpuGpuReadbackBytes !=

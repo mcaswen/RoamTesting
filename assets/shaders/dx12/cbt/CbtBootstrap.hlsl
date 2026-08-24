@@ -39,6 +39,12 @@ RWStructuredBuffer<float3> ClassificationPositions : register(u5);
 RWStructuredBuffer<TerrainVertex> RenderVertices : register(u6);
 RWStructuredBuffer<uint> Validation : register(u7);
 
+uint CbtBootstrapHeapDepth(uint64_t heapId)
+{
+    const uint high = uint(heapId >> 32u);
+    return high != 0u ? uint(firstbithigh(high)) + 33u : uint(firstbithigh(uint(heapId))) + 1u;
+}
+
 [numthreads(64, 1, 1)]
 void CSIndexation(uint physicalSlot : SV_DispatchThreadID)
 {
@@ -52,6 +58,10 @@ void CSIndexation(uint physicalSlot : SV_DispatchThreadID)
     // draw 顶点数同时充当 active list 的三倍 append 游标
     InterlockedAdd(DrawState[CbtDrawActiveVertexCountWord], 3u, vertexOffset);
     ActiveIndices[vertexOffset / 3u] = physicalSlot;
+    // HeapID 位长就是分类使用的 subdivision depth；与活动索引同一次全槽扫描归约。
+    InterlockedMax(
+        Validation[CbtValidationMaxActiveDepthWord],
+        CbtBootstrapHeapDepth(HeapIds[physicalSlot]));
 
     // visible 和 modified 是 active 的逐级子集 只有对应标志存在才继续追加
     const uint flags = BisectorData[physicalSlot].Flags;
@@ -198,12 +208,6 @@ void CSBuildBaseGeometry(uint localBase : SV_DispatchThreadID)
     {
         RenderVertices[physicalSlot * 3u + outputVertex] = vertices[outputVertex];
     }
-}
-
-uint CbtBootstrapHeapDepth(uint64_t heapId)
-{
-    const uint high = uint(heapId >> 32u);
-    return high != 0u ? uint(firstbithigh(high)) + 33u : uint(firstbithigh(uint(heapId))) + 1u;
 }
 
 void CbtSplitPlaneTriangle(inout float3 p0, inout float3 p1, inout float3 p2, bool rightChild)

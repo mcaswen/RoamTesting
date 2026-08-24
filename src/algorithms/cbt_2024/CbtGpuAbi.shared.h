@@ -5,6 +5,7 @@
 // Keep values as language-neutral integer tokens and expose typed names in each language adapter.
 #define CBT_GPU_INVALID_INDEX 0xffffffffu
 #define CBT_GPU_BASE_BISECTOR_COUNT 6u
+#define CBT_GPU_BASE_DEPTH 4u
 
 #define CBT_GPU_VISIBLE_FLAG 0x1u
 #define CBT_GPU_MODIFIED_FLAG 0x2u
@@ -69,8 +70,10 @@
 // [14] neighbor rewrites emitted by merge propagation;
 // [15] two-node merge groups committed;
 // [16] four-node merge groups committed;
-// [17] active dynamic OCBT root captured before this frame mutates it.
+// [17] active dynamic OCBT root captured before this frame mutates it;
+// [18] maximum bit-length depth among the active heap IDs after indexation.
 // Keep this count synchronized with D3D12CbtDiagnostics readback sizing.
-#define CBT_GPU_VALIDATION_WORD_COUNT 18u
+#define CBT_GPU_VALIDATION_MAX_ACTIVE_DEPTH_WORD 18u
+#define CBT_GPU_VALIDATION_WORD_COUNT 19u
 
 #endif

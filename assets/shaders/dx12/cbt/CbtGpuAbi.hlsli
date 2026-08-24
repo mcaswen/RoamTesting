@@ -39,6 +39,7 @@ static const uint CbtActiveDispatchOffsetWord = CBT_GPU_ACTIVE_DISPATCH_OFFSET_W
 // 三条 dispatch 命令各占三个连续 uint，偏移可直接用于 ExecuteIndirect。
 static const uint CbtActivePositionDispatchOffsetWord = CBT_GPU_ACTIVE_POSITION_DISPATCH_OFFSET_WORD;
 static const uint CbtModifiedDispatchOffsetWord = CBT_GPU_MODIFIED_DISPATCH_OFFSET_WORD;
+static const uint CbtValidationMaxActiveDepthWord = CBT_GPU_VALIDATION_MAX_ACTIVE_DEPTH_WORD;
 static const uint CbtValidationWordCount = CBT_GPU_VALIDATION_WORD_COUNT;
 
 struct CbtBisectorData

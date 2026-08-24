@@ -372,6 +372,16 @@
 - 验证：`cbt_procedural_h_*` 在 CBT 已记录本帧命令后依次请求高度图重载、CBT→Classic→CBT 和容量换档；128K、256K、512K、1M 四档均完成全部 540 帧，观察到切出、切回和新容量，退出码为 0。初版回归曾稳定复现 256K/512K/1M 降到 128K 时的 `DXGI_ERROR_DEVICE_HUNG`，改为帧边界整状态重建后消失。
 - 后续：设备丢失后的 fence 等待仍应增加超时与 DRED breadcrumb 报告，作为故障可诊断性增强；它不替代本次资源生命周期修复。
 
+### BUG-031：CBT 实际深度固定显示基础深度
+
+- 状态：`Fixed`
+- 严重级别：`一般`
+- 发生阶段：CBT UI 运行时统计与 benchmark 报告
+- 现象：无论 CBT 已细分出多少活动三角形，`Reached Max Depth` 始终显示 4；默认和极限报告无法反映真实活动拓扑深度。
+- 定位：D3D12 adapter 直接把六个基础面的 `BaseDepth` 发布为 `MaxActiveDepth`，没有从 GPU 常驻 HeapID 中统计活动叶片的最大深度。
+- 解决方案：Indexation 在原有全槽活动扫描中对 HeapID 位长执行原子最大值归约，并通过常规延迟诊断槽追加 4 字节回读；UI 与 benchmark 改为发布该样本值，不增加全容量验证或同步等待。
+- 验证：D3D12 quick benchmark 的默认路径样本报告深度 11、12，极限路径报告深度 20；CBT smoke 同时验证细分活动数大于六时深度不能停留在基础值 4，并覆盖降深过程中真实深度逐帧回落的语义。
+
 ## 模板
 
 ```text

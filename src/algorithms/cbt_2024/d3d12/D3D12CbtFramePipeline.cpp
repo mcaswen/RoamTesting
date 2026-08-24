@@ -35,6 +35,8 @@ constexpr std::size_t MemoryCounterOffset = D3D12CbtDiagnostics::MemoryCounterOf
 constexpr std::size_t ValidationCounterOffset = D3D12CbtDiagnostics::ValidationCounterOffset;
 constexpr std::size_t OccupancyRootOffset = D3D12CbtDiagnostics::OccupancyRootOffset;
 constexpr std::size_t DrawStateReadbackOffset = D3D12CbtDiagnostics::DrawStateReadbackOffset;
+constexpr std::size_t MaximumActiveDepthReadbackOffset =
+    D3D12CbtDiagnostics::MaximumActiveDepthReadbackOffset;
 constexpr std::size_t BaseBisectorDataOffset = D3D12CbtDiagnostics::BaseBisectorDataOffset;
 constexpr std::size_t BaseRenderVertexOffset = D3D12CbtDiagnostics::BaseRenderVertexOffset;
 constexpr std::size_t BaseClassificationPositionOffset =
@@ -1282,6 +1284,18 @@ bool D3D12CbtFramePipeline::RecordFrame(
             sizeof(std::uint32_t) * CbtValidationWordCount);
         Transition(commandList, resources.Validation, _validationState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     }
+    else
+    {
+        // Indexation 已归约全部活动 HeapID；常规诊断只追加复制这个 uint，不启用全容量验证。
+        Transition(commandList, resources.Validation, _validationState, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        commandList->CopyBufferRegion(
+            _diagnostics.Readback(frameIndex),
+            MaximumActiveDepthReadbackOffset,
+            resources.Validation,
+            static_cast<std::uint64_t>(CbtValidationMaxActiveDepthWord) * sizeof(std::uint32_t),
+            sizeof(std::uint32_t));
+        Transition(commandList, resources.Validation, _validationState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    }
     endGpuStage(TerrainLodCbtGpuStage::Validation);
     if (exactReference)
     {
@@ -1464,6 +1478,11 @@ std::uint32_t D3D12CbtFramePipeline::LastActiveDynamicSlotCount() const
 std::uint32_t D3D12CbtFramePipeline::LastIndexedActiveCount() const
 {
     return _diagnostics.Snapshot().IndexedActiveCount;
+}
+
+std::uint32_t D3D12CbtFramePipeline::LastMaximumActiveDepth() const
+{
+    return _diagnostics.Snapshot().MaximumActiveDepth;
 }
 
 std::uint64_t D3D12CbtFramePipeline::ClassificationSampleGeneration() const

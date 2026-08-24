@@ -10,6 +10,7 @@ namespace ParallelRoam::Algorithms::Cbt2024
 // GPU buffer 布局变化必须先修改共享 word index，再由 offsetof 断言验证结构体。
 inline constexpr std::uint32_t InvalidCbtBisectorIndex = CBT_GPU_INVALID_INDEX;
 inline constexpr std::uint32_t CbtBaseBisectorCount = CBT_GPU_BASE_BISECTOR_COUNT;
+inline constexpr std::uint32_t CbtBaseDepth = CBT_GPU_BASE_DEPTH;
 inline constexpr std::uint32_t CbtBaseControlPointCount = CbtBaseBisectorCount * 3U;
 
 inline constexpr std::uint32_t CbtVisibleFlag = CBT_GPU_VISIBLE_FLAG;
@@ -36,5 +37,7 @@ inline constexpr std::uint32_t CbtBisectorDataWordCount = CBT_GPU_BISECTOR_DATA_
 // word count 用于资源容量、readback 范围和跨语言静态布局检查。
 inline constexpr std::uint32_t CbtDrawStateWordCount = CBT_GPU_DRAW_STATE_WORD_COUNT;
 inline constexpr std::uint32_t CbtIndirectDispatchWordCount = CBT_GPU_GEOMETRY_DISPATCH_WORD_COUNT;
+inline constexpr std::uint32_t CbtValidationMaxActiveDepthWord =
+    CBT_GPU_VALIDATION_MAX_ACTIVE_DEPTH_WORD;
 inline constexpr std::uint32_t CbtValidationWordCount = CBT_GPU_VALIDATION_WORD_COUNT;
 } // namespace ParallelRoam::Algorithms::Cbt2024

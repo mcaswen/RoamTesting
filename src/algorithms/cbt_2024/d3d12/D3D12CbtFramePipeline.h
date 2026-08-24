@@ -94,6 +94,7 @@ public:
     [[nodiscard]] std::uint32_t LastQuadMergeCount() const;
     [[nodiscard]] std::uint32_t LastActiveDynamicSlotCount() const;
     [[nodiscard]] std::uint32_t LastIndexedActiveCount() const;
+    [[nodiscard]] std::uint32_t LastMaximumActiveDepth() const;
     [[nodiscard]] std::uint64_t ClassificationSampleGeneration() const;
     [[nodiscard]] std::uint64_t GpuTimingSampleGeneration() const;
     [[nodiscard]] const std::array<float, TerrainLodCbtGpuStageCount>& LastGpuStageMilliseconds() const;

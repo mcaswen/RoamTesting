@@ -8,7 +8,7 @@ namespace ParallelRoam::Algorithms::Cbt2024
 {
 namespace
 {
-constexpr std::uint32_t BaseDepth = 4U;
+constexpr std::uint32_t BaseDepth = CbtBaseDepth;
 constexpr std::uint64_t FirstBaseHeapId = std::uint64_t{1U} << (BaseDepth - 1U);
 constexpr std::uint32_t GeometryThreadGroupSize = 64U;
 

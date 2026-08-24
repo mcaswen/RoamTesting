@@ -67,6 +67,8 @@ struct D3D12CbtDiagnosticSnapshot
     // OCBT 根只含动态槽位；draw state 的活动数还包含六个基础二分器。
     std::uint32_t ActiveDynamicSlotCount{0U};
     std::uint32_t IndexedActiveCount{CbtBaseBisectorCount};
+    // 与 shader 分类协议一致，深度采用 HeapID 位长，因此六个基础面位于深度 4。
+    std::uint32_t MaximumActiveDepth{CbtBaseDepth};
     // GPU timestamp 与计数槽一同轮转，数组末项 TerrainRender 由 renderer 单独填充
     std::uint64_t GpuTimingSampleGeneration{0U};
     std::array<float, TerrainLodCbtGpuStageCount> GpuStageMilliseconds{};
@@ -87,7 +89,10 @@ public:
     static constexpr std::size_t MemoryCounterOffset = sizeof(std::uint32_t) * 3U;
     // validation 保留 split、merge、传播和帧前活动数的原子诊断。
     static constexpr std::size_t ValidationCounterOffset = sizeof(std::uint32_t) * 5U;
-    // OCBT 根只在完整验证路径复制。
+    static constexpr std::size_t MaximumActiveDepthReadbackOffset =
+        ValidationCounterOffset +
+        sizeof(std::uint32_t) * CbtValidationMaxActiveDepthWord;
+    // OCBT 根与 draw state 每帧配对复制，关闭完整验证时也能发布活动统计。
     static constexpr std::size_t OccupancyRootOffset =
         ValidationCounterOffset + sizeof(std::uint32_t) * CbtValidationWordCount;
     // draw state 位于根计数之后，保持结构体自然字节布局。

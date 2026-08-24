@@ -70,8 +70,8 @@ bool Near(const Terrain::TerrainMeshVertex& lhs, const Terrain::TerrainMeshVerte
 }
 } // namespace
 
-static_assert(D3D12CbtDiagnostics::DiagnosticReadbackBytes == 136U);
-static_assert(D3D12CbtDiagnostics::ValidationReadbackBytes == 1552U);
+static_assert(D3D12CbtDiagnostics::DiagnosticReadbackBytes == 140U);
+static_assert(D3D12CbtDiagnostics::ValidationReadbackBytes == 1556U);
 
 bool D3D12CbtDiagnostics::Initialize(
     Render::D3D12GraphicsBackend& backend,
@@ -256,6 +256,7 @@ bool D3D12CbtDiagnostics::ConsumeCompleted(
     std::memcpy(&drawState, bytes + DrawStateReadbackOffset, sizeof(drawState));
     _snapshot.ActiveDynamicSlotCount = occupancyRoot;
     _snapshot.IndexedActiveCount = drawState.ActiveBisectorCount;
+    _snapshot.MaximumActiveDepth = validation[CbtValidationMaxActiveDepthWord];
     const std::uint32_t expectedDynamic =
         validation[17] + _snapshot.CommittedDynamicSlotCount - _snapshot.ReleasedDynamicSlotCount;
     if (_snapshot.CommittedDynamicSlotCount != _snapshot.AllocatedSplitSlotCount ||

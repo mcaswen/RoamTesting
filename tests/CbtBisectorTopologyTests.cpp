@@ -13,6 +13,7 @@ using ParallelRoam::Algorithms::Cbt2024::CbtHeapIdChild;
 using ParallelRoam::Algorithms::Cbt2024::CbtHeapIdDepth;
 using ParallelRoam::Algorithms::Cbt2024::CbtHeapIdParent;
 using ParallelRoam::Algorithms::Cbt2024::CbtOccupancyCapacity;
+using ParallelRoam::Algorithms::Cbt2024::CbtValidationMaxActiveDepthWord;
 using ParallelRoam::Algorithms::Cbt2024::CbtValidationWordCount;
 using ParallelRoam::Algorithms::Cbt2024::InvalidCbtBisectorIndex;
 using ParallelRoam::Algorithms::Cbt2024::ValidateCbtBaseTopology;
@@ -44,6 +45,10 @@ bool ValidateCapacity(CbtOccupancyCapacity capacity)
     valid &= Expect(
         layout.ValidationElementCount == CbtValidationWordCount,
         "validation and F diagnostics size mismatch");
+    valid &= Expect(CbtValidationWordCount == 19U, "validation diagnostics must include maximum active depth");
+    valid &= Expect(
+        CbtValidationMaxActiveDepthWord + 1U == CbtValidationWordCount,
+        "maximum active depth must occupy the validation tail word");
     valid &= Expect(layout.DrawStateElementCount == 10U, "draw state must contain ten uints");
     valid &= Expect(layout.TopologyDispatchElementCount == 9U, "topology indirect scratch size mismatch");
     valid &= Expect(layout.GeometryDispatchElementCount == 9U, "geometry dispatch size mismatch");
