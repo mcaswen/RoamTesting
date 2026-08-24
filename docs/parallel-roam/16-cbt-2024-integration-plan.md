@@ -759,7 +759,7 @@ E3 对外启用 `SupportsSplit`、`SupportsCrackFix` 和 `SupportsTopologyValida
 - UI 与 `--runtime-benchmark-cbt-*` 参数独立控制 area、128K/256K/512K/1M 容量、Off/Delayed/BlockingSmoke 验证和 ModifiedOnly/FullDebug 几何，不再复用 CPU ROAM 阈值或验证开关；
 - compute、几何、validation 与 terrain draw 使用交换链轮转 timestamp query；普通帧不等待当前样本，BlockingSmoke 的显式等待单独计时；
 - 延迟诊断公开资源、拓扑、计数、compute timing 和 terrain draw 代次，并记录 sample age 与 dropped；汇总只计算代次完全对齐的新鲜样本；
-- runtime benchmark 在 D3D12 能力可用时加入 CBT，每种算法独立预热 8 帧，默认与极限路径复用相同离散相机 `sampleIndex`，极限路径固定为 1M 和 25 px²；
+- runtime benchmark 在 D3D12 能力可用时加入 CBT，默认路径固定为 20K、20 层、128K 和 58 px²并预热 8 帧，极限路径固定为 200K、20 层、1M 和 2.05 px²并预热 24 帧；两条路径复用相同离散相机 `sampleIndex`，并按稳态活动三角形规模完成校准；
 - Markdown/CSV 输出 CBT 配置、硬件、资源代次、动态槽位与 split/merge 计数、18 个 GPU 阶段、阻塞等待和完整回读字节数；自动流程在采样完成后写出报告并退出；
 - `cbt_procedural_h_*` 覆盖四档容量及三种验证路径，`cbt_runtime_h_default_quick`、`cbt_runtime_h_extreme_quick` 和 `cbt_runtime_h_full_geometry_quick` 覆盖默认、极限和 full-debug runtime 接入；
 - RTX 5090 D / Debug D3D12 下 25/25 CTest 通过，Debug OpenGL 下 18/18 通过；CBT C++ 注释率为 16.1%，shader 注释率为 15.3%。

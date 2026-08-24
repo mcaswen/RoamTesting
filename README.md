@@ -221,9 +221,9 @@ powershell -ExecutionPolicy Bypass -File scripts/run/d3d12/run_relwithdebinfo_fe
 - `runtime-benchmark-<timestamp>.md`：中文汇总和阶段对比；
 - `runtime-benchmark-<timestamp>.csv`：逐帧原始数据。
 
-默认选项路径包含 600 个采样点，极限压力路径包含 64 个采样点；每种算法都按相同 `sampleIndex` 执行，因此算法快慢不会改变路径采样密度。极限路径默认将 CBT 设为 1M 容量和 25 px² 面积阈值，性能路径默认使用 `Off` 验证与 `ModifiedOnly` 几何。可通过 `--runtime-benchmark-path`、`--runtime-benchmark-heightmap`、`--runtime-benchmark-terrain-size`、`--runtime-benchmark-height-scale`、`--runtime-benchmark-max-depth`、`--runtime-benchmark-split-pixels`、`--runtime-benchmark-merge-pixels`、`--runtime-benchmark-cbt-area`、`--runtime-benchmark-cbt-capacity`、`--runtime-benchmark-cbt-validation`、`--runtime-benchmark-cbt-geometry`、`--runtime-benchmark-samples` 和 `--runtime-benchmark-label` 覆盖实验参数。旧 `--runtime-benchmark-duration` 仅作为兼容参数保留，每个名义秒换算为 60 个离散采样点。
+默认选项路径包含 600 个采样点，固定使用 20K 预算、20 层最大深度、128K CBT 容量和 58 px² 面积阈值；极限压力路径包含 64 个采样点，固定使用 200K 预算、20 层最大深度、1M CBT 容量和 2.05 px² 面积阈值。两条路径都已按稳态活动三角形规模校准，每种算法按相同 `sampleIndex` 执行，因此算法快慢不会改变路径采样密度。性能路径默认使用 `Off` 验证与 `ModifiedOnly` 几何；仍可通过 `--runtime-benchmark-path`、`--runtime-benchmark-heightmap`、`--runtime-benchmark-terrain-size`、`--runtime-benchmark-height-scale`、`--runtime-benchmark-max-depth`、`--runtime-benchmark-split-pixels`、`--runtime-benchmark-merge-pixels`、`--runtime-benchmark-cbt-area`、`--runtime-benchmark-cbt-capacity`、`--runtime-benchmark-cbt-validation`、`--runtime-benchmark-cbt-geometry`、`--runtime-benchmark-samples` 和 `--runtime-benchmark-label` 显式覆盖实验参数。旧 `--runtime-benchmark-duration` 仅作为兼容参数保留，每个名义秒换算为 60 个离散采样点。
 
-每条算法路径会独立预热 8 帧，初始化成本不进入稳态样本。单次运行顺序固定为 Classic、DOD、CBT；正式重复实验仍应轮换启动顺序，以降低缓存状态、GPU 频率和设备温度造成的顺序偏差。Markdown/CSV 会记录 CBT 参数、资源/拓扑/诊断代次、样本年龄与 dropped 标记、动态槽位计数，以及 compute、几何和 terrain draw 的逐阶段 GPU 时间。
+默认路径会为每种算法独立预热 8 帧，极限路径预热 24 帧，使 CBT 在正式采样前完成深层拓扑扩张，初始化成本不进入稳态样本。单次运行顺序固定为 Classic、DOD、CBT；正式重复实验仍应轮换启动顺序，以降低缓存状态、GPU 频率和设备温度造成的顺序偏差。Markdown/CSV 会记录 CBT 参数、资源/拓扑/诊断代次、样本年龄与 dropped 标记、动态槽位计数，以及 compute、几何和 terrain draw 的逐阶段 GPU 时间。
 
 > ROAM 1997 论文公式 (1) 和公式 (2)/(3) 接入后，候选优先级分数（score）与活动拓扑语义已经变化。旧版本的三角形数量、score 分布等结果不应与当前版本直接横向比较。
 

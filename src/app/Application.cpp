@@ -95,7 +95,15 @@ BudgetSaturationCameraPose ComputeBudgetSaturationCameraPose(float normalizedTim
 // benchmark 路径是有限的相机姿态序列；压力路径的单点成本更高，因此使用较少采样点
 constexpr std::size_t DefaultRuntimeBenchmarkSampleCount = 600;
 constexpr std::size_t BudgetSaturationRuntimeBenchmarkSampleCount = 64;
-constexpr std::size_t RuntimeBenchmarkWarmupFrameCount = 8;
+constexpr std::size_t DefaultRuntimeBenchmarkWarmupFrameCount = 8;
+constexpr std::size_t BudgetSaturationRuntimeBenchmarkWarmupFrameCount = 24;
+
+std::size_t RuntimeBenchmarkWarmupFrameCount(Gui::TerrainPanelState::RuntimeBenchmarkPath path)
+{
+    return path == Gui::TerrainPanelState::RuntimeBenchmarkPath::BudgetSaturation
+        ? BudgetSaturationRuntimeBenchmarkWarmupFrameCount
+        : DefaultRuntimeBenchmarkWarmupFrameCount;
+}
 
 Render::TerrainRenderSettings ToRenderSettings(const Gui::TerrainPanelState& state)
 {
@@ -1000,7 +1008,7 @@ void Application::StartRuntimeBenchmark()
 
     if (_runtimeBenchmark.Path == Gui::TerrainPanelState::RuntimeBenchmarkPath::BudgetSaturation)
     {
-        // 压力路径使用已验证能吃满 200000 三角形的固定场景参数。
+        // 压力路径使用已校准到约 200000 个稳态三角形的固定场景参数。
         _terrainPanelState.HeightMapIndex = 1;
         _terrainPanelState.TerrainSize = 80.0F;
         _terrainPanelState.HeightScale = 12.0F;
@@ -1009,11 +1017,21 @@ void Application::StartRuntimeBenchmark()
         _terrainPanelState.RoamScreenSpaceMergeThresholdPixels = 0.10F;
         _terrainPanelState.RoamTriangleBudget = 200000;
         _terrainPanelState.CbtCapacity = Algorithms::TerrainLodCbtCapacity::Capacity1M;
-        _terrainPanelState.CbtTriangleAreaPixels = 25.0F;
+        _terrainPanelState.CbtTriangleAreaPixels = 2.05F;
         _runtimeBenchmark.Notes.push_back("Benchmark 路径：极限压力路径");
     }
     else
     {
+        // 默认路径固定到约 20000 个三角形，避免启动前的 UI 状态改变比较口径。
+        _terrainPanelState.HeightMapIndex = 0;
+        _terrainPanelState.TerrainSize = 30.0F;
+        _terrainPanelState.HeightScale = 4.0F;
+        _terrainPanelState.RoamMaxDepth = 20;
+        _terrainPanelState.RoamScreenSpaceSplitThresholdPixels = 4.0F;
+        _terrainPanelState.RoamScreenSpaceMergeThresholdPixels = 2.0F;
+        _terrainPanelState.RoamTriangleBudget = 20000;
+        _terrainPanelState.CbtCapacity = Algorithms::TerrainLodCbtCapacity::Capacity128K;
+        _terrainPanelState.CbtTriangleAreaPixels = 58.0F;
         _runtimeBenchmark.Notes.push_back("Benchmark 路径：默认选项路径");
     }
 
@@ -1029,7 +1047,8 @@ void Application::StartRuntimeBenchmark()
     ApplyPendingRuntimeBenchmarkOverrides();
     ApplyHeightMapSelection();
     _runtimeBenchmark.Notes.push_back(
-        "每种算法预热帧数：" + std::to_string(RuntimeBenchmarkWarmupFrameCount));
+        "每种算法预热帧数：" +
+        std::to_string(RuntimeBenchmarkWarmupFrameCount(_runtimeBenchmark.Path)));
     _runtimeBenchmark.Notes.push_back(
         "CBT 参数：capacity=" + std::string{CbtCapacityName(_terrainPanelState.CbtCapacity)} +
         "，area=" + std::to_string(_terrainPanelState.CbtTriangleAreaPixels) + " px²，validation=" +
@@ -1091,7 +1110,7 @@ void Application::BeginRuntimeBenchmarkAlgorithm()
     _runtimeBenchmark.PitchDegrees = pitchDegrees;
     _runtimeBenchmark.ElapsedSeconds = 0.0F;
     _runtimeBenchmark.PathSampleIndex = 0;
-    _runtimeBenchmark.WarmupFramesRemaining = RuntimeBenchmarkWarmupFrameCount;
+    _runtimeBenchmark.WarmupFramesRemaining = RuntimeBenchmarkWarmupFrameCount(_runtimeBenchmark.Path);
     _runtimeBenchmark.HasPreparedFirstFrame = false;
 
     _terrainPanelState.UseTerrainLod = true;
