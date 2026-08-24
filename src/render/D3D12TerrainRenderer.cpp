@@ -760,6 +760,16 @@ bool TerrainRenderer::ApplySettings(const TerrainRenderSettings& settings, std::
 {
     // 光照和线框设置立即生效，只有几何相关设置会标记网格过期
     const bool rebuildMesh = NeedsMeshRebuild(_settings, settings);
+    const bool touchesNativeGpuResources =
+        UsesNativeGpuResources(_settings.TerrainLodAlgorithm) ||
+        UsesNativeGpuResources(settings.TerrainLodAlgorithm);
+    if (rebuildMesh && touchesNativeGpuResources && _d3d12State != nullptr &&
+        _d3d12State->Backend->FrameOpen())
+    {
+        // 已打开的命令列表可能仍引用当前 CBT 资源；调用方必须延迟到 Present 之后。
+        SetError(errorMessage, "D3D12 terrain settings that rebuild CBT resources require a frame boundary");
+        return false;
+    }
     _settings = settings;
     _meshDirty = _meshDirty || rebuildMesh;
     if (_meshDirty &&
@@ -775,6 +785,12 @@ bool TerrainRenderer::ApplySettings(const TerrainRenderSettings& settings, std::
 
 bool TerrainRenderer::LoadHeightMap(const std::filesystem::path& heightMapPath, std::string* errorMessage)
 {
+    if (_d3d12State != nullptr && _d3d12State->Backend->FrameOpen())
+    {
+        // 高度图替换会销毁算法持有的纹理和拓扑，不能与当前帧记录交错。
+        SetError(errorMessage, "D3D12 height-map changes require a frame boundary");
+        return false;
+    }
     Terrain::HeightMap nextHeightMap;
     if (!nextHeightMap.LoadFromFile(heightMapPath, errorMessage))
     {
@@ -837,6 +853,14 @@ void TerrainRenderer::RequestMeshRebuild()
 
 void TerrainRenderer::ResetTerrainLodAlgorithm()
 {
+    if (_terrainLodAlgorithm != nullptr &&
+        UsesNativeGpuResources(_terrainLodAlgorithm->Info().Id) &&
+        _d3d12State != nullptr && _d3d12State->Backend->FrameOpen())
+    {
+        // 防线只拒绝非法调用；正常 UI 路径会在 Present 后进入这里。
+        _terrainLodStatusMessage = "D3D12 CBT reset was deferred because a frame is open";
+        return;
+    }
     // GPU 算法资源可能仍被队列引用，销毁所有者前必须完成队列同步
     if (_terrainLodAlgorithm != nullptr &&
         UsesNativeGpuResources(_terrainLodAlgorithm->Info().Id) &&

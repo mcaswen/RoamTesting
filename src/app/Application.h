@@ -196,6 +196,8 @@ private:
 
     // 应用不影响 terrain mesh 的窗口运行参数
     void ApplyWindowPanelSettings();
+    // UI 在当前命令列表完成提交后再统一应用会重建 terrain 资源的变化
+    void ApplyPendingTerrainPanelChanges();
     void ApplyPendingRuntimeBenchmarkOverrides();
 
     // 根据 UI 选择加载不同 HeightMap，并重置 terrain LOD 状态
@@ -241,6 +243,9 @@ private:
     bool _cbtObservedSplitAfterMerge{false};
     bool _cbtObservedHeightScaleChange{false};
     bool _cbtObservedHeightMapReload{false};
+    bool _cbtObservedDeferredAlgorithmSwitchToCpu{false};
+    bool _cbtObservedDeferredAlgorithmSwitchBackToCbt{false};
+    bool _cbtObservedDeferredCapacityChange{false};
     bool _cbtObservedGpuTimingSample{false};
     bool _cbtObservedBlockingValidationWait{false};
     bool _cbtSmokeInitialPoseCaptured{false};
@@ -254,10 +259,14 @@ private:
     int _cbtSmokeInitialHeightMapIndex{0};
     int _cbtSmokeReloadHeightMapIndex{0};
     bool _cbtSmokeHeightMapReloadRequested{false};
+    Algorithms::TerrainLodCbtCapacity _cbtSmokeReloadCapacity{
+        Algorithms::TerrainLodCbtCapacity::Capacity128K};
     int _cbtSmokeInitialMaxDepth{14};
     bool _cbtOccupancyTreeSmokeTestEnabled{false};
     bool _cbtBaseTopologySmokeTestEnabled{false};
     bool _automaticRuntimeBenchmarkEnabled{false};
+    bool _terrainPanelSettingsApplyPending{false};
+    bool _heightMapSelectionApplyPending{false};
     bool _automaticRuntimeBenchmarkCompleted{false};
     bool _automaticRuntimeBenchmarkFailed{false};
     bool _hasRuntimeBenchmarkOverrides{false};

@@ -361,6 +361,17 @@
 - 验证：OpenGL RelWithDebInfo 构建通过；使用 `--runtime-benchmark-samples 4` 完成窗口实测，Classic、DOD、GPU 均输出 4 个样本，索引均为 `0,1,2,3`，进度均为 `0,0.333,0.667,1`；按索引分组后每组只有一个唯一相机坐标，Markdown 输出“采样完整性：完整”。
 - 后续：采用旧 10 秒口径生成的报告仍可用于说明当时版本，但不能直接作为新口径下的逐点公平对比基线；正式优化实验应在固定采样点口径下重新运行多轮。
 
+### BUG-030：UI 在已打开的 D3D12 帧中销毁 CBT 资源
+
+- 状态：`Fixed`
+- 严重级别：`阻断`
+- 发生阶段：D3D12 UI 高度图、算法和 CBT 容量切换
+- 现象：CBT 运行时从 UI 切换高度图或算法后窗口永久无响应；容量换档也可能触发 `DXGI_ERROR_DEVICE_REMOVED`。Classic/DOD 的纯 CPU 切换至多产生同步重建停顿，不应造成相同的 GPU 挂起。
+- 定位：`RenderFrame` 先在 `UpdateForView` 中把 CBT compute 写入当前命令列表，随后才读取 UI 并立即调用 `ApplySettings`/`LoadHeightMap`。旧 `WaitForGpuIdle` 只等待已经进入 direct queue 的工作，不包含尚未 Present 的当前命令列表；算法 reset 因而释放了该列表仍引用的拓扑、几何和诊断资源。下一帧 `WaitForFrame` 对无法完成的 fence 无限等待，表现为应用卡死。原有 smoke 在 `BeginFrame` 前换图，没有覆盖真实 UI 时序。
+- 解决方案：UI 只设置 terrain settings 与 height-map pending 标记，当前帧完成 Present 后再在帧边界合并应用。D3D12 renderer 拒绝帧内 CBT settings rebuild、height-map load 和 reset；CBT 容量变化在帧边界销毁完整算法状态，下一帧从空状态建立新资源代，不再在打开的命令列表中替换已发布容量。
+- 验证：`cbt_procedural_h_*` 在 CBT 已记录本帧命令后依次请求高度图重载、CBT→Classic→CBT 和容量换档；128K、256K、512K、1M 四档均完成全部 540 帧，观察到切出、切回和新容量，退出码为 0。初版回归曾稳定复现 256K/512K/1M 降到 128K 时的 `DXGI_ERROR_DEVICE_HUNG`，改为帧边界整状态重建后消失。
+- 后续：设备丢失后的 fence 等待仍应增加超时与 DRED breadcrumb 报告，作为故障可诊断性增强；它不替代本次资源生命周期修复。
+
 ## 模板
 
 ```text

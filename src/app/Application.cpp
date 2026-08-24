@@ -358,6 +358,8 @@ int Application::Run(int maxFrameCount)
         // RenderFrame 记录场景和 GUI，Present 统一关闭并提交后端帧
         RenderFrame(frameTiming);
         _graphicsBackend->Present();
+        // UI 可能在 RenderFrame 中请求资源重建；必须等本帧提交后再释放旧 GPU 资源。
+        ApplyPendingTerrainPanelChanges();
         CompleteRuntimeBenchmarkFrame();
         if (_automaticRuntimeBenchmarkEnabled && _automaticRuntimeBenchmarkCompleted)
         {
@@ -382,10 +384,13 @@ int Application::Run(int maxFrameCount)
         (!_cbtObservedClassificationSample || !_cbtObservedSplitCandidate ||
          !observedAllCbtTemplates || !_cbtObservedMerge || !_cbtObservedSplitAfterMerge ||
          !_cbtObservedHeightScaleChange || !_cbtObservedHeightMapReload ||
+         !_cbtObservedDeferredAlgorithmSwitchToCpu ||
+         !_cbtObservedDeferredAlgorithmSwitchBackToCbt ||
+         !_cbtObservedDeferredCapacityChange ||
          !_cbtObservedGpuTimingSample || !_cbtObservedBlockingValidationWait))
     {
         std::cerr << "CBT H smoke test did not observe classification, all Bisect templates, "
-                     "merge release, split reuse, height-map changes, GPU timing, and blocking validation\n";
+                     "merge release, split reuse, deferred UI changes, GPU timing, and blocking validation\n";
         _terrainLodSmokeTestFailed = true;
     }
     const int exitCode =
@@ -471,6 +476,10 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
         _cbtSmokeInitialHeightMapIndex = _terrainPanelState.HeightMapIndex;
         _cbtSmokeReloadHeightMapIndex =
             (_cbtSmokeInitialHeightMapIndex + 1) % static_cast<int>(HeightMapPaths.size());
+        _cbtSmokeReloadCapacity = _terrainPanelState.CbtCapacity ==
+                Algorithms::TerrainLodCbtCapacity::Capacity128K
+            ? Algorithms::TerrainLodCbtCapacity::Capacity256K
+            : Algorithms::TerrainLodCbtCapacity::Capacity128K;
         _cbtSmokeInitialPoseCaptured = true;
     }
     // 在命令列表打开前修改参数，下一帧事务会为全活动槽重建分类几何。
@@ -507,16 +516,6 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
     {
         _terrainPanelState.CbtValidationMode = Algorithms::TerrainLodCbtValidationMode::BlockingSmoke;
         ApplyTerrainPanelSettings();
-    }
-    // 切换到另一张尺寸不同的高度图，强制重建算法持有的纹理与首帧精确参考。
-    if (_cbtProceduralSmokeTestEnabled && _cbtProceduralSmokeFrameCount == 420U)
-    {
-        _terrainPanelState.HeightMapIndex = _cbtSmokeReloadHeightMapIndex;
-        ApplyHeightMapSelection();
-        _cbtSmokeHeightMapReloadRequested =
-            _terrainPanelState.HeightMapIndex == _cbtSmokeReloadHeightMapIndex;
-        _lastCbtTopologyFrameGeneration = 0U;
-        _lastCbtClassificationSampleGeneration = 0U;
     }
     // 末段关闭完整验证，覆盖只保留轻量计数回读的常规帧路径。
     if (_cbtProceduralSmokeTestEnabled && _cbtProceduralSmokeFrameCount == 480U)
@@ -580,100 +579,116 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
     const Render::TerrainRenderStats terrainStats = _terrainRenderer.Stats();
     if (_cbtProceduralSmokeTestEnabled)
     {
-        const std::string expectedCapacity = CbtCapacityName(_terrainPanelState.CbtCapacity);
-        if (terrainStats.TerrainLodStatusMessage.find(expectedCapacity) == std::string::npos)
+        if (terrainStats.TerrainLodAlgorithm == Algorithms::TerrainLodAlgorithmId::ClassicCpuRoam)
         {
-            std::cerr << "CBT smoke test did not initialize requested capacity "
-                      << expectedCapacity << ": " << terrainStats.TerrainLodStatusMessage << '\n';
-            _terrainLodSmokeTestFailed = true;
+            _cbtObservedDeferredAlgorithmSwitchToCpu = true;
         }
-        const std::uint64_t generation = terrainStats.GpuTopologyFrameGeneration;
-        if (generation == 0U ||
-            (_lastCbtTopologyFrameGeneration != 0U && generation != _lastCbtTopologyFrameGeneration + 1U))
+        else if (terrainStats.TerrainLodAlgorithm == Algorithms::TerrainLodAlgorithmId::Cbt2024)
         {
-            std::cerr << "CBT topology frame generation did not advance exactly once per frame: previous="
-                      << _lastCbtTopologyFrameGeneration << ", current=" << generation
-                      << ", status=" << terrainStats.TerrainLodStatusMessage << '\n';
-            _terrainLodSmokeTestFailed = true;
-        }
-        _lastCbtTopologyFrameGeneration = generation;
+            const std::string expectedCapacity = CbtCapacityName(_terrainPanelState.CbtCapacity);
+            if (terrainStats.TerrainLodStatusMessage.find(expectedCapacity) == std::string::npos)
+            {
+                std::cerr << "CBT smoke test did not initialize requested capacity "
+                          << expectedCapacity << ": " << terrainStats.TerrainLodStatusMessage << '\n';
+                _terrainLodSmokeTestFailed = true;
+            }
+            const std::uint64_t generation = terrainStats.GpuTopologyFrameGeneration;
+            if (generation == 0U ||
+                (_lastCbtTopologyFrameGeneration != 0U && generation != _lastCbtTopologyFrameGeneration + 1U))
+            {
+                std::cerr << "CBT topology frame generation did not advance exactly once per frame: previous="
+                          << _lastCbtTopologyFrameGeneration << ", current=" << generation
+                          << ", status=" << terrainStats.TerrainLodStatusMessage << '\n';
+                _terrainLodSmokeTestFailed = true;
+            }
+            _lastCbtTopologyFrameGeneration = generation;
 
-        const std::uint64_t sampleGeneration = terrainStats.GpuClassificationSampleGeneration;
-        if (sampleGeneration > generation ||
-            (_lastCbtClassificationSampleGeneration != 0U &&
-             sampleGeneration < _lastCbtClassificationSampleGeneration))
-        {
-            std::cerr << "CBT H diagnostic sample generation is invalid: previous="
-                      << _lastCbtClassificationSampleGeneration << ", current=" << sampleGeneration
-                      << ", topology=" << generation << '\n';
-            _terrainLodSmokeTestFailed = true;
-        }
-        if (sampleGeneration != 0U)
-        {
-            _cbtObservedClassificationSample = true;
-            _lastCbtClassificationSampleGeneration = sampleGeneration;
-        }
-        if (terrainStats.CbtGpuTimingSampleGeneration != 0U &&
-            terrainStats.CbtGpuTimingSampleGeneration == sampleGeneration &&
-            terrainStats.CbtGpuStageSumMilliseconds > 0.0F)
-        {
-            _cbtObservedGpuTimingSample = true;
-        }
-        if (_cbtProceduralSmokeFrameCount >= 400U &&
-            terrainStats.CbtBlockingValidationWaitMilliseconds > 0.0F)
-        {
-            _cbtObservedBlockingValidationWait = true;
-        }
-        const std::size_t classifiedCandidateCount =
-            terrainStats.CbtSplitCandidateCount + terrainStats.CbtSimplifyCandidateCount;
-        if (sampleGeneration != 0U && classifiedCandidateCount > terrainStats.RoamNodeCount)
-        {
-            std::cerr << "CBT classification counters exceed the sampled active list: split="
-                      << terrainStats.CbtSplitCandidateCount << ", simplify="
-                      << terrainStats.CbtSimplifyCandidateCount << ", active="
-                      << terrainStats.RoamNodeCount << '\n';
-            _terrainLodSmokeTestFailed = true;
-        }
+            const std::uint64_t sampleGeneration = terrainStats.GpuClassificationSampleGeneration;
+            if (sampleGeneration > generation ||
+                (_lastCbtClassificationSampleGeneration != 0U &&
+                 sampleGeneration < _lastCbtClassificationSampleGeneration))
+            {
+                std::cerr << "CBT H diagnostic sample generation is invalid: previous="
+                          << _lastCbtClassificationSampleGeneration << ", current=" << sampleGeneration
+                          << ", topology=" << generation << '\n';
+                _terrainLodSmokeTestFailed = true;
+            }
+            if (sampleGeneration != 0U)
+            {
+                _cbtObservedClassificationSample = true;
+                _lastCbtClassificationSampleGeneration = sampleGeneration;
+            }
+            if (terrainStats.CbtGpuTimingSampleGeneration != 0U &&
+                terrainStats.CbtGpuTimingSampleGeneration == sampleGeneration &&
+                terrainStats.CbtGpuStageSumMilliseconds > 0.0F)
+            {
+                _cbtObservedGpuTimingSample = true;
+            }
+            if (_cbtProceduralSmokeFrameCount >= 400U &&
+                terrainStats.CbtBlockingValidationWaitMilliseconds > 0.0F)
+            {
+                _cbtObservedBlockingValidationWait = true;
+            }
+            const std::size_t classifiedCandidateCount =
+                terrainStats.CbtSplitCandidateCount + terrainStats.CbtSimplifyCandidateCount;
+            if (sampleGeneration != 0U && classifiedCandidateCount > terrainStats.RoamNodeCount)
+            {
+                std::cerr << "CBT classification counters exceed the sampled active list: split="
+                          << terrainStats.CbtSplitCandidateCount << ", simplify="
+                          << terrainStats.CbtSimplifyCandidateCount << ", active="
+                          << terrainStats.RoamNodeCount << '\n';
+                _terrainLodSmokeTestFailed = true;
+            }
 #if defined(PARALLEL_ROAM_GRAPHICS_API_D3D12)
-        if (_cbtProceduralSmokeFrameCount >= 480U &&
-            terrainStats.RoamCpuGpuReadbackBytes !=
-                Algorithms::Cbt2024::D3D12::D3D12CbtDiagnostics::DiagnosticReadbackBytes +
-                Algorithms::Cbt2024::D3D12::D3D12CbtDiagnostics::GpuTimestampReadbackBytes +
-                Render::D3D12ProceduralTerrainPipeline::GpuTimestampReadbackBytes)
-        {
-            std::cerr << "CBT validation-off path reported an unexpected readback size: "
-                      << terrainStats.RoamCpuGpuReadbackBytes << '\n';
-            _terrainLodSmokeTestFailed = true;
-        }
+            if (_cbtProceduralSmokeFrameCount >= 480U &&
+                terrainStats.RoamCpuGpuReadbackBytes !=
+                    Algorithms::Cbt2024::D3D12::D3D12CbtDiagnostics::DiagnosticReadbackBytes +
+                    Algorithms::Cbt2024::D3D12::D3D12CbtDiagnostics::GpuTimestampReadbackBytes +
+                    Render::D3D12ProceduralTerrainPipeline::GpuTimestampReadbackBytes)
+            {
+                std::cerr << "CBT validation-off path reported an unexpected readback size: "
+                          << terrainStats.RoamCpuGpuReadbackBytes << '\n';
+                _terrainLodSmokeTestFailed = true;
+            }
 #endif
-        _cbtObservedSplitCandidate =
-            _cbtObservedSplitCandidate || terrainStats.RoamSplitCount > 0U;
-        if (terrainStats.CbtReleasedDynamicSlotCount > 0U)
-        {
-            _cbtObservedMerge = true;
-        }
-        if (_cbtObservedMerge && _cbtProceduralSmokeFrameCount >= 300U &&
-            terrainStats.CbtCommittedDynamicSlotCount > 0U)
-        {
-            _cbtObservedSplitAfterMerge = true;
-        }
-        if (_cbtProceduralSmokeFrameCount >= 100U && _cbtProceduralSmokeFrameCount < 300U &&
-            std::abs(terrainStats.HeightScale - _cbtSmokeChangedHeightScale) <= 0.0001F)
-        {
-            _cbtObservedHeightScaleChange = true;
-        }
-        if (_cbtSmokeHeightMapReloadRequested &&
-            terrainStats.HeightMapPath ==
-                HeightMapPaths[static_cast<std::size_t>(_cbtSmokeReloadHeightMapIndex)] &&
-            terrainStats.HeightMapWidth > 0 && terrainStats.HeightMapHeight > 0)
-        {
-            _cbtObservedHeightMapReload = true;
-        }
-        for (std::size_t index = 0U; index < _cbtObservedBisectTemplates.size(); ++index)
-        {
-            _cbtObservedBisectTemplates[index] =
-                _cbtObservedBisectTemplates[index] ||
-                terrainStats.CbtBisectTemplateCounts[index] > 0U;
+            _cbtObservedSplitCandidate =
+                _cbtObservedSplitCandidate || terrainStats.RoamSplitCount > 0U;
+            if (terrainStats.CbtReleasedDynamicSlotCount > 0U)
+            {
+                _cbtObservedMerge = true;
+            }
+            if (_cbtObservedMerge && _cbtProceduralSmokeFrameCount >= 300U &&
+                terrainStats.CbtCommittedDynamicSlotCount > 0U)
+            {
+                _cbtObservedSplitAfterMerge = true;
+            }
+            if (_cbtProceduralSmokeFrameCount >= 100U && _cbtProceduralSmokeFrameCount < 300U &&
+                std::abs(terrainStats.HeightScale - _cbtSmokeChangedHeightScale) <= 0.0001F)
+            {
+                _cbtObservedHeightScaleChange = true;
+            }
+            if (_cbtSmokeHeightMapReloadRequested &&
+                terrainStats.HeightMapPath ==
+                    HeightMapPaths[static_cast<std::size_t>(_cbtSmokeReloadHeightMapIndex)] &&
+                terrainStats.HeightMapWidth > 0 && terrainStats.HeightMapHeight > 0)
+            {
+                _cbtObservedHeightMapReload = true;
+            }
+            if (_cbtObservedDeferredAlgorithmSwitchToCpu)
+            {
+                _cbtObservedDeferredAlgorithmSwitchBackToCbt = true;
+            }
+            if (terrainStats.CbtCapacitySetting ==
+                static_cast<std::uint32_t>(_cbtSmokeReloadCapacity))
+            {
+                _cbtObservedDeferredCapacityChange = true;
+            }
+            for (std::size_t index = 0U; index < _cbtObservedBisectTemplates.size(); ++index)
+            {
+                _cbtObservedBisectTemplates[index] =
+                    _cbtObservedBisectTemplates[index] ||
+                    terrainStats.CbtBisectTemplateCounts[index] > 0U;
+            }
         }
         ++_cbtProceduralSmokeFrameCount;
     }
@@ -797,9 +812,37 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
 
     const bool previousVSyncEnabled = _terrainPanelState.VSyncEnabled;
     const int previousHeightMapIndex = _terrainPanelState.HeightMapIndex;
-    if (_guiLayer.DrawDebugOverlay(debugData, _terrainPanelState))
+    bool terrainSettingsChanged = _guiLayer.DrawDebugOverlay(debugData, _terrainPanelState);
+    // smoke 在 CBT 已记录本帧命令后模拟 UI 变化，验证资源只在 Present 后重建。
+    if (_cbtProceduralSmokeTestEnabled && _cbtProceduralSmokeFrameCount == 421U)
     {
-        ApplyTerrainPanelSettings();
+        _terrainPanelState.HeightMapIndex = _cbtSmokeReloadHeightMapIndex;
+        _cbtSmokeHeightMapReloadRequested = true;
+        _lastCbtTopologyFrameGeneration = 0U;
+        _lastCbtClassificationSampleGeneration = 0U;
+    }
+    if (_cbtProceduralSmokeTestEnabled && _cbtProceduralSmokeFrameCount == 521U)
+    {
+        _terrainPanelState.TerrainLodAlgorithm = Algorithms::TerrainLodAlgorithmId::ClassicCpuRoam;
+        terrainSettingsChanged = true;
+    }
+    if (_cbtProceduralSmokeTestEnabled && _cbtProceduralSmokeFrameCount == 523U)
+    {
+        _terrainPanelState.TerrainLodAlgorithm = Algorithms::TerrainLodAlgorithmId::Cbt2024;
+        terrainSettingsChanged = true;
+        _lastCbtTopologyFrameGeneration = 0U;
+        _lastCbtClassificationSampleGeneration = 0U;
+    }
+    if (_cbtProceduralSmokeTestEnabled && _cbtProceduralSmokeFrameCount == 531U)
+    {
+        _terrainPanelState.CbtCapacity = _cbtSmokeReloadCapacity;
+        terrainSettingsChanged = true;
+        _lastCbtTopologyFrameGeneration = 0U;
+        _lastCbtClassificationSampleGeneration = 0U;
+    }
+    if (terrainSettingsChanged)
+    {
+        _terrainPanelSettingsApplyPending = true;
     }
 
     if (previousVSyncEnabled != _terrainPanelState.VSyncEnabled)
@@ -810,7 +853,7 @@ void Application::RenderFrame(const FrameTiming& frameTiming)
 
     if (previousHeightMapIndex != _terrainPanelState.HeightMapIndex)
     {
-        ApplyHeightMapSelection();
+        _heightMapSelectionApplyPending = true;
     }
 
     if (_terrainPanelState.StartBenchmarkRequested)
@@ -843,6 +886,30 @@ void Application::ApplyWindowPanelSettings()
     if (!_graphicsBackend->SetVSyncEnabled(_terrainPanelState.VSyncEnabled))
     {
         _terrainPanelState.VSyncEnabled = _graphicsBackend->VSyncEnabled();
+    }
+}
+
+void Application::ApplyPendingTerrainPanelChanges()
+{
+    const bool applyHeightMap = std::exchange(_heightMapSelectionApplyPending, false);
+    const bool applySettings = std::exchange(_terrainPanelSettingsApplyPending, false);
+    const Algorithms::TerrainLodAlgorithmId previousAlgorithm = _terrainSettings.TerrainLodAlgorithm;
+    const Algorithms::TerrainLodCbtCapacity previousCbtCapacity = _terrainSettings.CbtCapacity;
+    if (applyHeightMap)
+    {
+        ApplyHeightMapSelection();
+    }
+    if (applySettings)
+    {
+        ApplyTerrainPanelSettings();
+    }
+    const bool cbtCapacityChanged = previousCbtCapacity != _terrainSettings.CbtCapacity &&
+        (previousAlgorithm == Algorithms::TerrainLodAlgorithmId::Cbt2024 ||
+         _terrainSettings.TerrainLodAlgorithm == Algorithms::TerrainLodAlgorithmId::Cbt2024);
+    if (cbtCapacityChanged)
+    {
+        // 容量改变会替换全部 OCBT 资源；在帧边界先销毁算法，下一帧再创建新资源代。
+        _terrainRenderer.ResetTerrainLodAlgorithm();
     }
 }
 
