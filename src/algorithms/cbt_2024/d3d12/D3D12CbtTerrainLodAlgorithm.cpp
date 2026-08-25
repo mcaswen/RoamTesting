@@ -1,5 +1,6 @@
 #include "algorithms/cbt_2024/d3d12/D3D12CbtTerrainLodAlgorithm.h"
 
+#include "algorithms/cbt_2024/Cbt2024Baseline.h"
 #include "algorithms/cbt_2024/Cbt2024Support.h"
 #include "algorithms/cbt_2024/d3d12/D3D12CbtFramePipeline.h"
 #include "algorithms/cbt_2024/d3d12/D3D12CbtGpuState.h"
@@ -57,7 +58,7 @@ void FillRenderPacket(
     const auto& templates = state.Pipeline.LastBisectTemplateCounts();
     outPacket.Mode = TerrainLodRenderMode::GpuProceduralIndirect;
     outPacket.StatusMessage =
-        "CBT 2024 H " + std::string{CbtOccupancyCapacityName(topology.Layout.Occupancy.Capacity)} +
+        "CBT 2024 baseline v1 " + std::string{CbtOccupancyCapacityName(topology.Layout.Occupancy.Capacity)} +
         " commit: split=" + std::to_string(state.Pipeline.LastSplitCandidateCount()) +
         " simplify=" + std::to_string(state.Pipeline.LastSimplifyCandidateCount()) +
         " nodes=" + std::to_string(state.Pipeline.LastPlannedSplitNodeCount()) +
@@ -110,9 +111,9 @@ TerrainLodAlgorithmInfo D3D12CbtTerrainLodAlgorithm::Info() const
 {
     return TerrainLodAlgorithmInfo{
         TerrainLodAlgorithmId::Cbt2024,
-        "cbt-2024-h",
-        "CBT 2024（H）",
-        "GPU 常驻拓扑、高度图增量几何、延迟诊断和逐阶段 GPU 计时",
+        OfficialBaselineV1::AlgorithmKey,
+        OfficialBaselineV1::DisplayName,
+        "冻结上游 pass 语义、四档容量、高度图增量几何、延迟诊断和逐阶段 GPU 计时",
     };
 }
 

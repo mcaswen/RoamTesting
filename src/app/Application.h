@@ -19,8 +19,16 @@
 
 namespace ParallelRoam::App
 {
+enum class RuntimeBenchmarkAlgorithmSelection
+{
+    All,
+    CbtOnly,
+};
+
 struct RuntimeBenchmarkOverrides
 {
+    RuntimeBenchmarkAlgorithmSelection AlgorithmSelection{RuntimeBenchmarkAlgorithmSelection::All};
+
     bool HasPath{false};
     Gui::TerrainPanelState::RuntimeBenchmarkPath Path{
         Gui::TerrainPanelState::RuntimeBenchmarkPath::Default};

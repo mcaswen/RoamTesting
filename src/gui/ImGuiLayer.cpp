@@ -213,7 +213,7 @@ const char* TerrainModeName(bool useTerrainLod, Algorithms::TerrainLodAlgorithmI
 
     if (algorithmId == Algorithms::TerrainLodAlgorithmId::Cbt2024)
     {
-        return "CBT 2024（GPU 常驻拓扑）";
+        return "CBT 2024（官方语义基线 v1）";
     }
 
     return "Classic CPU ROAM";
@@ -736,7 +736,7 @@ bool ImGuiLayer::DrawDebugOverlay(const DebugOverlayData& data, TerrainPanelStat
         data.TerrainLodAvailability[
             static_cast<std::size_t>(Algorithms::TerrainLodAlgorithmId::Cbt2024)];
     const char* cbtModeLabel =
-        cbtAvailability.Available ? "CBT 2024（GPU 常驻拓扑）" : "CBT 2024（不可用）";
+        cbtAvailability.Available ? "CBT 2024（官方语义基线 v1）" : "CBT 2024（不可用）";
     const char* terrainModeItems[] = {
         "规则网格",
         "Classic CPU ROAM",

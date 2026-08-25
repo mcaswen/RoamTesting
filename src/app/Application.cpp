@@ -1,5 +1,6 @@
 #include "app/Application.h"
 
+#include "algorithms/cbt_2024/Cbt2024Baseline.h"
 #include "algorithms/cbt_2024/Cbt2024Support.h"
 #include "algorithms/cbt_2024/CbtBisectorTopology.h"
 
@@ -29,6 +30,8 @@ namespace ParallelRoam::App
 {
 namespace
 {
+namespace CbtBaseline = Algorithms::Cbt2024::OfficialBaselineV1;
+
 const std::array<std::filesystem::path, 2> HeightMapPaths{
     // 资源表顺序必须和 ImGui 高度图下拉框保持一致
     std::filesystem::path{"assets/heightmaps/Hm_Terrain_Test_129.pgm"},
@@ -81,22 +84,23 @@ BudgetSaturationCameraPose ComputeBudgetSaturationCameraPose(float normalizedTim
     const float angle = t * 6.28318530718F;
     return BudgetSaturationCameraPose{
         glm::vec3{
-            std::cos(angle) * 58.0F,
-            20.0F + std::sin(angle * 2.0F) * 3.0F,
-            std::sin(angle) * 58.0F,
+            std::cos(angle) * CbtBaseline::ExtremeOrbitRadius,
+            CbtBaseline::ExtremeOrbitHeight +
+                std::sin(angle * 2.0F) * CbtBaseline::ExtremeOrbitHeightAmplitude,
+            std::sin(angle) * CbtBaseline::ExtremeOrbitRadius,
         },
         glm::vec3{
-            std::cos(angle + 0.55F) * 10.0F,
-            4.0F,
-            std::sin(angle + 0.55F) * 10.0F,
+            std::cos(angle + CbtBaseline::ExtremeTargetPhase) * CbtBaseline::ExtremeTargetRadius,
+            CbtBaseline::ExtremeTargetHeight,
+            std::sin(angle + CbtBaseline::ExtremeTargetPhase) * CbtBaseline::ExtremeTargetRadius,
         }};
 }
 
 // benchmark 路径是有限的相机姿态序列；压力路径的单点成本更高，因此使用较少采样点
-constexpr std::size_t DefaultRuntimeBenchmarkSampleCount = 600;
-constexpr std::size_t BudgetSaturationRuntimeBenchmarkSampleCount = 64;
-constexpr std::size_t DefaultRuntimeBenchmarkWarmupFrameCount = 8;
-constexpr std::size_t BudgetSaturationRuntimeBenchmarkWarmupFrameCount = 24;
+constexpr std::size_t DefaultRuntimeBenchmarkSampleCount = CbtBaseline::DefaultPath.SampleCount;
+constexpr std::size_t BudgetSaturationRuntimeBenchmarkSampleCount = CbtBaseline::ExtremePath.SampleCount;
+constexpr std::size_t DefaultRuntimeBenchmarkWarmupFrameCount = CbtBaseline::DefaultPath.WarmupFrameCount;
+constexpr std::size_t BudgetSaturationRuntimeBenchmarkWarmupFrameCount = CbtBaseline::ExtremePath.WarmupFrameCount;
 
 std::size_t RuntimeBenchmarkWarmupFrameCount(Gui::TerrainPanelState::RuntimeBenchmarkPath path)
 {
@@ -234,8 +238,8 @@ bool Application::Initialize()
     // 后端决定窗口是否携带 OpenGL 标志或只作为原生交换链目标
     if (!_window.Create(
             "Parallel ROAM",
-            1280,
-            720,
+            CbtBaseline::DrawableWidth,
+            CbtBaseline::DrawableHeight,
             _graphicsBackend->RequiredSdlWindowFlags()))
     {
         Shutdown();
@@ -1057,10 +1061,19 @@ void Application::StartRuntimeBenchmark()
     {
         _runtimeBenchmark.Notes.push_back("Benchmark 标签：" + _runtimeBenchmarkOverrides.Label);
     }
-    _runtimeBenchmark.AlgorithmSequence = {
-        Algorithms::TerrainLodAlgorithmId::ClassicCpuRoam,
-        Algorithms::TerrainLodAlgorithmId::DataOrientedCpuRoam,
-    };
+    _runtimeBenchmark.AlgorithmSequence.clear();
+    if (_runtimeBenchmarkOverrides.AlgorithmSelection == RuntimeBenchmarkAlgorithmSelection::All)
+    {
+        _runtimeBenchmark.AlgorithmSequence = {
+            Algorithms::TerrainLodAlgorithmId::ClassicCpuRoam,
+            Algorithms::TerrainLodAlgorithmId::DataOrientedCpuRoam,
+        };
+        _runtimeBenchmark.Notes.push_back("算法集合：Classic、Data-Oriented、CBT 2024");
+    }
+    else
+    {
+        _runtimeBenchmark.Notes.push_back("算法集合：仅 CBT 2024 基线容量矩阵");
+    }
 #if defined(PARALLEL_ROAM_GRAPHICS_API_D3D12)
     const Algorithms::Cbt2024::Cbt2024Availability cbtAvailability =
         Algorithms::Cbt2024::QueryCbt2024Availability(*_graphicsBackend);
@@ -1082,33 +1095,42 @@ void Application::StartRuntimeBenchmark()
         _camera.YawDegrees(),
         _camera.PitchDegrees(),
     };
+    if (_runtimeBenchmark.AlgorithmSequence.empty())
+    {
+        _runtimeBenchmark.Failed = true;
+        _runtimeBenchmark.FailureMessage = "The requested runtime benchmark algorithm is unavailable";
+        FinishRuntimeBenchmark();
+        return;
+    }
 
     if (_runtimeBenchmark.Path == Gui::TerrainPanelState::RuntimeBenchmarkPath::BudgetSaturation)
     {
         // 压力路径使用已校准到约 200000 个稳态三角形的固定场景参数。
-        _terrainPanelState.HeightMapIndex = 1;
-        _terrainPanelState.TerrainSize = 80.0F;
-        _terrainPanelState.HeightScale = 12.0F;
-        _terrainPanelState.RoamMaxDepth = 20;
-        _terrainPanelState.RoamScreenSpaceSplitThresholdPixels = 0.25F;
-        _terrainPanelState.RoamScreenSpaceMergeThresholdPixels = 0.10F;
-        _terrainPanelState.RoamTriangleBudget = 200000;
-        _terrainPanelState.CbtCapacity = Algorithms::TerrainLodCbtCapacity::Capacity1M;
-        _terrainPanelState.CbtTriangleAreaPixels = 2.05F;
+        const CbtBaseline::RuntimePathPreset& preset = CbtBaseline::ExtremePath;
+        _terrainPanelState.HeightMapIndex = preset.HeightMapIndex;
+        _terrainPanelState.TerrainSize = preset.TerrainSize;
+        _terrainPanelState.HeightScale = preset.HeightScale;
+        _terrainPanelState.RoamMaxDepth = preset.MaxDepth;
+        _terrainPanelState.RoamScreenSpaceSplitThresholdPixels = preset.RoamSplitPixels;
+        _terrainPanelState.RoamScreenSpaceMergeThresholdPixels = preset.RoamMergePixels;
+        _terrainPanelState.RoamTriangleBudget = preset.RoamTriangleBudget;
+        _terrainPanelState.CbtCapacity = preset.CbtCapacity;
+        _terrainPanelState.CbtTriangleAreaPixels = preset.CbtTriangleAreaPixels;
         _runtimeBenchmark.Notes.push_back("Benchmark 路径：极限压力路径");
     }
     else
     {
         // 默认路径固定到约 20000 个三角形，避免启动前的 UI 状态改变比较口径。
-        _terrainPanelState.HeightMapIndex = 0;
-        _terrainPanelState.TerrainSize = 30.0F;
-        _terrainPanelState.HeightScale = 4.0F;
-        _terrainPanelState.RoamMaxDepth = 20;
-        _terrainPanelState.RoamScreenSpaceSplitThresholdPixels = 4.0F;
-        _terrainPanelState.RoamScreenSpaceMergeThresholdPixels = 2.0F;
-        _terrainPanelState.RoamTriangleBudget = 20000;
-        _terrainPanelState.CbtCapacity = Algorithms::TerrainLodCbtCapacity::Capacity128K;
-        _terrainPanelState.CbtTriangleAreaPixels = 58.0F;
+        const CbtBaseline::RuntimePathPreset& preset = CbtBaseline::DefaultPath;
+        _terrainPanelState.HeightMapIndex = preset.HeightMapIndex;
+        _terrainPanelState.TerrainSize = preset.TerrainSize;
+        _terrainPanelState.HeightScale = preset.HeightScale;
+        _terrainPanelState.RoamMaxDepth = preset.MaxDepth;
+        _terrainPanelState.RoamScreenSpaceSplitThresholdPixels = preset.RoamSplitPixels;
+        _terrainPanelState.RoamScreenSpaceMergeThresholdPixels = preset.RoamMergePixels;
+        _terrainPanelState.RoamTriangleBudget = preset.RoamTriangleBudget;
+        _terrainPanelState.CbtCapacity = preset.CbtCapacity;
+        _terrainPanelState.CbtTriangleAreaPixels = preset.CbtTriangleAreaPixels;
         _runtimeBenchmark.Notes.push_back("Benchmark 路径：默认选项路径");
     }
 
@@ -1135,6 +1157,7 @@ void Application::StartRuntimeBenchmark()
     _runtimeBenchmark.Notes.push_back(
         "路径采样点数：" + std::to_string(_runtimeBenchmark.PathSampleCount) +
         "；每种算法按相同 sampleIndex 执行完整路径");
+    _runtimeBenchmark.Notes.push_back("CBT 基线标识：" + std::string{CbtBaseline::BaselineId});
 
     _terrainPanelState.VSyncEnabled = false;
     ApplyWindowPanelSettings();
@@ -1160,6 +1183,7 @@ void Application::BeginRuntimeBenchmarkAlgorithm()
     RuntimeBenchmarkAlgorithmResult result{};
     result.AlgorithmId = algorithmId;
     result.AlgorithmName = RuntimeBenchmarkAlgorithmDisplayName(algorithmId);
+    result.AlgorithmKey = RuntimeBenchmarkAlgorithmKey(algorithmId);
     result.Samples.reserve(_runtimeBenchmark.PathSampleCount);
     _runtimeBenchmark.Results.push_back(std::move(result));
 
@@ -1303,6 +1327,8 @@ void Application::RecordRuntimeBenchmarkSample(
     sample.GraphicsAdapter = _graphicsBackend->AdapterName();
     sample.GraphicsVersion = _graphicsBackend->VersionString();
     sample.VSyncEnabled = _terrainPanelState.VSyncEnabled;
+    sample.DrawableWidth = _graphicsBackend->DrawableWidth();
+    sample.DrawableHeight = _graphicsBackend->DrawableHeight();
     sample.PathSampleIndex = _runtimeBenchmark.PathSampleIndex;
     sample.PathSampleCount = _runtimeBenchmark.PathSampleCount;
     sample.PathProgress = _runtimeBenchmark.PathSampleCount <= 1U

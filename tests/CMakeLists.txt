@@ -368,6 +368,27 @@ if(TARGET parallel_roam)
                 LABELS "gpu-quick;cbt;integration;benchmark;geometry"
                 TIMEOUT 90
         )
+        add_test(
+            NAME cbt_runtime_i_baseline_quick
+            COMMAND
+                $<TARGET_FILE:parallel_roam>
+                --runtime-benchmark
+                --runtime-benchmark-algorithm
+                cbt
+                --runtime-benchmark-path
+                default
+                --runtime-benchmark-samples
+                2
+                --runtime-benchmark-label
+                ctest-i-baseline
+        )
+        set_tests_properties(
+            cbt_runtime_i_baseline_quick
+            PROPERTIES
+                WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."
+                LABELS "gpu-quick;cbt;integration;benchmark;baseline"
+                TIMEOUT 90
+        )
     endif()
 
     add_test(

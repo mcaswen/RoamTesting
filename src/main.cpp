@@ -200,6 +200,33 @@ int main(int argc, char** argv)
             continue;
         }
 
+        if (argument == "--runtime-benchmark-algorithm")
+        {
+            const char* value = requireValue(index, argument);
+            if (value == nullptr)
+            {
+                break;
+            }
+            const std::string_view algorithmValue{value};
+            if (algorithmValue == "all")
+            {
+                runtimeBenchmarkOverrides.AlgorithmSelection =
+                    ParallelRoam::App::RuntimeBenchmarkAlgorithmSelection::All;
+            }
+            else if (algorithmValue == "cbt" || algorithmValue == "cbt-2024")
+            {
+                runtimeBenchmarkOverrides.AlgorithmSelection =
+                    ParallelRoam::App::RuntimeBenchmarkAlgorithmSelection::CbtOnly;
+            }
+            else
+            {
+                parseError = "Invalid runtime benchmark algorithm: " + std::string{algorithmValue};
+                break;
+            }
+            hasRuntimeBenchmarkOverrides = true;
+            continue;
+        }
+
         if (argument == "--runtime-benchmark-path")
         {
             const char* value = requireValue(index, argument);

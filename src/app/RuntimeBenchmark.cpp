@@ -1,5 +1,7 @@
 #include "app/RuntimeBenchmark.h"
 
+#include "algorithms/cbt_2024/Cbt2024Baseline.h"
+
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -488,7 +490,8 @@ void WriteDetailedCsv(
     }
 
     // 配置字段放在时间序列前，方便按高度图和参数筛选
-    csv << "algorithm,buildConfiguration,graphicsBackend,graphicsAdapter,graphicsVersion,vSyncEnabled,"
+    csv << "algorithm,algorithmKey,buildConfiguration,graphicsBackend,graphicsAdapter,graphicsVersion,"
+        << "vSyncEnabled,drawableWidth,drawableHeight,"
         << "heightMapPath,heightMapWidth,heightMapHeight,terrainSize,heightScale,"
         << "maxDepthSetting,screenSpaceSplitThresholdPixels,"
         << "screenSpaceMergeThresholdPixels,triangleBudget,dodParallelSplitEnabled,"
@@ -536,11 +539,14 @@ void WriteDetailedCsv(
         {
             const Render::TerrainRenderStats& stats = sample.Stats;
             csv << result.AlgorithmName << ','
+                << result.AlgorithmKey << ','
                 << sample.BuildConfiguration << ','
                 << sample.GraphicsBackend << ','
                 << sample.GraphicsAdapter << ','
                 << sample.GraphicsVersion << ','
                 << (sample.VSyncEnabled ? "true" : "false") << ','
+                << sample.DrawableWidth << ','
+                << sample.DrawableHeight << ','
                 << stats.HeightMapPath.generic_string() << ','
                 << stats.HeightMapWidth << ','
                 << stats.HeightMapHeight << ','
@@ -707,6 +713,8 @@ void WriteSummaryMarkdown(
 
     if (const Render::TerrainRenderStats* stats = FindFirstSampleStats(results))
     {
+        const RuntimeBenchmarkSample& sample = results.front().Samples.front();
+        markdown << "- Drawable 分辨率：" << sample.DrawableWidth << "x" << sample.DrawableHeight << "\n";
         // 顶部配置块解释 UI 设置和实际达到深度的差异
         markdown << "- Height map：`" << stats->HeightMapPath.generic_string() << "` "
                  << stats->HeightMapWidth << "x" << stats->HeightMapHeight << "\n";
@@ -989,12 +997,28 @@ std::string RuntimeBenchmarkAlgorithmDisplayName(Algorithms::TerrainLodAlgorithm
     case Algorithms::TerrainLodAlgorithmId::DataOrientedCpuRoam:
         return "Data-Oriented CPU ROAM";
     case Algorithms::TerrainLodAlgorithmId::Cbt2024:
-        return "CBT 2024（GPU 常驻拓扑）";
+        return std::string{Algorithms::Cbt2024::OfficialBaselineV1::DisplayName};
     case Algorithms::TerrainLodAlgorithmId::Count:
         break;
     }
 
     return "Unknown ROAM";
+}
+
+std::string RuntimeBenchmarkAlgorithmKey(Algorithms::TerrainLodAlgorithmId algorithmId)
+{
+    switch (algorithmId)
+    {
+    case Algorithms::TerrainLodAlgorithmId::ClassicCpuRoam:
+        return "classic_cpu_roam";
+    case Algorithms::TerrainLodAlgorithmId::DataOrientedCpuRoam:
+        return "data_oriented_cpu_roam";
+    case Algorithms::TerrainLodAlgorithmId::Cbt2024:
+        return std::string{Algorithms::Cbt2024::OfficialBaselineV1::AlgorithmKey};
+    case Algorithms::TerrainLodAlgorithmId::Count:
+        break;
+    }
+    return "unknown";
 }
 
 RuntimeBenchmarkReportPaths WriteRuntimeBenchmarkReport(

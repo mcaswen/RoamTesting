@@ -22,6 +22,8 @@ struct RuntimeBenchmarkSample
     std::string GraphicsAdapter;
     std::string GraphicsVersion;
     bool VSyncEnabled{false};
+    int DrawableWidth{0};
+    int DrawableHeight{0};
 
     // 离散相机路径坐标；同一轮中的每种算法都使用相同序列
     std::size_t PathSampleIndex{0};
@@ -52,6 +54,9 @@ struct RuntimeBenchmarkAlgorithmResult
     // AlgorithmName 写进 UI 和输出文件，避免报告依赖枚举值
     std::string AlgorithmName;
 
+    // AlgorithmKey 是跨报告保持稳定的机器标识，展示名称可以独立本地化。
+    std::string AlgorithmKey;
+
     // Samples 保留逐帧明细，汇总表只从这里二次聚合
     std::vector<RuntimeBenchmarkSample> Samples;
 };
@@ -69,6 +74,7 @@ struct RuntimeBenchmarkReportPaths
 };
 
 [[nodiscard]] std::string RuntimeBenchmarkAlgorithmDisplayName(Algorithms::TerrainLodAlgorithmId algorithmId);
+[[nodiscard]] std::string RuntimeBenchmarkAlgorithmKey(Algorithms::TerrainLodAlgorithmId algorithmId);
 
 [[nodiscard]] RuntimeBenchmarkReportPaths WriteRuntimeBenchmarkReport(
     const std::vector<RuntimeBenchmarkAlgorithmResult>& results,

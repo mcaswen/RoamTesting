@@ -1,4 +1,5 @@
 #include "algorithms/ITerrainLodAlgorithm.h"
+#include "algorithms/cbt_2024/Cbt2024Baseline.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -52,6 +53,14 @@ int main()
     TerrainLodRenderPacket undersizedVertices = packet;
     undersizedVertices.GpuVertexBufferCapacityBytes -= undersizedVertices.GpuVertexStrideBytes;
     passed &= !undersizedVertices.HasConsistentResourceContract();
+
+    namespace Baseline = ParallelRoam::Algorithms::Cbt2024::OfficialBaselineV1;
+    // 阶段 I 的身份和正式场景参数属于公开契约，避免后续研究变体静默覆盖基线。
+    passed &= Baseline::AlgorithmKey == "cbt_2024_official_baseline_v1";
+    passed &= Baseline::DefaultPath.SampleCount == 600U;
+    passed &= Baseline::DefaultPath.WarmupFrameCount == 16U;
+    passed &= Baseline::ExtremePath.SampleCount == 64U;
+    passed &= Baseline::CapacityMatrix.size() == 4U;
 
     if (!passed)
     {
