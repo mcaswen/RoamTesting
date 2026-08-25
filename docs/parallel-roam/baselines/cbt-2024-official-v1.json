@@ -1,0 +1,187 @@
+{
+  "schemaVersion": 1,
+  "baselineId": "cbt-2024-official-baseline-v1",
+  "algorithmKey": "cbt_2024_official_baseline_v1",
+  "benchmarkTag": "benchmark/cbt-2024-official-baseline-v1",
+  "upstream": {
+    "repository": "https://github.com/AnisB/large_cbt.git",
+    "officialCommit": "7351e6fb380acc149b3aef22a6c39bf3df7950a6",
+    "localCompatibilityCommit": "7ae736d179528a0996449c0cc2db7f3279edc8ee",
+    "localPatchScope": "NVIDIA-compatible 64-bit firstbithigh implementation only"
+  },
+  "licenseReview": {
+    "reviewedOn": "2026-08-25",
+    "upstreamLicense": "NONE_DECLARED",
+    "redistributionStatus": "BLOCKED_PENDING_UPSTREAM_PERMISSION",
+    "notice": "THIRD_PARTY_NOTICES.md"
+  },
+  "renderer": {
+    "graphicsApi": "D3D12",
+    "buildPreset": "relwithdebinfo-d3d12-fetch",
+    "buildConfiguration": "RelWithDebInfo",
+    "drawableWidth": 1280,
+    "drawableHeight": 720,
+    "vSync": false,
+    "agilitySdk": "1.614.1",
+    "dxc": "1.7.2308.12",
+    "shaderModel": "6.6"
+  },
+  "paths": {
+    "default": {
+      "heightMap": "assets/heightmaps/Hm_Terrain_Test_129.pgm",
+      "heightMapWidth": 129,
+      "heightMapHeight": 129,
+      "terrainSize": 30.0,
+      "heightScale": 4.0,
+      "maxDepth": 20,
+      "roamSplitPixels": 4.0,
+      "roamMergePixels": 2.0,
+      "roamTriangleBudget": 20000,
+      "cbtTriangleAreaPixels": 58.0,
+      "sampleCount": 600,
+      "warmupFrameCount": 16
+    },
+    "extreme": {
+      "heightMap": "assets/heightmaps/Hm_Terrain_Peking_513.png",
+      "heightMapWidth": 547,
+      "heightMapHeight": 547,
+      "terrainSize": 80.0,
+      "heightScale": 12.0,
+      "maxDepth": 20,
+      "roamSplitPixels": 0.25,
+      "roamMergePixels": 0.1,
+      "roamTriangleBudget": 200000,
+      "cbtTriangleAreaPixels": 2.05,
+      "sampleCount": 64,
+      "warmupFrameCount": 24
+    }
+  },
+  "capacities": [
+    { "name": "128K", "elements": 131072 },
+    { "name": "256K", "elements": 262144 },
+    { "name": "512K", "elements": 524288 },
+    { "name": "1M", "elements": 1048576 }
+  ],
+  "shaderPrograms": {
+    "topology": {
+      "source": "assets/shaders/dx12/cbt/CbtTopologyE0.hlsl",
+      "profile": "cs_6_6",
+      "capacitySpecialized": true,
+      "entryPoints": [
+        "CSResetE0",
+        "CSClassify",
+        "CSPrepareClassificationIndirect",
+        "CSSplitE2",
+        "CSPrepareAllocationIndirect",
+        "CSAllocateE2",
+        "CSBisectE3",
+        "CSPreparePropagationIndirectE3",
+        "CSPropagateBisectE3",
+        "CSPrepareSimplifyF",
+        "CSPrepareSimplifyIndirectF",
+        "CSSimplifyF",
+        "CSPrepareSimplifyPropagationIndirectF",
+        "CSPropagateSimplifyF",
+        "CSReducePre",
+        "CSReduceFirst",
+        "CSReduceSecond",
+        "CSValidateF"
+      ]
+    },
+    "geometry": {
+      "source": "assets/shaders/dx12/cbt/CbtBootstrap.hlsl",
+      "profile": "cs_6_6",
+      "entryPoints": [
+        "CSIndexation",
+        "CSPrepareIndirect",
+        "CSBuildActiveGeometry",
+        "CSBuildModifiedGeometry",
+        "CSValidateGeometryG"
+      ]
+    },
+    "draw": {
+      "source": "assets/shaders/dx12/CbtProceduralTerrain.hlsl",
+      "profile": "vs_6_6",
+      "entryPoints": ["VSCbtProcedural"]
+    },
+    "ocbtValidation": {
+      "source": "assets/shaders/dx12/cbt/CbtOccupancyTreeTests.hlsl",
+      "profile": "cs_6_6",
+      "capacitySpecialized": true,
+      "entryPoints": [
+        "CSClear",
+        "CSApplyUpdates",
+        "CSReducePre",
+        "CSReduceFirst",
+        "CSReduceSecond",
+        "CSDecodeOccupied",
+        "CSDecodeFree"
+      ]
+    }
+  },
+  "benchmarkMatrix": {
+    "paths": ["default", "extreme"],
+    "capacities": ["128K", "256K", "512K", "1M"],
+    "repeats": 3,
+    "validation": "Off",
+    "geometry": "ModifiedOnly",
+    "algorithmSelection": "cbt-only"
+  },
+  "frozenFiles": [
+    { "path": "assets/heightmaps/Hm_Terrain_Peking_513.png", "sha256": "1b084bacf08e3cb67afc3744d98cc80c6dfb7d55280d93d02a3f93294e121031", "binary": true },
+    { "path": "assets/heightmaps/Hm_Terrain_Test_129.pgm", "sha256": "88e7688c5ee298e4df16a250ae37e82c1e48ae8e66c973facfcc0eb208d6448c", "binary": true },
+    { "path": "assets/shaders/dx12/cbt/CbtBootstrap.hlsl", "sha256": "925a4eefa1869c60403a4b4be5a3098478cc67d2c58604c0796eddb8f6d328bb" },
+    { "path": "assets/shaders/dx12/cbt/CbtGpuAbi.hlsli", "sha256": "425f03fc2c0c723c6966f3a08d991c7f1ae2d2d3e37f570a4653149df4e3d329" },
+    { "path": "assets/shaders/dx12/cbt/CbtOccupancyTree.hlsli", "sha256": "71d5fd02098e60a5eca0aaea2b05707dd2d572ea46ac04b793cf346b4d8cc459" },
+    { "path": "assets/shaders/dx12/cbt/CbtOccupancyTreeTests.hlsl", "sha256": "182168e0e21ba0815f7e9b34488138d0fec5808e869c7a7fd457746b8bf04a23" },
+    { "path": "assets/shaders/dx12/cbt/CbtTopologyE0.hlsl", "sha256": "70ab278f16e9bebca70ee827b8b3b3d52b2fc874646947c107296ea6b82e9a90" },
+    { "path": "assets/shaders/dx12/CbtProceduralTerrain.hlsl", "sha256": "48378962509f0e5b364295c2b01a6904971fbfd0c1a4d5c3419306eedca06c4d" },
+    { "path": "cmake/ProjectOptions.cmake", "sha256": "ec19fa3a80f65c3b6ce10a3d3815a74680f3c2bc2d57cdbcc644da3ba24e42af" },
+    { "path": "CMakeLists.txt", "sha256": "263f89f474f5cf4886c091a786a4ad11a747ace44c154b78cc18802d44d306d9" },
+    { "path": "CMakePresets.json", "sha256": "4379e4ccad87a3c06fea159a56b5ffbaa6ebaf66f17fd4b1baf03a12b267d9e3" },
+    { "path": "scripts/benchmark/d3d12/run_cbt_2024_official_baseline_v1.ps1", "sha256": "ec5b83cca58870db255f23bb55dd4b8fb73d33920a2952a2ce2e1d91b42cab40" },
+    { "path": "src/algorithms/cbt_2024/Cbt2024Baseline.h", "sha256": "cfcc883e7b26903178d22535189254d35cda20d8d105fea63b246ef81408ffe2" },
+    { "path": "src/algorithms/cbt_2024/Cbt2024Support.cpp", "sha256": "bca41a9ef837311881ce752fa9b7146eec7038813371a774d8034cac2acc82bf" },
+    { "path": "src/algorithms/cbt_2024/Cbt2024Support.h", "sha256": "a20e45dbc7c136a4895648bd8eab4c973cc647d64c93b29ac85d00071312163f" },
+    { "path": "src/algorithms/cbt_2024/CbtBisectCommit.cpp", "sha256": "986d4d299d88a09a7395aeb91a37f616c3cca4be1f4408f826bed19bd8fabc48" },
+    { "path": "src/algorithms/cbt_2024/CbtBisectCommit.h", "sha256": "50b6b8e7f9ae0fb53b4ef7046ff5d9952c1921ae513412ad735988f878a1b0e2" },
+    { "path": "src/algorithms/cbt_2024/CbtBisectorTopology.cpp", "sha256": "29eb8495b410b216e8fef012168aed19c6d214b8553c97e5023f623bd9417cbf" },
+    { "path": "src/algorithms/cbt_2024/CbtBisectorTopology.h", "sha256": "b004fb56aaeeed6ec6b7b6dc118bc356c1a218f2dad088a6f6545c6988034690" },
+    { "path": "src/algorithms/cbt_2024/CbtClassification.cpp", "sha256": "18ae18f42fe4a4512f97c25cd1954f802f1122dd7e4ef9b9b74c350c7e4661e0" },
+    { "path": "src/algorithms/cbt_2024/CbtClassification.h", "sha256": "7fb35c76eb86a68cd5df3338558bb5c9a13d1b896fa5e0e7083882be5f9bdb55" },
+    { "path": "src/algorithms/cbt_2024/CbtGpuAbi.h", "sha256": "e82d1996e3193e9077cdb4a5175d3c96ea9aa032e9e58942a6dc24d74ca645ed" },
+    { "path": "src/algorithms/cbt_2024/CbtGpuAbi.shared.h", "sha256": "7a3ad61a76b814b72a1fb9b8022f974b49a9f026dc639eea3040b35be97ece89" },
+    { "path": "src/algorithms/cbt_2024/CbtOccupancyTree.cpp", "sha256": "00090ec733bd9676569fea1dba11f6192d6e0b0c81591e58d5b730e40968d29a" },
+    { "path": "src/algorithms/cbt_2024/CbtOccupancyTree.h", "sha256": "fd27eec3a4ebc9903455127d8ef483dcf2a1a1014f98dd10a51e31716d2ca5d6" },
+    { "path": "src/algorithms/cbt_2024/CbtSimplifyCommit.cpp", "sha256": "f84e085e17bb7dd1d9d722d495127c87a8f9f0031bc72d7cb4945f02889cdf3c" },
+    { "path": "src/algorithms/cbt_2024/CbtSimplifyCommit.h", "sha256": "970d479725df627c4f8bfec815e5508df8b450159bf951a006480bc6208f80c7" },
+    { "path": "src/algorithms/cbt_2024/CbtSplitPlanner.cpp", "sha256": "8f3adb97b3ef54af031d530d3c4cb5536e5a8e5deb1c9a766da63b87580789de" },
+    { "path": "src/algorithms/cbt_2024/CbtSplitPlanner.h", "sha256": "9cc0b5c9b48adfc808ac8285084411686d3ca3f277572e7671aa1850ca35d450" },
+    { "path": "src/algorithms/cbt_2024/CbtTerrainGeometry.cpp", "sha256": "96ed909f07e7e5a3b05d7dd7f2da4d9a1f93604e03a5e63df7f97af7d48d8d87" },
+    { "path": "src/algorithms/cbt_2024/CbtTerrainGeometry.h", "sha256": "f566d0e18ca7cfffabc2a8d96b5c91543ac0c26c270f18782e6ac63605608dc9" },
+    { "path": "src/algorithms/cbt_2024/d3d12/D3D12CbtDiagnostics.cpp", "sha256": "1664ca591b09fcefe4515b9e5b953b977e3bcce43126f365fc72ee3ba5b770f6" },
+    { "path": "src/algorithms/cbt_2024/d3d12/D3D12CbtDiagnostics.h", "sha256": "97745ee3575f6124f15b5d7281146f3297cdf2273fe49b739d9b2ecf81a7b6ac" },
+    { "path": "src/algorithms/cbt_2024/d3d12/D3D12CbtFramePipeline.cpp", "sha256": "0e61136ab45e6d9d94d0dfc48de0f5639097bce0bb7417ec0daa1286a8c7973d" },
+    { "path": "src/algorithms/cbt_2024/d3d12/D3D12CbtFramePipeline.h", "sha256": "e33db325c7e73a5e66294ebb1afb60b309b0f63aae3fdb85300aa7ab25321c4b" },
+    { "path": "src/algorithms/cbt_2024/d3d12/D3D12CbtGeometryPipeline.cpp", "sha256": "1736fda71e8bfd347d325f8cb2308a8d9fce798d5aa9349141684d22b5dfc5ce" },
+    { "path": "src/algorithms/cbt_2024/d3d12/D3D12CbtGeometryPipeline.h", "sha256": "53b943b0357a4fe2e916889848019bf47dc515741ae813c2a317e8259ccc6e85" },
+    { "path": "src/algorithms/cbt_2024/d3d12/D3D12CbtGpuState.cpp", "sha256": "576ed769fce1cb80461de0469af2a48b857b343cfd5a6abdf33e86ecb0667b63" },
+    { "path": "src/algorithms/cbt_2024/d3d12/D3D12CbtGpuState.h", "sha256": "09c8238ee2fc157f64f65078a6dd47f814db5c6b97584cd50c56bce4cbf22749" },
+    { "path": "src/algorithms/cbt_2024/d3d12/D3D12CbtOccupancyTree.cpp", "sha256": "9ab86a406db1f52f4ccd47ee2596a3ade003974dce40ead98f391ee7131eac85" },
+    { "path": "src/algorithms/cbt_2024/d3d12/D3D12CbtOccupancyTree.h", "sha256": "642e10aae6897d5ed3a0d18e214230f2b181ea16d5848cc6fc022885a1c16c11" },
+    { "path": "src/algorithms/cbt_2024/d3d12/D3D12CbtTerrainLodAlgorithm.cpp", "sha256": "c0e3dbf4c032e74b3d4cd982d1310d72c02f2a2ef011378f7862c162d53e397c" },
+    { "path": "src/algorithms/cbt_2024/d3d12/D3D12CbtTerrainLodAlgorithm.h", "sha256": "ebc23b08242adc5c0b1ca66c53831acbb8a96272aaeddc0fa591694d5597f80a" },
+    { "path": "src/app/Application.cpp", "sha256": "7a8aa7a15beababe610a7e4d4ae15e1a33daf58c7d6229df722b12e229b3a5f5" },
+    { "path": "src/app/Application.h", "sha256": "4607441574504a546509f7b07f89cc70809f1821483607ae9cfb0ffc3a90697b" },
+    { "path": "src/app/RuntimeBenchmark.cpp", "sha256": "46dbc9986f13810b3e5972f5384942507999e230463e9427a63deae4fa8a0511" },
+    { "path": "src/app/RuntimeBenchmark.h", "sha256": "747f48a652bca61a9ca9d312eff66a79716699a3a118bcc726c7d7fa9f8f4f2c" },
+    { "path": "src/gui/ImGuiLayer.cpp", "sha256": "7cce1a2b619be48abb9944f7b030cdbfa14289fe2cb2902fb6729bb330f733f9" },
+    { "path": "src/main.cpp", "sha256": "7cbf758b298811b8376ad805b605868958c749fde31ed728c2e2387f4274f98a" },
+    { "path": "src/render/D3D12ProceduralTerrainPipeline.cpp", "sha256": "3c5326b277590168a9d1ac4c534df036eb3046fa578d0896bc4cc8d6ffdcd4c9" },
+    { "path": "src/render/D3D12ProceduralTerrainPipeline.h", "sha256": "3e71029557a03f7d3671e0d9f58ea647ca5f2711aab82d73872cbee8ae1dfd5b" },
+    { "path": "src/render/D3D12TerrainRenderer.cpp", "sha256": "95c6ce77917e0a1fd33a23b7ac13ab896dc43f79b57e4e092a9dd84f8d2dcb3b" },
+    { "path": "src/render/TerrainRenderer.h", "sha256": "75e8d8e63c2dad8ceec88b71f59395172497c6cc2deb871c5318f3e152f26180" },
+    { "path": "tests/CMakeLists.txt", "sha256": "2c340833bb9a9a88cc9cc9feeed63098b3e05b97c7f7c25ab2fdb9b42511d65c" },
+    { "path": "tests/TerrainLodContractTests.cpp", "sha256": "b358fa8ca9be19ee72af145248f707a3c2dfd5703660c0bc6c3a4f6ab21aad5d" }
+  ]
+}
