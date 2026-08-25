@@ -226,8 +226,10 @@ function Invoke-BenchmarkRun(
     {
         throw "Runtime benchmark did not report its output paths for $label"
     }
-    $csvRelative = [regex]::Match($csvLine, '^Runtime benchmark csv:\s*(.+)$').Groups[1].Value.Trim()
-    $markdownRelative = [regex]::Match($markdownLine, '^Runtime benchmark report:\s*(.+)$').Groups[1].Value.Trim()
+    # std::filesystem::path uses quoted output on Windows, so remove the wrapper
+    # before resolving the application-reported relative path.
+    $csvRelative = [regex]::Match($csvLine, '^Runtime benchmark csv:\s*(.+)$').Groups[1].Value.Trim().Trim('"')
+    $markdownRelative = [regex]::Match($markdownLine, '^Runtime benchmark report:\s*(.+)$').Groups[1].Value.Trim().Trim('"')
     $csvSource = [IO.Path]::GetFullPath((Join-Path $repositoryRoot $csvRelative))
     $markdownSource = [IO.Path]::GetFullPath((Join-Path $repositoryRoot $markdownRelative))
     if (-not $csvSource.StartsWith($reportRoot, [StringComparison]::OrdinalIgnoreCase) -or
