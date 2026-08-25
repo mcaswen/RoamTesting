@@ -1,10 +1,10 @@
 # CBT 2024 接入与复现计划
 
 > 初稿日期：2026-07-16
-> 源码复核：2026-08-23
-> 状态：实施计划 v1.0；阶段 H 已完成，当前进入阶段 I
+> 源码复核：2026-08-25
+> 状态：实施计划 v1.0；阶段 I 已完成
 > 前置条件：D3D12 迁移阶段已完成
-> 上游参考：`third_party/large_cbt`，提交 `7ae736d179528a0996449c0cc2db7f3279edc8ee`
+> 上游参考：`AnisB/large_cbt`，官方提交 `7351e6fb380acc149b3aef22a6c39bf3df7950a6`
 > 本机兼容基线：提交 `7ae736d179528a0996449c0cc2db7f3279edc8ee`，仅替换 NVIDIA 64 位 `firstbithigh` 实现
 
 > 主分支已移除 GPU ROAM-like 过渡实现。它只作为历史实验保留在 `archive/gpu-roam-like` 分支，不再属于当前接入架构或完成后的主线比较集合。
@@ -479,7 +479,7 @@ CPU ROAM 的厚度阈值和 triangle budget 继续保留原义，不伪装成 CB
 
 ### 阶段 A：官方程序构建与基线准备
 
-状态：官方程序和本机兼容版本已运行；完整动态实验冻结留到阶段 I。
+状态：已完成；官方程序、本机兼容版本和阶段 I 动态实验均已冻结。
 
 已完成：
 
@@ -488,7 +488,7 @@ CPU ROAM 的厚度阈值和 triangle budget 继续保留原义，不伪装成 CB
 - 构建运行 `outer_space`；
 - 确认核心 CBT shader 自初始公开提交后没有算法性变化。
 
-阶段 I 仍需固定官方相机、分辨率、容量、截图、占用量和阶段时间。
+阶段 I 已固定 RoamTesting 的高度图、分辨率、离散相机、容量、占用量和阶段时间；上游场景差异见 [`18-cbt-2024-official-baseline-v1.md`](18-cbt-2024-official-baseline-v1.md)。
 
 ### 阶段 B：公共接口与程序化绘制
 
@@ -759,12 +759,14 @@ E3 对外启用 `SupportsSplit`、`SupportsCrackFix` 和 `SupportsTopologyValida
 - UI 与 `--runtime-benchmark-cbt-*` 参数独立控制 area、128K/256K/512K/1M 容量、Off/Delayed/BlockingSmoke 验证和 ModifiedOnly/FullDebug 几何，不再复用 CPU ROAM 阈值或验证开关；
 - compute、几何、validation 与 terrain draw 使用交换链轮转 timestamp query；普通帧不等待当前样本，BlockingSmoke 的显式等待单独计时；
 - 延迟诊断公开资源、拓扑、计数、compute timing 和 terrain draw 代次，并记录 sample age 与 dropped；汇总只计算代次完全对齐的新鲜样本；
-- runtime benchmark 在 D3D12 能力可用时加入 CBT，默认路径固定为 20K、20 层、128K 和 58 px²并预热 8 帧，极限路径固定为 200K、20 层、1M 和 2.05 px²并预热 24 帧；两条路径复用相同离散相机 `sampleIndex`，并按稳态活动三角形规模完成校准；
+- runtime benchmark 在 D3D12 能力可用时加入 CBT，默认路径固定为 20K、20 层、128K 和 58 px²并预热 16 帧，极限路径固定为 200K、20 层、1M 和 2.05 px²并预热 24 帧；两条路径复用相同离散相机 `sampleIndex`，并按稳态活动三角形规模完成校准；
 - Markdown/CSV 输出 CBT 配置、硬件、资源代次、动态槽位与 split/merge 计数、18 个 GPU 阶段、阻塞等待和完整回读字节数；自动流程在采样完成后写出报告并退出；
 - `cbt_procedural_h_*` 覆盖四档容量及三种验证路径，`cbt_runtime_h_default_quick`、`cbt_runtime_h_extreme_quick` 和 `cbt_runtime_h_full_geometry_quick` 覆盖默认、极限和 full-debug runtime 接入；
 - RTX 5090 D / Debug D3D12 下 25/25 CTest 通过，Debug OpenGL 下 18/18 通过；CBT C++ 注释率为 16.1%，shader 注释率为 15.3%。
 
 ### 阶段 I：官方语义基线冻结
+
+状态：已完成，2026-08-25。
 
 任务：
 
@@ -777,6 +779,16 @@ E3 对外启用 `SupportsSplit`、`SupportsCrackFix` 和 `SupportsTopologyValida
 - 在发布或复制上游衍生实现前完成许可证确认。
 
 完成条件：后续研究变体可以与一个不可变、可复现、统计完整、没有隐式 CPU 同步的 CBT 2024 基线比较。
+
+验收记录：
+
+- 算法键固定为 `cbt_2024_official_baseline_v1`，清单对 55 个关键源码、shader、场景资产和运行脚本执行规范化 SHA-256 校验；
+- `benchmark/cbt-2024-official-baseline-v1` 固定到提交 `b0bdd5d0c25a523f5a15221dfb90eaf4db829b4c`；
+- 默认/极限路径、128K/256K/512K/1M 和三次重复均由专用脚本执行，正式结果保存于 [`benchmark-output/cbt-2024-official-baseline-v1`](../../benchmark-output/cbt-2024-official-baseline-v1)；
+- 默认路径四容量保持相同活动三角形轨迹；极限路径的 128K 接近饱和，256K 起稳定达到约 20.18 万三角形，符合 OCBT 容量约束趋势；
+- 拓扑 pass 顺序与上游一致，基础网格、地形几何、帧围栏和扩展验证差异已记录在 [`18-cbt-2024-official-baseline-v1.md`](18-cbt-2024-official-baseline-v1.md)；
+- RelWithDebInfo D3D12 26/26、OpenGL 18/18 CTest 通过，四档 D3D12 smoke 覆盖 Delayed、BlockingSmoke 与 Off；
+- 上游没有声明许可证，技术基线已经冻结，但公开发布和再分发仍由 [`THIRD_PARTY_NOTICES.md`](../../THIRD_PARTY_NOTICES.md) 阻塞。
 
 ## 10. 统计与实验口径
 
@@ -956,7 +968,17 @@ CTest 应使用 `unit`、`gpu-quick`、`integration` 标签并设置明确超时
 4. 延迟统计；
 5. UI、CLI、runtime benchmark 和完整测试矩阵。
 
-每个批次必须先通过自身正确性门槛，再进入下一批。阶段 G-H 已完成高度图几何、增量更新、延迟统计、UI/CLI 和 runtime benchmark，下一批进入阶段 I 的官方语义冻结。
+### 批次 7：I 官方语义基线冻结
+
+状态：已完成，2026-08-25。
+
+1. 固定算法身份、shader/PSO、双路径和实际分辨率；
+2. 建立关键输入哈希清单与不可变 benchmark 标签；
+3. 完成四档容量、双路径、三次重复性能矩阵；
+4. 记录上游 pass、占用趋势、验证、基础网格、几何和同步差异；
+5. 将上游许可证缺失转化为显式发布门禁。
+
+每个批次必须先通过自身正确性门槛，再进入下一批。阶段 I 已完成官方语义基线冻结；后续预算调度、可见列表绘制或 OCBT 扫描优化必须使用新的算法键、shader 变体和 benchmark 标签。
 
 ## 13. 主要风险与控制措施
 
@@ -1023,6 +1045,6 @@ CTest 应使用 `unit`、`gpu-quick`、`integration` 标签并设置明确超时
 
 ## 17. 结论
 
-当前仓库已经完成 OCBT、方形基础半边、程序化间接绘制、阶段 E0 的动态管线前置契约、阶段 E1 的官方面积分类、阶段 E2 的兼容链规划与旧 OCBT 空闲槽位分配、阶段 E3 的四模板 Bisect 及 split 传播、阶段 F 的两/四节点 merge 与槽位回收、阶段 G 的 GPU 高度图几何，以及阶段 H 的独立应用参数、延迟诊断、逐阶段 GPU timestamp 与 runtime benchmark。split 和 merge 共享一个邻接代次与一轮 Reduce，高度几何默认按 modified list 增量更新，CBT 也已接入默认/极限离散路径和可复现报告。
+当前仓库已经完成 OCBT、方形基础半边、程序化间接绘制、阶段 E0 的动态管线前置契约、阶段 E1 的官方面积分类、阶段 E2 的兼容链规划与旧 OCBT 空闲槽位分配、阶段 E3 的四模板 Bisect 及 split 传播、阶段 F 的两/四节点 merge 与槽位回收、阶段 G 的 GPU 高度图几何、阶段 H 的独立应用参数与 benchmark，以及阶段 I 的官方语义冻结。split 和 merge 共享一个邻接代次与一轮 Reduce，高度几何默认按 modified list 增量更新，普通性能帧不引入当前帧 CPU 同步。
 
-下一步进入阶段 I，冻结 shader、PSO、参数、算法标识和正式场景，并记录四档容量的重复性能结果及与上游实现的差异。
+后续研究工作必须从 `benchmark/cbt-2024-official-baseline-v1` 派生，并使用不同的算法身份和实验标签；在上游许可证或书面授权确认前，CBT source-referenced 部分仍不得作为公开可再分发实现发布。

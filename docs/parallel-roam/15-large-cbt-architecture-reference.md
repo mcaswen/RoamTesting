@@ -1,8 +1,8 @@
 # large_cbt 总体架构与关键算法路径参考
 
 > 日期：2026-07-16  
-> 文档状态：源码架构参考 v0.2；RoamTesting 映射更新于 2026-07-20
-> 分析对象：`third_party/large_cbt`，提交 `7351e6fc603b9b2c2ab4da399b13a9ab0f327398`  
+> 文档状态：源码架构参考 v0.2；RoamTesting 映射更新于 2026-08-25
+> 分析对象：`third_party/large_cbt`，官方提交 `7351e6fb380acc149b3aef22a6c39bf3df7950a6`
 > 对应论文：*Concurrent Binary Trees for Large-Scale Game Components*，HPG 2024
 
 > 接入实施安排见 [CBT 2024 接入与复现计划](16-cbt-2024-integration-plan.md)。
@@ -470,7 +470,7 @@ CBT 忠实基线不额外生成传统索引缓冲；传统索引间接路径只�
 
 ### 阶段 A：冻结官方参考程序
 
-状态：官方程序和本机兼容基线已运行，完整动态实验冻结仍待阶段 I。
+状态：已完成。官方程序和本机兼容版本已经运行，RoamTesting 动态实验冻结见 [`18-cbt-2024-official-baseline-v1.md`](18-cbt-2024-official-baseline-v1.md)。
 
 - 在 `third_party/large_cbt` 独立生成并运行 `outer_space`；
 - 固定提交、适配器、驱动、分辨率、CBT 类型和相机路径；
@@ -479,7 +479,7 @@ CBT 忠实基线不额外生成传统索引缓冲；传统索引间接路径只�
 
 ### 阶段 B：桥接官方拓扑，不改算法语义
 
-状态：程序化绘制、OCBT 和基础 GPU 状态已完成；完整 split/merge 尚未完成。
+状态：已完成。程序化绘制、OCBT、GPU 常驻状态、split/merge、双向传播、Reduce 和 Indexation 已形成闭环。
 
 - 在 RoamTesting 中增加 CBT 算法实例和 GPU 常驻状态；
 - 迁移 OCBT、`UpdateMesh.compute` 和命令阶段顺序；
@@ -489,7 +489,7 @@ CBT 忠实基线不额外生成传统索引缓冲；传统索引间接路径只�
 
 ### 阶段 C：适配高度图地形
 
-状态：规则地形基础半边拓扑已完成，高度图几何求值待实施。
+状态：已完成。规则地形基础半边、GPU 高度图位置/法线/UV/调试色和 modified/full 两种几何模式均已接入。
 
 - 为规则地形构建半边基础网格；
 - 用高度图求值替换球面 `PlanetGeometry.compute`；
@@ -497,6 +497,8 @@ CBT 忠实基线不额外生成传统索引缓冲；传统索引间接路径只�
 - 接入现有相机路径、界面和 benchmark。
 
 ### 阶段 D：建立论文基线
+
+状态：官方先到先分配语义、容量压力结果和观测字段已冻结；全局预算调度保留为独立研究变体。
 
 - 冻结“官方先到先分配”策略；
 - 增加容量饱和场景和候选超过预算的测试；

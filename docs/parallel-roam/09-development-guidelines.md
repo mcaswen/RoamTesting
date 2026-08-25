@@ -390,7 +390,7 @@ frames.resize(FrameCount);
 
 ### 7.1 Benchmark scenario 规范
 
-1. 当前 runtime benchmark 使用程序内固定的离散相机采样点，并通过 `--runtime-benchmark-*` 参数覆盖高度图、地形尺度、深度、采样点数和标签。Classic、DOD 和可用的 CBT 2024 必须按相同 `sampleIndex` 执行全部姿态；`timeSeconds` 只记录实际墙钟时间，不驱动路径。CPU ROAM 共用像素 split/merge 阈值与三角形预算，CBT 独立记录面积阈值、容量、验证模式和几何模式。每种算法先预热 8 帧，普通 CBT 性能样本采用 `Off` 验证、延迟 timestamp/counter 回读，并通过资源、诊断、compute 和 terrain draw 代次过滤错位样本。
+1. 当前 runtime benchmark 使用程序内固定的离散相机采样点，并通过 `--runtime-benchmark-*` 参数覆盖高度图、地形尺度、深度、采样点数和标签。Classic、DOD 和可用的 CBT 2024 必须按相同 `sampleIndex` 执行全部姿态；`timeSeconds` 只记录实际墙钟时间，不驱动路径。CPU ROAM 共用像素 split/merge 阈值与三角形预算，CBT 独立记录面积阈值、容量、验证模式和几何模式。默认路径预热 16 帧，极限路径预热 24 帧；普通 CBT 性能样本采用 `Off` 验证、延迟 timestamp/counter 回读，并通过资源、诊断、compute 和 terrain draw 代次过滤错位样本。
 2. 正式实验命令必须记录完整参数、构建 preset、图形后端、适配器、分辨率和 VSync 状态。
 3. 输出统一写入 Git 忽略的 `benchmark-output/`；需要进入报告的聚合数据和图表应保留生成脚本与来源说明。
 4. 不覆盖已经用于报告结论的原始 CSV；实验变体使用独立标签和输出目录。

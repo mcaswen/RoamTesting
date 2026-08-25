@@ -217,6 +217,21 @@ scripts\run\d3d12\run_relwithdebinfo_fetch.bat --runtime-benchmark
 
 该命令会让每种可用算法依次执行同一组离散相机采样点，生成 `benchmark-output/runtime-benchmark-*.md` 和对应逐点 CSV 后自动退出。默认选项路径为 600 点，极限压力路径为 64 点，也可通过 `--runtime-benchmark-samples` 覆盖；算法耗时只改变完成整轮测试所需的墙钟时间，不再改变采样点数量或姿态。GPU capability 不满足时，报告会保留 CPU 结果并写明 CBT skip 原因；D3D12 能力满足时，CBT 会记录延迟诊断和逐阶段 GPU 计时。
 
+只运行 CBT、保留相同 runtime benchmark 链路：
+
+```bat
+scripts\run\d3d12\run_relwithdebinfo_fetch.bat --runtime-benchmark --runtime-benchmark-algorithm cbt
+```
+
+阶段 I 的正式四容量基线使用专用 PowerShell 入口。它会先核对 benchmark 标签、干净 tracked worktree 和冻结输入哈希，再构建并执行默认/极限路径、四档容量和三次重复：
+
+```powershell
+git switch --detach benchmark/cbt-2024-official-baseline-v1
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/benchmark/d3d12/run_cbt_2024_official_baseline_v1.ps1
+```
+
+正式汇总位于 `benchmark-output/cbt-2024-official-baseline-v1/`，逐帧原始报告位于其 Git 忽略的 `raw/` 子目录。固定身份、结果解释和上游差异见 [`18-cbt-2024-official-baseline-v1.md`](18-cbt-2024-official-baseline-v1.md)。
+
 当前 pin 的版本：
 
 ```text
