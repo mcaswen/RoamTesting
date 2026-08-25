@@ -262,6 +262,10 @@ function Invoke-BenchmarkRun(
 
     Assert-UniformValue $rows "buildConfiguration" $configuration
     Assert-UniformValue $rows "graphicsBackend" "D3D12"
+    $graphicsAdapter = [string]$rows[0].graphicsAdapter
+    $graphicsVersion = [string]$rows[0].graphicsVersion
+    Assert-UniformValue $rows "graphicsAdapter" $graphicsAdapter
+    Assert-UniformValue $rows "graphicsVersion" $graphicsVersion
     Assert-UniformValue $rows "vSyncEnabled" "false"
     Assert-UniformValue $rows "drawableWidth" ([string]$Manifest.renderer.drawableWidth)
     Assert-UniformValue $rows "drawableHeight" ([string]$Manifest.renderer.drawableHeight)
@@ -305,6 +309,8 @@ function Invoke-BenchmarkRun(
     return [PSCustomObject]@{
         baselineId = [string]$Manifest.baselineId
         sourceCommit = $Head
+        graphicsAdapter = $graphicsAdapter
+        graphicsVersion = $graphicsVersion
         path = $PathName
         capacity = $capacityName
         capacityElements = [int64]$Capacity.elements
@@ -370,6 +376,11 @@ function Format-Decimal([double]$Value)
 
 function Write-Summaries($Manifest, $GitIdentity, $RunRows, $AggregateRows, [string]$SessionName)
 {
+    $graphicsAdapter = [string]$RunRows[0].graphicsAdapter
+    $graphicsVersion = [string]$RunRows[0].graphicsVersion
+    Assert-UniformValue $RunRows "graphicsAdapter" $graphicsAdapter
+    Assert-UniformValue $RunRows "graphicsVersion" $graphicsVersion
+
     New-Item -ItemType Directory -Path $outputRoot -Force | Out-Null
     $runCsv = (($RunRows | ConvertTo-Csv -NoTypeInformation) -join "`r`n") + "`r`n"
     $aggregateCsv = (($AggregateRows | ConvertTo-Csv -NoTypeInformation) -join "`r`n") + "`r`n"
@@ -383,6 +394,8 @@ function Write-Summaries($Manifest, $GitIdentity, $RunRows, $AggregateRows, [str
     $lines.Add("- Algorithm key: $($Manifest.algorithmKey)")
     $lines.Add("- Git commit: $($GitIdentity.Head)")
     $lines.Add("- Benchmark tag: $($GitIdentity.Tag)")
+    $lines.Add("- GPU: $graphicsAdapter")
+    $lines.Add("- Graphics runtime: $graphicsVersion")
     $lines.Add("- Raw report directory: raw/$SessionName (generated locally and excluded from Git)")
     $lines.Add("- Repeats: $repeatCount; validation=Off; geometry=ModifiedOnly; VSync=Off")
     $lines.Add("- License status: upstream has no declared license; public redistribution remains blocked")

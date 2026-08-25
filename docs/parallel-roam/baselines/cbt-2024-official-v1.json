@@ -139,7 +139,7 @@
     { "path": "cmake/ProjectOptions.cmake", "sha256": "ec19fa3a80f65c3b6ce10a3d3815a74680f3c2bc2d57cdbcc644da3ba24e42af" },
     { "path": "CMakeLists.txt", "sha256": "263f89f474f5cf4886c091a786a4ad11a747ace44c154b78cc18802d44d306d9" },
     { "path": "CMakePresets.json", "sha256": "4379e4ccad87a3c06fea159a56b5ffbaa6ebaf66f17fd4b1baf03a12b267d9e3" },
-    { "path": "scripts/benchmark/d3d12/run_cbt_2024_official_baseline_v1.ps1", "sha256": "e659b920ddd8fbbce2bb8dee45cc5818988761a775b391ca056425bce841622d" },
+    { "path": "scripts/benchmark/d3d12/run_cbt_2024_official_baseline_v1.ps1", "sha256": "547520af56e6ebc908ce885133671219dbfeaf50a538d35f847465df272f7cea" },
     { "path": "src/algorithms/cbt_2024/Cbt2024Baseline.h", "sha256": "cfcc883e7b26903178d22535189254d35cda20d8d105fea63b246ef81408ffe2" },
     { "path": "src/algorithms/cbt_2024/Cbt2024Support.cpp", "sha256": "bca41a9ef837311881ce752fa9b7146eec7038813371a774d8034cac2acc82bf" },
     { "path": "src/algorithms/cbt_2024/Cbt2024Support.h", "sha256": "a20e45dbc7c136a4895648bd8eab4c973cc647d64c93b29ac85d00071312163f" },
