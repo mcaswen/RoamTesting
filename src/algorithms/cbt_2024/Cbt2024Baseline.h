@@ -11,7 +11,7 @@ namespace ParallelRoam::Algorithms::Cbt2024::OfficialBaselineV1
 // 阶段 I 之后的研究变体必须使用新的算法键和 benchmark 标签，不能覆盖本基线身份。
 inline constexpr std::string_view BaselineId{"cbt-2024-official-baseline-v1"};
 inline constexpr std::string_view AlgorithmKey{"cbt_2024_official_baseline_v1"};
-inline constexpr std::string_view DisplayName{"CBT 2024（官方语义基线 v1）"};
+inline constexpr std::string_view DisplayName{"CBT 2024"};
 inline constexpr std::string_view BenchmarkTag{"benchmark/cbt-2024-official-baseline-v1"};
 
 // 官方远端提交与本机 NVIDIA 兼容补丁分开记录，避免把兼容提交误认为上游发布版本。
