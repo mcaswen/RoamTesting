@@ -10,6 +10,17 @@
 #define CBT_GPU_VISIBLE_FLAG 0x1u
 #define CBT_GPU_MODIFIED_FLAG 0x2u
 
+// Debug metadata shares Flags without changing the operational low bits.
+// The hold window makes every-frame CBT changes perceptible in the UI.
+#define CBT_GPU_SPLIT_EVENT_FLAG 0x4u
+#define CBT_GPU_MERGE_EVENT_FLAG 0x8u
+#define CBT_GPU_DEBUG_EVENT_MASK 0xcu
+#define CBT_GPU_DEBUG_EVENT_LIFETIME_SHIFT 4u
+#define CBT_GPU_DEBUG_EVENT_LIFETIME_MASK 0x1f0u
+#define CBT_GPU_DEBUG_EVENT_HOLD_FRAMES 16u
+#define CBT_GPU_ACTIVE_DEPTH_SHIFT 9u
+#define CBT_GPU_ACTIVE_DEPTH_MASK 0x7e00u
+
 #define CBT_GPU_UNCHANGED_ELEMENT 0u
 #define CBT_GPU_BISECT_ELEMENT 1u
 #define CBT_GPU_SIMPLIFY_ELEMENT 2u

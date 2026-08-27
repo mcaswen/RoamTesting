@@ -1,6 +1,7 @@
 #include "algorithms/cbt_2024/CbtSimplifyCommit.h"
 
 #include <algorithm>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -159,7 +160,10 @@ bool CommitSimplification(
     currentData.PropagationId = pairId;
     currentData.ProblematicNeighbor = pairNeighbors.Twin;
     currentData.BisectorState = CbtMergedElement;
-    currentData.Flags = CbtVisibleFlag | CbtModifiedFlag;
+    currentData.Flags = CbtVisibleFlag | CbtModifiedFlag | CbtMergeEventFlag |
+        EncodeCbtDebugEventLifetime(CbtDebugEventHoldFrames) |
+        EncodeCbtActiveDepth(
+            static_cast<std::uint32_t>(std::bit_width(result.HeapIds[currentId])));
     result.BisectorData[currentId] = currentData;
     if (currentData.ProblematicNeighbor != InvalidCbtBisectorIndex)
     {
@@ -195,7 +199,10 @@ bool CommitSimplification(
     lowData.PropagationId = twinHighId;
     lowData.ProblematicNeighbor = highNeighbors.Twin;
     lowData.BisectorState = CbtMergedElement;
-    lowData.Flags = CbtVisibleFlag | CbtModifiedFlag;
+    lowData.Flags = CbtVisibleFlag | CbtModifiedFlag | CbtMergeEventFlag |
+        EncodeCbtDebugEventLifetime(CbtDebugEventHoldFrames) |
+        EncodeCbtActiveDepth(
+            static_cast<std::uint32_t>(std::bit_width(result.HeapIds[twinLowId])));
     result.BisectorData[twinLowId] = lowData;
     if (lowData.ProblematicNeighbor != InvalidCbtBisectorIndex)
     {

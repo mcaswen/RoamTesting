@@ -224,11 +224,15 @@ const char* TerrainModeName(bool useTerrainLod, Algorithms::TerrainLodAlgorithmI
 void DrawDebugColorLegend()
 {
     // 当前 Build 的 split 与 merge 必须分别展示，避免合并成含糊的“重建”颜色。
+    const glm::vec3 originalColor = Algorithms::Roam::OriginalDebugColor();
+    const glm::vec3 subdividedColor = Algorithms::Roam::SubdividedDebugColor(0.0F);
     const glm::vec3 splitColor = Algorithms::Roam::SplitDebugColor();
     const glm::vec3 mergeColor = Algorithms::Roam::MergeDebugColor();
     const std::array<std::pair<const char*, ImVec4>, 4> legendItems{
-        std::pair<const char*, ImVec4>{"原始", ImVec4{0.28F, 0.34F, 0.30F, 1.0F}},
-        std::pair<const char*, ImVec4>{"细分", ImVec4{0.08F, 0.72F, 0.62F, 1.0F}},
+        std::pair<const char*, ImVec4>{
+            "原始", ImVec4{originalColor.r, originalColor.g, originalColor.b, 1.0F}},
+        std::pair<const char*, ImVec4>{
+            "细分", ImVec4{subdividedColor.r, subdividedColor.g, subdividedColor.b, 1.0F}},
         std::pair<const char*, ImVec4>{
             "本帧 Split", ImVec4{splitColor.r, splitColor.g, splitColor.b, 1.0F}},
         std::pair<const char*, ImVec4>{

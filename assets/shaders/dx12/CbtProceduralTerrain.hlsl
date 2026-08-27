@@ -43,6 +43,28 @@ StructuredBuffer<TerrainVertexData> CbtVertices : register(t2);
 // 拓扑状态保留本帧 modified 与 split/merge 语义，几何缓冲只保存稳定的基础调色板。
 StructuredBuffer<CbtBisectorData> CbtBisectors : register(t3);
 
+float3 CbtStableDebugColor(uint depth)
+{
+    if (depth <= CbtInitialDepth)
+    {
+        return float3(
+            ROAM_DEBUG_ORIGINAL_RED,
+            ROAM_DEBUG_ORIGINAL_GREEN,
+            ROAM_DEBUG_ORIGINAL_BLUE);
+    }
+    const float depthRange = max(float(DebugParameters.z) - float(CbtInitialDepth), 1.0);
+    const float depthRatio = saturate((float(depth) - float(CbtInitialDepth)) / depthRange);
+    const float3 low = float3(
+        ROAM_DEBUG_SUBDIVIDED_LOW_RED,
+        ROAM_DEBUG_SUBDIVIDED_LOW_GREEN,
+        ROAM_DEBUG_SUBDIVIDED_LOW_BLUE);
+    const float3 high = float3(
+        ROAM_DEBUG_SUBDIVIDED_HIGH_RED,
+        ROAM_DEBUG_SUBDIVIDED_HIGH_GREEN,
+        ROAM_DEBUG_SUBDIVIDED_HIGH_BLUE);
+    return lerp(low, high, depthRatio);
+}
+
 VertexOutput VSCbtProcedural(uint vertexId : SV_VertexID)
 {
     // 每三个 SV_VertexID 组成一个活动三角形
@@ -57,24 +79,29 @@ VertexOutput VSCbtProcedural(uint vertexId : SV_VertexID)
     output.Normal = input.Normal;
     output.TexCoord = input.TexCoord;
     output.Height = input.Height;
-    output.DebugColor = input.DebugColor;
-    output.DebugHighlight = input.DebugHighlight;
     const CbtBisectorData bisector = CbtBisectors[physicalSlot];
-    if ((bisector.Flags & CbtModifiedFlag) != 0u)
+    const uint depth = CbtDecodeActiveDepth(bisector.Flags);
+    output.DebugColor = CbtStableDebugColor(depth);
+    output.DebugHighlight = depth <= CbtInitialDepth
+        ? ROAM_DEBUG_ORIGINAL_HIGHLIGHT
+        : ROAM_DEBUG_SUBDIVIDED_HIGHLIGHT;
+    if (CbtDecodeDebugEventLifetime(bisector.Flags) != 0u)
     {
-        if (bisector.BisectorState == CbtMergedElement)
+        if ((bisector.Flags & CbtMergeEventFlag) != 0u)
         {
             output.DebugColor = float3(
                 ROAM_DEBUG_MERGE_RED,
                 ROAM_DEBUG_MERGE_GREEN,
                 ROAM_DEBUG_MERGE_BLUE);
+            output.DebugHighlight = ROAM_DEBUG_EVENT_HIGHLIGHT;
         }
-        else if (bisector.BisectorState == CbtUnchangedElement)
+        else if ((bisector.Flags & CbtSplitEventFlag) != 0u)
         {
             output.DebugColor = float3(
                 ROAM_DEBUG_SPLIT_RED,
                 ROAM_DEBUG_SPLIT_GREEN,
                 ROAM_DEBUG_SPLIT_BLUE);
+            output.DebugHighlight = ROAM_DEBUG_EVENT_HIGHLIGHT;
         }
     }
     // CBT 几何已经写成世界坐标 不再应用额外模型矩阵

@@ -148,6 +148,12 @@ int main()
                      "pair simplify neighbors did not round-trip");
     passed &= Expect(merged.ReleasedDynamicSlots == std::vector<std::uint32_t>{0U},
                      "pair simplify did not release its sibling slot");
+    passed &= Expect(
+        (merged.BisectorData[baseNode].Flags & CbtMergeEventFlag) != 0U &&
+            DecodeCbtDebugEventLifetime(merged.BisectorData[baseNode].Flags) ==
+                CbtDebugEventHoldFrames &&
+            DecodeCbtActiveDepth(merged.BisectorData[baseNode].Flags) == CbtBaseDepth,
+        "merge debug metadata mismatch");
     std::string validationError;
     passed &= Expect(
         ValidateCbtSimplifiedTopology(

@@ -90,9 +90,9 @@ glm::vec3 ClassicRoamMeshBuilder::DebugColorForLeaf(const ClassicRoamNode& node)
     switch (ClassifyLeafDebug(node))
     {
     case LeafDebugClass::Original:
-        return glm::vec3{0.28F, 0.34F, 0.30F};
+        return Roam::OriginalDebugColor();
     case LeafDebugClass::Subdivided:
-        return glm::mix(glm::vec3{0.08F, 0.72F, 0.62F}, glm::vec3{0.10F, 0.34F, 0.95F}, depthRatio);
+        return Roam::SubdividedDebugColor(depthRatio);
     case LeafDebugClass::Split:
         // requested 与 forced split 都属于本次展开，统一用红色表达方向。
         return Roam::SplitDebugColor();
@@ -100,7 +100,7 @@ glm::vec3 ClassicRoamMeshBuilder::DebugColorForLeaf(const ClassicRoamNode& node)
         return Roam::MergeDebugColor();
     }
 
-    return glm::vec3{0.28F, 0.34F, 0.30F};
+    return Roam::OriginalDebugColor();
 }
 
 float ClassicRoamMeshBuilder::DebugHighlightForLeaf(const ClassicRoamNode& node) const
@@ -109,15 +109,15 @@ float ClassicRoamMeshBuilder::DebugHighlightForLeaf(const ClassicRoamNode& node)
     switch (ClassifyLeafDebug(node))
     {
     case LeafDebugClass::Original:
-        return 0.35F;
+        return Roam::OriginalDebugHighlight();
     case LeafDebugClass::Subdivided:
-        return 0.70F;
+        return Roam::SubdividedDebugHighlight();
     case LeafDebugClass::Split:
     case LeafDebugClass::Merge:
-        return 1.0F;
+        return Roam::EventDebugHighlight();
     }
 
-    return 0.35F;
+    return Roam::OriginalDebugHighlight();
 }
 
 void ClassicRoamMeshBuilder::RebuildVarianceTrees(int finestDepth)

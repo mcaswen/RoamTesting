@@ -16,6 +16,49 @@ inline constexpr std::uint32_t CbtBaseControlPointCount = CbtBaseBisectorCount *
 inline constexpr std::uint32_t CbtVisibleFlag = CBT_GPU_VISIBLE_FLAG;
 // Flags 和 element state 分属不同字段，保持独立常量避免位值/枚举值误用。
 inline constexpr std::uint32_t CbtModifiedFlag = CBT_GPU_MODIFIED_FLAG;
+inline constexpr std::uint32_t CbtSplitEventFlag = CBT_GPU_SPLIT_EVENT_FLAG;
+inline constexpr std::uint32_t CbtMergeEventFlag = CBT_GPU_MERGE_EVENT_FLAG;
+inline constexpr std::uint32_t CbtDebugEventMask = CBT_GPU_DEBUG_EVENT_MASK;
+inline constexpr std::uint32_t CbtDebugEventLifetimeMask =
+    CBT_GPU_DEBUG_EVENT_LIFETIME_MASK;
+inline constexpr std::uint32_t CbtDebugEventHoldFrames =
+    CBT_GPU_DEBUG_EVENT_HOLD_FRAMES;
+inline constexpr std::uint32_t CbtActiveDepthMask = CBT_GPU_ACTIVE_DEPTH_MASK;
+
+// 调试元数据只占用 Flags 的高位，Visible/Modified 的执行语义保持不变。
+// 事件类型和剩余帧数分开编码，分类阶段可以衰减寿命而不改写类型。
+// 活动深度由 heap ID 刷新，程序化绘制无需依赖几何缓冲中的旧调色板。
+// 编码函数采用饱和截断，防止诊断值越过共享 ABI 预留范围。
+[[nodiscard]] inline constexpr std::uint32_t EncodeCbtDebugEventLifetime(
+    std::uint32_t lifetime)
+{
+    const std::uint32_t maximum =
+        CbtDebugEventLifetimeMask >> CBT_GPU_DEBUG_EVENT_LIFETIME_SHIFT;
+    return ((lifetime < maximum ? lifetime : maximum) <<
+            CBT_GPU_DEBUG_EVENT_LIFETIME_SHIFT) &
+        CbtDebugEventLifetimeMask;
+}
+
+[[nodiscard]] inline constexpr std::uint32_t DecodeCbtDebugEventLifetime(
+    std::uint32_t flags)
+{
+    return (flags & CbtDebugEventLifetimeMask) >>
+        CBT_GPU_DEBUG_EVENT_LIFETIME_SHIFT;
+}
+
+[[nodiscard]] inline constexpr std::uint32_t EncodeCbtActiveDepth(
+    std::uint32_t depth)
+{
+    const std::uint32_t maximum = CbtActiveDepthMask >> CBT_GPU_ACTIVE_DEPTH_SHIFT;
+    return ((depth < maximum ? depth : maximum) << CBT_GPU_ACTIVE_DEPTH_SHIFT) &
+        CbtActiveDepthMask;
+}
+
+[[nodiscard]] inline constexpr std::uint32_t DecodeCbtActiveDepth(
+    std::uint32_t flags)
+{
+    return (flags & CbtActiveDepthMask) >> CBT_GPU_ACTIVE_DEPTH_SHIFT;
+}
 inline constexpr std::uint32_t CbtUnchangedElement = CBT_GPU_UNCHANGED_ELEMENT;
 inline constexpr std::uint32_t CbtBisectElement = CBT_GPU_BISECT_ELEMENT;
 inline constexpr std::uint32_t CbtSimplifyElement = CBT_GPU_SIMPLIFY_ELEMENT;

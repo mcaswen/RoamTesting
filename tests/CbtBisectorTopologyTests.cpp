@@ -8,13 +8,26 @@
 namespace
 {
 using ParallelRoam::Algorithms::Cbt2024::BuildSquareCbtBaseTopology;
+using ParallelRoam::Algorithms::Cbt2024::CbtActiveDepthMask;
 using ParallelRoam::Algorithms::Cbt2024::CbtBaseBisectorCount;
+using ParallelRoam::Algorithms::Cbt2024::CbtBaseDepth;
+using ParallelRoam::Algorithms::Cbt2024::CbtDebugEventHoldFrames;
+using ParallelRoam::Algorithms::Cbt2024::CbtDebugEventLifetimeMask;
+using ParallelRoam::Algorithms::Cbt2024::CbtDebugEventMask;
 using ParallelRoam::Algorithms::Cbt2024::CbtHeapIdChild;
 using ParallelRoam::Algorithms::Cbt2024::CbtHeapIdDepth;
 using ParallelRoam::Algorithms::Cbt2024::CbtHeapIdParent;
+using ParallelRoam::Algorithms::Cbt2024::CbtMergeEventFlag;
+using ParallelRoam::Algorithms::Cbt2024::CbtModifiedFlag;
 using ParallelRoam::Algorithms::Cbt2024::CbtOccupancyCapacity;
+using ParallelRoam::Algorithms::Cbt2024::CbtSplitEventFlag;
 using ParallelRoam::Algorithms::Cbt2024::CbtValidationMaxActiveDepthWord;
 using ParallelRoam::Algorithms::Cbt2024::CbtValidationWordCount;
+using ParallelRoam::Algorithms::Cbt2024::CbtVisibleFlag;
+using ParallelRoam::Algorithms::Cbt2024::DecodeCbtActiveDepth;
+using ParallelRoam::Algorithms::Cbt2024::DecodeCbtDebugEventLifetime;
+using ParallelRoam::Algorithms::Cbt2024::EncodeCbtActiveDepth;
+using ParallelRoam::Algorithms::Cbt2024::EncodeCbtDebugEventLifetime;
 using ParallelRoam::Algorithms::Cbt2024::InvalidCbtBisectorIndex;
 using ParallelRoam::Algorithms::Cbt2024::ValidateCbtBaseTopology;
 
@@ -60,6 +73,9 @@ bool ValidateCapacity(CbtOccupancyCapacity capacity)
         valid &= Expect(topology.ActiveIndices[index] >= layout.DynamicElementCount, "base slot consumes dynamic budget");
         valid &= Expect(topology.BisectorData[index].ProblematicNeighbor == InvalidCbtBisectorIndex, "base problematic neighbor should be invalid");
         valid &= Expect(topology.BisectorData[index].PropagationId == InvalidCbtBisectorIndex, "base propagation ID should be invalid");
+        valid &= Expect(
+            DecodeCbtActiveDepth(topology.BisectorData[index].Flags) == CbtBaseDepth,
+            "base debug depth mismatch");
     }
 
     valid &= Expect(topology.Neighbors[1].Twin == layout.BaseElementOffset + 3U, "shared diagonal twin mismatch");
@@ -99,11 +115,36 @@ bool ValidateHeapNavigation()
     }
     return valid;
 }
+
+bool ValidateDebugFlagLayout()
+{
+    const std::uint32_t operationalMask = CbtVisibleFlag | CbtModifiedFlag;
+    const std::uint32_t eventFlags = CbtSplitEventFlag | CbtMergeEventFlag;
+    bool valid = true;
+    valid &= Expect((operationalMask & CbtDebugEventMask) == 0U,
+                    "debug event flags overlap operational flags");
+    valid &= Expect(eventFlags == CbtDebugEventMask,
+                    "debug event mask does not cover split and merge");
+    valid &= Expect((CbtDebugEventMask & CbtDebugEventLifetimeMask) == 0U,
+                    "debug event type overlaps its lifetime");
+    valid &= Expect(
+        (CbtActiveDepthMask &
+         (operationalMask | CbtDebugEventMask | CbtDebugEventLifetimeMask)) == 0U,
+        "active depth overlaps another flag range");
+    valid &= Expect(
+        DecodeCbtDebugEventLifetime(
+            EncodeCbtDebugEventLifetime(CbtDebugEventHoldFrames)) ==
+            CbtDebugEventHoldFrames,
+        "debug event lifetime did not round-trip");
+    valid &= Expect(DecodeCbtActiveDepth(EncodeCbtActiveDepth(20U)) == 20U,
+                    "active debug depth did not round-trip");
+    return valid;
+}
 } // namespace
 
 int main()
 {
-    bool valid = ValidateHeapNavigation();
+    bool valid = ValidateHeapNavigation() && ValidateDebugFlagLayout();
     const std::array<CbtOccupancyCapacity, 4> capacities{
         CbtOccupancyCapacity::Capacity128K,
         CbtOccupancyCapacity::Capacity256K,

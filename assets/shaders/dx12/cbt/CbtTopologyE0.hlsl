@@ -308,7 +308,10 @@ void CSClassify(uint activeOrdinal : SV_DispatchThreadID)
     data.SubdivisionPattern = 0u;
     data.BisectorState = CbtUnchangedElement;
     data.ProblematicNeighbor = CbtInvalidIndex;
-    data.Flags = CbtVisibleFlag;
+    // CBT 每帧都会分类；短暂保留事件元数据，让人眼能够看到刚完成的拓扑变化。
+    const uint debugFlags = CbtDecayDebugEvent(data.Flags);
+    const uint persistentFlags = debugFlags | CbtEncodeActiveDepth(depth);
+    data.Flags = CbtVisibleFlag | persistentFlags;
 
     if (validity > CbtUnchanged)
     {
@@ -328,7 +331,7 @@ void CSClassify(uint activeOrdinal : SV_DispatchThreadID)
     }
     else
     {
-        data.Flags = validity >= CbtTooSmall ? CbtVisibleFlag : 0u;
+        data.Flags = (validity >= CbtTooSmall ? CbtVisibleFlag : 0u) | persistentFlags;
     }
 
     if (depth != CbtBaseDepth && validity < CbtUnchanged)
@@ -687,7 +690,9 @@ void CbtWriteCommittedData(
     // visible/modified 同时置位，使 Indexation 派生绘制和增量几何任务。
     source.ProblematicNeighbor = problematicNeighbor;
     source.BisectorState = CbtUnchangedElement;
-    source.Flags = CbtVisibleFlag | CbtModifiedFlag;
+    source.Flags = CbtVisibleFlag | CbtModifiedFlag | CbtSplitEventFlag |
+        CbtEncodeDebugEventLifetime(CbtDebugEventHoldFrames) |
+        CbtEncodeActiveDepth(CbtHeapDepth(CbtHeapIds[targetId]));
     source.PropagationId = parentId;
     CbtBisectorDataBuffer[targetId] = source;
 }
@@ -1114,7 +1119,9 @@ void CSSimplifyF(uint dispatchId : SV_DispatchThreadID)
     currentData.PropagationId = pairId;
     currentData.ProblematicNeighbor = pairNeighbors.z;
     currentData.BisectorState = CbtMergedElement;
-    currentData.Flags = CbtVisibleFlag | CbtModifiedFlag;
+    currentData.Flags = CbtVisibleFlag | CbtModifiedFlag | CbtMergeEventFlag |
+        CbtEncodeDebugEventLifetime(CbtDebugEventHoldFrames) |
+        CbtEncodeActiveDepth(CbtHeapDepth(CbtHeapIds[currentId]));
     CbtBisectorDataBuffer[currentId] = currentData;
     if (currentData.ProblematicNeighbor != CbtInvalidIndex)
     {
@@ -1141,7 +1148,9 @@ void CSSimplifyF(uint dispatchId : SV_DispatchThreadID)
     lowData.PropagationId = twinHighId;
     lowData.ProblematicNeighbor = highNeighbors.z;
     lowData.BisectorState = CbtMergedElement;
-    lowData.Flags = CbtVisibleFlag | CbtModifiedFlag;
+    lowData.Flags = CbtVisibleFlag | CbtModifiedFlag | CbtMergeEventFlag |
+        CbtEncodeDebugEventLifetime(CbtDebugEventHoldFrames) |
+        CbtEncodeActiveDepth(CbtHeapDepth(CbtHeapIds[twinLowId]));
     CbtBisectorDataBuffer[twinLowId] = lowData;
     if (lowData.ProblematicNeighbor != CbtInvalidIndex)
     {

@@ -88,16 +88,16 @@ glm::vec3 DebugColorForLeaf(const DataOrientedRoamState& state, DataOrientedRoam
     switch (ClassifyLeafDebug(state, node))
     {
     case DataOrientedRoamLeafDebugClass::Original:
-        return glm::vec3{0.28F, 0.34F, 0.30F};
+        return Roam::OriginalDebugColor();
     case DataOrientedRoamLeafDebugClass::Subdivided:
-        return glm::mix(glm::vec3{0.08F, 0.72F, 0.62F}, glm::vec3{0.10F, 0.34F, 0.95F}, depthRatio);
+        return Roam::SubdividedDebugColor(depthRatio);
     case DataOrientedRoamLeafDebugClass::Split:
         return Roam::SplitDebugColor();
     case DataOrientedRoamLeafDebugClass::Merge:
         return Roam::MergeDebugColor();
     }
 
-    return glm::vec3{0.28F, 0.34F, 0.30F};
+    return Roam::OriginalDebugColor();
 }
 
 float DebugHighlightForLeaf(const DataOrientedRoamState& state, DataOrientedRoamNodeIndex node)
@@ -105,15 +105,15 @@ float DebugHighlightForLeaf(const DataOrientedRoamState& state, DataOrientedRoam
     switch (ClassifyLeafDebug(state, node))
     {
     case DataOrientedRoamLeafDebugClass::Original:
-        return 0.35F;
+        return Roam::OriginalDebugHighlight();
     case DataOrientedRoamLeafDebugClass::Subdivided:
-        return 0.70F;
+        return Roam::SubdividedDebugHighlight();
     case DataOrientedRoamLeafDebugClass::Split:
     case DataOrientedRoamLeafDebugClass::Merge:
-        return 1.0F;
+        return Roam::EventDebugHighlight();
     }
 
-    return 0.35F;
+    return Roam::OriginalDebugHighlight();
 }
 
 void RebuildVarianceTrees(DataOrientedRoamState& state, int finestDepth)

@@ -81,6 +81,12 @@ int main()
     passed &= Expect(centerResult.PropagationNodes == std::vector<std::uint32_t>{0U} &&
                          centerResult.BisectorData[0].ProblematicNeighbor == InvalidCbtBisectorIndex,
                      "center template propagation was not completed");
+    passed &= Expect(
+        (centerResult.BisectorData[8].Flags & CbtSplitEventFlag) != 0U &&
+            DecodeCbtDebugEventLifetime(centerResult.BisectorData[8].Flags) ==
+                CbtDebugEventHoldFrames &&
+            DecodeCbtActiveDepth(centerResult.BisectorData[8].Flags) == 5U,
+        "split debug metadata mismatch");
 
     TemplateFixture boundaryCenter;
     boundaryCenter.Neighbors[8].Next = InvalidCbtBisectorIndex;

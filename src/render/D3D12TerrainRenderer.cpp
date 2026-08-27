@@ -970,6 +970,7 @@ void TerrainRenderer::Render(const RenderContext& context)
         _settings.SpecularStrength,
         _settings.DebugOverlayStrength};
     constants.DebugParameters.x = static_cast<int>(_settings.DebugColorMode);
+    constants.DebugParameters.z = std::max(_settings.RoamMaxDepth, 1);
     std::memcpy(_d3d12State->MappedConstants[frameIndex], &constants, sizeof(constants));
 
     // 根描述符表中的 GPU 句柄只对当前绑定的共享堆有效

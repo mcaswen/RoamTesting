@@ -1347,6 +1347,8 @@ bool D3D12CbtFramePipeline::RecordFrame(
     Transition(commandList, resources.ModifiedIndices, _modifiedIndexState, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     Transition(commandList, resources.IndirectDrawState, _drawState, D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT);
     Transition(commandList, resources.GeometryDispatchCommands, _geometryDispatchState, D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT);
+    // 完整验证会把 BisectorData 切回 UAV；程序化 VS 读取前必须统一发布为 SRV 状态。
+    Transition(commandList, resources.BisectorData, _bisectorDataState, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     _geometry.TransitionClassification(commandList, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     _geometry.TransitionVertices(commandList, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
 

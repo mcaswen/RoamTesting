@@ -98,7 +98,9 @@ void WriteCommittedData(
     CbtBisectorData committed = source;
     committed.ProblematicNeighbor = problematicNeighbor;
     committed.BisectorState = 0U;
-    committed.Flags = CbtVisibleFlag | CbtModifiedFlag;
+    committed.Flags = CbtVisibleFlag | CbtModifiedFlag | CbtSplitEventFlag |
+        EncodeCbtDebugEventLifetime(CbtDebugEventHoldFrames) |
+        EncodeCbtActiveDepth(static_cast<std::uint32_t>(std::bit_width(result.HeapIds[target])));
     committed.PropagationId = parent;
     result.BisectorData[target] = committed;
 }

@@ -118,7 +118,8 @@ CbtBaseTopology BuildSquareCbtBaseTopology(CbtOccupancyCapacity capacity)
         topology.VisibleIndices[index] = baseOffset + index;
         topology.BisectorData[index].Indices.fill(InvalidCbtBisectorIndex);
         topology.BisectorData[index].ProblematicNeighbor = InvalidCbtBisectorIndex;
-        topology.BisectorData[index].Flags = CbtVisibleFlag | CbtModifiedFlag;
+        topology.BisectorData[index].Flags =
+            CbtVisibleFlag | CbtModifiedFlag | EncodeCbtActiveDepth(CbtBaseDepth);
         topology.BisectorData[index].PropagationId = InvalidCbtBisectorIndex;
     }
 
