@@ -61,13 +61,13 @@ bool ClassicRoamMeshBuilder::WasSplitLastFrame(const ClassicRoamNode& node) cons
 
 ClassicRoamMeshBuilder::LeafDebugClass ClassicRoamMeshBuilder::ClassifyLeafDebug(const ClassicRoamNode& node) const
 {
-    // merge 会同时刷新 ActivatedBuildId，因此必须先判断更具体的恢复事件。
-    if (node.MergeBuildId == _buildSequence)
+    // 事件字段覆盖直接事务与邻接传播；后写入的事务决定最终可见颜色。
+    if (node.DebugTopologyEvent == 2U)
     {
         return LeafDebugClass::Merge;
     }
 
-    if (node.ActivatedBuildId == _buildSequence)
+    if (node.DebugTopologyEvent == 1U)
     {
         return LeafDebugClass::Split;
     }

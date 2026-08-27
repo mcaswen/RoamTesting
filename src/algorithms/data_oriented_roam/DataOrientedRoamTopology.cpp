@@ -8,6 +8,7 @@
 #include "tools/PerformanceTimer.h"
 
 #include <algorithm>
+#include <atomic>
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
@@ -28,6 +29,20 @@ constexpr std::size_t MinParallelSplitCommitCandidateCount = 32;
 constexpr std::size_t MinParallelMergeCommitCandidateCount = 160;
 
 void NormalizeQueueNeighborhood(std::vector<DataOrientedRoamNodeIndex>& nodes);
+
+void MarkTopologyDebugEvent(
+    DataOrientedRoamState& state,
+    DataOrientedRoamNodeIndex node,
+    std::uint8_t event)
+{
+    if (state.IsValidNode(node))
+    {
+        // interior chunk 可能并行触达同一外侧叶，独立事件字节采用原子覆盖避免数据竞争。
+        std::atomic_ref<std::uint8_t>{state.Nodes.DebugTopologyEvents[node]}.store(
+            event,
+            std::memory_order_relaxed);
+    }
+}
 
 // 以下环境变量仅服务 benchmark 的独立进程配对实验：它们可以固定候选阈值，
 // 并把并行提交限制到指定 Build 和指定 phase。未设置变量时全部回落到上述产品默认值，
@@ -467,29 +482,38 @@ void ReplaceNeighborReference(
     DataOrientedRoamState& state,
     DataOrientedRoamNodeIndex neighbor,
     DataOrientedRoamNodeIndex oldNode,
-    DataOrientedRoamNodeIndex newNode)
+    DataOrientedRoamNodeIndex newNode,
+    std::uint8_t debugEvent)
 {
     if (!state.IsValidNode(neighbor))
     {
         return;
     }
 
+    bool replaced = false;
     if (state.Nodes.BaseNeighbors[neighbor] == oldNode)
     {
         // base edge 对应旧 parent 时改到 split 后 child
         state.Nodes.BaseNeighbors[neighbor] = newNode;
+        replaced = true;
     }
 
     if (state.Nodes.LeftNeighbors[neighbor] == oldNode)
     {
         // left edge 引用旧 parent 时同步替换
         state.Nodes.LeftNeighbors[neighbor] = newNode;
+        replaced = true;
     }
 
     if (state.Nodes.RightNeighbors[neighbor] == oldNode)
     {
         // right edge 引用旧 parent 时同步替换
         state.Nodes.RightNeighbors[neighbor] = newNode;
+        replaced = true;
+    }
+    if (replaced)
+    {
+        MarkTopologyDebugEvent(state, neighbor, debugEvent);
     }
 }
 
@@ -509,6 +533,7 @@ void PrepareSplitNodeState(
         state.Nodes.LeftNeighbors[child] = InvalidDataOrientedRoamNodeIndex;
         state.Nodes.RightNeighbors[child] = InvalidDataOrientedRoamNodeIndex;
         state.Nodes.ActivatedBuildIds[child] = state.BuildSequence;
+        MarkTopologyDebugEvent(state, child, 1U);
         state.Nodes.ActivatedByForcedSplits[child] =
             reason == DataOrientedRoamSplitReason::Requested ? 0U : 1U;
     };
@@ -522,6 +547,7 @@ void PrepareMergedNodeState(DataOrientedRoamState& state, DataOrientedRoamNodeIn
     state.Nodes.IsSplits[node] = 0U;
     state.Nodes.ActivatedBuildIds[node] = state.BuildSequence;
     state.Nodes.MergeBuildIds[node] = state.BuildSequence;
+    MarkTopologyDebugEvent(state, node, 2U);
     state.Nodes.ActivatedByForcedSplits[node] = 0U;
 }
 
@@ -552,8 +578,8 @@ void LinkSplitNeighbors(
     const DataOrientedRoamNodeIndex rightNeighbor = state.Nodes.RightNeighborAt(node);
     state.Nodes.BaseNeighbors[leftChild] = leftNeighbor;
     state.Nodes.BaseNeighbors[rightChild] = rightNeighbor;
-    ReplaceNeighborReference(state, leftNeighbor, node, leftChild);
-    ReplaceNeighborReference(state, rightNeighbor, node, rightChild);
+    ReplaceNeighborReference(state, leftNeighbor, node, leftChild, 1U);
+    ReplaceNeighborReference(state, rightNeighbor, node, rightChild, 1U);
 
     if (!state.IsValidNode(baseNeighbor) || state.IsLeaf(baseNeighbor))
     {
@@ -569,11 +595,13 @@ void LinkSplitNeighbors(
     if (state.IsValidNode(baseRightChild))
     {
         state.Nodes.LeftNeighbors[baseRightChild] = leftChild;
+        MarkTopologyDebugEvent(state, baseRightChild, 1U);
     }
 
     if (state.IsValidNode(baseLeftChild))
     {
         state.Nodes.RightNeighbors[baseLeftChild] = rightChild;
+        MarkTopologyDebugEvent(state, baseLeftChild, 1U);
     }
 }
 
@@ -745,8 +773,8 @@ void MergeSingleNodeImpl(
     const DataOrientedRoamNodeIndex newRightNeighbor = state.Nodes.BaseNeighborAt(rightChild);
 
     // parent 重新成为 leaf 后，外部 neighbor 必须从 inactive child 改回 parent
-    ReplaceNeighborReference(state, newLeftNeighbor, leftChild, node);
-    ReplaceNeighborReference(state, newRightNeighbor, rightChild, node);
+    ReplaceNeighborReference(state, newLeftNeighbor, leftChild, node, 2U);
+    ReplaceNeighborReference(state, newRightNeighbor, rightChild, node, 2U);
     state.Nodes.LeftNeighbors[node] = newLeftNeighbor;
     state.Nodes.RightNeighbors[node] = newRightNeighbor;
     PrepareMergedNodeState(state, node);

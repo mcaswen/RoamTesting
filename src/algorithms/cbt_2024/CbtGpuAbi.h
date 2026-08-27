@@ -59,6 +59,16 @@ inline constexpr std::uint32_t CbtActiveDepthMask = CBT_GPU_ACTIVE_DEPTH_MASK;
 {
     return (flags & CbtActiveDepthMask) >> CBT_GPU_ACTIVE_DEPTH_SHIFT;
 }
+
+// 邻接传播也属于本帧拓扑变化；更新事件时保留可见性和活动深度等其余语义位。
+[[nodiscard]] inline constexpr std::uint32_t WithCbtDebugEvent(
+    std::uint32_t flags,
+    std::uint32_t eventFlag)
+{
+    return (flags & ~(CbtDebugEventMask | CbtDebugEventLifetimeMask)) |
+        CbtModifiedFlag | (eventFlag & CbtDebugEventMask) |
+        EncodeCbtDebugEventLifetime(CbtDebugEventHoldFrames);
+}
 inline constexpr std::uint32_t CbtUnchangedElement = CBT_GPU_UNCHANGED_ELEMENT;
 inline constexpr std::uint32_t CbtBisectElement = CBT_GPU_BISECT_ELEMENT;
 inline constexpr std::uint32_t CbtSimplifyElement = CBT_GPU_SIMPLIFY_ELEMENT;

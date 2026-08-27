@@ -30,6 +30,7 @@ using ParallelRoam::Algorithms::Cbt2024::EncodeCbtActiveDepth;
 using ParallelRoam::Algorithms::Cbt2024::EncodeCbtDebugEventLifetime;
 using ParallelRoam::Algorithms::Cbt2024::InvalidCbtBisectorIndex;
 using ParallelRoam::Algorithms::Cbt2024::ValidateCbtBaseTopology;
+using ParallelRoam::Algorithms::Cbt2024::WithCbtDebugEvent;
 
 bool Expect(bool condition, const std::string& message)
 {
@@ -138,6 +139,18 @@ bool ValidateDebugFlagLayout()
         "debug event lifetime did not round-trip");
     valid &= Expect(DecodeCbtActiveDepth(EncodeCbtActiveDepth(20U)) == 20U,
                     "active debug depth did not round-trip");
+    volatile std::uint32_t eventInput =
+        CbtVisibleFlag | CbtSplitEventFlag | EncodeCbtDebugEventLifetime(1U) |
+        EncodeCbtActiveDepth(12U);
+    const std::uint32_t replacedEvent =
+        WithCbtDebugEvent(eventInput, CbtMergeEventFlag);
+    valid &= Expect(
+        (replacedEvent & (CbtVisibleFlag | CbtModifiedFlag | CbtMergeEventFlag)) ==
+                (CbtVisibleFlag | CbtModifiedFlag | CbtMergeEventFlag) &&
+            (replacedEvent & CbtSplitEventFlag) == 0U &&
+            DecodeCbtDebugEventLifetime(replacedEvent) == CbtDebugEventHoldFrames &&
+            DecodeCbtActiveDepth(replacedEvent) == 12U,
+        "topology event replacement damaged operational or depth metadata");
     return valid;
 }
 } // namespace

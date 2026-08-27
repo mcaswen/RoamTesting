@@ -342,6 +342,14 @@ void BeginIncrementalMeshUpdate(
     bool resetTopology)
 {
     DataOrientedRoamIncrementalMesh& mesh = state.IncrementalMesh;
+    // topology pass 前结束上一 Build 的事件，旧叶稍后会借助 transition 列表刷新稳定色。
+    for (DataOrientedRoamNodeIndex node : mesh.DebugTransitionLeaves)
+    {
+        if (state.IsValidNode(node))
+        {
+            state.Nodes.DebugTopologyEvents[node] = 0U;
+        }
+    }
     mesh.DirtySlots.clear();
     mesh.UpdateRanges.clear();
     mesh.TopologyEdits.clear();
@@ -434,6 +442,16 @@ void ApplyIncrementalMeshUpdates(DataOrientedRoamState& state)
 
     mesh.TopologyEdits.clear();
     mesh.TracksTopologyEdits = false;
+    // 邻接传播不会生成 mesh edit，但它仍属于本次可见拓扑变化。
+    // 稳定叶的事件字节是它进入增量上传集合的唯一依据。
+    for (std::size_t slot = 0U; slot < mesh.SlotOwners.size(); ++slot)
+    {
+        const DataOrientedRoamNodeIndex node = mesh.SlotOwners[slot];
+        if (state.IsValidNode(node) && state.Nodes.DebugTopologyEventAt(node) != 0U)
+        {
+            MarkMeshSlotDirty(state, slot);
+        }
+    }
     NormalizeDirtyMeshSlots(mesh);
     EmitDirtyMeshSlots(state);
 }
@@ -474,8 +492,7 @@ void FinalizeIncrementalMeshUpdate(DataOrientedRoamState& state)
 
     const auto appendTransition = [&state, &mesh](DataOrientedRoamNodeIndex node) {
         if (state.IsValidNode(node) &&
-            (state.Nodes.ActivatedBuildIdAt(node) == state.BuildSequence ||
-             state.Nodes.MergeBuildIdAt(node) == state.BuildSequence))
+            state.Nodes.DebugTopologyEventAt(node) != 0U)
         {
             mesh.DebugTransitionLeaves.push_back(node);
         }

@@ -50,6 +50,7 @@ ClassicRoamMeshBuilder::ClassicRoamNode* ClassicRoamMeshBuilder::AddNode(
     // CreatedBuildId 记录节点第一次进入持久化池的帧
     node->CreatedBuildId = _buildSequence;
     node->ActivatedBuildId = _buildSequence;
+    node->DebugTopologyEvent = 1U;
     // nested wedgie tree 已按公式 (1) 累积子树误差，节点只复制稳定索引对应值
     node->GeometricError = VarianceError(varianceTreeIndex, varianceIndex);
     // 创建时更新一次，后续最终统计会按 active leaf 重算

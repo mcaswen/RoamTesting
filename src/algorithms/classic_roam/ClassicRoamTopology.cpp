@@ -130,6 +130,8 @@ bool ClassicRoamMeshBuilder::SplitNode(
     node->RightChild->Active = true;
     node->LeftChild->ActivatedBuildId = _buildSequence;
     node->RightChild->ActivatedBuildId = _buildSequence;
+    node->LeftChild->DebugTopologyEvent = 1U;
+    node->RightChild->DebugTopologyEvent = 1U;
     node->LeftChild->ActivatedByForcedSplit = reason != SplitReason::Requested;
     // 来源标记保留给节点诊断；LOD 事件色把普通与 forced split 统一显示为红色。
     node->RightChild->ActivatedByForcedSplit = reason != SplitReason::Requested;
@@ -169,8 +171,16 @@ void ClassicRoamMeshBuilder::LinkSplitNeighbors(ClassicRoamNode* node, ClassicRo
     // child 的 base edge 分别来自父节点的 left edge 和 right edge
     leftChild->BaseNeighbor = node->LeftNeighbor;
     rightChild->BaseNeighbor = node->RightNeighbor;
-    ReplaceNeighborReference(node->LeftNeighbor, node, leftChild);
-    ReplaceNeighborReference(node->RightNeighbor, node, rightChild);
+    if (ReplaceNeighborReference(node->LeftNeighbor, node, leftChild) &&
+        IsLeaf(node->LeftNeighbor))
+    {
+        node->LeftNeighbor->DebugTopologyEvent = 1U;
+    }
+    if (ReplaceNeighborReference(node->RightNeighbor, node, rightChild) &&
+        IsLeaf(node->RightNeighbor))
+    {
+        node->RightNeighbor->DebugTopologyEvent = 1U;
+    }
 
     if (baseNeighbor == nullptr || IsLeaf(baseNeighbor))
     {
@@ -185,15 +195,23 @@ void ClassicRoamMeshBuilder::LinkSplitNeighbors(ClassicRoamNode* node, ClassicRo
     if (baseNeighbor->RightChild != nullptr)
     {
         baseNeighbor->RightChild->LeftNeighbor = leftChild;
+        if (IsLeaf(baseNeighbor->RightChild))
+        {
+            baseNeighbor->RightChild->DebugTopologyEvent = 1U;
+        }
     }
 
     if (baseNeighbor->LeftChild != nullptr)
     {
         baseNeighbor->LeftChild->RightNeighbor = rightChild;
+        if (IsLeaf(baseNeighbor->LeftChild))
+        {
+            baseNeighbor->LeftChild->DebugTopologyEvent = 1U;
+        }
     }
 }
 
-void ClassicRoamMeshBuilder::ReplaceNeighborReference(
+bool ClassicRoamMeshBuilder::ReplaceNeighborReference(
     ClassicRoamNode* neighbor,
     ClassicRoamNode* oldNode,
     ClassicRoamNode* newNode) const
@@ -201,24 +219,30 @@ void ClassicRoamMeshBuilder::ReplaceNeighborReference(
     if (neighbor == nullptr)
     {
         // terrain 边界没有邻居需要修复
-        return;
+        return false;
     }
+
+    bool replaced = false;
 
     // 相邻 leaf 仍指向旧节点时，把它改到 split 后共享完整边的 child
     if (neighbor->BaseNeighbor == oldNode)
     {
         neighbor->BaseNeighbor = newNode;
+        replaced = true;
     }
 
     if (neighbor->LeftNeighbor == oldNode)
     {
         neighbor->LeftNeighbor = newNode;
+        replaced = true;
     }
 
     if (neighbor->RightNeighbor == oldNode)
     {
         neighbor->RightNeighbor = newNode;
+        replaced = true;
     }
+    return replaced;
 }
 
 bool ClassicRoamMeshBuilder::CanMergeNode(const ClassicRoamNode* node, float maximumScore) const
@@ -263,8 +287,14 @@ void ClassicRoamMeshBuilder::MergeSingleNode(ClassicRoamNode* node)
     // parent 的 left/right 边分别来自两个 child 的 base 边
     // 外部 neighbor 必须改指向 parent，不能继续指向 inactive child
     // 否则 validator 会发现 neighbor 指向非 active leaf
-    ReplaceNeighborReference(newLeftNeighbor, leftChild, node);
-    ReplaceNeighborReference(newRightNeighbor, rightChild, node);
+    if (ReplaceNeighborReference(newLeftNeighbor, leftChild, node) && IsLeaf(newLeftNeighbor))
+    {
+        newLeftNeighbor->DebugTopologyEvent = 2U;
+    }
+    if (ReplaceNeighborReference(newRightNeighbor, rightChild, node) && IsLeaf(newRightNeighbor))
+    {
+        newRightNeighbor->DebugTopologyEvent = 2U;
+    }
     node->LeftNeighbor = newLeftNeighbor;
     node->RightNeighbor = newRightNeighbor;
     // child 指针保留但不再 active，后续重新 split 可复用 child 对象
@@ -274,6 +304,7 @@ void ClassicRoamMeshBuilder::MergeSingleNode(ClassicRoamNode* node)
     rightChild->Active = false;
     node->ActivatedBuildId = _buildSequence;
     node->MergeBuildId = _buildSequence;
+    node->DebugTopologyEvent = 2U;
     node->ActivatedByForcedSplit = false;
     RecordMeshMerge(node);
     InsertSplitQueueNode(node);

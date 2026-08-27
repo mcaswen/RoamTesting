@@ -154,6 +154,15 @@ int main()
                 CbtDebugEventHoldFrames &&
             DecodeCbtActiveDepth(merged.BisectorData[baseNode].Flags) == CbtBaseDepth,
         "merge debug metadata mismatch");
+    const std::uint32_t mergePropagationNeighbor = originalNeighbors.Next;
+    passed &= Expect(
+        mergePropagationNeighbor != InvalidCbtBisectorIndex &&
+            (merged.BisectorData[mergePropagationNeighbor].Flags & CbtMergeEventFlag) != 0U &&
+            (merged.BisectorData[mergePropagationNeighbor].Flags & CbtModifiedFlag) != 0U &&
+            DecodeCbtDebugEventLifetime(
+                merged.BisectorData[mergePropagationNeighbor].Flags) ==
+                CbtDebugEventHoldFrames,
+        "merge propagation target was not included in debug metadata");
     std::string validationError;
     passed &= Expect(
         ValidateCbtSimplifiedTopology(

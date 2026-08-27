@@ -93,7 +93,7 @@ void CbtStoreNextNeighbors(uint physicalSlot, uint3 neighbors)
     }
 }
 
-void CbtReplaceNextNeighbor(
+bool CbtReplaceNextNeighbor(
     uint physicalSlot,
     uint component,
     uint expectedNeighbor,
@@ -120,6 +120,24 @@ void CbtReplaceNextNeighbor(
             replacementNeighbor,
             originalNeighbor);
     }
+    return originalNeighbor == expectedNeighbor;
+}
+
+void CbtMarkTopologyEvent(uint physicalSlot, uint eventFlag)
+{
+    // Propagation-touched leaves remain visible even though their neighbor references changed.
+    // Keep visibility and active depth intact while replacing the event type and lifetime.
+    // Atomic flag updates allow independent propagation chains to meet at the same leaf safely.
+    uint previousFlags;
+    InterlockedAnd(
+        CbtBisectorDataBuffer[physicalSlot].Flags,
+        ~(CbtDebugEventMask | CbtDebugEventLifetimeMask),
+        previousFlags);
+    InterlockedOr(
+        CbtBisectorDataBuffer[physicalSlot].Flags,
+        CbtModifiedFlag | (eventFlag & CbtDebugEventMask) |
+            CbtEncodeDebugEventLifetime(CbtDebugEventHoldFrames),
+        previousFlags);
 }
 
 void CbtStoreNextTwin(uint physicalSlot, uint twin)
@@ -918,21 +936,33 @@ void CSPropagateBisectE3(uint dispatchId : SV_DispatchThreadID)
     const CbtBisectorData targetData = CbtBisectorDataBuffer[problematic];
     if (targetData.SubdivisionPattern == CbtNoSplitPattern)
     {
+        // Evaluate every component because separate propagation chains can own different edges.
+        // A successful replacement promotes the stable target into this frame's split event set.
         // 未 split 目标可能从 previous、next 或 twin 任一分量指向旧 parent。
-        CbtReplaceNextNeighbor(problematic, 0u, parentId, currentId);
-        CbtReplaceNextNeighbor(problematic, 1u, parentId, currentId);
-        CbtReplaceNextNeighbor(problematic, 2u, parentId, currentId);
+        bool replaced = CbtReplaceNextNeighbor(problematic, 0u, parentId, currentId);
+        replaced = CbtReplaceNextNeighbor(problematic, 1u, parentId, currentId) || replaced;
+        replaced = CbtReplaceNextNeighbor(problematic, 2u, parentId, currentId) || replaced;
+        if (replaced)
+        {
+            CbtMarkTopologyEvent(problematic, CbtSplitEventFlag);
+        }
     }
     else if (targetData.SubdivisionPattern == CbtCenterSplitPattern)
     {
         // center 目标的 facing 引用可能位于 retained 或其奇子，两处均条件替换。
-        CbtReplaceNextNeighbor(problematic, 2u, parentId, currentId);
+        if (CbtReplaceNextNeighbor(problematic, 2u, parentId, currentId))
+        {
+            CbtMarkTopologyEvent(problematic, CbtSplitEventFlag);
+        }
         if (targetData.PropagationId >= CbtTotalElementCount)
         {
             CbtSetValidationError(19u, currentId);
             return;
         }
-        CbtReplaceNextNeighbor(targetData.PropagationId, 2u, parentId, currentId);
+        if (CbtReplaceNextNeighbor(targetData.PropagationId, 2u, parentId, currentId))
+        {
+            CbtMarkTopologyEvent(targetData.PropagationId, CbtSplitEventFlag);
+        }
     }
     else if (targetData.SubdivisionPattern == CbtRightDoubleSplitPattern)
     {
@@ -943,11 +973,13 @@ void CSPropagateBisectE3(uint dispatchId : SV_DispatchThreadID)
             return;
         }
         CbtStoreNextTwin(targetData.Indices[1], currentId);
+        CbtMarkTopologyEvent(targetData.Indices[1], CbtSplitEventFlag);
     }
     else if (targetData.SubdivisionPattern == CbtLeftDoubleSplitPattern)
     {
         // left-double 直接在 retained 物理槽上发布 facing twin。
         CbtStoreNextTwin(problematic, currentId);
+        CbtMarkTopologyEvent(problematic, CbtSplitEventFlag);
     }
     else
     {
@@ -1201,9 +1233,14 @@ void CSPropagateSimplifyF(uint dispatchId : SV_DispatchThreadID)
     const CbtBisectorData neighborData = CbtBisectorDataBuffer[neighborId];
     if (neighborData.BisectorState != CbtMergedElement || CbtHeapIds[neighborId] != 0u)
     {
-        CbtReplaceNextNeighbor(neighborId, 0u, deletedPair, currentId);
-        CbtReplaceNextNeighbor(neighborId, 1u, deletedPair, currentId);
-        CbtReplaceNextNeighbor(neighborId, 2u, deletedPair, currentId);
+        // Only an actual deleted-sibling replacement counts as a visible merge-side change.
+        bool replaced = CbtReplaceNextNeighbor(neighborId, 0u, deletedPair, currentId);
+        replaced = CbtReplaceNextNeighbor(neighborId, 1u, deletedPair, currentId) || replaced;
+        replaced = CbtReplaceNextNeighbor(neighborId, 2u, deletedPair, currentId) || replaced;
+        if (replaced)
+        {
+            CbtMarkTopologyEvent(neighborId, CbtMergeEventFlag);
+        }
     }
     else
     {
@@ -1214,9 +1251,13 @@ void CSPropagateSimplifyF(uint dispatchId : SV_DispatchThreadID)
             CbtSetValidationError(35u, currentId);
             return;
         }
-        CbtReplaceNextNeighbor(neighborPair, 0u, deletedPair, currentId);
-        CbtReplaceNextNeighbor(neighborPair, 1u, deletedPair, currentId);
-        CbtReplaceNextNeighbor(neighborPair, 2u, deletedPair, currentId);
+        bool replaced = CbtReplaceNextNeighbor(neighborPair, 0u, deletedPair, currentId);
+        replaced = CbtReplaceNextNeighbor(neighborPair, 1u, deletedPair, currentId) || replaced;
+        replaced = CbtReplaceNextNeighbor(neighborPair, 2u, deletedPair, currentId) || replaced;
+        if (replaced)
+        {
+            CbtMarkTopologyEvent(neighborPair, CbtMergeEventFlag);
+        }
     }
     currentData.ProblematicNeighbor = CbtInvalidIndex;
     CbtBisectorDataBuffer[currentId] = currentData;

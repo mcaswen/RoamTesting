@@ -310,12 +310,21 @@ CbtBisectCommitResult CommitCbtBisects(
         {
             // 未 split 的目标可能从任意一个有向边引用旧 parent。
             auto& target = result.Neighbors[problematic];
+            // CPU 参考与 GPU 一样只标记确实替换了旧 parent 引用的存活目标。
+            bool replaced = false;
             for (std::uint32_t* neighbor : {&target.Previous, &target.Next, &target.Twin})
             {
                 if (*neighbor == parentId)
                 {
                     *neighbor = currentId;
+                    replaced = true;
                 }
+            }
+            if (replaced)
+            {
+                result.BisectorData[problematic].Flags = WithCbtDebugEvent(
+                    result.BisectorData[problematic].Flags,
+                    CbtSplitEventFlag);
             }
         }
         else if (targetData.SubdivisionPattern == CbtCenterSplitPattern)
@@ -324,6 +333,9 @@ CbtBisectCommitResult CommitCbtBisects(
             if (result.Neighbors[problematic].Twin == parentId)
             {
                 result.Neighbors[problematic].Twin = currentId;
+                result.BisectorData[problematic].Flags = WithCbtDebugEvent(
+                    result.BisectorData[problematic].Flags,
+                    CbtSplitEventFlag);
             }
             const std::uint32_t propagated = targetData.PropagationId;
             if (!IsIndex(propagated, result.Neighbors.size()))
@@ -334,6 +346,9 @@ CbtBisectCommitResult CommitCbtBisects(
             if (result.Neighbors[propagated].Twin == parentId)
             {
                 result.Neighbors[propagated].Twin = currentId;
+                result.BisectorData[propagated].Flags = WithCbtDebugEvent(
+                    result.BisectorData[propagated].Flags,
+                    CbtSplitEventFlag);
             }
         }
         else if (targetData.SubdivisionPattern == CbtRightDoubleSplitPattern)
@@ -346,11 +361,17 @@ CbtBisectCommitResult CommitCbtBisects(
                 return result;
             }
             result.Neighbors[sibling].Twin = currentId;
+            result.BisectorData[sibling].Flags = WithCbtDebugEvent(
+                result.BisectorData[sibling].Flags,
+                CbtSplitEventFlag);
         }
         else if (targetData.SubdivisionPattern == CbtLeftDoubleSplitPattern)
         {
             // left-double 的 retained 物理槽直接承接新的 facing 引用。
             result.Neighbors[problematic].Twin = currentId;
+            result.BisectorData[problematic].Flags = WithCbtDebugEvent(
+                result.BisectorData[problematic].Flags,
+                CbtSplitEventFlag);
         }
         else
         {

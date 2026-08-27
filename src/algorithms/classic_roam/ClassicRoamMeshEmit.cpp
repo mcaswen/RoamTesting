@@ -19,6 +19,14 @@ constexpr std::size_t InvalidMeshSlot = std::numeric_limits<std::size_t>::max();
 /// </summary>
 void ClassicRoamMeshBuilder::BeginIncrementalMeshUpdate(bool resetTopology)
 {
+    // 在 topology pass 前结束上一 Build 的事件，仍存活的叶会在 replay 前刷新为稳定色。
+    for (ClassicRoamNode* node : _debugTransitionLeaves)
+    {
+        if (node != nullptr)
+        {
+            node->DebugTopologyEvent = 0U;
+        }
+    }
     ++_meshGeneration;
     _meshRequiresFullUpload = false;
     _dirtyMeshSlots.clear();
@@ -117,6 +125,15 @@ void ClassicRoamMeshBuilder::ApplyIncrementalMeshUpdates()
         }
     }
     _meshTopologyEdits.clear();
+
+    // 邻接传播可能只改写稳定叶的拓扑引用；这些叶没有 mesh edit，仍需单独刷新事件色。
+    for (ClassicRoamNode* node : _meshSlotOwners)
+    {
+        if (node != nullptr && node->DebugTopologyEvent != 0U)
+        {
+            RefreshMeshLeafDebugAttributes(*node);
+        }
+    }
 }
 
 /// <summary>
@@ -354,7 +371,7 @@ void ClassicRoamMeshBuilder::FinalizeIncrementalMeshUpdate()
     _debugTransitionLeaves.clear();
     const auto appendTransition = [this](ClassicRoamNode* node) {
         if (node != nullptr &&
-            (node->ActivatedBuildId == _buildSequence || node->MergeBuildId == _buildSequence))
+            node->DebugTopologyEvent != 0U)
         {
             _debugTransitionLeaves.push_back(node);
         }

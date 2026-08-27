@@ -47,8 +47,8 @@ out vec3 vWorldPosition;
 out vec3 vNormal;
 out vec2 vTexCoord;
 out float vHeight;
-out vec3 vDebugColor;
-out float vDebugHighlight;
+flat out vec3 vDebugColor;
+flat out float vDebugHighlight;
 
 void main()
 {
@@ -68,8 +68,8 @@ in vec3 vWorldPosition;
 in vec3 vNormal;
 in vec2 vTexCoord;
 in float vHeight;
-in vec3 vDebugColor;
-in float vDebugHighlight;
+flat in vec3 vDebugColor;
+flat in float vDebugHighlight;
 
 uniform sampler2D uTerrainTexture;
 uniform vec3 uCameraPosition;
@@ -102,9 +102,17 @@ void main()
     if (uDebugColorMode == 1)
     {
         float highlight = clamp(vDebugHighlight, 0.0, 1.0);
-        vec3 debugLit = vDebugColor * (0.45 + 0.45 * diffuse);
-        debugLit += vDebugColor * highlight * 0.35;
-        lighting = mix(lighting, debugLit, clamp(uDebugOverlayStrength, 0.0, 1.0));
+        // Event colors cover the complete face without terrain-lighting dilution.
+        if (highlight >= 0.999)
+        {
+            lighting = vDebugColor;
+        }
+        else
+        {
+            vec3 debugLit = vDebugColor * (0.45 + 0.45 * diffuse);
+            debugLit += vDebugColor * highlight * 0.35;
+            lighting = mix(lighting, debugLit, clamp(uDebugOverlayStrength, 0.0, 1.0));
+        }
     }
 
     FragColor = vec4(lighting, 1.0);

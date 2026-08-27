@@ -96,6 +96,7 @@ DataOrientedRoamNodeRef::operator DataOrientedRoamNodeConstRef() const
         ActivatedBuildId,
         SplitBuildId,
         MergeBuildId,
+        DebugTopologyEvent,
         Depth,
         VarianceTreeIndex,
         ActivatedByForcedSplit,
@@ -131,6 +132,7 @@ std::size_t DataOrientedRoamNodePool::storage_bytes() const
            ActivatedBuildIds.capacity() * sizeof(std::uint64_t) +
            SplitBuildIds.capacity() * sizeof(std::uint64_t) +
            MergeBuildIds.capacity() * sizeof(std::uint64_t) +
+           DebugTopologyEvents.capacity() * sizeof(std::uint8_t) +
            // byte flags 独立存储，避免 vector<bool> bit proxy
            Depths.capacity() * sizeof(int) +
            VarianceTreeIndices.capacity() * sizeof(std::uint8_t) +
@@ -141,7 +143,7 @@ std::size_t DataOrientedRoamNodePool::storage_bytes() const
 std::size_t DataOrientedRoamNodePool::array_count() const
 {
     // array_count 用数组数量描述 SoA 字段拆分程度
-    return 20U;
+    return 21U;
 }
 
 bool DataOrientedRoamNodePool::empty() const
@@ -169,6 +171,7 @@ void DataOrientedRoamNodePool::clear()
     ActivatedBuildIds.clear();
     SplitBuildIds.clear();
     MergeBuildIds.clear();
+    DebugTopologyEvents.clear();
     // 所有数组一起清空，避免同 index 指向错位字段
     Depths.clear();
     VarianceTreeIndices.clear();
@@ -197,6 +200,7 @@ void DataOrientedRoamNodePool::reserve(std::size_t capacity)
     ActivatedBuildIds.reserve(capacity);
     SplitBuildIds.reserve(capacity);
     MergeBuildIds.reserve(capacity);
+    DebugTopologyEvents.reserve(capacity);
     // depth 和 flag 分离，避免访问拓扑 index 时带入不需要的状态字节
     Depths.reserve(capacity);
     VarianceTreeIndices.reserve(capacity);
@@ -236,6 +240,7 @@ DataOrientedRoamNodeIndex DataOrientedRoamNodePool::Add(
     // split / merge id 初始为 0，只有对应 pass 会写入
     SplitBuildIds.push_back(0);
     MergeBuildIds.push_back(0);
+    DebugTopologyEvents.push_back(1U);
     Depths.push_back(depth);
     VarianceTreeIndices.push_back(varianceTreeIndex);
     // flag 使用 byte 数组，避免 vector<bool> 的代理语义干扰 pass 代码
@@ -264,6 +269,7 @@ DataOrientedRoamNodeRef DataOrientedRoamNodePool::operator[](DataOrientedRoamNod
         ActivatedBuildIds[node],
         SplitBuildIds[node],
         MergeBuildIds[node],
+        DebugTopologyEvents[node],
         Depths[node],
         VarianceTreeIndices[node],
         ActivatedByForcedSplits[node],
@@ -291,6 +297,7 @@ DataOrientedRoamNodeConstRef DataOrientedRoamNodePool::operator[](DataOrientedRo
         ActivatedBuildIds[node],
         SplitBuildIds[node],
         MergeBuildIds[node],
+        DebugTopologyEvents[node],
         Depths[node],
         VarianceTreeIndices[node],
         ActivatedByForcedSplits[node],

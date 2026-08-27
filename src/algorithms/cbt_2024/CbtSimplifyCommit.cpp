@@ -30,24 +30,30 @@ bool HasReverseNeighbor(
            neighbors.Twin == physicalSlot;
 }
 
-void ReplaceNeighbor(
+bool ReplaceNeighbor(
     CbtBisectorNeighbors& neighbors,
     std::uint32_t expected,
     std::uint32_t replacement)
 {
+    // 返回值区分真实邻接改写与无操作传播，避免把未变化叶片计入 merge 着色。
     // CPU 参考与 GPU 的逐分量 CompareExchange 保持相同的条件替换语义
+    bool replaced = false;
     if (neighbors.Previous == expected)
     {
         neighbors.Previous = replacement;
+        replaced = true;
     }
     if (neighbors.Next == expected)
     {
         neighbors.Next = replacement;
+        replaced = true;
     }
     if (neighbors.Twin == expected)
     {
         neighbors.Twin = replacement;
+        replaced = true;
     }
+    return replaced;
 }
 
 bool PrepareSimplification(
@@ -233,7 +239,12 @@ bool PropagateSimplification(
     const CbtBisectorData neighborData = result.BisectorData[neighborId];
     if (neighborData.BisectorState != CbtMergedElement || result.HeapIds[neighborId] != 0U)
     {
-        ReplaceNeighbor(result.Neighbors[neighborId], deletedPair, currentId);
+        if (ReplaceNeighbor(result.Neighbors[neighborId], deletedPair, currentId))
+        {
+            result.BisectorData[neighborId].Flags = WithCbtDebugEvent(
+                result.BisectorData[neighborId].Flags,
+                CbtMergeEventFlag);
+        }
     }
     else
     {
@@ -243,7 +254,12 @@ bool PropagateSimplification(
         {
             return SetInvalid(result);
         }
-        ReplaceNeighbor(result.Neighbors[neighborPair], deletedPair, currentId);
+        if (ReplaceNeighbor(result.Neighbors[neighborPair], deletedPair, currentId))
+        {
+            result.BisectorData[neighborPair].Flags = WithCbtDebugEvent(
+                result.BisectorData[neighborPair].Flags,
+                CbtMergeEventFlag);
+        }
     }
     currentData.ProblematicNeighbor = InvalidCbtBisectorIndex;
     return true;

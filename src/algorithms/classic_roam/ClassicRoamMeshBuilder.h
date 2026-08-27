@@ -78,6 +78,8 @@ private:
         std::uint64_t SplitBuildId{0};
         std::uint64_t MergeBuildId{0};
         std::uint64_t SplitBlockedBuildId{0};
+        // 1/2 分别表示本次 Build 的 split/merge 可视事件，邻接改写也会更新该字段。
+        std::uint8_t DebugTopologyEvent{0};
         int Depth{0};
         std::uint8_t VarianceTreeIndex{0};
         bool ActivatedByForcedSplit{false};
@@ -200,7 +202,10 @@ private:
     void LinkSplitNeighbors(ClassicRoamNode* node, ClassicRoamNode* baseNeighbor);
 
     // 邻居还指向旧 leaf 时，需要改指向 split 后对应的 child
-    void ReplaceNeighborReference(ClassicRoamNode* neighbor, ClassicRoamNode* oldNode, ClassicRoamNode* newNode) const;
+    [[nodiscard]] bool ReplaceNeighborReference(
+        ClassicRoamNode* neighbor,
+        ClassicRoamNode* oldNode,
+        ClassicRoamNode* newNode) const;
 
     // 判断 parent 是否可以在给定最大误差下安全回收为 leaf
     [[nodiscard]] bool CanMergeNode(const ClassicRoamNode* node, float maximumScore) const;

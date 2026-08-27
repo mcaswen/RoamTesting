@@ -165,6 +165,7 @@ struct DataOrientedRoamNodeConstRef
     const std::uint64_t& ActivatedBuildId;
     const std::uint64_t& SplitBuildId;
     const std::uint64_t& MergeBuildId;
+    const std::uint8_t& DebugTopologyEvent;
     const int& Depth;
     const std::uint8_t& VarianceTreeIndex;
     const std::uint8_t& ActivatedByForcedSplit;
@@ -192,6 +193,7 @@ struct DataOrientedRoamNodeRef
     std::uint64_t& ActivatedBuildId;
     std::uint64_t& SplitBuildId;
     std::uint64_t& MergeBuildId;
+    std::uint8_t& DebugTopologyEvent;
     int& Depth;
     std::uint8_t& VarianceTreeIndex;
     std::uint8_t& ActivatedByForcedSplit;
@@ -237,6 +239,8 @@ struct DataOrientedRoamNodePool
     std::vector<std::uint64_t> ActivatedBuildIds;
     std::vector<std::uint64_t> SplitBuildIds;
     std::vector<std::uint64_t> MergeBuildIds;
+    // 1/2 分别记录 split/merge 对当前活动叶造成的直接或邻接拓扑改写。
+    std::vector<std::uint8_t> DebugTopologyEvents;
     std::vector<int> Depths;
     std::vector<std::uint8_t> VarianceTreeIndices;
 
@@ -325,6 +329,12 @@ struct DataOrientedRoamNodePool
     [[nodiscard]] std::uint64_t ActivatedBuildIdAt(DataOrientedRoamNodeIndex node) const noexcept
     {
         return ActivatedBuildIds[node];
+    }
+
+    [[nodiscard]] std::uint8_t DebugTopologyEventAt(
+        DataOrientedRoamNodeIndex node) const noexcept
+    {
+        return DebugTopologyEvents[node];
     }
 
     [[nodiscard]] int DepthAt(DataOrientedRoamNodeIndex node) const noexcept

@@ -38,8 +38,8 @@ struct VertexOutput
     float3 Normal : NORMAL;
     float2 TexCoord : TEXCOORD1;
     float Height : TEXCOORD2;
-    float3 DebugColor : COLOR0;
-    float DebugHighlight : TEXCOORD3;
+    nointerpolation float3 DebugColor : COLOR0;
+    nointerpolation float DebugHighlight : TEXCOORD3;
 };
 
 VertexOutput VSMain(VertexInput input)
@@ -81,9 +81,17 @@ float4 PSMain(VertexOutput input) : SV_Target0
     if (DebugParameters.x == 1)
     {
         const float highlight = saturate(input.DebugHighlight);
-        float3 debugLit = input.DebugColor * (0.45 + 0.45 * diffuse);
-        debugLit += input.DebugColor * highlight * 0.35;
-        lighting = lerp(lighting, debugLit, saturate(LightingParameters.w));
+        // 事件色直接覆盖整面，避免光照和叠加强度把红绿变化标记稀释掉。
+        if (highlight >= 0.999)
+        {
+            lighting = input.DebugColor;
+        }
+        else
+        {
+            float3 debugLit = input.DebugColor * (0.45 + 0.45 * diffuse);
+            debugLit += input.DebugColor * highlight * 0.35;
+            lighting = lerp(lighting, debugLit, saturate(LightingParameters.w));
+        }
     }
 
     return float4(lighting, 1.0);

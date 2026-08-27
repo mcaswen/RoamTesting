@@ -58,13 +58,13 @@ DataOrientedRoamLeafDebugClass ClassifyLeafDebug(
     const DataOrientedRoamState& state,
     DataOrientedRoamNodeIndex node)
 {
-    // merge parent 也会刷新 ActivatedBuildId，优先保留更具体的 merge 分类。
-    if (state.Nodes.MergeBuildIdAt(node) == state.BuildSequence)
+    // 事件字段覆盖直接事务与邻接传播；后写入的事务决定最终可见颜色。
+    if (state.Nodes.DebugTopologyEventAt(node) == 2U)
     {
         return DataOrientedRoamLeafDebugClass::Merge;
     }
 
-    if (state.Nodes.ActivatedBuildIdAt(node) == state.BuildSequence)
+    if (state.Nodes.DebugTopologyEventAt(node) == 1U)
     {
         return DataOrientedRoamLeafDebugClass::Split;
     }

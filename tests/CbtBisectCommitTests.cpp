@@ -87,6 +87,12 @@ int main()
                 CbtDebugEventHoldFrames &&
             DecodeCbtActiveDepth(centerResult.BisectorData[8].Flags) == 5U,
         "split debug metadata mismatch");
+    passed &= Expect(
+        (centerResult.BisectorData[10].Flags & CbtSplitEventFlag) != 0U &&
+            (centerResult.BisectorData[10].Flags & CbtModifiedFlag) != 0U &&
+            DecodeCbtDebugEventLifetime(centerResult.BisectorData[10].Flags) ==
+                CbtDebugEventHoldFrames,
+        "split propagation target was not included in debug metadata");
 
     TemplateFixture boundaryCenter;
     boundaryCenter.Neighbors[8].Next = InvalidCbtBisectorIndex;
