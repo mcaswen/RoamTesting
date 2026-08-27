@@ -1,6 +1,7 @@
 #include "benchmark/TerrainLodBenchmark.h"
 
 #include "algorithms/ITerrainLodAlgorithm.h"
+#include "algorithms/RoamDebugVisualization.h"
 #include "algorithms/TerrainLodView.h"
 #include "algorithms/classic_roam/ClassicRoamTerrainLodAlgorithm.h"
 #include "algorithms/data_oriented_roam/DataOrientedRoamTerrainLodAlgorithm.h"
@@ -390,6 +391,55 @@ bool HasInvalidTopology(const Algorithms::TerrainLodStats& stats)
            stats.InvalidTopologyCount != 0U;
 }
 
+bool NearDebugColor(const glm::vec3& lhs, const glm::vec3& rhs)
+{
+    constexpr float epsilon = 1.0e-6F;
+    return std::abs(lhs.x - rhs.x) <= epsilon &&
+           std::abs(lhs.y - rhs.y) <= epsilon &&
+           std::abs(lhs.z - rhs.z) <= epsilon;
+}
+
+bool ValidateTransitionDebugColors(
+    const Terrain::TerrainMeshData& mesh,
+    const Algorithms::TerrainLodStats& stats)
+{
+    const glm::vec3 splitColor = Algorithms::Roam::SplitDebugColor();
+    const glm::vec3 mergeColor = Algorithms::Roam::MergeDebugColor();
+    std::size_t splitLeafCount = 0U;
+    std::size_t mergeLeafCount = 0U;
+
+    for (std::size_t triangle = 0U; triangle < mesh.Vertices.size() / 3U; ++triangle)
+    {
+        const std::size_t firstVertex = triangle * 3U;
+        const glm::vec3& color = mesh.Vertices[firstVertex].DebugColor;
+        const bool isSplit = NearDebugColor(color, splitColor);
+        const bool isMerge = NearDebugColor(color, mergeColor);
+        if (!isSplit && !isMerge)
+        {
+            continue;
+        }
+
+        // 每个 CPU ROAM leaf 使用三个独立顶点，事件色必须覆盖完整三角形。
+        for (std::size_t vertex = 0U; vertex < 3U; ++vertex)
+        {
+            const Terrain::TerrainMeshVertex& meshVertex = mesh.Vertices[firstVertex + vertex];
+            if (!NearDebugColor(meshVertex.DebugColor, color) ||
+                std::abs(meshVertex.DebugHighlight - 1.0F) > 1.0e-6F)
+            {
+                return false;
+            }
+        }
+
+        splitLeafCount += isSplit ? 1U : 0U;
+        mergeLeafCount += isMerge ? 1U : 0U;
+    }
+
+    // RebuiltTriangleCount 保留兼容名称，但必须精确等于红色 split 叶与绿色 merge 叶之和。
+    return splitLeafCount + mergeLeafCount == stats.RebuiltTriangleCount &&
+           (stats.SplitCount == 0U || splitLeafCount > 0U) &&
+           (stats.MergeCount == 0U || mergeLeafCount > 0U);
+}
+
 bool ValidateFrame(
     const BenchmarkScenario& scenario,
     const Algorithms::TerrainLodRenderPacket& renderPacket,
@@ -424,7 +474,8 @@ bool ValidateFrame(
     if (renderPacket.Mode == Algorithms::TerrainLodRenderMode::CpuMesh &&
         (cpuMesh->Vertices.size() != stats.ActiveTriangleCount * 3U ||
          cpuMesh->Indices.size() != stats.ActiveTriangleCount * 3U ||
-         renderPacket.IndexCount != cpuMesh->Indices.size()))
+         renderPacket.IndexCount != cpuMesh->Indices.size() ||
+         !ValidateTransitionDebugColors(*cpuMesh, stats)))
     {
         return false;
     }

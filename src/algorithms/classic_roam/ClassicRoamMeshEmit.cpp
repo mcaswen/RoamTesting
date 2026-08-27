@@ -93,7 +93,7 @@ void ClassicRoamMeshBuilder::ApplyIncrementalMeshUpdates()
         InitializeIncrementalMesh();
     }
 
-    // Rebuilt 颜色只维持一个 Build；拓扑稳定后只刷新仍是 leaf 的旧成员。
+    // Split/Merge 事件色只维持一个 Build；拓扑稳定后刷新仍是 leaf 的旧成员。
     for (ClassicRoamNode* node : _debugTransitionLeaves)
     {
         if (node != nullptr && node->Active && IsLeaf(node) &&
@@ -269,7 +269,7 @@ void ClassicRoamMeshBuilder::WriteMeshLeaf(std::size_t slot, const ClassicRoamNo
 }
 
 /// <summary>
-/// topology 不变时只刷新上一 Build 的 Rebuilt 调试属性，避免重采样几何。
+/// topology 不变时只刷新上一 Build 的 Split/Merge 调试属性，避免重采样几何。
 /// </summary>
 void ClassicRoamMeshBuilder::RefreshMeshLeafDebugAttributes(ClassicRoamNode& node)
 {

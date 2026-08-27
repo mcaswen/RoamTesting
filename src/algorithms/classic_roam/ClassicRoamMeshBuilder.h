@@ -258,7 +258,8 @@ private:
     {
         Original,
         Subdivided,
-        Rebuilt,
+        Split,
+        Merge,
     };
 
     // 对 active leaf 做调试分类，供颜色输出和 benchmark 统计共用

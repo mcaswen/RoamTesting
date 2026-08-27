@@ -131,7 +131,7 @@ bool ClassicRoamMeshBuilder::SplitNode(
     node->LeftChild->ActivatedBuildId = _buildSequence;
     node->RightChild->ActivatedBuildId = _buildSequence;
     node->LeftChild->ActivatedByForcedSplit = reason != SplitReason::Requested;
-    // forced 标记只用于 debug color，不改变拓扑语义
+    // 来源标记保留给节点诊断；LOD 事件色把普通与 forced split 统一显示为红色。
     node->RightChild->ActivatedByForcedSplit = reason != SplitReason::Requested;
 
     LinkSplitNeighbors(node, baseNeighbor);

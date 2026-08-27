@@ -72,7 +72,7 @@ struct ClassicRoamStats
     std::size_t OriginalTriangleCount{0};
     // 已细分但仍处于稳定活动状态的叶三角形数量
     std::size_t SubdividedTriangleCount{0};
-    // 本次 Build 新激活或由 merge 恢复的叶三角形数量
+    // 本次 Build 由 split 新激活或由 merge 恢复的最终叶三角形总数
     std::size_t RebuiltTriangleCount{0};
     // 当前仍处于 split 状态的 internal 节点数量
     std::size_t ActiveSplitCount{0};

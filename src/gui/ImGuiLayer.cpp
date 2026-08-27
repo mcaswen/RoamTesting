@@ -1,5 +1,7 @@
 #include "gui/ImGuiLayer.h"
 
+#include "algorithms/RoamDebugVisualization.h"
+
 #include <imgui.h>
 #if defined(PARALLEL_ROAM_GRAPHICS_API_OPENGL)
 #include <imgui_impl_opengl3.h>
@@ -221,12 +223,16 @@ const char* TerrainModeName(bool useTerrainLod, Algorithms::TerrainLodAlgorithmI
 
 void DrawDebugColorLegend()
 {
-    // legend 与 TerrainMeshVertex 的 debug color 语义对应
-    // 用户打开 LOD 着色后能直接解释当前颜色
-    const std::array<std::pair<const char*, ImVec4>, 3> legendItems{
+    // 当前 Build 的 split 与 merge 必须分别展示，避免合并成含糊的“重建”颜色。
+    const glm::vec3 splitColor = Algorithms::Roam::SplitDebugColor();
+    const glm::vec3 mergeColor = Algorithms::Roam::MergeDebugColor();
+    const std::array<std::pair<const char*, ImVec4>, 4> legendItems{
         std::pair<const char*, ImVec4>{"原始", ImVec4{0.28F, 0.34F, 0.30F, 1.0F}},
         std::pair<const char*, ImVec4>{"细分", ImVec4{0.08F, 0.72F, 0.62F, 1.0F}},
-        std::pair<const char*, ImVec4>{"重建", ImVec4{1.0F, 0.58F, 0.12F, 1.0F}},
+        std::pair<const char*, ImVec4>{
+            "本帧 Split", ImVec4{splitColor.r, splitColor.g, splitColor.b, 1.0F}},
+        std::pair<const char*, ImVec4>{
+            "本帧 Merge", ImVec4{mergeColor.r, mergeColor.g, mergeColor.b, 1.0F}},
     };
 
     for (const auto& [label, color] : legendItems)
@@ -335,7 +341,7 @@ void DrawDetailedPerformanceMetrics(const DebugOverlayData& data)
     DrawSectionHeader("ROAM");
     DrawMetricSize("原始三角", data.RoamOriginalTriangleCount);
     DrawMetricSize("细分三角", data.RoamSubdividedTriangleCount);
-    DrawMetricSize("重建三角", data.RoamRebuiltTriangleCount);
+    DrawMetricSize("本帧变更叶", data.RoamRebuiltTriangleCount);
     DrawMetricSize("活跃 Split", data.RoamActiveSplitCount);
     DrawMetricSize("本帧 Split", data.RoamSplitCount);
     DrawMetricSize("强制 Split", data.RoamForcedSplitCount);

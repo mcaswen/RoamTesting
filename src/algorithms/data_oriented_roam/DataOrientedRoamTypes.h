@@ -77,6 +77,7 @@ struct DataOrientedRoamStats
     std::size_t ActiveTriangleCount{0};
     std::size_t OriginalTriangleCount{0};
     std::size_t SubdividedTriangleCount{0};
+    // split 新叶与 merge 恢复叶的合计，保持统一统计字段兼容。
     std::size_t RebuiltTriangleCount{0};
     // split/merge 以及局部约束传播统计
     std::size_t ActiveSplitCount{0};

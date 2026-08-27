@@ -205,7 +205,8 @@ void ClassicRoamMeshBuilder::AccumulateLeafStats(
         case LeafDebugClass::Subdivided:
             ++_stats.SubdividedTriangleCount;
             break;
-        case LeafDebugClass::Rebuilt:
+        case LeafDebugClass::Split:
+        case LeafDebugClass::Merge:
             ++_stats.RebuiltTriangleCount;
             break;
         }

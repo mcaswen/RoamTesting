@@ -47,7 +47,8 @@ enum class DataOrientedRoamLeafDebugClass
 {
     Original,
     Subdivided,
-    Rebuilt,
+    Split,
+    Merge,
 };
 
 /// <summary>
@@ -231,7 +232,7 @@ struct DataOrientedRoamNodePool
     // PathIds 是 hysteresis 的稳定键，不能使用 vector index 代替
     std::vector<std::uint64_t> PathIds;
 
-    // build id 让 debug overlay 区分新建、激活和合并节点
+    // build id 让 debug overlay 区分新建、split 激活和 merge 恢复节点
     std::vector<std::uint64_t> CreatedBuildIds;
     std::vector<std::uint64_t> ActivatedBuildIds;
     std::vector<std::uint64_t> SplitBuildIds;

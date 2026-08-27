@@ -2,6 +2,7 @@
 #include "algorithms/data_oriented_roam/DataOrientedRoamVariance.h"
 
 #include "algorithms/ITerrainLodAlgorithm.h"
+#include "algorithms/RoamDebugVisualization.h"
 #include "algorithms/RoamGeometry.h"
 #include "algorithms/RoamNestedWedgie.h"
 #include "algorithms/RoamScreenError.h"
@@ -57,10 +58,15 @@ DataOrientedRoamLeafDebugClass ClassifyLeafDebug(
     const DataOrientedRoamState& state,
     DataOrientedRoamNodeIndex node)
 {
-    if (state.Nodes.ActivatedBuildIdAt(node) == state.BuildSequence ||
-        state.Nodes.MergeBuildIdAt(node) == state.BuildSequence)
+    // merge parent 也会刷新 ActivatedBuildId，优先保留更具体的 merge 分类。
+    if (state.Nodes.MergeBuildIdAt(node) == state.BuildSequence)
     {
-        return DataOrientedRoamLeafDebugClass::Rebuilt;
+        return DataOrientedRoamLeafDebugClass::Merge;
+    }
+
+    if (state.Nodes.ActivatedBuildIdAt(node) == state.BuildSequence)
+    {
+        return DataOrientedRoamLeafDebugClass::Split;
     }
 
     if (state.Nodes.DepthAt(node) > 0)
@@ -85,13 +91,10 @@ glm::vec3 DebugColorForLeaf(const DataOrientedRoamState& state, DataOrientedRoam
         return glm::vec3{0.28F, 0.34F, 0.30F};
     case DataOrientedRoamLeafDebugClass::Subdivided:
         return glm::mix(glm::vec3{0.08F, 0.72F, 0.62F}, glm::vec3{0.10F, 0.34F, 0.95F}, depthRatio);
-    case DataOrientedRoamLeafDebugClass::Rebuilt:
-        if (state.Nodes.ActivatedByForcedSplitAt(node))
-        {
-            return glm::mix(glm::vec3{0.96F, 0.34F, 0.90F}, glm::vec3{0.96F, 0.16F, 0.42F}, depthRatio);
-        }
-
-        return glm::mix(glm::vec3{1.0F, 0.68F, 0.15F}, glm::vec3{1.0F, 0.34F, 0.10F}, depthRatio);
+    case DataOrientedRoamLeafDebugClass::Split:
+        return Roam::SplitDebugColor();
+    case DataOrientedRoamLeafDebugClass::Merge:
+        return Roam::MergeDebugColor();
     }
 
     return glm::vec3{0.28F, 0.34F, 0.30F};
@@ -105,7 +108,8 @@ float DebugHighlightForLeaf(const DataOrientedRoamState& state, DataOrientedRoam
         return 0.35F;
     case DataOrientedRoamLeafDebugClass::Subdivided:
         return 0.70F;
-    case DataOrientedRoamLeafDebugClass::Rebuilt:
+    case DataOrientedRoamLeafDebugClass::Split:
+    case DataOrientedRoamLeafDebugClass::Merge:
         return 1.0F;
     }
 

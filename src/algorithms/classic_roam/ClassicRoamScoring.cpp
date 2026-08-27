@@ -1,6 +1,7 @@
 #include "algorithms/classic_roam/ClassicRoamMeshBuilder.h"
 
 #include "algorithms/RoamGeometry.h"
+#include "algorithms/RoamDebugVisualization.h"
 #include "algorithms/RoamNestedWedgie.h"
 #include "algorithms/RoamScreenError.h"
 #include "algorithms/ITerrainLodAlgorithm.h"
@@ -60,10 +61,15 @@ bool ClassicRoamMeshBuilder::WasSplitLastFrame(const ClassicRoamNode& node) cons
 
 ClassicRoamMeshBuilder::LeafDebugClass ClassicRoamMeshBuilder::ClassifyLeafDebug(const ClassicRoamNode& node) const
 {
-    if (node.ActivatedBuildId == _buildSequence || node.MergeBuildId == _buildSequence)
+    // merge 会同时刷新 ActivatedBuildId，因此必须先判断更具体的恢复事件。
+    if (node.MergeBuildId == _buildSequence)
     {
-        // 本帧新激活和 merge 回来的 parent 都属于 rebuilt
-        return LeafDebugClass::Rebuilt;
+        return LeafDebugClass::Merge;
+    }
+
+    if (node.ActivatedBuildId == _buildSequence)
+    {
+        return LeafDebugClass::Split;
     }
 
     if (node.Depth > 0)
@@ -87,15 +93,11 @@ glm::vec3 ClassicRoamMeshBuilder::DebugColorForLeaf(const ClassicRoamNode& node)
         return glm::vec3{0.28F, 0.34F, 0.30F};
     case LeafDebugClass::Subdivided:
         return glm::mix(glm::vec3{0.08F, 0.72F, 0.62F}, glm::vec3{0.10F, 0.34F, 0.95F}, depthRatio);
-    case LeafDebugClass::Rebuilt:
-        // forced split 用粉色系标出 crack repair 触发区域
-        if (node.ActivatedByForcedSplit)
-        {
-            return glm::mix(glm::vec3{0.96F, 0.34F, 0.90F}, glm::vec3{0.96F, 0.16F, 0.42F}, depthRatio);
-        }
-
-        // 普通 rebuild 用暖色，便于和历史细分叶子区分
-        return glm::mix(glm::vec3{1.0F, 0.68F, 0.15F}, glm::vec3{1.0F, 0.34F, 0.10F}, depthRatio);
+    case LeafDebugClass::Split:
+        // requested 与 forced split 都属于本次展开，统一用红色表达方向。
+        return Roam::SplitDebugColor();
+    case LeafDebugClass::Merge:
+        return Roam::MergeDebugColor();
     }
 
     return glm::vec3{0.28F, 0.34F, 0.30F};
@@ -110,7 +112,8 @@ float ClassicRoamMeshBuilder::DebugHighlightForLeaf(const ClassicRoamNode& node)
         return 0.35F;
     case LeafDebugClass::Subdivided:
         return 0.70F;
-    case LeafDebugClass::Rebuilt:
+    case LeafDebugClass::Split:
+    case LeafDebugClass::Merge:
         return 1.0F;
     }
 

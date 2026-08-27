@@ -382,6 +382,16 @@
 - 解决方案：Indexation 在原有全槽活动扫描中对 HeapID 位长执行原子最大值归约，并通过常规延迟诊断槽追加 4 字节回读；UI 与 benchmark 改为发布该样本值，不增加全容量验证或同步等待。
 - 验证：D3D12 quick benchmark 的默认路径样本报告深度 11、12，极限路径报告深度 20；CBT smoke 同时验证细分活动数大于六时深度不能停留在基础值 4，并覆盖降深过程中真实深度逐帧回落的语义。
 
+### BUG-032：Classic/DOD 本帧拓扑着色混淆 Split 与 Merge
+
+- 状态：`Fixed`
+- 严重级别：`一般`
+- 发生阶段：Classic/DOD 增量 Mesh 的 LOD 状态可视化
+- 现象：本次 Build 发生拓扑变化后，普通 Split 显示为橙色、强制 Split 显示为图例中没有说明的粉色，Merge 又与 Split 共用“重建”分类。画面无法直接判断拓扑变化方向，粉色区域还容易被误认为没有完整着色。
+- 定位：两种 CPU 算法都先用 `ActivatedBuildId || MergeBuildId` 合并为 `Rebuilt`，但 Merge 恢复父节点时会同时刷新这两个字段；颜色函数又根据 `ActivatedByForcedSplit` 把一部分 Split 分流成粉色，而 UI 只发布一个橙色“重建”图例。
+- 解决方案：Classic/DOD 的活动叶调试分类拆为 `Split` 与 `Merge`，优先检查 `MergeBuildId`，再把本次激活的普通与强制 Split 统一标红、Merge 恢复叶标绿。两种算法和 UI 图例共用 `RoamDebugVisualization` 颜色定义，原“重建三角”指标改称“本帧变更叶”，继续表示两类最终可见变化叶的合计。
+- 验证：benchmark 逐三角检查三个独立顶点具有一致事件色和完整高亮，并验证红色 Split 叶与绿色 Merge 叶之和等于 `RebuiltTriangleCount`；OpenGL/D3D12 RelWithDebInfo 构建通过，两个后端的 Classic/DOD budget-reentry、view 与 incremental-emit 回归共 10 项通过，OpenGL 完整 CTest 18/18 通过。
+
 ## 模板
 
 ```text

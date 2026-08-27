@@ -397,7 +397,7 @@ void ApplyIncrementalMeshUpdates(DataOrientedRoamState& state)
     }
     else
     {
-        // Rebuilt 颜色只维持一个 Build；仍是最终 leaf 的旧成员需要刷新一次。
+        // Split/Merge 事件色只维持一个 Build；仍是最终 leaf 的旧成员需要刷新一次。
         for (DataOrientedRoamNodeIndex node : mesh.DebugTransitionLeaves)
         {
             if (state.IsLeaf(node) && node < mesh.NodeSlots.size())

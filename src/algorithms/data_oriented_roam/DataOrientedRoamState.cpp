@@ -521,7 +521,8 @@ void AccumulateLeafStats(
         case DataOrientedRoamLeafDebugClass::Subdivided:
             ++state.Stats.SubdividedTriangleCount;
             break;
-        case DataOrientedRoamLeafDebugClass::Rebuilt:
+        case DataOrientedRoamLeafDebugClass::Split:
+        case DataOrientedRoamLeafDebugClass::Merge:
             ++state.Stats.RebuiltTriangleCount;
             break;
         }
