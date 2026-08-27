@@ -1,5 +1,7 @@
 #pragma once
 
+#include "algorithms/RoamDebugVisualization.shared.h"
+
 #include <glm/vec3.hpp>
 
 namespace ParallelRoam::Algorithms::Roam
@@ -10,7 +12,10 @@ namespace ParallelRoam::Algorithms::Roam
 /// </summary>
 [[nodiscard]] inline glm::vec3 SplitDebugColor()
 {
-    return glm::vec3{0.95F, 0.08F, 0.06F};
+    return glm::vec3{
+        ROAM_DEBUG_SPLIT_RED,
+        ROAM_DEBUG_SPLIT_GREEN,
+        ROAM_DEBUG_SPLIT_BLUE};
 }
 
 /// <summary>
@@ -18,6 +23,9 @@ namespace ParallelRoam::Algorithms::Roam
 /// </summary>
 [[nodiscard]] inline glm::vec3 MergeDebugColor()
 {
-    return glm::vec3{0.10F, 0.88F, 0.18F};
+    return glm::vec3{
+        ROAM_DEBUG_MERGE_RED,
+        ROAM_DEBUG_MERGE_GREEN,
+        ROAM_DEBUG_MERGE_BLUE};
 }
 } // namespace ParallelRoam::Algorithms::Roam

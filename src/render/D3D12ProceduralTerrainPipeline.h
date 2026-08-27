@@ -44,6 +44,9 @@ public:
         ID3D12Resource* activeElementBuffer,
         std::size_t activeElementCapacityBytes,
         std::size_t activeElementStrideBytes,
+        ID3D12Resource* lodStateBuffer,
+        std::size_t lodStateCapacityBytes,
+        std::size_t lodStateStrideBytes,
         std::uint64_t resourceGeneration,
         std::string* errorMessage);
 
@@ -80,6 +83,7 @@ private:
     Microsoft::WRL::ComPtr<ID3D12CommandSignature> _drawCommandSignature;
     std::array<D3D12DescriptorAllocation, D3D12GraphicsBackend::FrameCount> _activeElementSrvs;
     std::array<D3D12DescriptorAllocation, D3D12GraphicsBackend::FrameCount> _vertexSrvs;
+    std::array<D3D12DescriptorAllocation, D3D12GraphicsBackend::FrameCount> _lodStateSrvs;
     std::array<std::uint64_t, D3D12GraphicsBackend::FrameCount> _descriptorGenerations{};
     Microsoft::WRL::ComPtr<ID3D12QueryHeap> _timestampQueryHeap;
     std::array<Microsoft::WRL::ComPtr<ID3D12Resource>, D3D12GraphicsBackend::FrameCount> _timestampReadbacks;

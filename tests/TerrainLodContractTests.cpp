@@ -22,11 +22,14 @@ TerrainLodRenderPacket MakeGpuPacket()
     packet.NativeResourceApi = TerrainLodNativeResourceApi::Direct3D12;
     packet.NativeVertexBuffer = 1U;
     packet.NativeActiveLeafBuffer = 2U;
-    packet.NativeIndirectDrawBuffer = 3U;
+    packet.NativeLodStateBuffer = 3U;
+    packet.NativeIndirectDrawBuffer = 4U;
     packet.GpuVertexBufferCapacityBytes = TriangleCapacity * 3U * VertexStride;
     packet.GpuVertexStrideBytes = VertexStride;
     packet.GpuActiveLeafBufferCapacityBytes = TriangleCapacity * sizeof(std::uint32_t);
     packet.GpuActiveLeafStrideBytes = sizeof(std::uint32_t);
+    packet.GpuLodStateBufferCapacityBytes = TriangleCapacity * 8U * sizeof(std::uint32_t);
+    packet.GpuLodStateStrideBytes = 8U * sizeof(std::uint32_t);
     packet.GpuIndirectDrawBufferCapacityBytes = 10U * sizeof(std::uint32_t);
     packet.GpuIndirectDrawArgumentOffsetBytes = 0U;
     packet.GpuResourceLifetime = TerrainLodGpuResourceLifetime::UntilNextBuildOrReset;
@@ -53,6 +56,14 @@ int main()
     TerrainLodRenderPacket undersizedVertices = packet;
     undersizedVertices.GpuVertexBufferCapacityBytes -= undersizedVertices.GpuVertexStrideBytes;
     passed &= !undersizedVertices.HasConsistentResourceContract();
+
+    TerrainLodRenderPacket missingLodState = packet;
+    missingLodState.NativeLodStateBuffer = 0U;
+    passed &= !missingLodState.HasConsistentResourceContract();
+
+    TerrainLodRenderPacket undersizedLodState = packet;
+    undersizedLodState.GpuLodStateBufferCapacityBytes -= undersizedLodState.GpuLodStateStrideBytes;
+    passed &= !undersizedLodState.HasConsistentResourceContract();
 
     namespace Baseline = ParallelRoam::Algorithms::Cbt2024::OfficialBaselineV1;
     // 阶段 I 的身份和正式场景参数属于公开契约，避免后续研究变体静默覆盖基线。

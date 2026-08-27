@@ -1,3 +1,6 @@
+#include "cbt/CbtGpuAbi.hlsli"
+#include "RoamDebugVisualization.shared.h"
+
 cbuffer TerrainConstants : register(b0)
 {
     // 与普通 Terrain.hlsl 共用常量 ABI 保证两条渲染路径的相机和光照一致
@@ -37,6 +40,8 @@ struct VertexOutput
 StructuredBuffer<uint> ActiveBisectors : register(t1);
 // 顶点缓冲按物理槽位保存而不是按本帧活动顺序紧凑重排
 StructuredBuffer<TerrainVertexData> CbtVertices : register(t2);
+// 拓扑状态保留本帧 modified 与 split/merge 语义，几何缓冲只保存稳定的基础调色板。
+StructuredBuffer<CbtBisectorData> CbtBisectors : register(t3);
 
 VertexOutput VSCbtProcedural(uint vertexId : SV_VertexID)
 {
@@ -54,6 +59,24 @@ VertexOutput VSCbtProcedural(uint vertexId : SV_VertexID)
     output.Height = input.Height;
     output.DebugColor = input.DebugColor;
     output.DebugHighlight = input.DebugHighlight;
+    const CbtBisectorData bisector = CbtBisectors[physicalSlot];
+    if ((bisector.Flags & CbtModifiedFlag) != 0u)
+    {
+        if (bisector.BisectorState == CbtMergedElement)
+        {
+            output.DebugColor = float3(
+                ROAM_DEBUG_MERGE_RED,
+                ROAM_DEBUG_MERGE_GREEN,
+                ROAM_DEBUG_MERGE_BLUE);
+        }
+        else if (bisector.BisectorState == CbtUnchangedElement)
+        {
+            output.DebugColor = float3(
+                ROAM_DEBUG_SPLIT_RED,
+                ROAM_DEBUG_SPLIT_GREEN,
+                ROAM_DEBUG_SPLIT_BLUE);
+        }
+    }
     // CBT 几何已经写成世界坐标 不再应用额外模型矩阵
     output.Position = mul(Projection, mul(View, float4(input.Position, 1.0)));
     return output;

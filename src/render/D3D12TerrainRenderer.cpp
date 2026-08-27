@@ -2,6 +2,7 @@
 
 #include "algorithms/TerrainLodView.h"
 #include "algorithms/cbt_2024/Cbt2024Support.h"
+#include "algorithms/cbt_2024/CbtGpuAbi.h"
 #include "algorithms/cbt_2024/d3d12/D3D12CbtTerrainLodAlgorithm.h"
 #include "algorithms/classic_roam/ClassicRoamTerrainLodAlgorithm.h"
 #include "algorithms/data_oriented_roam/DataOrientedRoamTerrainLodAlgorithm.h"
@@ -379,12 +380,15 @@ struct D3D12TerrainRendererState
     // GPU LOD 缓冲由算法持有，renderer 只保存当前绘制需要的借用指针
     ID3D12Resource* GpuVertexBuffer{nullptr};
     ID3D12Resource* GpuActiveLeafBuffer{nullptr};
+    ID3D12Resource* GpuLodStateBuffer{nullptr};
     ID3D12Resource* GpuIndirectBuffer{nullptr};
     D3D12_VERTEX_BUFFER_VIEW GpuVertexView{};
     std::size_t GpuVertexCapacityBytes{0};
     std::size_t GpuVertexStrideBytes{0};
     std::size_t GpuActiveLeafCapacityBytes{0};
     std::size_t GpuActiveLeafStrideBytes{0};
+    std::size_t GpuLodStateCapacityBytes{0};
+    std::size_t GpuLodStateStrideBytes{0};
     std::size_t GpuIndirectCapacityBytes{0};
     std::size_t GpuIndirectArgumentOffsetBytes{0};
     std::uint64_t GpuResourceGeneration{0};
@@ -397,12 +401,15 @@ void ClearBorrowedGpuResources(D3D12TerrainRendererState& state)
 {
     state.GpuVertexBuffer = nullptr;
     state.GpuActiveLeafBuffer = nullptr;
+    state.GpuLodStateBuffer = nullptr;
     state.GpuIndirectBuffer = nullptr;
     state.GpuVertexView = {};
     state.GpuVertexCapacityBytes = 0U;
     state.GpuVertexStrideBytes = 0U;
     state.GpuActiveLeafCapacityBytes = 0U;
     state.GpuActiveLeafStrideBytes = 0U;
+    state.GpuLodStateCapacityBytes = 0U;
+    state.GpuLodStateStrideBytes = 0U;
     state.GpuIndirectCapacityBytes = 0U;
     state.GpuIndirectArgumentOffsetBytes = 0U;
     state.GpuResourceGeneration = 0U;
@@ -979,6 +986,9 @@ void TerrainRenderer::Render(const RenderContext& context)
                 _d3d12State->GpuActiveLeafBuffer,
                 _d3d12State->GpuActiveLeafCapacityBytes,
                 _d3d12State->GpuActiveLeafStrideBytes,
+                _d3d12State->GpuLodStateBuffer,
+                _d3d12State->GpuLodStateCapacityBytes,
+                _d3d12State->GpuLodStateStrideBytes,
                 _d3d12State->GpuResourceGeneration,
                 &descriptorError))
         {
@@ -986,7 +996,7 @@ void TerrainRenderer::Render(const RenderContext& context)
             return;
         }
 
-        // pipeline 内部固定 t1/t2 映射和 DRAW 命令，renderer 只提交当前算法借用资源
+        // pipeline 内部固定 t1..t3 映射和 DRAW 命令，renderer 只提交当前算法借用资源
         _d3d12State->ProceduralPipeline.RecordDraw(
             commandList,
             frameIndex,
@@ -1290,7 +1300,9 @@ bool TerrainRenderer::RebuildTerrainLod(const RenderContext& context, std::strin
         renderPacket.NativeResourceApi == Algorithms::TerrainLodNativeResourceApi::Direct3D12)
     {
         if (renderPacket.GpuVertexStrideBytes != sizeof(Terrain::TerrainMeshVertex) ||
-            renderPacket.GpuActiveLeafStrideBytes != sizeof(std::uint32_t))
+            renderPacket.GpuActiveLeafStrideBytes != sizeof(std::uint32_t) ||
+            renderPacket.GpuLodStateStrideBytes !=
+                Algorithms::Cbt2024::CbtBisectorDataWordCount * sizeof(std::uint32_t))
         {
             _terrainLodStatusMessage = "D3D12 CBT procedural buffer stride does not match the render shader";
             SetError(errorMessage, _terrainLodStatusMessage);
@@ -1303,12 +1315,16 @@ bool TerrainRenderer::RebuildTerrainLod(const RenderContext& context, std::strin
         _d3d12State->GpuVertexBuffer = reinterpret_cast<ID3D12Resource*>(renderPacket.NativeVertexBuffer);
         _d3d12State->GpuActiveLeafBuffer =
             reinterpret_cast<ID3D12Resource*>(renderPacket.NativeActiveLeafBuffer);
+        _d3d12State->GpuLodStateBuffer =
+            reinterpret_cast<ID3D12Resource*>(renderPacket.NativeLodStateBuffer);
         _d3d12State->GpuIndirectBuffer = reinterpret_cast<ID3D12Resource*>(renderPacket.NativeIndirectDrawBuffer);
         _d3d12State->GpuVertexView = {};
         _d3d12State->GpuVertexCapacityBytes = renderPacket.GpuVertexBufferCapacityBytes;
         _d3d12State->GpuVertexStrideBytes = renderPacket.GpuVertexStrideBytes;
         _d3d12State->GpuActiveLeafCapacityBytes = renderPacket.GpuActiveLeafBufferCapacityBytes;
         _d3d12State->GpuActiveLeafStrideBytes = renderPacket.GpuActiveLeafStrideBytes;
+        _d3d12State->GpuLodStateCapacityBytes = renderPacket.GpuLodStateBufferCapacityBytes;
+        _d3d12State->GpuLodStateStrideBytes = renderPacket.GpuLodStateStrideBytes;
         _d3d12State->GpuIndirectCapacityBytes = renderPacket.GpuIndirectDrawBufferCapacityBytes;
         _d3d12State->GpuIndirectArgumentOffsetBytes = renderPacket.GpuIndirectDrawArgumentOffsetBytes;
         _d3d12State->GpuResourceGeneration = renderPacket.GpuResourceGeneration;

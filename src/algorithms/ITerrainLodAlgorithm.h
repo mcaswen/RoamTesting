@@ -251,6 +251,8 @@ struct TerrainLodRenderPacket
     std::uintptr_t NativeVertexBuffer{0};
     // 程序化路径借用的活动二分器索引资源地址
     std::uintptr_t NativeActiveLeafBuffer{0};
+    // 程序化路径借用的逐槽 LOD 拓扑状态资源地址
+    std::uintptr_t NativeLodStateBuffer{0};
     // D3D12 间接路径借用的命令参数资源地址
     std::uintptr_t NativeIndirectDrawBuffer{0};
     // 原生顶点视图允许访问的总字节数
@@ -260,6 +262,9 @@ struct TerrainLodRenderPacket
     // 活动二分器 SRV 允许访问的总字节数和结构化元素跨度
     std::size_t GpuActiveLeafBufferCapacityBytes{0};
     std::size_t GpuActiveLeafStrideBytes{0};
+    // 逐槽 LOD 状态 SRV 允许访问的总字节数和结构化元素跨度
+    std::size_t GpuLodStateBufferCapacityBytes{0};
+    std::size_t GpuLodStateStrideBytes{0};
     // 间接参数容量和字节偏移由 GPU 协议拥有，renderer 不依赖 CPU 活动数推导命令位置
     std::size_t GpuIndirectDrawBufferCapacityBytes{0};
     std::size_t GpuIndirectDrawArgumentOffsetBytes{0};
@@ -284,6 +289,7 @@ struct TerrainLodRenderPacket
         const bool hasNativeGpuResources =
             NativeVertexBuffer != 0U ||
             NativeActiveLeafBuffer != 0U ||
+            NativeLodStateBuffer != 0U ||
             NativeIndirectDrawBuffer != 0U;
 
         if (Mode == TerrainLodRenderMode::CpuMesh || Mode == TerrainLodRenderMode::DebugOnly)
@@ -329,16 +335,21 @@ struct TerrainLodRenderPacket
         {
             const bool hasValidStrides =
                 GpuVertexStrideBytes > 0U &&
-                GpuActiveLeafStrideBytes > 0U;
+                GpuActiveLeafStrideBytes > 0U &&
+                GpuLodStateStrideBytes > 0U;
             const std::size_t vertexCapacity = hasValidStrides
                 ? GpuVertexBufferCapacityBytes / GpuVertexStrideBytes
                 : 0U;
             const std::size_t activeLeafCapacity = hasValidStrides
                 ? GpuActiveLeafBufferCapacityBytes / GpuActiveLeafStrideBytes
                 : 0U;
+            const std::size_t lodStateCapacity = hasValidStrides
+                ? GpuLodStateBufferCapacityBytes / GpuLodStateStrideBytes
+                : 0U;
             constexpr std::size_t DrawArgumentBytes = sizeof(std::uint32_t) * 4U;
             const bool hasRequiredCapacity =
                 activeLeafCapacity > 0U &&
+                lodStateCapacity >= activeLeafCapacity &&
                 vertexCapacity / 3U >= activeLeafCapacity;
             const bool hasValidIndirectArgument =
                 GpuIndirectDrawArgumentOffsetBytes % sizeof(std::uint32_t) == 0U &&
@@ -349,6 +360,7 @@ struct TerrainLodRenderPacket
             return NativeResourceApi == TerrainLodNativeResourceApi::Direct3D12 &&
                     NativeVertexBuffer != 0U &&
                     NativeActiveLeafBuffer != 0U &&
+                    NativeLodStateBuffer != 0U &&
                     NativeIndirectDrawBuffer != 0U &&
                     hasValidStrides &&
                    hasRequiredCapacity &&

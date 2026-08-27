@@ -83,12 +83,16 @@ void FillRenderPacket(
     outPacket.NativeResourceApi = TerrainLodNativeResourceApi::Direct3D12;
     outPacket.NativeVertexBuffer = reinterpret_cast<std::uintptr_t>(state.Pipeline.RenderVertices());
     outPacket.NativeActiveLeafBuffer = reinterpret_cast<std::uintptr_t>(resources.ActiveIndices);
+    outPacket.NativeLodStateBuffer = reinterpret_cast<std::uintptr_t>(resources.BisectorData);
     outPacket.NativeIndirectDrawBuffer = reinterpret_cast<std::uintptr_t>(resources.IndirectDrawState);
     outPacket.GpuVertexBufferCapacityBytes = state.Pipeline.RenderVertexCapacityBytes();
     outPacket.GpuVertexStrideBytes = sizeof(Terrain::TerrainMeshVertex);
     outPacket.GpuActiveLeafBufferCapacityBytes =
         static_cast<std::size_t>(topology.Layout.IndexElementCount) * sizeof(std::uint32_t);
     outPacket.GpuActiveLeafStrideBytes = sizeof(std::uint32_t);
+    outPacket.GpuLodStateBufferCapacityBytes =
+        static_cast<std::size_t>(topology.Layout.TotalElementCount) * sizeof(CbtBisectorData);
+    outPacket.GpuLodStateStrideBytes = sizeof(CbtBisectorData);
     outPacket.GpuIndirectDrawBufferCapacityBytes = sizeof(CbtDrawState);
     outPacket.GpuIndirectDrawArgumentOffsetBytes = offsetof(CbtDrawState, Active);
     outPacket.GpuResourceLifetime = TerrainLodGpuResourceLifetime::UntilNextBuildOrReset;

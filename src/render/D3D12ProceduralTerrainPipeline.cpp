@@ -144,6 +144,7 @@ void D3D12ProceduralTerrainPipeline::Shutdown()
         {
             _backend->ReleaseSrvDescriptor(_activeElementSrvs[frameIndex]);
             _backend->ReleaseSrvDescriptor(_vertexSrvs[frameIndex]);
+            _backend->ReleaseSrvDescriptor(_lodStateSrvs[frameIndex]);
         }
     }
     // 先归还外部分配的描述符，再释放引用这些槽位的管线对象
@@ -178,6 +179,9 @@ bool D3D12ProceduralTerrainPipeline::ConfigureResourceDescriptors(
     ID3D12Resource* activeElementBuffer,
     std::size_t activeElementCapacityBytes,
     std::size_t activeElementStrideBytes,
+    ID3D12Resource* lodStateBuffer,
+    std::size_t lodStateCapacityBytes,
+    std::size_t lodStateStrideBytes,
     std::uint64_t resourceGeneration,
     std::string* errorMessage)
 {
@@ -193,10 +197,11 @@ bool D3D12ProceduralTerrainPipeline::ConfigureResourceDescriptors(
         return true;
     }
     // StructuredBuffer 容量必须是 stride 的整数倍，否则最后一个元素会越界
-    if (vertexBuffer == nullptr || activeElementBuffer == nullptr ||
-        vertexStrideBytes == 0U || activeElementStrideBytes == 0U ||
+    if (vertexBuffer == nullptr || activeElementBuffer == nullptr || lodStateBuffer == nullptr ||
+        vertexStrideBytes == 0U || activeElementStrideBytes == 0U || lodStateStrideBytes == 0U ||
         vertexCapacityBytes % vertexStrideBytes != 0U ||
-        activeElementCapacityBytes % activeElementStrideBytes != 0U)
+        activeElementCapacityBytes % activeElementStrideBytes != 0U ||
+        lodStateCapacityBytes % lodStateStrideBytes != 0U)
     {
         SetError(errorMessage, "D3D12 procedural SRV metadata is incomplete");
         return false;
@@ -205,10 +210,13 @@ bool D3D12ProceduralTerrainPipeline::ConfigureResourceDescriptors(
     // D3D12 描述符字段使用 UINT，先在 size_t 中计算再检查收窄范围
     const std::size_t vertexCount = vertexCapacityBytes / vertexStrideBytes;
     const std::size_t activeElementCount = activeElementCapacityBytes / activeElementStrideBytes;
+    const std::size_t lodStateCount = lodStateCapacityBytes / lodStateStrideBytes;
     if (vertexStrideBytes > std::numeric_limits<UINT>::max() ||
         activeElementStrideBytes > std::numeric_limits<UINT>::max() ||
+        lodStateStrideBytes > std::numeric_limits<UINT>::max() ||
         vertexCount > std::numeric_limits<UINT>::max() ||
-        activeElementCount > std::numeric_limits<UINT>::max())
+        activeElementCount > std::numeric_limits<UINT>::max() ||
+        lodStateCount > std::numeric_limits<UINT>::max())
     {
         SetError(errorMessage, "D3D12 procedural SRV exceeds descriptor limits");
         return false;
@@ -237,7 +245,19 @@ bool D3D12ProceduralTerrainPipeline::ConfigureResourceDescriptors(
         vertexBuffer,
         &vertexDescription,
         _vertexSrvs[frameIndex].Cpu);
-    // 两个 SRV 都成功写入后才发布版本，失败重试不会误判为已配置
+
+    // t3 让顶点着色器直接观察本帧拓扑事件，避免把短生命周期状态固化进几何缓冲。
+    D3D12_SHADER_RESOURCE_VIEW_DESC lodStateDescription{};
+    lodStateDescription.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    lodStateDescription.Format = DXGI_FORMAT_UNKNOWN;
+    lodStateDescription.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+    lodStateDescription.Buffer.NumElements = static_cast<UINT>(lodStateCount);
+    lodStateDescription.Buffer.StructureByteStride = static_cast<UINT>(lodStateStrideBytes);
+    _backend->Device()->CreateShaderResourceView(
+        lodStateBuffer,
+        &lodStateDescription,
+        _lodStateSrvs[frameIndex].Cpu);
+    // 三个 SRV 都成功写入后才发布版本，失败重试不会误判为已配置
     _descriptorGenerations[frameIndex] = resourceGeneration;
     return true;
 }
@@ -260,13 +280,14 @@ void D3D12ProceduralTerrainPipeline::RecordDraw(
     {
         commandList->EndQuery(_timestampQueryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, queryStart);
     }
-    // 根参数顺序固定为 b0、t0、t1、t2，与独立 root signature 完全一致
+    // 根参数顺序固定为 b0、t0、t1、t2、t3，与独立 root signature 完全一致
     commandList->SetPipelineState(wireframe ? _wireframePipelineState.Get() : _fillPipelineState.Get());
     commandList->SetGraphicsRootSignature(_rootSignature.Get());
     commandList->SetGraphicsRootConstantBufferView(0, constantBufferAddress);
     commandList->SetGraphicsRootDescriptorTable(1, textureSrv);
     commandList->SetGraphicsRootDescriptorTable(2, _activeElementSrvs[frameIndex].Gpu);
     commandList->SetGraphicsRootDescriptorTable(3, _vertexSrvs[frameIndex].Gpu);
+    commandList->SetGraphicsRootDescriptorTable(4, _lodStateSrvs[frameIndex].Gpu);
     commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     // 当前命令缓冲只含一条 DRAW，不使用额外 count buffer
     commandList->ExecuteIndirect(
@@ -341,9 +362,9 @@ void D3D12ProceduralTerrainPipeline::ConsumeCompletedTiming(std::uint32_t frameI
 // 与普通 terrain root signature 分离，避免程序化 CBT 绘制污染 CPU mesh 管线。
 bool D3D12ProceduralTerrainPipeline::CreateRootSignature(std::string* errorMessage)
 {
-    // t0 仅供像素着色器采样地形纹理，t1 和 t2 仅供程序化顶点着色器读取
+    // t0 仅供像素着色器采样地形纹理，t1..t3 仅供程序化顶点着色器读取
     // 每个 table 独占一个 range，后续新增 UAV 时不会改变现有根参数编号
-    std::array<D3D12_DESCRIPTOR_RANGE, 3> srvRanges{};
+    std::array<D3D12_DESCRIPTOR_RANGE, 4> srvRanges{};
     for (std::size_t index = 0; index < srvRanges.size(); ++index)
     {
         srvRanges[index].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
@@ -353,7 +374,7 @@ bool D3D12ProceduralTerrainPipeline::CreateRootSignature(std::string* errorMessa
     }
 
     // range 指针只在当前函数序列化期间使用，局部数组生命周期覆盖调用
-    std::array<D3D12_ROOT_PARAMETER, 4> parameters{};
+    std::array<D3D12_ROOT_PARAMETER, 5> parameters{};
     parameters[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     parameters[0].Descriptor.ShaderRegister = 0;
     parameters[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
@@ -506,7 +527,10 @@ bool D3D12ProceduralTerrainPipeline::AllocateFrameDescriptors(std::string* error
     {
         _activeElementSrvs[frameIndex] = _backend->AllocateSrvDescriptor();
         _vertexSrvs[frameIndex] = _backend->AllocateSrvDescriptor();
-        if (!_activeElementSrvs[frameIndex].IsValid() || !_vertexSrvs[frameIndex].IsValid())
+        _lodStateSrvs[frameIndex] = _backend->AllocateSrvDescriptor();
+        if (!_activeElementSrvs[frameIndex].IsValid() ||
+            !_vertexSrvs[frameIndex].IsValid() ||
+            !_lodStateSrvs[frameIndex].IsValid())
         {
             SetError(errorMessage, "D3D12 SRV heap has no descriptors for procedural terrain rendering");
             return false;

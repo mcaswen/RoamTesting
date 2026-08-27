@@ -236,6 +236,8 @@ if(PARALLEL_ROAM_BUILD_APP)
                 "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/dx12/Terrain.hlsl"
             COMMAND ${PARALLEL_ROAM_DXC_EXECUTABLE}
                 -T vs_6_6 -E VSCbtProcedural -Fo ${PARALLEL_ROAM_DX12_CBT_PROCEDURAL_VERTEX_SHADER}
+                -I "${CMAKE_CURRENT_SOURCE_DIR}/src/algorithms"
+                -I "${CMAKE_CURRENT_SOURCE_DIR}/src/algorithms/cbt_2024"
                 "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/dx12/CbtProceduralTerrain.hlsl"
             COMMAND ${PARALLEL_ROAM_DXC_EXECUTABLE}
                 -T cs_6_6 -E CSIndexation
@@ -267,6 +269,7 @@ if(PARALLEL_ROAM_BUILD_APP)
                 "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/dx12/CbtProceduralTerrain.hlsl"
                 "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/dx12/cbt/CbtBootstrap.hlsl"
                 "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/dx12/cbt/CbtGpuAbi.hlsli"
+                "${CMAKE_CURRENT_SOURCE_DIR}/src/algorithms/RoamDebugVisualization.shared.h"
                 "${CMAKE_CURRENT_SOURCE_DIR}/src/algorithms/cbt_2024/CbtGpuAbi.shared.h"
             VERBATIM
         )
