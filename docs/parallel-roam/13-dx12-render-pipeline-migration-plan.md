@@ -4,26 +4,26 @@
 > 完成日期：2026-07-16  
 > 状态：阶段 0 至阶段 6 已完成，迁移阶段关闭  
 > 后续工作：见 [CBT 2024 接入与复现计划](16-cbt-2024-integration-plan.md)
-> 后续状态更新：CBT 阶段 B-D 已完成，迁移总结中原有的程序化绘制和设备能力技术债务已经关闭
+> 后续状态更新：截至 2026-08-29，CBT 阶段 A-I 已完成，程序化绘制、设备能力、动态拓扑、高度图几何、诊断和 benchmark 技术债务均已关闭
 
-> 本文包含 GPU ROAM-like DX12 迁移的历史总结。该实现已从主分支删除并保留在 `archive/gpu-roam-like` 分支；当前主分支只保留 CBT 程序化绘制契约。
+> 本文包含 GPU ROAM-like DX12 迁移的历史总结。该实现已从主分支删除并保留在 `archive/gpu-roam-like` 分支；当前主分支的程序化 GPU 路径是已经完成阶段 A-I 的 CBT 2024。
 
 ## 1. 完成结论
 
-RoamTesting 已完成从 OpenGL 单一渲染路径向 DX12 主开发路径的迁移准备和功能接入。当前代码已经具备：
+RoamTesting 已完成从 OpenGL 单一渲染路径向 DX12 主开发路径的迁移准备和功能接入。迁移基础与后续 CBT 接入合并后，当前代码具备：
 
 - SDL 窗口与图形后端生命周期分离；
 - 可选择的 OpenGL/DX12 构建后端；
 - DX12 设备、交换链、帧资源、描述符、围栏和调试层；
 - 高度图地形、深度、纹理、线框、调试着色和 ImGui；
 - Classic CPU ROAM 与数据导向 CPU ROAM 的 DX12 网格上传和绘制；
-- GPU ROAM-like 的 DX12 Compute Shader、GPU 网格生成和 `ExecuteIndirect` 路径；
+- CBT 2024 的 DX12 Compute Shader、GPU 高度图网格生成和 `ExecuteIndirect` 路径；
 - DX12 GPU 时间戳、围栏等待统计、自动烟雾测试和运行时 benchmark；
 - GPU 资源借用、生命周期和间接绘制数据包约定。
 
-迁移阶段的目标已经达到：CBT 2024 不再需要先解决窗口、渲染、着色器、屏障、计时或基础间接绘制问题，可以作为独立算法接入任务推进。
+迁移阶段的目标已经达到；后续 CBT 2024 也已经在这套基础上完成阶段 A-I，不再是待推进任务。
 
-## 2. 迁移后的实际架构
+## 2. 当前实际架构
 
 ```text
 Application
@@ -39,12 +39,12 @@ Application
 │       └── ImGui DX12 命令记录
 ├── TerrainRenderer
 │   ├── CPU 网格上传与直接绘制
-│   ├── GPU 顶点/索引资源借用
-│   └── DRAW_INDEXED 间接绘制
+│   ├── CBT GPU 顶点/活动索引资源借用
+│   └── 程序化 DRAW 间接绘制
 └── ITerrainLodAlgorithm
     ├── Classic CPU ROAM
     ├── 数据导向 CPU ROAM
-    └── GPU ROAM-like（DX12 计算管线验证实现）
+    └── CBT 2024（DX12 GPU 常驻动态拓扑）
 ```
 
 ### 2.1 模块迁移结果
@@ -58,7 +58,7 @@ Application
 | `gui/ImGuiLayer` | SDL2/OpenGL3 | 同时支持 SDL2/OpenGL3 和 SDL2/DX12 |
 | `render/TerrainRenderer` | OpenGL VAO、缓冲和绘制 | 支持 DX12 CPU 网格和 GPU 间接绘制 |
 | `ITerrainLodAlgorithm` | GPU 输出暴露 OpenGL 资源编号 | 增加原生 DX12 资源和生命周期约定 |
-| GPU ROAM-like | OpenGL Compute Shader | 增加独立 DX12/HLSL 计算实现 |
+| GPU ROAM-like | OpenGL Compute Shader | 迁移阶段曾增加 DX12/HLSL 验证实现，现已归档 |
 | benchmark | OpenGL 查询和基础 CSV | 增加后端、适配器、驱动、围栏等待和渲染时间 |
 | CMake | 默认依赖 OpenGL | 支持 `OpenGL` 和 `D3D12` 构建选择 |
 
@@ -105,7 +105,7 @@ OpenGL 不再是 CBT 2024 的目标实现后端，但仍保留用于：
 - 回归 CPU 算法拓扑计数；
 - 区分算法问题与 DX12 渲染问题。
 
-是否删除 OpenGL、GLAD 和旧着色器，延后到 CBT 官方基线稳定之后决定。
+CBT 官方基线冻结后仍保留 OpenGL、GLAD 和 CPU terrain shader，作为 Classic/DOD 的跨后端公共回归；这已成为当前明确选择，不再是待决事项。
 
 ## 4. 构建和着色器流程
 
@@ -118,12 +118,10 @@ PARALLEL_ROAM_GRAPHICS_API=OpenGL|D3D12
 DX12 路径使用项目固定版本的 DXC 在构建阶段编译外部 HLSL。当前生成：
 
 - 地形顶点和像素着色器；
-- GPU ROAM-like 活动叶节点压缩；
-- 误差评估和候选标记；
-- split-only 拓扑更新；
-- 网格生成和间接命令。
 - CBT 程序化地形顶点着色器；
-- CBT OCBT 128K、256K、512K、1M 的清空、更新、归约和 rank-select 容量特化。
+- CBT 基础/分类/modified/full 高度图几何；
+- CBT 18 个 topology/diagnostic 入口及 128K、256K、512K、1M OCBT 容量特化；
+- CBT OCBT 独立 CPU/GPU 对照测试着色器。
 
 编译产物复制到应用运行目录，避免运行时依赖源码工作目录。
 
@@ -211,15 +209,15 @@ DX12 路径使用项目固定版本的 DXC 在构建阶段编译外部 HLSL。�
 
 ## 7. 迁移阶段关闭后的技术边界
 
-以下事项不再属于 DX12 迁移，而由 CBT 2024 接入单独跟踪。状态更新至 2026-07-20：
+以下事项不再属于 DX12 迁移，而由 CBT 2024 接入单独跟踪。状态更新至 2026-08-29：
 
 - [x] Shader Model 6.6、64 位整数和原子操作能力检查；
 - [x] OCBT 位域、压缩求和树和四档容量特化；
 - [x] 基础二分器槽位、逻辑 `heapID` 和半边邻接初始状态；
 - [x] 程序化 `DRAW` 间接绘制；
-- [ ] 完整 split、merge、槽位回收和兼容关系传播；
-- [ ] 完整 CBT 专用统计、动态拓扑验证和容量饱和测试；
-- [ ] 官方动态基线冻结和高度图几何适配。
+- [x] 完整 split、merge、槽位回收和兼容关系传播；
+- [x] 完整 CBT 专用统计、动态拓扑验证和容量饱和测试；
+- [x] 官方动态基线冻结和高度图几何适配。
 
 这些任务统一转入 [CBT 2024 接入与复现计划](16-cbt-2024-integration-plan.md)。
 
@@ -227,11 +225,11 @@ DX12 路径使用项目固定版本的 DXC 在构建阶段编译外部 HLSL。�
 
 ### 8.1 GPU ROAM-like 不是 CBT 基线
 
-当前 DX12 GPU ROAM-like 的主要角色是验证计算着色器、跨阶段屏障、GPU 网格生成、计时和间接绘制。它不具备 CBT 的 OCBT 空闲槽位选择、一般半边邻接和完整 split/merge 传播协议，不能作为 CBT 拓扑实现的替代品。
+历史 DX12 GPU ROAM-like 的主要角色是验证计算着色器、跨阶段屏障、GPU 网格生成、计时和间接绘制。它不具备 CBT 的 OCBT 空闲槽位选择、一般半边邻接和完整 split/merge 传播协议，不能作为当前 CBT 拓扑实现的替代品。
 
 ### 8.2 程序化 `DRAW` 契约已补齐
 
-`TerrainLodRenderMode::GpuProceduralIndirect`、原生活动索引资源、`D3D12_DRAW_ARGUMENTS` 命令资源和对应命令签名已经接入。GPU ROAM-like 继续使用 `DRAW_INDEXED`，CBT 基础拓扑使用程序化 `DRAW`，两条契约并存。
+`TerrainLodRenderMode::GpuProceduralIndirect`、原生活动索引资源、`D3D12_DRAW_ARGUMENTS` 命令资源和对应命令签名已经接入。主分支 CBT 使用程序化 `DRAW`；历史 GPU ROAM-like 的 `DRAW_INDEXED` 契约只存在于归档分支。
 
 ### 8.3 CBT 设备能力检查已补齐
 
@@ -239,7 +237,7 @@ DX12 路径使用项目固定版本的 DXC 在构建阶段编译外部 HLSL。�
 
 ### 8.4 OpenGL 清理暂缓
 
-双后端会增加少量维护成本，但在 CBT 官方基线稳定前仍有回归价值。删除 OpenGL 不作为 CBT 接入前置条件。
+双后端会增加少量维护成本，但 OpenGL 仍承担 Classic/DOD 公共回归。当前继续保留 OpenGL，删除它不属于已冻结 CBT 基线或近期研究计划。
 
 ## 9. 完成定义
 
@@ -251,10 +249,12 @@ DX12 迁移阶段满足以下完成条件：
 - benchmark 能区分算法、上传、渲染和同步等待；
 - 普通帧没有未说明的强制 GPU 读回；
 - OpenGL 基线和迁移产物可追溯；
-- CBT 接入可以在不重做渲染管线的前提下开始。
+- CBT 接入可以在不重做渲染管线的前提下开始；该后续接入现已完成阶段 A-I。
 
 ## 10. 后续文档关系
 
 - 研究问题与假设：[研究假设与验证计划](12-research-hypothesis-validation-plan.md)；
 - 官方源码结构：[large_cbt 总体架构与关键算法路径参考](15-large-cbt-architecture-reference.md)；
-- 下一阶段实施：[CBT 2024 接入与复现计划](16-cbt-2024-integration-plan.md)。
+- 已完成的后续实施：[CBT 2024 接入与复现计划](16-cbt-2024-integration-plan.md)；
+- 冻结结果：[CBT 2024 官方语义基线 v1](18-cbt-2024-official-baseline-v1.md)；
+- 最终性能：[最终实验数据分析与结论](../../benchmark-output/runtime-benchmark-final-analysis-20260828.md)。

@@ -55,7 +55,7 @@ ParallelROAM/
 │   ├── fonts/
 │   ├── heightmaps/
 │   ├── textures/
-│   └── shaders/dx12/       D3D12 terrain、GPU ROAM 和 CBT shader
+│   └── shaders/dx12/       D3D12 terrain 与 CBT shader
 ├── benchmark-output/       Git 忽略的 runtime benchmark 和实验输出
 ├── docs/parallel-roam/     当前文档、历史文档和报告资源
 ├── tests/                  CTest 单元与结构验证
@@ -371,7 +371,7 @@ frames.resize(FrameCount);
 
 1. 平台层：SDL2 window、OpenGL capability、filesystem 和时间等平台细节。
 2. 数据层：Height Map、TerrainConfig、BenchmarkScenario、CameraPath。
-3. 算法层：Classic ROAM、Data-Oriented ROAM、GPU ROAM-like 和 CBT 2024 等 LOD 决策。
+3. 算法层：Classic ROAM、Data-Oriented ROAM 和 CBT 2024 等 LOD 决策；GPU ROAM-like 只存在于历史分支。
 4. 渲染层：OpenGL/D3D12 backend、shader、buffer、texture 和 terrain renderer。
 5. 表现与控制层：GUI、debug view、benchmark 控制面板。
 6. 观测层：CPU/GPU profiler、stats history、CSV export。

@@ -1,5 +1,7 @@
 # LibGen ROAM 论文参考实现源码分析
 
+> 本文分析固定第三方参考快照，结论不随主分支算法阶段变化。当前项目的最终实现与性能结论见[项目计划](../../Parallel_ROAM_Project_Plan.md)和[最终实验分析](../../benchmark-output/runtime-benchmark-final-analysis-20260828.md)。
+
 ## 1. 分析定位与结论
 
 本文分析 `third_party/LibGenROAM010206` 中由 ROAM 论文作者 Mark Duchaineau 提供的参考源码。论文基线采用 1997 年的 [ROAMing Terrain: Real-time Optimally Adapting Meshes](roaming_terrain_paper.md)（[OSTI 原始 PDF](https://www.osti.gov/servlets/purl/632827)）。本文不把“作者源码”和“论文全部机制在这个快照中完整启用”混为一件事：论文概念以论文为准，具体行为以仓库中的 `.l` 源码为准。

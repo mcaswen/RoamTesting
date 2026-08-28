@@ -1,10 +1,10 @@
 # 面向固定拓扑预算的自适应网格细分：兼容闭包感知的全局资源分配
 
-本项目是一个面向高度图地形的自适应网格细分研究与实验平台。项目以 ROAM 1997 核心算法思想为基础，实现 Classic CPU ROAM、Data-Oriented CPU ROAM 两条对照路径，并正在复现与适配 CBT 2024 的 GPU 动态拓扑方法。此前的 GPU ROAM-like 实验已移至 `archive/gpu-roam-like` 分支，主分支不再构建或运行该路径。
+本项目是一个面向高度图地形的自适应网格细分研究与实验平台。项目以 ROAM 1997 核心算法思想为基础，实现 Classic CPU ROAM、Data-Oriented CPU ROAM 两条对照路径，并完成 CBT 2024 GPU 动态拓扑在高度图地形、D3D12 渲染、运行时界面和 benchmark 链路中的接入。
 
-**研究状态：基线建设与问题定义阶段。**
+**研究状态：三算法最终实现与性能基线已经完成，后续进入预算调度研究阶段。**
 
-ROAM 对照平台、统一误差口径、固定预算、拓扑验证、双图形后端和阶段化 benchmark 已可运行。CBT 2024 忠实基线正在复现，当前已完成 OCBT、基础二分器状态和程序化间接绘制。兼容闭包感知调度器已完成研究问题、假设、基线和实验计划定义，但尚未实现和验证。
+ROAM 对照平台、统一误差口径、固定预算、拓扑验证、双图形后端和阶段化 benchmark 均已可运行。CBT 2024 阶段 A-I 已完成，包含四档 OCBT、split/merge、双向传播、GPU 高度图几何、程序化间接绘制、延迟诊断、UI、自动测试与官方语义基线冻结。
 
 ![Parallel ROAM 交互界面](docs/parallel-roam/report-assets/进入后界面.png)
 
@@ -63,9 +63,9 @@ subject to cost(S) <= available_capacity
 | 路径 | 数据与执行方式 | 当前能力 | 边界 |
 | --- | --- | --- | --- |
 | Classic CPU ROAM | 对象式节点、裸指针二叉三角树、串行索引堆 | 持久 `Q_s/Q_m`、统一交叉调度、split、forced split、diamond merge、视锥感知、固定叶三角形预算、增量 indexed CPU Mesh | 采用工程等价复现口径：公式、连续拓扑和增量输出对应 ROAM 1997 论文主要效果，但不追求完整最优性证明 |
-| Data-Oriented CPU ROAM | SoA 节点池、索引邻接、持久 `Q_s/Q_m`、批量评分与条件并行 | 与 Classic 使用相同的误差公式、阈值、预算和拓扑验证口径；并行刷新队列优先级，局部维护队列成员，并持续执行预算交换直至队首条件收敛 | 拓扑依赖限制并行度，最终仍生成 CPU Mesh |
-| CBT 2024 | D3D12、OCBT 位域/归约树、GPU 常驻二分器资源 | 四档容量、面积分类、split/merge、双向传播、高度图增量几何、间接绘制、延迟诊断及逐阶段 GPU 计时 | 忠实实现已进入可复现 benchmark，后续阶段冻结官方语义基线 |
-| 闭包感知预算调度器 | 计划中的独立研究变体 | 研究问题、假设、基线和验收标准已定义 | 尚未实现；必须在忠实 CBT 基线冻结后开展 |
+| Data-Oriented CPU ROAM | SoA 节点池、索引邻接、持久 `Q_s/Q_m`、批量评分与条件并行 | 与 Classic 使用相同的误差公式、阈值、预算和拓扑验证口径；并行刷新队列优先级，局部维护队列成员，并持续执行预算交换直至队首条件收敛 | 拓扑依赖限制并行度；使用持久增量 CPU Mesh，尚未按 dirty 比例自动切换全量 emit |
+| CBT 2024 | D3D12、OCBT 位域/归约树、GPU 常驻二分器资源 | 128K/256K/512K/1M、面积分类、split/merge、双向传播、高度图增量/全量几何、`ExecuteIndirect`、延迟诊断及 18 阶段 GPU 计时 | 官方语义基线 v1 已冻结；面积阈值控制细分，容量不是三角形硬预算 |
+| 闭包感知预算调度器 | 计划中的独立研究变体 | 研究问题、假设、冻结基线和验收标准已定义 | 尚未实现；必须使用新的算法键、shader 变体和实验标签 |
 
 ### 统一误差、预算与拓扑语义
 
@@ -79,17 +79,6 @@ subject to cost(S) <= available_capacity
 - 活动叶三角形 `TriangleBudget` 上限；
 - forced split、diamond merge 和可选拓扑验证；
 - 为避免几何误差接近零时平坦区域过度粗糙，额外提供独立的投影边密度约束。
-
-当前 Classic 路径已经对齐以下 ROAM 1997 关键机制：
-
-- 公式 (1) 的嵌套楔形厚度预计算；
-- 公式 (2)/(3) 的保守屏幕空间投影；
-- 连续二叉三角树与 diamond 拓扑；
-- forced split 和 diamond merge；
-- 持久 split/merge 优先级队列；
-- 增量 indexed CPU Mesh 更新。
-
-DOD 也持久维护同口径的 `Q_s/Q_m`。预算满载时，只要 `max(Q_s) > min(Q_m)`，就先回收最低损失 diamond，再重试最高收益 split，直到队首条件不再成立。它保留全局候选排序与局部队列成员更新，但由于没有实现论文的全部单调性前提和优先级延期机制，仍不声称复现 ROAM 1997 的最少拓扑操作或最优网格证明。
 
 当前实现未复现以下机制：
 
@@ -107,7 +96,7 @@ DOD 也持久维护同口径的 `Q_s/Q_m`。预算满载时，只要 `max(Q_s) >
 - 基于 ITerrainLodAlgorithm 统一接口实现并优化 Classic、DOD 和 CBT 路径；
 - Classic、DOD 的阶段化 CPU 性能统计；
 - 自动相机路径 benchmark，输出中文 Markdown 与逐帧 CSV；
-- CTest、预算重入测试和 CBT 专项 smoke test；
+- CTest、预算重入/增量输出回归和 CBT 四容量专项 smoke test；
 - 拓扑预算、邻接、T-junction 和资源契约检查。
 
 ## 快速开始
@@ -172,6 +161,8 @@ powershell -ExecutionPolicy Bypass -File scripts/run/d3d12/run_relwithdebinfo_fe
 
 右侧面板可以切换高度图、线框、LOD 算法和调试着色，并调整 `TerrainSize`、`HeightScale`、`MaxDepth`、`Split/Merge thresholds (px)`、`TriangleBudget`、局部约束、拓扑验证与光照参数。
 
+CBT 的运行时界面与 Classic/DOD 使用同一条算法选择、统计和调试显示链路。本帧 split 三角形显示为红色，merge 三角形显示为绿色，并在左侧信息面板中显示容量、活动深度、动态槽位、诊断样本年龄和各 GPU 阶段耗时。
+
 ## 测试与验证
 
 运行 CTest：
@@ -195,7 +186,7 @@ powershell -ExecutionPolicy Bypass -File scripts/run/d3d12/run_relwithdebinfo_fe
 .\build\relwithdebinfo-d3d12-fetch\bin\ParallelROAM.exe --cbt-procedural-smoke-test
 ```
 
-当前单元与结构测试覆盖嵌套楔形误差、保守屏幕投影、D3D/OpenGL 视锥约定、CBT 占用树、基础二分器拓扑、Classic/DOD 预算重入、Classic 增量 Mesh 输出及 C++/HLSL 注释覆盖率。
+当前单元与结构测试覆盖嵌套楔形误差、保守屏幕投影、D3D/OpenGL 视锥约定、CBT 占用树、基础二分器拓扑、分类、split 规划与提交、simplify、地形几何、Classic/DOD 预算重入与增量 Mesh 输出，以及 C++/HLSL 注释覆盖率。D3D12 CTest 还覆盖四档 CBT 容量、默认/极限 runtime quick、FullDebug 几何和冻结清单验证。
 
 ## Benchmark
 
@@ -221,13 +212,9 @@ powershell -ExecutionPolicy Bypass -File scripts/run/d3d12/run_relwithdebinfo_fe
 - `runtime-benchmark-<timestamp>.md`：中文汇总和阶段对比；
 - `runtime-benchmark-<timestamp>.csv`：逐帧原始数据。
 
-默认选项路径包含 600 个采样点，固定使用 20K 预算、20 层最大深度、128K CBT 容量和 58 px² 面积阈值；极限压力路径包含 64 个采样点，固定使用 200K 预算、20 层最大深度、1M CBT 容量和 2.05 px² 面积阈值。两条路径都已按稳态活动三角形规模校准，每种算法按相同 `sampleIndex` 执行，因此算法快慢不会改变路径采样密度。性能路径默认使用 `Off` 验证与 `ModifiedOnly` 几何；仍可通过 `--runtime-benchmark-path`、`--runtime-benchmark-heightmap`、`--runtime-benchmark-terrain-size`、`--runtime-benchmark-height-scale`、`--runtime-benchmark-max-depth`、`--runtime-benchmark-split-pixels`、`--runtime-benchmark-merge-pixels`、`--runtime-benchmark-cbt-area`、`--runtime-benchmark-cbt-capacity`、`--runtime-benchmark-cbt-validation`、`--runtime-benchmark-cbt-geometry`、`--runtime-benchmark-samples` 和 `--runtime-benchmark-label` 显式覆盖实验参数。旧 `--runtime-benchmark-duration` 仅作为兼容参数保留，每个名义秒换算为 60 个离散采样点。
+默认选项路径包含 600 个采样点，固定使用 20K 预算、20 层最大深度、128K CBT 容量和 58 px² 面积阈值；极限压力路径包含 64 个采样点，固定使用 200K 预算、20 层最大深度、1M CBT 容量和 2.05 px² 面积阈值。两条路径都已按稳态活动三角形规模校准，每种算法按相同 `sampleIndex` 执行，因此算法快慢不会改变路径采样密度。性能路径默认使用 `Off` 验证与 `ModifiedOnly` 几何；仍可通过 `--runtime-benchmark-path`、`--runtime-benchmark-heightmap`、`--runtime-benchmark-terrain-size`等显式覆盖实验参数。
 
-默认路径会为每种算法独立预热 8 帧，极限路径预热 24 帧，使 CBT 在正式采样前完成深层拓扑扩张，初始化成本不进入稳态样本。单次运行顺序固定为 Classic、DOD、CBT；正式重复实验仍应轮换启动顺序，以降低缓存状态、GPU 频率和设备温度造成的顺序偏差。Markdown/CSV 会记录 CBT 参数、资源/拓扑/诊断代次、样本年龄与 dropped 标记、动态槽位计数，以及 compute、几何和 terrain draw 的逐阶段 GPU 时间。
-
-> ROAM 1997 论文公式 (1) 和公式 (2)/(3) 接入后，候选优先级分数（score）与活动拓扑语义已经变化。旧版本的三角形数量、score 分布等结果不应与当前版本直接横向比较。
-
-实验方法、字段定义与现有 A/B 结果见[实验与基准测试](docs/parallel-roam/05-experiments-and-benchmarks.md)。
+实验方法、字段定义与当前对比结果见[实验与基准测试](docs/parallel-roam/05-experiments-and-benchmarks.md)。2026-08-28 的最终 Release/D3D12 数据与分阶段结论见[最终实验数据分析与结论](benchmark-output/runtime-benchmark-final-analysis-20260828.md)。
 
 ## 项目结构
 
@@ -258,8 +245,10 @@ powershell -ExecutionPolicy Bypass -File scripts/run/d3d12/run_relwithdebinfo_fe
 | 文档 | 内容 |
 | --- | --- |
 | [研究假设与验证计划](docs/parallel-roam/12-research-hypothesis-validation-plan.md) | 研究问题、H1-H5、基线、继续/停止条件 |
-| [CBT 2024 接入计划](docs/parallel-roam/16-cbt-2024-integration-plan.md) | 忠实基线的阶段状态、能力边界和后续 split/merge 路线 |
-| [实验与基准测试](docs/parallel-roam/05-experiments-and-benchmarks.md) | 指标、统计口径、实验流程和现有 A/B 结果 |
+| [CBT 2024 接入计划](docs/parallel-roam/16-cbt-2024-integration-plan.md) | 阶段 A-I 完成记录、架构、能力边界与源码索引 |
+| [CBT 2024 官方语义基线 v1](docs/parallel-roam/18-cbt-2024-official-baseline-v1.md) | 冻结身份、四容量结果、上游差异和许可证门禁 |
+| [实验与基准测试](docs/parallel-roam/05-experiments-and-benchmarks.md) | 当前指标、统计口径、实验流程和三算法结论 |
+| [历史课程技术报告](docs/parallel-roam/final-technical-report.docx) | 冻结的 OpenGL 课程阶段 DOCX，不随当前 CBT 实现更新 |
 | [依赖配置说明](docs/parallel-roam/10-dependency-setup.md) | OpenGL/D3D12 依赖、固定版本和构建脚本 |
 
 ## 可复现实验要求
@@ -278,18 +267,19 @@ powershell -ExecutionPolicy Bypass -File scripts/run/d3d12/run_relwithdebinfo_fe
 ## 当前限制
 
 - 兼容闭包感知调度器目前仅完成问题定义、假设、基线和实验计划，算法实现与 H1–H5 验证尚未开展；
-- CBT 2024 已形成动态 split/merge、高度图几何和性能采样闭环，但官方语义冻结、四档正式重复结果及上游差异报告仍待阶段 I 完成；
+- CBT 2024 官方语义基线已冻结，但它仍采用上游先到先分配语义，容量是二分器池上限而不是严格三角形预算；
+- CBT 极限路径通过面积阈值把平均工作量校准到约 20 万三角形，逐帧仍会在约 18.3 万至 21.7 万之间变化；跨算法质量结论仍需要独立离线误差评估器；
 - GPU ROAM-like 已移至 `archive/gpu-roam-like` 分支，不属于主分支构建目标；
 - Classic 已实现公式 (1)-(3)、连续二叉三角树/diamond 拓扑、持久双队列和增量 Mesh 输出；最终 priority、硬预算和输出格式是项目变体，当前研究不追求补齐 ROAM 1997 论文完整最优性证明；
-- 当前正式场景数量和 DEM 多样性不足，旧性能数据也需要在新误差口径下重跑；
+- 当前正式场景仅覆盖 Test129 与 Peking 两条路径，DEM 多样性、遮挡场景和跨硬件重复仍需扩充；
 
 ## 路线图
 
-1. 完成并冻结 CBT 2024 忠实基线的 split、merge、兼容传播、槽位回收和高度图几何；
-2. 建立公共离线质量评估器与小规模精确参考；
-3. 在冻结拓扑上建立 split 候选兼容闭包，并对比先到先分配、误差 Top-K、独立成本贪心和闭包去重贪心；
-4. 在独立 GPU 变体中实现闭包分析、确定性选择和严格预算提交，并与小规模精确参考比较；
-5. 在 split-only 调度验证完成后，进一步研究池饱和状态下的低损失 merge、高收益 split 交换、迟滞和时间预算。
+1. 建立公共离线质量评估器与小规模精确参考；
+2. 在冻结 CBT v1 上建立 split 候选兼容闭包，并对比先到先分配、误差 Top-K、独立成本贪心和闭包去重贪心；
+3. 在独立 GPU 变体中实现闭包分析、确定性选择和严格预算提交，并与小规模精确参考比较；
+4. 在 split-only 调度验证完成后，研究池饱和状态下的低损失 merge、高收益 split 交换、迟滞和时间预算；
+5. 扩充 DEM、视点变化和跨硬件重复实验，报告质量、预算、性能与稳定性共同结论。
 
 ## 引用与参考
 

@@ -2,7 +2,7 @@
 
 本文档记录 Parallel ROAM 开发过程中已经完成确认的 bug、易误判现象、定位过程、解决方案和验证方式。正在调查、尚未修复或用户未确认修复完成的问题，不写入正式记录。
 
-> 各条记录保留问题发生时的实现语境；较早条目中的“当前”“后续”和旧 benchmark 数值不代表仓库现状。算法质量基线见 BUG-019 至 BUG-021；最新性能统计口径见 BUG-023 和 `docs/source_analysis/classic_roam_context.md`。
+> 各条记录保留问题发生时的实现语境；较早条目中的“当前”“后续”和旧 benchmark 数值不代表仓库现状。当前三算法能力见 [项目计划](../../Parallel_ROAM_Project_Plan.md)，CBT 完成状态见 [16-cbt-2024-integration-plan.md](16-cbt-2024-integration-plan.md)，最终性能统计见[最终实验数据分析与结论](../../benchmark-output/runtime-benchmark-final-analysis-20260828.md)。
 
 ## 记录规范
 

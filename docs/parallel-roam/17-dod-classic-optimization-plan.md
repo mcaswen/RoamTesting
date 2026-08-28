@@ -2,7 +2,7 @@
 
 > 日期：2026-08-10
 >
-> 状态：实施规划 v1.5，B1-B4、C1-C2、D1 增量基础已完成；D1 自适应选择暂缓
+> 状态：优化批次已经关闭并进入稳定基线；O1/O2/O4/O7、O8 sidecar 与 O6 增量 Mesh 已完成，dirty 比例自适应全量 emit 和 O5 批量整理未纳入最终实现
 >
 > 范围：Data-Oriented CPU ROAM 相对 Classic CPU ROAM 的 CPU 热路径
 >
@@ -31,7 +31,7 @@
 - DOD 串行 topology 已使用普通预算计数和编译期专用入口；atomic token 只供并行 worker commit；
 - Classic 已实现增量 Mesh slot、dirty range 和增量 upload，DOD 仍完整 emit CPU Mesh。
 
-最新单轮参考报告：
+以下单轮报告是制定优化方向时使用的历史参考，不代表最终性能：
 
 - [默认选项路径报告](../../benchmark-output/runtime-benchmark-20260810-002908.md)
 - [极限压力路径报告](../../benchmark-output/runtime-benchmark-20260810-003052.md)
@@ -50,7 +50,7 @@
 | 极限压力 | Split topology | 67.7276 ms | 57.2506 ms | DOD 帧耗时更低，但单操作仍有差距 |
 | 极限压力 | Mesh emit | 44.5763 ms | 17.7158 ms | 高变化率下 DOD 全量并行 emit 有优势 |
 
-以上数据只用于确定优化方向，不作为正式性能结论。正式 A/B 必须多轮重复，并排除 `timeSeconds == 0` 的初始化样本。
+以上数据只用于确定优化方向，不作为正式性能结论。最终五轮 Release/D3D12 实验中，DOD 相对 Classic 的平均帧耗时在默认路径降低 26.15%，极限路径降低 41.04%；候选扫描显著更快，但 topology commit 仍是主要剩余瓶颈。完整 P95/P99 与分阶段结果见[最终实验数据分析与结论](../../benchmark-output/runtime-benchmark-final-analysis-20260828.md)。
 
 ## 3. 八类优化问题总表
 
@@ -550,17 +550,17 @@ frame slot 延迟消费 ranges 时不会漏更新
 
 候选评分、方差树和最终活动叶收集已经不是 Classic/DOD 当前差距的主要来源，不在本计划中重复优化。
 
-## 15. 最终交付
+## 15. 最终交付与结论
 
-本计划完成后应交付：
+当前实现实际交付：
 
 1. 一条精简且与 Classic 可解释对齐的 DOD 串行 topology 路径；
 2. 保留正确性约束的 DOD 并行 split/merge 路径；
-3. 稳定的活动叶视图和独立 split heap；
-4. DOD 增量/全量自适应 CPU Mesh 输出；
+3. 稳定的活动叶视图、持久 split/merge queue 与紧凑 membership sidecar；
+4. DOD 持久增量 CPU Mesh 输出和 dirty ranges；高变化率时不自动切换全量 emit；
 5. OpenGL/D3D12 增量 upload；
 6. 默认与极限压力路径的多轮 A/B 报告；
-7. 对剩余 Classic/DOD 差距的 profiler 证据；
+7. 对剩余 Classic/DOD 差距的 profiler 与最终分阶段证据；
 8. 明确结论：哪些收益来自数据导向和并行，哪些成本来自随机拓扑修改，哪些功能只是补齐 Classic 已有能力。
 
-最终报告不得只写“DOD 比 Classic 快或慢”，必须按 candidate mark、topology commit、Mesh emit、finalize 和 upload 分阶段说明原因。
+最终报告已经按 candidate mark、topology commit、Mesh emit、finalize 和 upload 分阶段给出结论。DOD 的结构性收益主要来自 merge mark、split scan、极限场景 Mesh emit 和 finalize；默认场景的 merge/split topology、emit 与 finalize，以及极限场景的串行 topology 收敛和 upload 仍会回吐部分收益。

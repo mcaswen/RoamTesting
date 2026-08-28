@@ -1,8 +1,8 @@
 # Milestones
 
-> 当前说明（2026-07-20）：本文件记录课程阶段从工程初始化到三算法实验完成的演进过程。带日期的“实现状态”和 4A-4I 的“阶段完成记录”是历史快照，不代表后续 D3D12 / CBT 2024 现状。当前 CBT 主线见 [16-cbt-2024-integration-plan.md](16-cbt-2024-integration-plan.md)。
+> 当前说明（2026-08-29）：本文件记录课程阶段从工程初始化到早期三算法实验完成的演进过程。带日期的“实现状态”和 4A-4I 的“阶段完成记录”是历史快照，不代表当前主分支。D3D12 迁移和 CBT 2024 阶段 A-I 均已完成，当前状态见 [项目计划](../../Parallel_ROAM_Project_Plan.md)、[CBT 接入完成记录](16-cbt-2024-integration-plan.md)与[最终实验分析](../../benchmark-output/runtime-benchmark-final-analysis-20260828.md)。
 
-当前课程阶段结果：阶段 0-5 的历史记录已保留；主分支当前只运行 Classic/DOD 固定相机 runtime benchmark，GPU ROAM-like 实验已归档到 `archive/gpu-roam-like`，OpenGL/D3D12 迁移与 CBT 后续工作分别由文档 13 和 16 跟踪。
+当前项目结果：阶段 0-5 的课程历史记录继续保留；主分支运行 Classic、DOD 与 D3D12 CBT 2024，GPU ROAM-like 实验已归档到 `archive/gpu-roam-like`。CBT 已接入 UI、调试着色、默认/极限 runtime benchmark、四容量 smoke 和官方语义冻结。
 
 核心原则：每一步都应有一个可运行、可截图、可录制、可验证的阶段成果。
 

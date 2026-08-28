@@ -1,6 +1,7 @@
 # ROAM 论文与当前 Classic CPU ROAM 实现详细对比
 
 > 对比基线：2026-08-08 当前源码，包含 nested wedgie 公式 (1)、保守屏幕投影公式 (2)/(3)、持久双优先队列与 Classic 增量 indexed Mesh 输出；Classic/DOD 对比已按当前 SoA、持久活动集合、条件并行拓扑提交和 CPU mesh 输出路径重新核对。
+> 状态说明（2026-08-29）：本文的论文/Classic 语义对照继续有效；GPU ROAM-like 路径和当时的 DOD 性能观察属于历史上下文。当前主分支以 Classic、DOD、CBT 2024 为对照，最终数据见[最终实验分析](../../benchmark-output/runtime-benchmark-final-analysis-20260828.md)。
 > 论文依据：项目内转写文档 [`roaming_terrain_paper.md`](roaming_terrain_paper.md)，未重新解析 PDF。  
 > 实现范围：以 `src/algorithms/classic_roam` 为核心，并追踪统一 LOD 接口、渲染上传和 Benchmark。  
 > 本文讨论的是“论文描述的 ROAM”与“项目当前名为 Classic CPU ROAM 的实现”之间的对应关系，不把同名类型或函数自动视为论文机制的完整复现。
@@ -956,8 +957,8 @@ Classic 还具有较低的固定调度成本：它不生成全量候选快照，
 | [`DataOrientedRoamMeshEmit.cpp`](../../src/algorithms/data_oriented_roam/DataOrientedRoamMeshEmit.cpp) | `ApplyIncrementalMeshUpdates`, `FinalizeIncrementalMeshUpdate` | DOD NodeIndex slot edit replay、dirty Mesh 批量写入和 range 发布 |
 | [`DataOrientedRoamThreadPool.cpp`](../../src/algorithms/data_oriented_roam/DataOrientedRoamThreadPool.cpp) | `ParallelFor`, `WorkerLoop` | DOD 跨帧复用 worker 的任务执行器 |
 | [`DataOrientedRoamTerrainLodAlgorithm.cpp`](../../src/algorithms/data_oriented_roam/DataOrientedRoamTerrainLodAlgorithm.cpp) | adapter, stats mapping | DOD 接入统一 CPU mesh 和 Benchmark 统计 |
-| [`GpuRoamShaderCommon.h`](../../src/algorithms/gpu_roam/GpuRoamShaderCommon.h) | `GpuRoamScoreCommonGlsl` | OpenGL 两个 compute pass 共用的 GPU ROAM-like score 逻辑 |
-| [`ITerrainLodAlgorithm.h`](../../src/algorithms/ITerrainLodAlgorithm.h) | settings, view input, stats, render packet | 三种 ROAM 路径的共享质量和统计口径 |
+| `src/algorithms/gpu_roam/GpuRoamShaderCommon.h`（归档分支） | `GpuRoamScoreCommonGlsl` | 历史 GPU ROAM-like score 逻辑，主分支文件已删除 |
+| [`ITerrainLodAlgorithm.h`](../../src/algorithms/ITerrainLodAlgorithm.h) | settings, view input, stats, render packet | Classic、DOD 与 CBT 的共享接口和统计契约 |
 | [`TerrainRenderer.cpp`](../../src/render/TerrainRenderer.cpp) | `BuildRenderData` 消费、`UploadMeshData` | OpenGL CPU Mesh full/range 上传 |
 | [`D3D12TerrainRenderer.cpp`](../../src/render/D3D12TerrainRenderer.cpp) | `UploadMeshData`、`UploadMeshForFrame` | D3D12 per-frame pending full/range 上传 |
 

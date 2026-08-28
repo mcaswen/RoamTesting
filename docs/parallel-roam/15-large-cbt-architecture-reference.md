@@ -1,7 +1,7 @@
 # large_cbt 总体架构与关键算法路径参考
 
 > 日期：2026-07-16  
-> 文档状态：源码架构参考 v0.2；RoamTesting 映射更新于 2026-08-25
+> 文档状态：源码架构参考 v0.2；RoamTesting 映射更新于 2026-08-29
 > 分析对象：`third_party/large_cbt`，官方提交 `7351e6fb380acc149b3aef22a6c39bf3df7950a6`
 > 对应论文：*Concurrent Binary Trees for Large-Scale Game Components*，HPG 2024
 
@@ -15,7 +15,7 @@
 
 1. `large_cbt` 如何组织 DX12 渲染、GPU 常驻拓扑和自适应几何更新；
 2. CBT 2024 的 split、merge、兼容关系传播、内存分配和活动节点索引如何在 GPU 上执行；
-3. 哪些部分应忠实复现，哪些部分应通过适配层接入当前 RoamTesting程。
+3. 哪些部分应忠实复现，哪些部分应通过适配层接入当前 RoamTesting 工程。
 
 ## 2. 一句话概括
 
@@ -347,7 +347,7 @@ split 和 merge 只修改底层占用位。之后必须执行三段归约：
 
 官方实现不生成传统索引缓冲。顶点着色器使用 `SV_VertexID / 3` 得到活动三角形序号，再通过 `indexedBisectorBuffer` 找到真实物理槽位，最后读取该槽位对应的三个顶点。
 
-这条路径使用 `D3D12_INDIRECT_ARGUMENT_TYPE_DRAW`。RoamTesting 的 GPU ROAM-like 继续使用 `D3D12_INDIRECT_ARGUMENT_TYPE_DRAW_INDEXED`，CBT 接入已经新增独立的程序化 `DRAW` 模式，因此桥接差异已经由双契约解决。
+这条路径使用 `D3D12_INDIRECT_ARGUMENT_TYPE_DRAW`。RoamTesting 主分支已经由 CBT 使用独立的程序化 `DRAW` 模式；旧 GPU ROAM-like 的 `DRAW_INDEXED` 路径只保留在归档分支。
 
 ## 10. 并发与正确性机制
 
@@ -398,7 +398,7 @@ split 和 merge 只修改底层占用位。之后必须执行三段归约：
 
 ## 12. 与 RoamTesting 的架构映射
 
-| large_cbt | RoamTesting 对应位置 | 处理建议 |
+| large_cbt | RoamTesting 对应位置 | 当前处理方式 |
 |---|---|---|
 | `SpaceRenderer` | `Application`、`D3D12GraphicsBackend`、`TerrainRenderer` | 不迁移，沿用现有主循环和后端 |
 | 自研 DX12 backend | `D3D12GraphicsBackend` | 不迁移；程序化间接绘制和原生资源借用接口已补齐 |
@@ -409,9 +409,9 @@ split 和 merge 只修改底层占用位。之后必须执行三段归约：
 | `UpdateMesh.compute` | `assets/shaders/dx12/cbt/` | 先忠实迁移，后续研究另建调度变体 |
 | `PlanetGeometry.compute` | 高度图几何求值着色器 | 不直接照搬球面逻辑，替换为地形基网格求值 |
 | 水体/月球形变 | 高度图采样和法线生成 | 不迁移演示效果 |
-| 程序化间接绘制 | `GpuProceduralIndirect` + `D3D12_DRAW_ARGUMENTS` | 已接入，继续与 GPU ROAM-like 的索引间接模式并存 |
+| 程序化间接绘制 | `GpuProceduralIndirect` + `D3D12_DRAW_ARGUMENTS` | 已接入并由主分支 CBT 独占使用；GPU ROAM-like 索引模式已归档 |
 
-### 12.1 建议的算法边界
+### 12.1 当前算法边界
 
 当前实现遵循统一接口，并先把基础状态拆成 CPU 参考拓扑和 D3D12 资源状态：
 
@@ -426,9 +426,9 @@ D3D12CbtTerrainLodAlgorithm : ITerrainLodAlgorithm
 └── TerrainLodRenderPacket      借用 GPU 资源，不转移所有权
 ```
 
-其中 `CbtGpuState` 必须跨帧持有，不能像当前 GPU ROAM-like 的过渡实现一样依赖 CPU 数据导向拓扑快照重建完整状态。
+其中 `D3D12CbtGpuState` 跨帧持有全部拓扑、任务、索引和间接命令资源，不依赖 CPU 数据导向拓扑快照重建完整状态。
 
-### 12.2 渲染数据包需要补足的语义
+### 12.2 渲染数据包语义
 
 当前 [`TerrainLodRenderPacket`](../../src/algorithms/ITerrainLodAlgorithm.h) 已支持 `GpuProceduralIndirect`，并携带：
 
@@ -437,23 +437,23 @@ D3D12CbtTerrainLodAlgorithm : ITerrainLodAlgorithm
 - `D3D12_DRAW_ARGUMENTS` 间接命令缓冲；
 - 活动三角形数和资源生命周期代次。
 
-CBT 忠实基线不额外生成传统索引缓冲；传统索引间接路径只服务现有 GPU ROAM-like。
+CBT 忠实基线不额外生成传统索引缓冲；主分支 renderer 直接消费活动二分器索引、程序化顶点和 `D3D12_DRAW_ARGUMENTS`。
 
 ### 12.3 参数映射
 
 | 官方参数 | RoamTesting 参数 | 说明 |
 |---|---|---|
-| `_TriangleSize` | 新增或重新定义的屏幕面积阈值 | 官方单位是像素面积，不等同于当前距离误差阈值 |
+| `_TriangleSize` | `CbtTriangleAreaThreshold` | 官方单位是像素面积，不等同于 CPU ROAM 的像素误差阈值 |
 | `_MaxSubdivisionDepth` | `MaxDepth` | 可以直接映射，但需受 64 位 `heapID` 深度限制 |
-| CBT 类型 | 新增 `CbtCapacity` | 建议支持 128K、256K、512K、1M |
+| CBT 类型 | `CbtCapacity` | 已支持 128K、256K、512K、1M |
 | 视图投影与屏幕大小 | 现有 `RenderContext` | 应进入算法输入或 GPU 常量缓冲 |
-| 基础网格 | 当前高度图根三角形/规则网格 | 需要显式半边邻接和基础 `heapID` 构建 |
+| 基础网格 | 高度图方形的两个根三角形 | 已生成六个基础半边、显式邻接和基础 `heapID` |
 
-`TerrainLodBuildInput` 已包含 View、Projection、ViewProjection、相机方向、六个视锥平面和 drawable 尺寸。后续 CBT 分类 pass 应直接使用这份与 renderer 同源的输入，不在算法中重建相机矩阵。
+`TerrainLodBuildInput` 已包含 View、Projection、ViewProjection、相机方向、六个视锥平面和 drawable 尺寸。CBT 分类 pass 直接使用这份与 renderer 同源的输入，不在算法中重建相机矩阵。
 
-### 12.4 建议新增统计字段
+### 12.4 观测字段
 
-为复现和后续预算论文，至少记录：
+当前诊断与 benchmark 链路围绕以下字段组织；个别只用于深度诊断的计数不会进入每帧 CSV：
 
 - CBT 容量、活动位数量和剩余槽位；
 - split 与 simplify 候选数；
@@ -510,12 +510,12 @@ CBT 忠实基线不额外生成传统索引缓冲；传统索引间接路径只�
 1. **许可证缺失。** 在使用或发布衍生代码前需要联系作者或确认授权。
 2. **程序化绘制接口不匹配，已解决。** renderer 已增加独立 `DRAW` 契约。
 3. **相机输入不足，已解决。** 算法输入已包含视图投影、视锥和屏幕尺寸。
-4. **基础网格不同，部分解决。** 规则地形基础邻接已生成，高度图几何求值仍待实施。
+4. **基础网格不同，已解决。** 规则地形基础邻接、高度图位置、法线、UV、调试色和父级分类位置均已实现并通过 CPU/GPU 对照。
 5. **每帧全队列等待。** 官方演示的 `flush` 不可直接作为性能实现迁移。
 6. **容量静态特化。** 四种 OCBT 规模对应不同 HLSL 布局，运行时切换需要重新创建资源和管线。
 7. **Shader Model 6.6，已解决。** CBT 可用性入口会显式检查 Shader Model 6.6、shader int64 和 64 位资源原子能力。
-8. **调度非确定性。** 容量饱和时获批候选可能随 GPU 执行顺序变化，应建立重复运行稳定性实验。
-9. **验证覆盖有限。** 官方验证主要覆盖邻接对称性，需要补充位域、heapID、活动列表和间接命令一致性检查。
+8. **调度非确定性，仍是研究边界。** 未饱和正式路径的五轮逐点三角形结果一致；容量饱和时的获批候选仍可能受 GPU 执行顺序影响，后续调度研究必须继续测量重复方差。
+9. **验证覆盖已扩展。** RoamTesting 除邻接对称性外，还核对 OCBT 根、位域/槽位/heapID、活动索引、间接参数、容量守恒、split/merge 计数与基础几何。
 
 ## 15. 关键源码索引
 

@@ -6,6 +6,8 @@
 > Git 提交：`b0bdd5d0c25a523f5a15221dfb90eaf4db829b4c`
 > Benchmark 标签：`benchmark/cbt-2024-official-baseline-v1`
 
+> 后续说明（2026-08-28）：本文件和标签继续保持不可变，用于复现阶段 I 的 CBT 四容量基线。当前主分支的 Classic/DOD/CBT 最终横向性能结论另见[最终实验数据分析与结论](../../benchmark-output/runtime-benchmark-final-analysis-20260828.md)，不会反向改写本冻结身份。
+
 ## 1. 冻结范围与复现入口
 
 阶段 I 将 CBT 基线的算法身份、shader、PSO 入口、CPU/GPU ABI、两条离散相机路径、地形输入、分辨率、四档容量和采样口径冻结在同一个清单中：

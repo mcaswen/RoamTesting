@@ -9,6 +9,6 @@
 | [03-implementation-strategies.md](03-implementation-strategies.md) | Classic、DOD 和 OpenGL GPU 实施策略 |
 | [06-risks-and-delivery.md](06-risks-and-delivery.md) | 课程提交、评分和三算法交付方案 |
 | [08-engine-framework.md](08-engine-framework.md) | 未完全采用的初始引擎框架提案 |
-| [final-technical-report.md](final-technical-report.md) | OpenGL 三算法课程技术报告与实验结论 |
+| [final-technical-report.md](final-technical-report.md) | OpenGL 三算法课程技术报告与实验结论；对应 DOCX 保留在上一级目录 |
 
-当前项目入口见 [Parallel_ROAM_Project_Plan.md](../../../Parallel_ROAM_Project_Plan.md)，CBT 实施状态见 [16-cbt-2024-integration-plan.md](../16-cbt-2024-integration-plan.md)。
+当前项目入口见 [Parallel_ROAM_Project_Plan.md](../../../Parallel_ROAM_Project_Plan.md)，CBT 完成状态见 [16-cbt-2024-integration-plan.md](../16-cbt-2024-integration-plan.md)。本目录的报告源文件与上一级的 `final-technical-report.docx` 都属于历史产物，不随主分支实现更新。

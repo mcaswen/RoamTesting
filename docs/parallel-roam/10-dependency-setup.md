@@ -185,12 +185,6 @@ scripts\run\d3d12\run_smoke_test_fetch.bat
 scripts\run\d3d12\run_relwithdebinfo_fetch.bat --smoke-test
 ```
 
-支持 OpenGL 4.3 Compute Shader 的机器还可以运行 GPU 专用 smoke test。该入口会连续强制重建 32 帧，覆盖 GPU split-only topology、active leaf compaction、mesh emit 和 indirect draw：
-
-```bat
-scripts\run\opengl\run_relwithdebinfo_fetch.bat --gpu-smoke-test
-```
-
 D3D12 构建可以独立验证 CBT OCBT 的四种容量特化。该入口不会初始化 terrain renderer 和 GUI，会检查空树、满树、边界位、交替位图和随机更新：
 
 ```powershell
@@ -203,7 +197,7 @@ D3D12 构建可以独立验证 CBT OCBT 的四种容量特化。该入口不会�
 .\build\debug-d3d12-fetch\bin\ParallelROAM.exe --cbt-base-topology-smoke-test
 ```
 
-下面的短窗口入口会使用 128K 容量尾部的六个基础二分器提交 32 帧程序化间接绘制：
+下面的窗口入口会运行完整 CBT 动态拓扑与程序化间接绘制 smoke，覆盖 split/merge 往返、容量和高度图切换、三种诊断模式以及 ModifiedOnly/FullDebug 几何：
 
 ```powershell
 .\build\debug-d3d12-fetch\bin\ParallelROAM.exe --cbt-procedural-smoke-test
@@ -215,7 +209,7 @@ D3D12 构建可以独立验证 CBT OCBT 的四种容量特化。该入口不会�
 scripts\run\d3d12\run_relwithdebinfo_fetch.bat --runtime-benchmark
 ```
 
-该命令会让每种可用算法依次执行同一组离散相机采样点，生成 `benchmark-output/runtime-benchmark-*.md` 和对应逐点 CSV 后自动退出。默认选项路径为 600 点，极限压力路径为 64 点，也可通过 `--runtime-benchmark-samples` 覆盖；算法耗时只改变完成整轮测试所需的墙钟时间，不再改变采样点数量或姿态。GPU capability 不满足时，报告会保留 CPU 结果并写明 CBT skip 原因；D3D12 能力满足时，CBT 会记录延迟诊断和逐阶段 GPU 计时。
+该命令会让每种可用算法依次执行同一组离散相机采样点，生成 `benchmark-output/runtime-benchmark-*.md` 和对应逐点 CSV 后自动退出。默认选项路径为 600 点并预热 16 帧，极限压力路径为 64 点并预热 24 帧，也可通过 `--runtime-benchmark-samples` 覆盖；算法耗时只改变完成整轮测试所需的墙钟时间，不改变采样点数量或姿态。GPU capability 不满足时，报告会保留 CPU 结果并写明 CBT skip 原因；D3D12 能力满足时，CBT 会记录延迟诊断和 18 项 GPU 阶段计时。
 
 只运行 CBT、保留相同 runtime benchmark 链路：
 
@@ -249,18 +243,20 @@ GLAD 已经使用官方生成器生成 OpenGL core 4.3 loader，并放在 `third
 
 ## 当前验证状态
 
-截至 2026-07-20，当前 Windows / NVIDIA GeForce RTX 5090 D 环境已验证：
+截至 2026-08-25，当前 Windows / NVIDIA GeForce RTX 5090 D 环境已验证：
 
 ```text
 relwithdebinfo-fetch:
-- OpenGL 4.3 application smoke test passed
+- OpenGL 4.1 application and Classic/DOD runtime path passed
 - SDL2、GLAD、GLM、stb 和 Dear ImGui local dependency path passed
-- CTest: cpp_comment_coverage、cbt_occupancy_tree、cbt_bisector_topology、terrain_lod_view passed
+- OpenGL public regression: 18/18 CTest passed
 
 relwithdebinfo-d3d12-fetch:
-- D3D12 application and adapter initialization passed
-- CBT OCBT 128K、256K、512K、1M CPU/GPU validation passed
-- CBT base topology resource creation、readback validation and capacity switching passed
+- D3D12 application, adapter, UI and runtime benchmark passed
+- CBT OCBT 128K、256K、512K、1M CPU/GPU validation and dynamic smoke passed
+- default/extreme runtime quick、FullDebug geometry and frozen baseline verification passed
+- D3D12 regression: 26/26 CTest passed
+- C++/HLSL comment coverage gate passed
 ```
 
 `debug-vcpkg` 和 `debug-d3d12-vcpkg` 尚未在当前机器验证，因为当前环境没有设置 `VCPKG_ROOT`。macOS OpenGL 4.1 的历史验证仅用于 capability skip 回归，不再代表当前主要开发环境。
@@ -268,7 +264,7 @@ relwithdebinfo-d3d12-fetch:
 ## 平台注意事项
 
 - Windows：仓库已内置 portable CMake 和第三方源码，但仍需要 MSVC/clang 等 C++20 编译器、Windows SDK 和可用的 OpenGL 驱动。
-- macOS：系统 OpenGL 可能无法满足 OpenGL 4.3 Compute Shader；GPU ROAM-like 阶段需要运行时检查 OpenGL version。
+- macOS：系统 OpenGL 4.1 可运行 Classic/DOD；CBT 2024 只在 Windows D3D12 构建中启用。
 - Linux：仍需要系统提供 C++20 编译器、CMake、OpenGL/Mesa 开发包和图形驱动。
 - GLAD：当前仓库已包含 OpenGL core 4.3 loader；若后续改 OpenGL 版本或 extension 集合，需要重新生成。
 - SDL3：官方最新稳定版本已经是 SDL3，但本项目当前选择 SDL2，原因是参考项目、ImGui backend 和现有代码计划都以 SDL2 为主。
