@@ -4,6 +4,8 @@
 >
 > 当前状态说明（2026-08-29）：Classic 的核心结构和公式结论仍适用；文中 GPU ROAM-like、旧 runtime 表格和 `--gpu-smoke-test` 只描述当时的历史分支。当前主分支三算法、CBT 与最终性能口径以[项目计划](../../Parallel_ROAM_Project_Plan.md)和[最终实验分析](../../benchmark-output/runtime-benchmark-final-analysis-20260828.md)为准。
 >
+> 对照阅读：[Data-Oriented CPU ROAM 源码上下文](data_oriented_roam_context.md)使用相同证据口径分析 SoA 节点池、持久队列、并行拓扑提交与增量 Mesh；[CBT 2024 复现源码上下文](cbt_2024_reproduction_context.md)分析完全驻留 GPU 的 OCBT 拓扑、LEB 几何和间接绘制链路。
+>
 > 证据标签约定：
 >
 > - **源码事实：** 可以从当前代码直接确认。

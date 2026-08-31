@@ -248,7 +248,10 @@ CBT 的运行时界面与 Classic/DOD 使用同一条算法选择、统计和调
 | [CBT 2024 接入计划](docs/parallel-roam/16-cbt-2024-integration-plan.md) | 阶段 A-I 完成记录、架构、能力边界与源码索引 |
 | [CBT 2024 官方语义基线 v1](docs/parallel-roam/18-cbt-2024-official-baseline-v1.md) | 冻结身份、四容量结果、上游差异和许可证门禁 |
 | [实验与基准测试](docs/parallel-roam/05-experiments-and-benchmarks.md) | 当前指标、统计口径、实验流程和三算法结论 |
-| [历史课程技术报告](docs/parallel-roam/final-technical-report.docx) | 冻结的 OpenGL 课程阶段 DOCX，不随当前 CBT 实现更新 |
+| [Classic CPU ROAM 源码分析](docs/source_analysis/classic_roam_context.md) | 对象式持久 bintree、双优先队列、误差与增量 Mesh |
+| [Data-Oriented CPU ROAM 源码分析](docs/source_analysis/data_oriented_roam_context.md) | SoA 节点池、持久队列、chunk 并行拓扑与增量 Mesh |
+| [CBT 2024 复现源码分析](docs/source_analysis/cbt_2024_reproduction_context.md) | OCBT、GPU 拓扑事务、LEB 几何、间接绘制、诊断与正式基线 |
+| [历史课程技术报告](docs/parallel-roam/history/final-technical-report.docx) | 冻结的 OpenGL 课程阶段 DOCX，不随当前 CBT 实现更新 |
 | [依赖配置说明](docs/parallel-roam/10-dependency-setup.md) | OpenGL/D3D12 依赖、固定版本和构建脚本 |
 
 ## 可复现实验要求
